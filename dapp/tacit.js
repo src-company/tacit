@@ -43300,7 +43300,7 @@ async function _ammClaimReservationWithQueue(circuitHash, contributorName, contr
   }
   const url = `${WORKER_BASE}/ceremony/${circuitHash}/reserve`;
   const start = Date.now();
-  const MAX_WAIT_MS = 15 * 60_000;
+  const MAX_WAIT_MS = 60 * 60_000;
   const _basePayload = {
     contributor_name: String(contributorName || 'anonymous').slice(0, 64),
     contributor_pubkey: contributorPubkeyHex.toLowerCase(),
