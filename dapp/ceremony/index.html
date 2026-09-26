@@ -28,7 +28,7 @@
 @font-face { font-family: 'Instrument Serif'; font-style: italic; font-weight: 400; font-display: swap; src: url(/fonts/instrument-serif-400i-latin.woff2) format('woff2'); }
 @font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url(/fonts/ibm-plex-mono-400-latin.woff2) format('woff2'); }
 :root {
-  --bg: #0b0c0e; --ink: #f4efe6; --mid: #a29d95; --faint: #2a2b2d; --orange: #f7931a;
+  --bg: #0b0c0e; --ink: #f4efe6; --mid: #a29d95; --dim: #6f6b65; --faint: #25262a; --orange: #f7931a;
   --serif: 'Instrument Serif', Georgia, serif; --mono: 'IBM Plex Mono', ui-monospace, monospace;
 }
 * { box-sizing: border-box; }
@@ -36,50 +36,74 @@ html, body { margin: 0; background: var(--bg); color: var(--ink); }
 body { font: 19px/1.55 var(--serif); -webkit-font-smoothing: antialiased; }
 main { max-width: 680px; margin: 0 auto; padding: 56px 24px 72px; }
 a { color: var(--ink); text-decoration-color: var(--orange); text-underline-offset: 3px; }
-.top { display: flex; align-items: center; gap: 12px; font: 13px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--mid); }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; font: 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--mid); }
 .top a { text-decoration: none; display: inline-flex; align-items: center; gap: 10px; color: var(--ink); }
-.top svg { width: 30px; height: 30px; }
+.top svg { width: 28px; height: 28px; }
+.live { display: inline-flex; align-items: center; gap: 8px; color: var(--mid); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 0 rgba(247,147,26,.6); animation: pulse 2s infinite; }
+.dot.idle { background: var(--dim); animation: none; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(247,147,26,.55); } 70% { box-shadow: 0 0 0 9px rgba(247,147,26,0); } 100% { box-shadow: 0 0 0 0 rgba(247,147,26,0); } }
 h1 { font-style: italic; font-weight: 400; font-size: clamp(56px, 12vw, 92px); line-height: 1; margin: 56px 0 20px; letter-spacing: -.01em; }
-h1 span, .o { color: var(--orange); }
+h1 span { color: var(--orange); }
 .lead { font-size: 23px; line-height: 1.45; margin: 0 0 36px; }
-.card { border: 1px solid var(--faint); padding: 22px 24px; margin: 0 0 44px; }
-.count { font: 14px var(--mono); color: var(--mid); margin: 0 0 14px; }
-.count strong { color: var(--ink); font-weight: 400; }
-.pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
-.pill { font: 12px var(--mono); padding: 4px 10px; border: 1px solid var(--faint); border-radius: 99px; color: var(--mid); }
-.pill.done { color: var(--ink); border-color: var(--mid); }
-.pill.next { color: var(--orange); border-color: var(--orange); }
-.cta { display: inline-block; background: var(--orange); color: #0b0c0e; text-decoration: none; font: 15px var(--mono); letter-spacing: .04em; padding: 13px 22px; }
+.card { border: 1px solid var(--faint); padding: 24px; margin: 0 0 48px; }
+.big { display: flex; align-items: baseline; gap: 12px; margin: 0 0 4px; }
+.big .n { font: italic 64px/1 var(--serif); font-variant-numeric: tabular-nums; }
+.big .l { font: 13px var(--mono); color: var(--mid); letter-spacing: .04em; }
+.now { font: 13px/1.5 var(--mono); color: var(--mid); min-height: 1.5em; margin: 0 0 22px; }
+.now b { color: var(--ink); font-weight: 400; }
+.now .hot { color: var(--orange); }
+.track { position: relative; height: 34px; margin: 0 0 26px; }
+.track .rail { position: absolute; left: 0; right: 0; top: 11px; height: 1px; background: var(--faint); }
+.track .fill { position: absolute; left: 0; top: 11px; height: 1px; background: var(--orange); width: 0; transition: width 1.2s cubic-bezier(.2,.8,.2,1); }
+.track .tick { position: absolute; top: 5px; width: 1px; height: 13px; background: var(--dim); }
+.track .tick.done { background: var(--orange); }
+.track .lbl { position: absolute; top: 20px; transform: translateX(-50%); font: 10.5px var(--mono); color: var(--dim); white-space: nowrap; }
+.track .lbl.done { color: var(--mid); }
+.track .lbl.first { transform: none; }
+.track .lbl.last { transform: translateX(-100%); }
+.track .head { position: absolute; top: 7px; width: 9px; height: 9px; margin-left: -4.5px; border-radius: 50%; background: var(--orange); transition: left 1.2s cubic-bezier(.2,.8,.2,1); animation: pulse 2s infinite; }
+.cta { display: inline-block; white-space: nowrap; background: var(--orange); color: #0b0c0e; text-decoration: none; font: 15px var(--mono); letter-spacing: .04em; padding: 13px 22px; transition: background .2s; }
 .cta:hover { background: var(--ink); }
-.note { font: 13px var(--mono); color: var(--mid); margin: 14px 0 0; }
-.recent { margin: 20px 0 0; padding: 0; list-style: none; font: 12.5px var(--mono); color: var(--mid); }
-.recent li { display: flex; gap: 12px; padding: 6px 0; border-top: 1px solid var(--faint); }
-.recent li span:nth-child(2) { color: var(--ink); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note { font: 12.5px var(--mono); color: var(--mid); margin: 12px 0 0; }
+.recent { margin: 24px 0 0; padding: 0; list-style: none; font: 12.5px var(--mono); color: var(--mid); }
+.recent li { display: grid; grid-template-columns: 3em minmax(0, 1fr) 7.5em 6.5em; gap: 12px; padding: 7px 0; border-top: 1px solid var(--faint); align-items: baseline; }
+.recent li .who { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent li .ago { color: var(--dim); min-width: 5.5em; text-align: right; }
+.recent li.new { animation: arrive 2.4s ease-out; }
+@keyframes arrive { 0% { background: rgba(247,147,26,.18); transform: translateY(-4px); opacity: 0; } 15% { opacity: 1; transform: none; } 100% { background: transparent; } }
 h2 { font-style: italic; font-weight: 400; font-size: 34px; margin: 0 0 14px; }
 section { margin: 0 0 44px; }
 ol { margin: 0; padding-left: 1.2em; }
 ol li { margin: 0 0 10px; }
 dl { margin: 0; }
-dt { font: 13px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--orange); margin: 18px 0 4px; }
+dt { font: 12.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--orange); margin: 18px 0 4px; }
 dd { margin: 0; }
 .links { display: flex; flex-wrap: wrap; gap: 10px 22px; font: 14px var(--mono); padding-top: 22px; border-top: 1px solid var(--faint); }
-footer { font: 12px var(--mono); color: var(--mid); margin-top: 28px; }
-@media (max-width: 480px) { body { font-size: 18px; } main { padding-top: 36px; } .lead { font-size: 20px; } h1 { margin-top: 40px; } }
+footer { font: 12px var(--mono); color: var(--dim); margin-top: 28px; }
+@media (max-width: 480px) {
+  body { font-size: 18px; } main { padding-top: 32px; } .lead { font-size: 20px; } h1 { margin-top: 40px; }
+  .big .n { font-size: 54px; } .card { padding: 20px 18px; }
+  .recent li { grid-template-columns: 2.6em minmax(0, 1fr) 6.5em; } .recent li .pk { display: none; }
+  .cta { padding: 13px 16px; font-size: 14px; letter-spacing: .02em; }
+}
+@media (prefers-reduced-motion: reduce) { .dot, .track .head { animation: none; } .track .fill, .track .head { transition: none; } .recent li.new { animation: none; } }
 </style>
 </head>
 <body>
 <main>
   <div class="top">
     <a href="/"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="#f4efe6"/><path d="M17.5 7L13 22.5Q13 25 18 24" fill="none" stroke="#f7931a" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11L21 11" stroke="#f7931a" stroke-width="2.8" stroke-linecap="round"/></svg>tacit</a>
-    <span>· open ceremony</span>
+    <span class="live"><span class="dot" id="dot"></span><span id="livelabel">open ceremony</span></span>
   </div>
 
   <h1>Trusted setup<span>.</span></h1>
   <p class="lead">The Secret Sats EVM pool lets anyone hold and send ETH privately, with every spend proved on their own device. Its proving key comes from one public ceremony: each contribution mixes in fresh randomness, and the key is sound as long as a single contributor kept theirs secret.</p>
 
-  <div class="card">
-    <p class="count" id="count">Loading the ceremony…</p>
-    <div class="pills" id="pills"></div>
+  <div class="card" aria-live="polite">
+    <div class="big"><span class="n" id="n">·</span><span class="l" id="nlabel">contributions</span></div>
+    <p class="now" id="now">&nbsp;</p>
+    <div class="track" id="track" aria-hidden="true"><div class="rail"></div><div class="fill" id="fill"></div></div>
     <a class="cta" href="/?evmpool=ceremony">Contribute in your browser →</a>
     <p class="note">A few minutes. No wallet needed. Contribute as often as you like.</p>
     <ul class="recent" id="recent"></ul>
@@ -113,36 +137,108 @@ footer { font: 12px var(--mono); color: var(--mid); margin-top: 28px; }
     <a href="/">Tacit</a>
     <a href="https://github.com/z0r0z/tacit/blob/main/docs/EVM-POOL.md">Integration guide</a>
   </nav>
-  <footer>Circuit <span id="hash">b0a246d1…6ddb3</span> · Hermez powers of tau, 2<sup>16</sup></footer>
+  <footer>Circuit b0a246d1…6ddb3 · Hermez powers of tau, 2<sup>16</sup></footer>
 </main>
 <script>
-(async () => {
+(() => {
   const H = 'b0a246d1790151c722e42ccfa89450cb96c7f5a9f4b70a2162b7d9fc79b6ddb3';
   const API = 'https://api.tacit.finance/ceremony/' + H;
   const MS = [[5, 'floor'], [30, 'comfort'], [100, 'strong']];
+  const TARGET = MS[MS.length - 1][0];
+  // Square-root scale: early milestones sit apart and the first contributions visibly move the head.
+  const pos = (c) => Math.min(100, Math.sqrt(Math.max(0, c) / TARGET) * 100);
+  const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const count = document.getElementById('count');
-  try {
-    const s = (await (await fetch(API, { cache: 'no-store' })).json()).state || {};
-    const n = Number(s.contribution_count) || 0;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const ago = (sec) => {
+    const d = Math.max(0, Math.floor(Date.now() / 1000 - sec));
+    if (d < 45) return 'just now';
+    if (d < 3600) return Math.round(d / 60) + ' min ago';
+    if (d < 86400) return Math.round(d / 3600) + ' h ago';
+    return Math.round(d / 86400) + ' d ago';
+  };
+  const dur = (sec) => { const d = Math.max(0, Math.floor(Date.now() / 1000 - sec)); return d < 60 ? d + 's' : Math.floor(d / 60) + 'm ' + String(d % 60).padStart(2, '0') + 's'; };
+
+  let shown = null, state = null, live = null, rows = [], known = new Set(), firstLoad = true;
+
+  // Track: a rail toward the last milestone, a tick per milestone, and a head at the current count.
+  const track = $('track');
+  for (const [c, l] of MS) {
+    const x = pos(c);
+    const t = document.createElement('div'); t.className = 'tick'; t.style.left = x + '%'; t.dataset.c = c; track.appendChild(t);
+    const lb = document.createElement('div'); lb.className = 'lbl' + (c === TARGET ? ' last' : '') + (c === MS[0][0] ? ' first' : ''); lb.style.left = x + '%'; lb.dataset.c = c; lb.textContent = c + ' ' + l; track.appendChild(lb);
+  }
+  const head = document.createElement('div'); head.className = 'head'; head.style.left = '0%'; track.appendChild(head);
+
+  function countTo(n) {
+    const el = $('n');
+    if (shown === null || reduced) { el.textContent = n; shown = n; return; }
+    const from = shown, t0 = performance.now();
+    const step = (t) => { const k = Math.min(1, (t - t0) / 900); el.textContent = Math.round(from + (n - from) * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step); shown = n;
+  }
+
+  function paint() {
+    if (!state) return;
+    const n = Number(state.contribution_count) || 0;
+    countTo(n);
+    $('nlabel').textContent = n === 1 ? 'contribution' : 'contributions';
+    const pct = pos(n);
+    $('fill').style.width = pct + '%';
+    head.style.left = pct + '%';
+    for (const el of track.querySelectorAll('.tick, .lbl')) el.classList.toggle('done', n >= Number(el.dataset.c));
     const next = MS.find(([c]) => n < c);
-    count.innerHTML = s.finalized
-      ? `<strong>${n}</strong> contributions · closed and finalized`
-      : `<strong>${n}</strong> contribution${n === 1 ? '' : 's'} so far` + (next ? ` · ${next[0] - n} more to reach ${next[1]}` : ' · every milestone reached');
-    document.getElementById('pills').innerHTML = MS.map(([c, l]) =>
-      `<span class="pill ${n >= c ? 'done' : (next && next[0] === c ? 'next' : '')}">${n >= c ? '✓' : '○'} ${c} ${l}</span>`).join('');
-  } catch { count.textContent = 'The ceremony is open.'; }
-  try {
-    const a = (await (await fetch(API + '/attestations?limit=40', { cache: 'no-store' })).json()).attestations || [];
-    const seen = new Set();
-    const rows = a.filter((r) => Number(r.index) > 0 && !r.is_beacon).sort((x, y) => Number(y.index) - Number(x.index))
-      .filter((r) => !seen.has(r.index) && seen.add(r.index)).slice(0, 5);
-    document.getElementById('recent').innerHTML = rows.map((r) => {
+    const busy = live && live.reservation && (Date.now() / 1000 - Number(live.reservation.head_started_at || live.reservation.started_at || 0)) < 600;
+    const waiting = Math.max(0, (Number(live?.queue_length) || 0) - (busy ? 1 : 0));
+    const lastAt = rows.length ? Number(rows[0].contributed_at) : Number(state.last_contributed_at || 0);
+    let line;
+    if (state.finalized) line = 'Closed and finalized. Thank you to everyone who contributed.';
+    else if (busy) line = `<span class="hot">Contributing now</span> · <b>${esc(live.reservation.contributor_name || 'anonymous')}</b> · ${dur(live.reservation.head_started_at || live.reservation.started_at)}` + (waiting ? ` · ${waiting} waiting` : '');
+    else line = (lastAt ? `Last contribution <b>${ago(lastAt)}</b>` : 'Be the first to contribute') + (next ? ` · ${next[0] - n} more to reach ${next[1]}` : ' · every milestone reached');
+    $('now').innerHTML = line;
+    $('dot').classList.toggle('idle', !busy && !state.finalized && !(lastAt && Date.now() / 1000 - lastAt < 900));
+    $('livelabel').textContent = state.finalized ? 'ceremony closed' : (busy ? 'live · contributing now' : 'open ceremony');
+    for (const li of $('recent').querySelectorAll('li')) { const a = li.querySelector('.ago'); if (a) a.textContent = ago(Number(li.dataset.t)); }
+  }
+
+  function paintRecent() {
+    const ul = $('recent');
+    ul.innerHTML = rows.slice(0, 6).map((r) => {
       const pk = String(r.contributor_pubkey || '');
-      const when = new Date(Number(r.contributed_at) * 1000).toISOString().slice(0, 16).replace('T', ' ');
-      return `<li><span>#${esc(r.index)}</span><span>${esc(r.contributor_name || 'anonymous')}</span><span title="${esc(pk)}">${esc(pk.slice(0, 8))}…</span><span>${esc(when)}</span></li>`;
+      const fresh = !firstLoad && !known.has(String(r.index));
+      return `<li data-t="${Number(r.contributed_at)}" class="${fresh ? 'new' : ''}"><span>#${esc(r.index)}</span><span class="who">${esc(r.contributor_name || 'anonymous')}</span><span class="pk" title="${esc(pk)}">${esc(pk.slice(0, 8))}…</span><span class="ago"></span></li>`;
     }).join('');
-  } catch {}
+    for (const r of rows) known.add(String(r.index));
+    firstLoad = false;
+  }
+
+  async function refreshState() {
+    try {
+      const j = await (await fetch(API, { cache: 'no-store' })).json();
+      state = j.state || state; live = j;
+    } catch {}
+  }
+  async function refreshRecent() {
+    try {
+      const a = (await (await fetch(API + '/attestations?limit=40', { cache: 'no-store' })).json()).attestations || [];
+      const seen = new Set();
+      rows = a.filter((r) => Number(r.index) > 0 && !r.is_beacon).sort((x, y) => Number(y.index) - Number(x.index))
+        .filter((r) => !seen.has(r.index) && seen.add(r.index));
+      paintRecent();
+    } catch {}
+  }
+
+  let lastCount = -1;
+  async function tick(full) {
+    await refreshState();
+    const n = Number(state?.contribution_count);
+    if (full || n !== lastCount) { await refreshRecent(); lastCount = n; }
+    paint();
+  }
+  tick(true).catch(() => { $('now').textContent = 'The ceremony is open.'; });
+  setInterval(() => { if (!document.hidden) tick(false); }, 12000);
+  setInterval(() => { if (!document.hidden) paint(); }, 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(false); });
 })();
 </script>
 </body>
