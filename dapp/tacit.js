@@ -72180,7 +72180,7 @@ function applyMarketFilters() {
   list.querySelectorAll('button[data-act="your-orders-cancel-bid"]').forEach(btn => {
     btn.onclick = async () => {
       if (btn.disabled) return;
-      if (!confirm('Cancel this bid? Removed from the marketplace immediately.')) return;
+      if (!confirm('Cancel this bid? Removes it from the book so no new seller can match it — but if a seller had already started filling it in the last few seconds, that fill can still complete.')) return;
       const aid = btn.dataset.aid;
       const bidId = btn.dataset.bidId;
       btn.disabled = true; const orig = btn.textContent; btn.textContent = 'cancelling…';
@@ -79347,7 +79347,7 @@ function refreshYourOpenOrdersPanel(scope, aid) {
   next.querySelectorAll('button[data-act="your-orders-cancel-bid"]').forEach(btn => {
     btn.onclick = async () => {
       if (btn.disabled) return;
-      if (!confirm('Cancel this bid? Removed from the marketplace immediately.')) return;
+      if (!confirm('Cancel this bid? Removes it from the book so no new seller can match it — but if a seller had already started filling it in the last few seconds, that fill can still complete.')) return;
       const aidc = btn.dataset.aid;
       const bidId = btn.dataset.bidId;
       btn.disabled = true; const orig = btn.textContent; btn.textContent = 'cancelling…';
