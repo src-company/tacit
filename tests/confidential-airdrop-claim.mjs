@@ -336,7 +336,7 @@ test('tab: eligible shows the exact amount, the allocation index and a real coun
   const state = makeAirdropState();
   wireAirdropTab({ ux: fakeUx(air), eth: fakeEth(), state, el: dom.el });
   await state.setAddress(ADDR, air);
-  assert.equal(dom.at('airdrop-amount').textContent, '216176.40819258 TAC');
+  assert.equal(dom.at('airdrop-amount').textContent, '216176.40819258');
   assert.match(dom.at('airdrop-claim-meta').textContent, /allocation #978/);
   assert.match(dom.at('airdrop-claim-meta').textContent, /57 days left/);
   assert.notEqual(dom.at('airdrop-claim-card').style.display, 'none');

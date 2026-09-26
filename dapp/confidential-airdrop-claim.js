@@ -276,7 +276,14 @@ async function runClaimTo({ air, state, eth }, to, { say, toast = notify } = {})
   }
 }
 
-async function runConnect({ air, state, eth }, { say, toast = notify } = {}) {
+// `button` (optional) gets the same disable + "connecting…" treatment as every other wallet-connect
+// button in the dapp (setupEthWalletButtons' #btn-eth-connect, the CLAIM tab's #btn-claim-connect-mm) —
+// without it, this was the one connect button in the app that gave no feedback while the wallet
+// extension's popup was open, and stayed clickable for a second, overlapping click.
+async function runConnect({ air, state, eth }, { say, toast = notify, button } = {}) {
+  if (button) { if (button.disabled) return; button.disabled = true; }
+  const orig = button ? button.textContent : null;
+  if (button) button.textContent = 'connecting…';
   try {
     if (!eth || typeof eth.connect !== 'function') throw new Error('No Ethereum wallet connector is available.');
     say('Connecting your Ethereum wallet…');
@@ -286,6 +293,8 @@ async function runConnect({ air, state, eth }, { say, toast = notify } = {}) {
   } catch (e) {
     const m = formatErr(e, 'Connect');
     say(m); toast(m, 'error');
+  } finally {
+    if (button) { button.disabled = false; button.textContent = orig; }
   }
 }
 
@@ -306,11 +315,18 @@ function defaultGoToTab() {
 // tests/confidential-payout-panel.mjs's use of payoutPanelHtml() for the same purpose).
 export function bannerTemplateHtml() {
   return `<button type="button" class="tacit-warn-banner__close" id="tac-airdrop-banner-close" aria-label="Dismiss" title="Dismiss">×</button>`
+    // Message left, actions right, wrapping on narrow viewports — the same flex-row shape as the
+    // otc-claim-banner and evm-cer-banner (index.html), rather than the buttons running straight into
+    // the headline text with a single space between them.
+    + `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:space-between;">`
     + `<span id="tac-airdrop-banner-headline"></span>`
-    + ` <button type="button" id="tac-airdrop-banner-connect" class="btn-go" style="font-size:11px;padding:3px 10px;display:none;">Connect wallet</button>`
-    + ` <button type="button" id="tac-airdrop-banner-claim" class="btn-go" style="font-size:11px;padding:3px 10px;display:none;">Claim</button>`
-    + ` <button type="button" id="tac-airdrop-banner-claimto-toggle" style="font-size:11px;padding:3px 10px;display:none;">Claim to…</button>`
-    + ` <a href="#" id="tac-airdrop-banner-view" style="display:none;">View details →</a>`
+    + `<span style="display:flex;gap:6px;flex-wrap:wrap;">`
+    + `<button type="button" id="tac-airdrop-banner-connect" class="btn-go" style="font-size:11px;padding:3px 10px;display:none;">Connect wallet</button>`
+    + `<button type="button" id="tac-airdrop-banner-claim" class="btn-go" style="font-size:11px;padding:3px 10px;display:none;">Claim</button>`
+    + `<button type="button" id="tac-airdrop-banner-claimto-toggle" style="font-size:11px;padding:3px 10px;display:none;">Claim to…</button>`
+    + `<a href="#" id="tac-airdrop-banner-view" style="display:none;">View details →</a>`
+    + `</span>`
+    + `</div>`
     + `<div id="tac-airdrop-banner-claimto-row" style="display:none;margin-top:8px;">`
     + `<input type="text" id="tac-airdrop-banner-claimto-addr" placeholder="0x… recipient address" style="font-size:11px;padding:3px 6px;width:220px;max-width:100%;">`
     + ` <button type="button" id="tac-airdrop-banner-claimto-go" style="font-size:11px;padding:3px 10px;">Send to this address</button>`
@@ -408,7 +424,7 @@ function wireBannerButtons(container, ctx, el, goToTab) {
     paintBanner(container, ctx, el);
   };
   if (p.view) p.view.onclick = (e) => { if (e && e.preventDefault) e.preventDefault(); goToTab(); };
-  if (p.connect) p.connect.onclick = () => runConnect(ctx, { say });
+  if (p.connect) p.connect.onclick = () => runConnect(ctx, { say, button: p.connect });
   if (p.claimtoToggle) p.claimtoToggle.onclick = () => { if (p.claimtoRow) show(p.claimtoRow, p.claimtoRow.style.display === 'none'); };
   if (p.claim) p.claim.onclick = () => runClaim(ctx, { say });
   if (p.claimtoGo) p.claimtoGo.onclick = () => {
@@ -452,22 +468,32 @@ export function mountAirdropAnnouncement(helpers = {}) {
 
 // ═══════════════════════════ dedicated tab ═══════════════════════════
 
-const INTRO_HTML = `<div class="note-concept"><b>One-time TAC (EVM) distribution.</b> A merkle airdrop pays 999,999`
-  + ` public TAC — the Ethereum ERC-20, separate from TAC's Bitcoin-native issuance — to 8,652 addresses that held`
-  + ` one of seven tokens at snapshot, one claim per address. Claim it to your address, send it on, or wrap it`
-  + ` into the shielded pool yourself afterward.</div>`;
+const INTRO_HTML = `<div class="note-concept"><b>One-time TAC (EVM) distribution.</b> A merkle airdrop to every address that`
+  + ` held one of seven tokens at snapshot, one claim per address. Claim it to your address, send it on, or wrap it`
+  + ` into the shielded pool yourself afterward.</div>`
+  // A scannable facts row in place of burying the same numbers inside the prose above — the same `.kv`
+  // dt/dd idiom the rest of the dapp uses for compact key facts (index.html's own `.kv` rule).
+  + `<dl class="kv" style="margin:14px 0;">`
+  + `<dt>Distributing</dt><dd>999,999 TAC <span class="muted">— the Ethereum ERC-20, separate from TAC's Bitcoin-native issuance</span></dd>`
+  + `<dt>Recipients</dt><dd>8,652 addresses</dd>`
+  + `<dt>Claim by</dt><dd id="airdrop-window">—</dd>`
+  + `</dl>`;
 
 export function tabTemplateHtml() {
   return INTRO_HTML
     + `<div id="airdrop-connect-row" style="display:none;">`
     + `<div class="muted" style="margin-bottom:10px;">Connect the Ethereum wallet that might be on the recipient list.</div>`
     + `<button type="button" id="airdrop-connect-btn" class="primary">Connect Ethereum wallet</button>`
+    + `<details style="margin-top:10px;"><summary class="muted" style="cursor:pointer;font-size:11px;">Compatible wallets</summary>`
+    + `<div class="muted" style="font-size:11px;margin-top:6px;line-height:1.5;">Most Ethereum wallets work: MetaMask, Rainbow, Rabby, Coinbase Wallet, Trust, Frame. Smart-contract wallets`
+    + ` (Safe, Argent, Ambire) work too — claiming is a plain transaction, not a signature.</div>`
+    + `</details>`
     + `</div>`
     + `<div id="airdrop-head" style="display:none;">Connected: <code class="addr" id="airdrop-address"></code>`
     + ` <button type="button" id="airdrop-refresh-btn" style="font-size:10px;padding:2px 8px;margin-left:6px;">↻ Refresh</button></div>`
     + `<div id="airdrop-message" class="muted" style="margin-top:8px;"></div>`
     + `<div id="airdrop-claim-card" class="info-card" style="display:none;margin-top:10px;">`
-    + `<div id="airdrop-amount" style="font-size:20px;font-weight:600;"></div>`
+    + `<div><span class="amount" id="airdrop-amount"></span> <span class="unit">TAC</span></div>`
     + `<div id="airdrop-claim-meta" class="muted" style="font-size:11px;margin-top:2px;"></div>`
     + `<div class="flex" style="margin-top:10px;"><button type="button" id="airdrop-claim-btn" class="primary">Claim to my address</button></div>`
     + `<div id="airdrop-gas-claim" class="muted" style="font-size:10px;margin-top:4px;"></div>`
@@ -490,6 +516,7 @@ function ensureTabTemplate(body) {
 
 function tabParts(el) {
   return {
+    window: el('airdrop-window'),
     connectRow: el('airdrop-connect-row'), connectBtn: el('airdrop-connect-btn'),
     head: el('airdrop-head'), address: el('airdrop-address'), refreshBtn: el('airdrop-refresh-btn'),
     message: el('airdrop-message'), claimCard: el('airdrop-claim-card'),
@@ -504,6 +531,11 @@ function paintTab(body, ctx, el) {
   const { state, air } = ctx;
   const { address, status, checking } = state;
   const setMsg = (html) => { if (p.message) p.message.innerHTML = html; };
+
+  // The claim-window fact holds regardless of whether a wallet is connected yet — shown eagerly so
+  // the page reads as a finished page rather than needing a connect first. The live countdown (which
+  // needs the chain's own clock, not this device's) stays on the claim card below, once eligible.
+  if (p.window) p.window.textContent = air.config.claimByISO ? fmtDate(air.config.claimByISO) : 'not open on this network';
 
   show(p.claimCard, false);
 
@@ -549,7 +581,7 @@ function paintTab(body, ctx, el) {
   // claimable
   setMsg('');
   show(p.claimCard, true);
-  if (p.amount) p.amount.textContent = `${status.amountTac} TAC`;
+  if (p.amount) p.amount.textContent = status.amountTac;
   if (p.meta) p.meta.textContent = `Claim by ${fmtDate(status.claimByISO)} (${fmtLeft(status.secondsLeft)}) · allocation #${status.index}`;
   if (p.claimtoFrom) p.claimtoFrom.textContent = `Sends from ${checksummedOrShort(address)} (this must be the connected wallet); the TAC lands at the address below instead.`;
   paintGasEstimates(p, ctx);
@@ -580,7 +612,7 @@ function paintGasEstimates(p, ctx) {
 function wireTabButtons(ctx, el) {
   const p = tabParts(el);
   const say = (t) => { if (p.status) p.status.textContent = t; };
-  if (p.connectBtn) p.connectBtn.onclick = () => runConnect(ctx, { say });
+  if (p.connectBtn) p.connectBtn.onclick = () => runConnect(ctx, { say, button: p.connectBtn });
   if (p.refreshBtn) p.refreshBtn.onclick = () => ctx.state.refresh(ctx.air, { force: true });
   if (p.claimBtn) p.claimBtn.onclick = () => runClaim(ctx, { say });
   if (p.claimtoGoBtn) p.claimtoGoBtn.onclick = () => {
