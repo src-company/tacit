@@ -115,6 +115,12 @@ address. The completer learns each output's value (the leaves hide it) but canno
 on the wrong chain can never be completed there, only reclaimed. Fund a box with a plain call carrying normal gas:
 once completed it has code, and a 2300-gas stipend transfer to it can fail.
 
+**Handing a box to a funding page.** A page that funds boxes on the user's behalf takes
+`#tacit-box=<base64url(JSON.stringify({ chainId, intent, hint }))>`, where `intent` and `hint` are exactly the
+keeper intake body below (integers as decimal strings or `0x` hex). The page checks the router has code on
+`chainId`, funds exactly `intent.amount` there, and forwards `{ intent, hint }` to the keeper. For funding from a
+V1 note, keep `amount` a multiple of 10^10 wei.
+
 A keeper service completes boxes for its fee: `POST /evm-pool/keeper/deposit` with `{ intent, hint }` from
 `depositIntent()` (endpoint published at launch). Anyone can run one (`worker-relay/src/evm-pool-keeper.js`).
 
