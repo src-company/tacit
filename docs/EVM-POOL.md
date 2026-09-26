@@ -129,7 +129,8 @@ funds or has code (no reuse) and one whose deadline is less than an hour away. F
 `amount` a multiple of 10^10 wei.
 
 A keeper service completes boxes for its fee: `POST /evm-pool/keeper/deposit` with `{ intent, hint }` from
-`depositIntent()` (endpoint published at launch). Anyone can run one (`worker-relay/src/evm-pool-keeper.js`).
+`depositIntent()` (endpoint published at launch). Anyone can run one (`worker-relay/src/evm-pool-keeper.js`); the
+same service sweeps receive boxes and relays (below).
 
 **Wrap boxes and `withdrawToV1`.** A `WrapIntent` fixes a V1 asset id, amount, tip, tip recipient (zero = whoever
 completes), V1 note commitment, refund and deadline. `completeWrap(intent)` wraps the box's funds into that V1 note.
@@ -185,6 +186,26 @@ makes public anyway; it never learns anything that spends. The owner can always 
 
 **Zaps.** `zapTokenToDepositWithPermit2(tx, amountIn, permit, sig, swapData)` swaps any ERC-20 to ETH through the
 pinned aggregator and deposits exactly the proven amount, refunding the rest.
+
+## Relaying
+
+A user never needs gas or a funded address: a relayer submits the transaction and is paid `fee` out of the
+user's shielded funds in the same call. The proof binds `relayer` and `fee` (with recipient, amount and memos), so
+a relayer cannot redirect the funds or raise its fee, and a copy of the transaction submitted by anyone else still
+pays the named relayer. Withdrawing to a fresh, empty address through a relayer leaves no on-chain link to the
+depositor's wallet.
+
+With the keeper service:
+
+1. `GET /evm-pool/keeper/quote` → `{ relayer, fee, … }`: the keeper's address and the fee it accepts now.
+2. Build and prove the transaction with that `relayer` and `fee` (`withdrawalWitness` for a withdrawal, or a
+   transfer with `extAmount = 0`).
+3. `POST /evm-pool/keeper/relay` with `{ tx: { pA, pB, pC, publicInputs, recipient, extAmount, relayer, fee, memo0,
+   memo1 } }` (integers as decimal strings) → `{ txHash }`.
+
+A `409` with `stale: true` means another transaction landed first: rebuild against the new root and prove again
+(the owner's signature does not change). A `400` carrying `needFee` means gas moved; re-quote. Deposits are not
+relayed, since a deposit is paid by whoever sends it.
 
 ## Moving between V1 and this pool
 

@@ -563,3 +563,54 @@ services:
   #       value: /var/lib/tacit-sp-index/index.db
   #     - key: PORT
   #       value: "10000"
+
+  # Always-on web service, one per chain: the EVM pool keeper and relayer (src/evm-pool-keeper.js), serving
+  # /evm-pool/keeper/{info,quote,relay,receive,deposit,wrap,status}. Enable once the suite is deployed on the chain
+  # (the router must have code) and the ceremony artifacts are pinned; copy the block for Base (8453) and Robinhood
+  # (4663), changing name, disk, EVM_POOL_CHAIN_ID, the RPC and the start block. Each copy signs with its own
+  # EVM_POOL_KEEPER_PRIV, funded for gas on that chain only; the keeper refuses the shared relay key.
+  # - type: web
+  #   name: tacit-evm-pool-keeper
+  #   runtime: docker
+  #   rootDir: .
+  #   dockerfilePath: ./worker-relay/Dockerfile.evm-pool-keeper
+  #   dockerContext: .
+  #   plan: starter
+  #   region: oregon
+  #   dockerCommand: node src/evm-pool-keeper.js
+  #   healthCheckPath: /health
+  #   autoDeploy: false
+  #   disk:
+  #     name: evm-pool-keeper-db
+  #     mountPath: /var/lib/tacit-evm-pool-keeper
+  #     sizeGB: 1
+  #   envVars:
+  #     # DELIBERATELY NOT `fromGroup: tacit-relay-shared`: public, and signs only with its own key.
+  #     - key: EVM_POOL_CHAIN_ID
+  #       value: "1"
+  #     - key: EVM_POOL_ADDR
+  #       value: "0x000000c2A20657CE25f2Ba99737933D031AFBEE9"
+  #     - key: EVM_POOL_ROUTER_ADDR
+  #       value: "0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5"
+  #     - key: EVM_POOL_START_BLOCK        # the pool's deployment block
+  #       sync: false
+  #     - key: EVM_POOL_RPC_URL
+  #       sync: false
+  #     - key: EVM_POOL_KEEPER_PRIV        # this keeper's own key — set in the Render dashboard
+  #       sync: false
+  #     - key: EVM_POOL_KEEPER_MIN_FEES    # floor per completion / sweep / relay, in wei
+  #       value: "eth:20000000000000"
+  #     - key: EVM_POOL_WASM               # finalized ceremony artifacts, by URL + pin (dapp/circuits/evm-pool finalize)
+  #       sync: false
+  #     - key: EVM_POOL_WASM_SHA256
+  #       sync: false
+  #     - key: EVM_POOL_ZKEY
+  #       sync: false
+  #     - key: EVM_POOL_ZKEY_SHA256
+  #       sync: false
+  #     - key: EVM_POOL_VK
+  #       sync: false
+  #     - key: EVM_POOL_VK_HASH
+  #       sync: false
+  #     - key: PORT
+  #       value: "10000"

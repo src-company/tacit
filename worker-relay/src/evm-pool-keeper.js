@@ -1,8 +1,10 @@
-// Keeper for TacitEvmPoolRouter's deposit and wrap boxes (contracts/src/TacitEvmPoolRouter.sol). Takes intents
-// over HTTP (POST /evm-pool/keeper/deposit, /evm-pool/keeper/wrap), watches each box's balance, and once it is
-// funded completes it: a deposit with a proof built against the pool's current leaves, a wrap directly. It is
-// paid the pool's relayer fee (deposits) or the intent's tip (wraps), and skips completions whose reward does
-// not cover the gas.
+// Keeper and relayer for the EVM pool (contracts/src/TacitEvmPool.sol, TacitEvmPoolRouter.sol). Takes deposit and
+// wrap intents and receive boxes over HTTP (POST /evm-pool/keeper/{deposit,wrap,receive}), watches each box's
+// balance and acts once it is funded: a deposit is completed with a proof built against the pool's current leaves,
+// a wrap directly, and a receive box is swept into a note for its owner. It is paid the pool's relayer fee
+// (deposits, sweeps) or the intent's tip (wraps), and skips work whose reward does not cover the gas. It also
+// relays users' own proven withdrawals and transfers that name it as relayer (GET /evm-pool/keeper/quote, then
+// POST /evm-pool/keeper/relay), so a user needs no gas and no funded address.
 //
 // Signs with EVM_POOL_KEEPER_PRIV only. Disabled (exits 0) while EVM_POOL_ADDR / EVM_POOL_ROUTER_ADDR are unset.
 // Knobs: src/lib/evm-pool-keeper-config.js.

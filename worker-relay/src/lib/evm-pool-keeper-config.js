@@ -79,6 +79,15 @@ export function loadKeeperConfig(env = process.env) {
     marginBps: big(env, 'EVM_POOL_KEEPER_MARGIN_BPS', 2000n),
     depositGas: big(env, 'EVM_POOL_KEEPER_DEPOSIT_GAS', 500000n),
     wrapGas: big(env, 'EVM_POOL_KEEPER_WRAP_GAS', 300000n),
+    sweepGas: big(env, 'EVM_POOL_KEEPER_SWEEP_GAS', 600000n),
+    relayGas: big(env, 'EVM_POOL_KEEPER_RELAY_GAS', 450000n),
+    // Receive boxes are watched indefinitely; this caps how many, and the smallest fee cap worth registering.
+    maxReceive: int(env, 'EVM_POOL_KEEPER_MAX_RECEIVE', 100000),
+    minReceiveFeeBps: int(env, 'EVM_POOL_KEEPER_MIN_RECEIVE_FEE_BPS', 1),
+    // An idle receive box is looked at least this often; re-posting it asks for a look now.
+    receiveMaxBackoffSecs: int(env, 'EVM_POOL_KEEPER_RECEIVE_MAX_BACKOFF_SECS', 1800),
+    // Public relaying of users' own transactions (withdrawals and transfers) at /evm-pool/keeper/relay.
+    relay: str(env, 'EVM_POOL_KEEPER_RELAY', '1') !== '0',
     gasCap: big(env, 'EVM_POOL_KEEPER_GAS_CAP', 1500000n),
     staleRetries: int(env, 'EVM_POOL_KEEPER_STALE_RETRIES', 3),
     maxAttempts: int(env, 'EVM_POOL_KEEPER_MAX_ATTEMPTS', 5),
@@ -97,6 +106,10 @@ export function loadKeeperConfig(env = process.env) {
     zkey: str(env, 'EVM_POOL_ZKEY', BUILD + 'transact_dev_final.zkey'),
     vk: str(env, 'EVM_POOL_VK', BUILD + 'transact_dev_vk.json'),
     vkHash: str(env, 'EVM_POOL_VK_HASH'),
+    // Set with https URLs for wasm / zkey (the finalized ceremony artifacts); cached under artifactDir.
+    wasmSha256: str(env, 'EVM_POOL_WASM_SHA256'),
+    zkeySha256: str(env, 'EVM_POOL_ZKEY_SHA256'),
+    artifactDir: str(env, 'EVM_POOL_ARTIFACT_DIR', '/var/lib/tacit-evm-pool-keeper/artifacts'),
     singleThread: str(env, 'EVM_POOL_KEEPER_SINGLE_THREAD', '0') === '1',
 
     keeperKey: str(env, 'EVM_POOL_KEEPER_PRIV'),

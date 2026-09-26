@@ -1,11 +1,18 @@
-// Intake for the EVM pool box keeper: validates a submitted deposit intent + hint (re-derived through the gateway,
-// so a hint that does not produce the intent's leaves and memo hashes is refused) or a wrap intent, and stores it.
+// HTTP side of the EVM pool keeper:
+//   POST /evm-pool/keeper/deposit  a deposit intent + hint (re-derived through the gateway, so a hint that does not
+//                                  produce the intent's leaves and memo hashes is refused)
+//   POST /evm-pool/keeper/wrap     a wrap intent
+//   POST /evm-pool/keeper/receive  { chainId, npk, feeBps }: a receive box to watch and sweep
+//   GET  /evm-pool/keeper/quote    the relayer address and fee to prove a relayed transaction with
+//   POST /evm-pool/keeper/relay    { tx }: submit a user's own proven withdrawal or transfer that pays this keeper
 // Request bodies are capped before parsing. Hints are never echoed back or logged.
 
 import { getAddress, isAddress } from 'viem';
 import { depositIntent } from '../../../dapp/evm-pool-gateway.js';
 import { P_FR } from '../../../dapp/btc-pool-zk.js';
 import { ETH } from './evm-pool-keeper-config.js';
+import { coverCheck, quoteFee } from './evm-pool-keeper-loop.js';
+import { revertName as defaultRevertName } from './evm-pool-keeper-chain.js';
 import { safeErr } from './safe-err.js';
 
 const VMAX = 1n << 120n;
@@ -103,6 +110,46 @@ export function parseWrapSubmission(body, { now, cfg }) {
   return { intent, reward: paysKeeper ? intent.tip : 0n };
 }
 
+export function parseReceiveSubmission(body, { chainId, cfg }) {
+  const b = obj(body, 'body');
+  if (uint(b.chainId, 'chainId', 1n << 64n) !== BigInt(chainId)) throw bad(`this keeper serves chain ${chainId}`);
+  const npk = uint(b.npk, 'npk', P_FR);
+  if (npk === 0n) throw bad('npk must be non-zero');
+  const feeBps = Number(uint(b.feeBps, 'feeBps', 10_001n));
+  if (feeBps < cfg.minReceiveFeeBps) throw bad(`this keeper sweeps boxes with feeBps ≥ ${cfg.minReceiveFeeBps}; sweep a lower-fee box directly`);
+  return { intent: { npk, feeBps } };
+}
+
+const SNARK_Q = 21888242871839275222246405745257275088696311157297823662689037894645226208583n;
+function int(x, name) {
+  if (typeof x === 'number' && Number.isSafeInteger(x)) return BigInt(x);
+  if (typeof x === 'string' && /^-?\d{1,78}$/.test(x)) return BigInt(x);
+  throw bad(`${name} must be an integer`);
+}
+const coords = (x, len, name) => {
+  if (!Array.isArray(x) || x.length !== len) throw bad(`${name} must have ${len} entries`);
+  return x;
+};
+
+// A user's proven pool transaction for relaying: it must pay this keeper (relayer) and must not be a deposit,
+// which would draw on the sender's own funds. → the pool.transact arguments and the fee.
+export function parseRelaySubmission(body, { keeper, cfg }) {
+  const t = obj(obj(body, 'body').tx, 'tx');
+  const pA = coords(t.pA, 2, 'pA').map((v, i) => uint(v, `pA[${i}]`, SNARK_Q));
+  const pB = coords(t.pB, 2, 'pB').map((row, i) => coords(row, 2, `pB[${i}]`).map((v, j) => uint(v, `pB[${i}][${j}]`, SNARK_Q)));
+  const pC = coords(t.pC, 2, 'pC').map((v, i) => uint(v, `pC[${i}]`, SNARK_Q));
+  const publicInputs = coords(t.publicInputs, 11, 'publicInputs').map((v, i) => uint(v, `publicInputs[${i}]`, P_FR));
+  const extAmount = int(t.extAmount, 'extAmount');
+  if (extAmount > 0n) throw bad('deposits are not relayed: a deposit is paid by whoever sends it');
+  if (extAmount <= -VMAX) throw bad('extAmount out of range');
+  const recipient = extAmount < 0n ? addr(t.recipient, 'recipient') : (t.recipient == null || String(t.recipient).toLowerCase() === ETH ? getAddress(ETH) : addr(t.recipient, 'recipient'));
+  if (typeof t.relayer !== 'string' || !isAddress(t.relayer) || t.relayer.toLowerCase() !== String(keeper).toLowerCase()) throw bad(`relayer must be this keeper, ${keeper}`);
+  const fee = uint(t.fee, 'fee', VMAX);
+  const memo0 = memo(t.memo0, 'memo0', cfg.maxMemoBytes);
+  const memo1 = memo(t.memo1, 'memo1', cfg.maxMemoBytes);
+  return { args: [pA, pB, pC, publicInputs, recipient, extAmount, getAddress(keeper), fee, memo0, memo1], fee };
+}
+
 // Stored JSON (decimal strings) → contract arguments.
 export function depositIntentArgs(j) {
   return {
@@ -168,14 +215,31 @@ function readJson(req, max) {
 }
 
 // chain: { address, chainId, pool, router, asset, v1, depositBoxOf(intent), wrapBoxOf(intent), wrapToken(assetId) }
-export function createIntakeHandler({ store, chain, zk, assetField, cfg, now = () => Math.floor(Date.now() / 1000), log = () => {}, isReady = () => true }) {
+export function createIntakeHandler({
+  store, chain, zk, assetField, cfg, now = () => Math.floor(Date.now() / 1000), log = () => {}, isReady = () => true,
+  revertName = defaultRevertName,
+}) {
   const limited = makeRateLimiter({ perMin: cfg.ratePerMin, burst: Math.max(1, Math.min(10, cfg.ratePerMin)) });
-  const view = (r) => ({ box: r.box, kind: r.kind, status: r.status, reward: r.reward, ...(r.tx_hash ? { txHash: r.tx_hash } : {}) });
+  const view = (r) => (r.kind === 'receive'
+    ? { box: r.box, kind: r.kind, status: r.status === 'pending' ? 'watching' : r.status, ...(r.note ? { note: r.note } : {}) }
+    : { box: r.box, kind: r.kind, status: r.status, reward: r.reward, ...(r.tx_hash ? { txHash: r.tx_hash } : {}) });
+  const STALE = new Set(['StaleRoot', 'WrongInsertionIndex']);
 
   async function accept(kind, body) {
-    if (store.pendingCount() >= cfg.maxPending) throw new IntakeError(503, 'the keeper is at capacity; try again later');
     const t = now();
     let parsed, box, token;
+    if (kind === 'receive') {
+      if (store.receiveCount() >= cfg.maxReceive) throw new IntakeError(503, 'the keeper is at capacity; try again later');
+      parsed = parseReceiveSubmission(body, { chainId: chain.chainId, cfg });
+      box = await chain.receiveBoxOf(parsed.intent.npk, parsed.intent.feeBps);
+      const fresh = store.addIntent({ box, kind, intent: parsed.intent, reward: 0n, token: chain.asset, deadline: 0, now: t });
+      const r = store.get(box);
+      if (r.kind !== kind) throw bad('box already registered under another kind');
+      if (fresh) log(`watching receive box ${box} (fee cap ${parsed.intent.feeBps} bps)`);
+      else if (r.kind === kind && r.status === 'pending' && r.next_check > t) store.update(box, { next_check: t, checks: 0 });
+      return view(r);
+    }
+    if (store.pendingCount() >= cfg.maxPending) throw new IntakeError(503, 'the keeper is at capacity; try again later');
     if (kind === 'deposit') {
       parsed = parseDepositSubmission(body, { zk, asset: assetField, now: t, cfg });
       box = await chain.depositBoxOf(parsed.intent);
@@ -195,6 +259,35 @@ export function createIntakeHandler({ store, chain, zk, assetField, cfg, now = (
     return view(r);
   }
 
+  async function quote() {
+    const q = quoteFee({ token: chain.asset, gas: cfg.relayGas, gasPrice: await chain.gasPrice(), cfg });
+    return { chainId: chain.chainId, pool: chain.pool, relayer: chain.address, asset: chain.asset, fee: q.toString(), gas: cfg.relayGas.toString() };
+  }
+
+  async function relay(body) {
+    const { args, fee } = parseRelaySubmission(body, { keeper: chain.address, cfg });
+    let est;
+    try { est = await chain.estimate('pool.transact', args); }
+    catch (e) {
+      const name = revertName(e);
+      if (STALE.has(name)) throw Object.assign(new IntakeError(409, `${name}: re-prove against the pool's current root`), { stale: true });
+      throw bad(name ? `the transaction reverts: ${name}` : 'the transaction reverts');
+    }
+    const gasPrice = await chain.gasPrice();
+    const cov = coverCheck({ reward: fee, token: chain.asset, gas: est, gasPrice, cfg });
+    if (!cov.ok) throw Object.assign(bad(`fee too low: ${cov.reason}`), { needFee: quoteFee({ token: chain.asset, gas: est, gasPrice, cfg }).toString() });
+    if (cfg.dryRun) return { dryRun: true, gas: est.toString() };
+    let hash;
+    try { hash = await chain.send('pool.transact', args, { gas: cov.gas }); }
+    catch (e) {
+      const name = revertName(e);
+      if (STALE.has(name)) throw Object.assign(new IntakeError(409, `${name}: re-prove against the pool's current root`), { stale: true });
+      throw e;
+    }
+    log(`relayed ${args[5] < 0n ? 'withdrawal' : 'transfer'} ${hash} fee ${fee}`);
+    return { txHash: hash };
+  }
+
   return async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const p = url.pathname.replace(/\/$/, '');
@@ -210,7 +303,23 @@ export function createIntakeHandler({ store, chain, zk, assetField, cfg, now = (
       let m;
       if (p === '/health' && req.method === 'GET') return send(isReady() ? 200 : 503, { ok: isReady() });
       if (p === `${PREFIX}/info` && req.method === 'GET') {
-        return send(200, { chainId: chain.chainId, pool: chain.pool, router: chain.router, asset: chain.asset, keeper: chain.address, wraps: !!chain.v1 && chain.v1.toLowerCase() !== ETH });
+        return send(200, {
+          chainId: chain.chainId, pool: chain.pool, router: chain.router, asset: chain.asset, keeper: chain.address,
+          wraps: !!chain.v1 && chain.v1.toLowerCase() !== ETH, relay: cfg.relay, minReceiveFeeBps: cfg.minReceiveFeeBps,
+        });
+      }
+      if (p === `${PREFIX}/quote` && req.method === 'GET') {
+        if (!cfg.relay) return send(404, { error: 'relaying is off' });
+        return send(200, await quote());
+      }
+      if (p === `${PREFIX}/relay` && req.method === 'POST') {
+        if (!cfg.relay) return send(404, { error: 'relaying is off' });
+        if (!limited(clientKey(req))) throw new IntakeError(429, 'rate limited');
+        return send(200, await relay(await readJson(req, cfg.maxBody)));
+      }
+      if (p === `${PREFIX}/receive` && req.method === 'POST') {
+        if (!limited(clientKey(req))) throw new IntakeError(429, 'rate limited');
+        return send(200, await accept('receive', await readJson(req, cfg.maxBody)));
       }
       if ((p === `${PREFIX}/deposit` || p === `${PREFIX}/wrap`) && req.method === 'POST') {
         if (!limited(clientKey(req))) throw new IntakeError(429, 'rate limited');
@@ -223,7 +332,7 @@ export function createIntakeHandler({ store, chain, zk, assetField, cfg, now = (
       }
       return send(404, { error: 'not found' });
     } catch (e) {
-      if (e instanceof IntakeError) return send(e.status, { error: e.message });
+      if (e instanceof IntakeError) return send(e.status, { error: e.message, ...(e.stale ? { stale: true } : {}), ...(e.needFee ? { needFee: e.needFee } : {}) });
       log(`intake error: ${safeErr(e)}`);
       return send(500, { error: 'internal error' });
     }

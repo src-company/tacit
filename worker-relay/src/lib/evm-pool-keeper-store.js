@@ -1,5 +1,6 @@
 // SQLite state for the EVM pool box keeper: the intents it watches, and the pool's leaves up to a confirmed
 // block. A deposit hint is kept only while its box is live and cleared once the box reaches a terminal state.
+// A receive box ({ npk, feeBps }, no deadline) stays pending: it is swept whenever it holds enough.
 
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -33,7 +34,8 @@ export function openKeeperStore(dbPath) {
                      VALUES (@box, @kind, @intent, @hint, 'pending', @reward, @token, @deadline, @now, @now, @now)`),
     get: db.prepare('SELECT * FROM intents WHERE box = ?'),
     due: db.prepare("SELECT * FROM intents WHERE status = 'pending' AND next_check <= ? ORDER BY next_check LIMIT ?"),
-    pending: db.prepare("SELECT COUNT(*) AS n FROM intents WHERE status = 'pending'"),
+    pending: db.prepare("SELECT COUNT(*) AS n FROM intents WHERE status = 'pending' AND kind != 'receive'"),
+    receiving: db.prepare("SELECT COUNT(*) AS n FROM intents WHERE status = 'pending' AND kind = 'receive'"),
     leafCount: db.prepare('SELECT COUNT(*) AS n FROM leaves'),
     leaves: db.prepare('SELECT leaf FROM leaves ORDER BY idx'),
     insLeaf: db.prepare('INSERT INTO leaves (idx, leaf, block) VALUES (?, ?, ?)'),
@@ -58,7 +60,9 @@ export function openKeeperStore(dbPath) {
     },
     get: (box) => row(st.get.get(box.toLowerCase())),
     due: (now, limit) => st.due.all(now, limit).map(row),
+    // Boxes awaiting completion; receive boxes, which are watched indefinitely, are counted apart.
     pendingCount: () => st.pending.get().n,
+    receiveCount: () => st.receiving.get().n,
 
     // Only the listed columns can change; a terminal status also drops the hint.
     update(box, fields) {

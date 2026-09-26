@@ -9,7 +9,11 @@ import { ContractFunctionExecutionError, ContractFunctionRevertedError, toFuncti
 import { poolAsset } from '../../dapp/evm-pool-zk.js';
 import { depositIntent, completionWitness } from '../../dapp/evm-pool-gateway.js';
 import { loadKeeperConfig } from '../src/lib/evm-pool-keeper-config.js';
-import { makeKeeperProver, loadZk } from '../src/lib/evm-pool-keeper-prover.js';
+import { makeKeeperProver, loadZk, loadArtifact } from '../src/lib/evm-pool-keeper-prover.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { ROUTER_ABI, revertName } from '../src/lib/evm-pool-keeper-chain.js';
 
 let n = 0;
@@ -20,6 +24,21 @@ await test('revertName decodes a router/pool custom error from a viem revert', (
   const e = new ContractFunctionExecutionError(cause, { abi: ROUTER_ABI, functionName: 'completeDeposit', args: [] });
   assert.equal(revertName(e), 'StaleRoot');
   assert.equal(revertName(new Error('connection reset')), null);
+});
+
+await test('artifacts from a URL must be pinned, are checked, and are cached', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keeper-artifacts-'));
+  try {
+    const body = Buffer.from('zkey bytes');
+    const sha = createHash('sha256').update(body).digest('hex');
+    let fetches = 0;
+    const fetchImpl = async () => { fetches++; return { ok: true, status: 200, arrayBuffer: async () => body }; };
+    await assert.rejects(loadArtifact('https://x.test/z', { dir, name: 'zkey', fetchImpl }), /must be pinned/);
+    await assert.rejects(loadArtifact('https://x.test/z', { sha256: '00'.repeat(32), dir, name: 'zkey', fetchImpl }), /does not match/);
+    assert.deepEqual(await loadArtifact('https://x.test/z', { sha256: sha, dir, name: 'zkey', fetchImpl }), body);
+    assert.deepEqual(await loadArtifact('https://x.test/z', { sha256: sha, dir, name: 'zkey', fetchImpl }), body);
+    assert.equal(fetches, 2, 'an unpinned URL is never fetched; the second good load comes from the cache');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 const cfg = loadKeeperConfig({ EVM_POOL_ADDR: '0x1111111111111111111111111111111111111111', EVM_POOL_ROUTER_ADDR: '0x2222222222222222222222222222222222222222', EVM_POOL_RPC_URL: 'http://127.0.0.1:1' });

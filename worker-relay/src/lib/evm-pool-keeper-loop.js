@@ -1,11 +1,12 @@
 // The keeper's work loop: for each pending box, read its balance; once funded, complete it (a deposit is proven
 // against the pool's current leaves, a wrap needs no proof) if the reward covers the gas; past the deadline,
-// optionally reclaim to the refund address, then stop watching.
+// optionally reclaim to the refund address, then stop watching. A receive box is swept whenever the fee its cap
+// allows on the whole balance covers the gas, and stays watched.
 //
 // A deposit proof inserts at the pool's current root, so any transaction that lands first makes it stale. The
 // pool reverts StaleRoot / WrongInsertionIndex; the keeper resyncs and re-proves, a bounded number of times.
 
-import { completionWitness } from '../../../dapp/evm-pool-gateway.js';
+import { completionWitness, sweepWitness } from '../../../dapp/evm-pool-gateway.js';
 import { depositIntentArgs, wrapIntentArgs, hintArgs } from './evm-pool-keeper-intake.js';
 import { revertName as defaultRevertName } from './evm-pool-keeper-chain.js';
 import { ETH } from './evm-pool-keeper-config.js';
@@ -33,6 +34,18 @@ export function coverCheck({ reward, token, gas, gasPrice, cfg }) {
   return { ok: true, gas: limit > cfg.gasCap ? cfg.gasCap : limit };
 }
 
+// The smallest fee, in `token` base units, that coverCheck accepts for `gas` at `gasPrice` (at least the floor).
+export function quoteFee({ token, gas, gasPrice, cfg }) {
+  const t = token.toLowerCase();
+  const min = cfg.minFees.get(t) ?? 0n;
+  const rate = cfg.rates.get(t);
+  if (rate === undefined) return min;
+  const cost = BigInt(gas) * BigInt(gasPrice);
+  const need = cost + (cost * cfg.marginBps) / 10000n;
+  const fee = (need * E18 + rate - 1n) / rate;
+  return fee > min ? fee : min;
+}
+
 const hexOf = (m) => (typeof m === 'string' ? m : '0x' + Buffer.from(m).toString('hex'));
 
 export function createKeeper({
@@ -41,7 +54,8 @@ export function createKeeper({
 }) {
   const backoff = (r, t, note) => {
     const checks = (r.checks || 0) + 1;
-    const wait = Math.min(cfg.pollSecs * 2 ** Math.min(checks, 16), cfg.maxBackoffSecs);
+    const cap = r.kind === 'receive' ? cfg.receiveMaxBackoffSecs : cfg.maxBackoffSecs;
+    const wait = Math.min(cfg.pollSecs * 2 ** Math.min(checks, 16), cap);
     store.update(r.box, { checks, next_check: t + wait, updated: t, ...(note !== undefined ? { note } : {}) });
   };
   const soon = (r, t, fields = {}) => store.update(r.box, { next_check: t + cfg.pollSecs, updated: t, ...fields });
@@ -132,7 +146,77 @@ export function createKeeper({
     return soon(r, t);
   }
 
+  // Sweep the whole balance for the most the box's cap allows. Another sweep landing first changes the box's
+  // counter (BadIntent) or balance: re-read and re-prove.
+  async function sweep(r, t) {
+    const { npk, feeBps } = r.intent;
+    const bal = BigInt(await chain.balanceOf(r.token, r.box));
+    if (bal === 0n) return { idle: true };
+    const fee = (bal * BigInt(feeBps)) / 10_000n;
+    const pre = coverCheck({ reward: fee, token: r.token, gas: cfg.sweepGas, gasPrice: await chain.gasPrice(), cfg });
+    if (!pre.ok) return { skipped: pre.reason };
+    for (let round = 0; round <= cfg.staleRetries; round++) {
+      const [{ leaves, root }, n] = await Promise.all([leafSync.sync(), chain.receiveCount(r.box)]);
+      const amount = round === 0 ? bal : BigInt(await chain.balanceOf(r.token, r.box));
+      if (amount === 0n) return { idle: true };
+      const f = (amount * BigInt(feeBps)) / 10_000n;
+      const w = sweepWitness(zk, { asset: assetField, leaves, npk: BigInt(npk), feeBps: Number(feeBps), box: r.box, n, amount, fee: f, relayer: chain.address, chainId: chain.chainId, pool: chain.pool });
+      if (BigInt(w.publicSignals[1]) !== root) {
+        leafSync.invalidate();
+        throw new Error('rebuilt leaves do not reach the pool root; resyncing');
+      }
+      const p = await prover.prove(w.input);
+      if (p.publicInputs.length !== 11 || p.publicInputs.some((x, i) => BigInt(x) !== BigInt(w.publicSignals[i]))) throw new Error('prover returned different public inputs');
+      const tx = { pA: p.pA, pB: p.pB, pC: p.pC, publicInputs: p.publicInputs.map(BigInt), recipient: ETH, extAmount: amount, relayer: chain.address, fee: f, memo0: '0x', memo1: '0x' };
+      const args = [BigInt(npk), Number(feeBps), tx];
+      let est;
+      try { est = await chain.estimate('sweepReceive', args); }
+      catch (e) {
+        const name = revertName(e);
+        if (STALE.has(name) || name === 'BadIntent') { log(`receive ${r.box}: raced (${name}), re-proving`); continue; }
+        return { failed: name || safeErr(e) };
+      }
+      const cov = coverCheck({ reward: f, token: r.token, gas: est, gasPrice: await chain.gasPrice(), cfg });
+      if (!cov.ok) return { skipped: cov.reason };
+      let out;
+      try { out = await submit(r, 'sweepReceive', args, cov.gas, t); }
+      catch (e) {
+        const name = revertName(e);
+        if (STALE.has(name) || name === 'BadIntent') { log(`receive ${r.box}: lost the race at submission, re-proving`); continue; }
+        throw e;
+      }
+      if (out === 'reverted') { log(`receive ${r.box}: sweep reverted on chain, re-proving`); continue; }
+      return { out, amount, fee: f };
+    }
+    return { stale: true };
+  }
+
+  async function processReceive(r) {
+    const t = now();
+    if (r.tx_hash) {
+      const rc = await chain.receipt(r.tx_hash);
+      if (!rc && t - (r.tx_sent_at || 0) < cfg.receiptWaitSecs * 3) return soon(r, t);
+      store.update(r.box, { tx_hash: null, tx_sent_at: null });
+      if (rc?.status === 'success') return soon(r, t, { checks: 0, attempts: 0, note: 'swept' });
+    }
+    const res = await sweep(r, t);
+    if (res.out === 'completed') {
+      log(`receive ${r.box}: swept ${res.amount} (fee ${res.fee})`);
+      return soon(r, t, { tx_hash: null, tx_sent_at: null, checks: 0, attempts: 0, note: 'swept' });
+    }
+    if (res.out === 'inflight') return soon(r, t);
+    if (res.out === 'dry') return backoff(r, t, 'dry run');
+    if (res.stale) return soon(r, t, { note: 'stale' });
+    if (res.failed) {
+      // A receive box is never given up on: a failure only slows the next look.
+      log(`receive ${r.box}: ${res.failed}`);
+      return backoff(r, t, res.failed);
+    }
+    return backoff(r, t, res.skipped ?? null);
+  }
+
   async function processIntent(r) {
+    if (r.kind === 'receive') return processReceive(r);
     const t = now();
     if (r.tx_hash) {
       const rc = await chain.receipt(r.tx_hash);

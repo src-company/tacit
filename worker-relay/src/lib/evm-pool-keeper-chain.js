@@ -1,4 +1,4 @@
-// Chain I/O for the EVM pool box keeper, behind the small interface the loop and intake use (tests mock it).
+// Chain I/O for the EVM pool keeper, behind the small interface the loop, intake and relay use (tests mock it).
 
 import { createPublicClient, createWalletClient, defineChain, fallback, getAddress, http, parseAbi } from 'viem';
 import { withNonceRetry } from './nonce-retry.js';
@@ -47,9 +47,17 @@ export const ROUTER_ABI = [
   fn('completeWrap', [WRAP_INTENT]),
   fn('reclaimDeposit', [DEPOSIT_INTENT, { type: 'address' }]),
   fn('reclaimWrap', [WRAP_INTENT, { type: 'address' }]),
+  fn('receiveBoxOf', [{ type: 'uint256' }, { type: 'uint16' }], [{ type: 'address' }], 'view'),
+  fn('receiveCount', [{ type: 'address' }], [{ type: 'uint256' }], 'view'),
+  fn('sweepReceive', [{ type: 'uint256' }, { type: 'uint16' }, TX]),
   ...ERRORS,
 ];
 const POOL_ABI = [
+  fn('transact', [
+    { type: 'uint256[2]' }, { type: 'uint256[2][2]' }, { type: 'uint256[2]' }, { type: 'uint256[11]' }, { type: 'address' },
+    { type: 'int256' }, { type: 'address' }, { type: 'uint256' }, { type: 'bytes' }, { type: 'bytes' },
+  ], [], 'payable'),
+  ...ERRORS,
   fn('root', [], [{ type: 'bytes32' }], 'view'),
   fn('nextIndex', [], [{ type: 'uint256' }], 'view'),
   ...parseAbi(['event Transact(bytes32 indexed nf0, bytes32 indexed nf1, bytes32 outLeaf0, bytes32 outLeaf1, uint256 firstIndex, bytes32 newRoot, address recipient, int256 extAmount, address relayer, uint256 fee, bytes memo0, bytes memo1)']),
@@ -78,6 +86,13 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
   if (getAddress(pool) !== cfg.pool) throw new Error(`router ${cfg.router} serves pool ${pool}, not EVM_POOL_ADDR ${cfg.pool}`);
 
   const sendUrls = [...cfg.sendRpcUrls, ...(cfg.allowPublicSend || !cfg.sendRpcUrls.length ? [cfg.rpcUrls[0]] : [])];
+  // `functionName` on the router, or `pool.transact` (a relayed user transaction) on the pool.
+  const target = (functionName) => (functionName === 'pool.transact'
+    ? { address: cfg.pool, abi: POOL_ABI, functionName: 'transact' }
+    : { address: cfg.router, abi: ROUTER_ABI, functionName });
+  // One signer, one nonce: the loop and relay requests send through this queue one at a time.
+  let sending = Promise.resolve();
+  const serial = (f) => { const run = sending.then(f, f); sending = run.catch(() => {}); return run; };
 
   return {
     address: account.address,
@@ -104,15 +119,17 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
     },
     balanceOf: (token, holder) => (token.toLowerCase() === ETH ? pub.getBalance({ address: holder }) : read(token, ERC20_ABI, 'balanceOf', [holder])),
     gasPrice: () => pub.getGasPrice(),
-    estimate: (functionName, args) => pub.estimateContractGas({ address: cfg.router, abi: ROUTER_ABI, functionName, args, account }),
+    receiveBoxOf: async (npk, feeBps) => getAddress(await read(cfg.router, ROUTER_ABI, 'receiveBoxOf', [npk, feeBps])),
+    receiveCount: async (box) => BigInt(await read(cfg.router, ROUTER_ABI, 'receiveCount', [box])),
+    estimate: (functionName, args) => pub.estimateContractGas({ ...target(functionName), args, account }),
 
     // Private endpoints first; the read RPC last when public sends are allowed. Returns the tx hash.
-    async send(functionName, args, { gas }) {
+    send: (functionName, args, { gas }) => serial(async () => {
       let lastErr;
       for (const url of sendUrls) {
         try {
           const wallet = createWalletClient({ account, chain: viemChain, transport: http(url) });
-          return await withNonceRetry(functionName, () => wallet.writeContract({ address: cfg.router, abi: ROUTER_ABI, functionName, args, gas }), { log });
+          return await withNonceRetry(functionName, () => wallet.writeContract({ ...target(functionName), args, gas }), { log });
         } catch (e) {
           lastErr = e;
           log(`  submit via ${new URL(url).host} failed: ${safeErr(e)}`);
@@ -120,7 +137,7 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
         }
       }
       throw lastErr || new Error('no submission endpoint');
-    },
+    }),
     async waitReceipt(hash, timeoutMs) {
       try { return await pub.waitForTransactionReceipt({ hash, timeout: timeoutMs }); }
       catch (e) { if (/timed out|could not be found/i.test(String(e?.shortMessage || e?.message))) return null; throw e; }

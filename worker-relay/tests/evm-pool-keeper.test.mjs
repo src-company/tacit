@@ -7,12 +7,12 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { keccak_256 } from '../../dapp/vendor/tacit-deps.min.js';
 import { poolAsset } from '../../dapp/evm-pool-zk.js';
-import { depositIntent } from '../../dapp/evm-pool-gateway.js';
+import { depositIntent, receiveRho, receiveKeys } from '../../dapp/evm-pool-gateway.js';
 import { loadKeeperConfig, checkKeeperSigner, parseTokenMap, RELAY_EOA } from '../src/lib/evm-pool-keeper-config.js';
 import { openKeeperStore } from '../src/lib/evm-pool-keeper-store.js';
 import { makeLeafSync, LeafSyncError } from '../src/lib/evm-pool-keeper-leaves.js';
-import { createIntakeHandler, parseDepositSubmission, parseWrapSubmission } from '../src/lib/evm-pool-keeper-intake.js';
-import { createKeeper, coverCheck } from '../src/lib/evm-pool-keeper-loop.js';
+import { createIntakeHandler, parseDepositSubmission, parseWrapSubmission, parseReceiveSubmission, parseRelaySubmission } from '../src/lib/evm-pool-keeper-intake.js';
+import { createKeeper, coverCheck, quoteFee } from '../src/lib/evm-pool-keeper-loop.js';
 import { loadZk } from '../src/lib/evm-pool-keeper-prover.js';
 
 const zk = await loadZk();
@@ -72,6 +72,9 @@ function mockChain({ log = [] } = {}) {
   c.boxOf = (tag, intent) => '0x' + Buffer.from(keccak_256(new TextEncoder().encode(tag + JSON.stringify(intent, (_, v) => (typeof v === 'bigint' ? v.toString() : v))))).subarray(12).toString('hex');
   c.depositBoxOf = async (i) => c.boxOf('d', i);
   c.wrapBoxOf = async (i) => c.boxOf('w', i);
+  c.counts = new Map();
+  c.receiveBoxOf = async (npk, feeBps) => c.boxOf('r', { npk: BigInt(npk), feeBps: Number(feeBps) });
+  c.receiveCount = async (box) => BigInt(c.counts.get(box.toLowerCase()) || 0);
   c.wrapToken = async (assetId) => ({ registered: assetId === ASSET_ID, token: WRAP_TOKEN });
   c.balanceOf = async (token, holder) => c.balances.get(key(token, holder)) || 0n;
   c.gasPrice = async () => c.gas;
@@ -85,7 +88,44 @@ function mockChain({ log = [] } = {}) {
     c.block += 1n;
     c.events.push({ firstIndex, outLeaf0: pair[0], outLeaf1: pair[1], blockNumber: c.block });
   };
-  const exec = (functionName, [intent, t]) => {
+  const insert = (pub) => {
+    const firstIndex = BigInt(c.leaves.length);
+    c.leaves.push(pub[9], pub[10]);
+    assert.equal(zk.tree(c.leaves).root, pub[2], 'newRoot must be the root after insertion');
+    c.block += 1n;
+    c.events.push({ firstIndex, outLeaf0: pub[9], outLeaf1: pub[10], blockNumber: c.block });
+  };
+  const exec = (functionName, args) => {
+    if (functionName === 'sweepReceive') {
+      const [npk, feeBps, t] = args;
+      const box = c.boxOf('r', { npk, feeBps });
+      const amount = t.extAmount;
+      if (amount <= 0n || t.recipient !== ETH || t.memo0 !== '0x' || t.memo1 !== '0x' || t.publicInputs[10] !== 0n) throw revert('BadIntent');
+      if (t.fee * 10000n > amount * BigInt(feeBps)) throw revert('BadIntent');
+      const n = BigInt(c.counts.get(box) || 0);
+      if (t.publicInputs[9] !== zk.leafOf(assetField, amount - t.fee, npk, receiveRho(box, n))) throw revert('BadIntent');
+      if (t.publicInputs[1] !== zk.tree(c.leaves).root) throw revert('StaleRoot');
+      if (t.publicInputs[3] !== BigInt(c.leaves.length)) throw revert('WrongInsertionIndex');
+      if ((c.balances.get(key(TOKEN, box)) || 0n) < amount) throw revert('TransferFailed');
+      return () => {
+        c.balances.set(key(TOKEN, box), c.balances.get(key(TOKEN, box)) - amount);
+        c.counts.set(box, Number(n) + 1);
+        insert(t.publicInputs);
+        c.fund(TOKEN, t.relayer, t.fee);
+      };
+    }
+    if (functionName === 'pool.transact') {
+      const [, , , pub, recipient, ext, relayer, fee] = args;
+      if (c.transactRevert) throw revert(c.transactRevert);
+      const inserts = pub[9] !== 0n || pub[10] !== 0n;
+      if (inserts && pub[1] !== zk.tree(c.leaves).root) throw revert('StaleRoot');
+      return () => {
+        if (inserts) insert(pub);
+        if (ext < 0n) c.fund(TOKEN, recipient, -ext);
+        c.fund(TOKEN, relayer, fee);
+      };
+    }
+    const [intent, t] = args;
     if (functionName === 'completeDeposit') {
       const box = c.boxOf('d', intent);
       if (t.extAmount !== intent.amount || t.recipient !== ETH) throw revert('BadIntent');
@@ -125,7 +165,7 @@ function mockChain({ log = [] } = {}) {
     if (c.beforeEstimate) c.beforeEstimate();
     if (c.estimateError) throw c.estimateError;
     exec(functionName, args);
-    return functionName === 'completeDeposit' ? 400000n : 150000n;
+    return functionName === 'completeDeposit' || functionName === 'sweepReceive' ? 400000n : functionName === 'pool.transact' ? 350000n : 150000n;
   };
   c.send = async (functionName, args, { gas }) => {
     const apply = exec(functionName, args);
@@ -515,6 +555,187 @@ await test('dry run proves and estimates but sends nothing', async () => {
   assert.equal(s.prover.calls, 1);
   assert.equal(s.chain.sent.length, 0);
   assert.equal(s.store.get(box).status, 'pending');
+});
+
+// ── receive boxes ──
+
+const receiveNpk = receiveKeys(zk, alice, 0).npk;
+async function addReceive(s, feeBps = 50) {
+  const parsed = parseReceiveSubmission({ chainId: CHAIN_ID, npk: receiveNpk.toString(), feeBps }, { chainId: CHAIN_ID, cfg: s.cfg });
+  const box = await s.chain.receiveBoxOf(parsed.intent.npk, parsed.intent.feeBps);
+  s.store.addIntent({ box, kind: 'receive', intent: parsed.intent, reward: 0n, token: TOKEN, deadline: 0, now: s.clock.t });
+  return box;
+}
+
+await test('receive intake: chain, npk range, fee cap floor', () => {
+  const cfg = mkCfg({ minReceiveFeeBps: 5 });
+  assert.throws(() => parseReceiveSubmission({ chainId: 8453, npk: '1', feeBps: 25 }, { chainId: CHAIN_ID, cfg }), /serves chain 1/);
+  assert.throws(() => parseReceiveSubmission({ chainId: 1, npk: '0', feeBps: 25 }, { chainId: CHAIN_ID, cfg }), /non-zero/);
+  assert.throws(() => parseReceiveSubmission({ chainId: 1, npk: (1n << 254n).toString(), feeBps: 25 }, { chainId: CHAIN_ID, cfg }), /out of range/);
+  assert.throws(() => parseReceiveSubmission({ chainId: 1, npk: '7', feeBps: 10001 }, { chainId: CHAIN_ID, cfg }), /out of range/);
+  assert.throws(() => parseReceiveSubmission({ chainId: 1, npk: '7', feeBps: 4 }, { chainId: CHAIN_ID, cfg }), /feeBps ≥ 5/);
+  assert.deepEqual(parseReceiveSubmission({ chainId: '1', npk: '7', feeBps: 25 }, { chainId: CHAIN_ID, cfg }).intent, { npk: 7n, feeBps: 25 });
+});
+
+await test('a receive box is swept for its capped fee, stays watched, and is swept again after the next payment', async () => {
+  const s = setup();
+  const box = await addReceive(s, 50);
+  await s.keeper.tick();
+  assert.equal(s.prover.calls, 0, 'an empty box is only watched');
+
+  s.chain.fund(TOKEN, box, 100_000n);
+  s.advance(s.cfg.maxBackoffSecs);
+  await s.keeper.tick();
+  assert.equal(s.chain.sent.length, 1);
+  assert.equal(s.chain.sent[0].functionName, 'sweepReceive');
+  assert.equal(await s.chain.balanceOf(TOKEN, box), 0n);
+  assert.equal(await s.chain.balanceOf(TOKEN, KEEPER), 500n, '50 bps of 100000');
+  assert.equal(s.store.get(box).status, 'pending');
+  assert.equal(await s.chain.receiveCount(box), 1n);
+
+  s.chain.fund(TOKEN, box, 40_000n);
+  s.advance(s.cfg.pollSecs);
+  await s.keeper.tick();
+  assert.equal(s.chain.sent.length, 2);
+  assert.equal(await s.chain.receiveCount(box), 2n);
+  assert.equal(await s.chain.balanceOf(TOKEN, KEEPER), 700n);
+});
+
+await test('a receive box whose capped fee does not cover gas waits for more funds; no proof is made', async () => {
+  const s = setup();
+  const box = await addReceive(s, 50);
+  s.chain.fund(TOKEN, box, 1000n); // 5 in fees, below the 10 floor
+  await s.keeper.tick();
+  assert.equal(s.prover.calls, 0);
+  assert.equal(s.chain.sent.length, 0);
+  assert.equal(s.store.get(box).status, 'pending');
+  s.chain.fund(TOKEN, box, 9000n);
+  s.advance(s.cfg.maxBackoffSecs);
+  await s.keeper.tick();
+  assert.equal(s.chain.sent.length, 1);
+});
+
+await test('a sweep raced by another transaction or another sweep is re-proven with the fresh counter and root', async () => {
+  const s = setup({ onProve: (k, chain) => { if (k === 1) chain.foreignTx(); } });
+  const box = await addReceive(s, 50);
+  s.chain.fund(TOKEN, box, 100_000n);
+  await s.keeper.tick();
+  assert.equal(s.prover.calls, 2);
+  assert.equal(s.chain.sent.length, 1);
+
+  // Someone else sweeps part of it between our proof and our estimate.
+  const s2 = setup({ onProve: (k, chain) => { if (k === 1) { chain.counts.set(box.toLowerCase(), 1); chain.balances.set(`${TOKEN.toLowerCase()}:${box.toLowerCase()}`, 60_000n); } } });
+  const box2 = await addReceive(s2, 50);
+  assert.equal(box2, box);
+  s2.chain.fund(TOKEN, box, 100_000n);
+  await s2.keeper.tick();
+  assert.equal(s2.prover.calls, 2);
+  assert.equal(s2.chain.sent.length, 1);
+  assert.equal(await s2.chain.balanceOf(TOKEN, KEEPER), 300n, 'fee on what was left');
+});
+
+await test('receive boxes back off to their own cap and do not count against deposit capacity', async () => {
+  const s = setup({ cfg: { receiveMaxBackoffSecs: 1000, maxBackoffSecs: 100 } });
+  const box = await addReceive(s, 50);
+  for (let i = 0; i < 12; i++) { s.advance(2000); await s.keeper.tick(); }
+  const r = s.store.get(box);
+  assert.ok(r.next_check - s.clock.t > 100 && r.next_check - s.clock.t <= 1000);
+  assert.equal(s.store.pendingCount(), 0);
+  assert.equal(s.store.receiveCount(), 1);
+});
+
+// ── relay ──
+
+function relayTx({ ext = -5000n, fee = 50n, relayer = KEEPER, recipient = REFUND, leaves = [0n, 0n] } = {}) {
+  const s = (x) => x.toString();
+  return {
+    tx: {
+      pA: ['1', '2'], pB: [['3', '4'], ['5', '6']], pC: ['7', '8'],
+      publicInputs: ['1', '1', '1', '0', '0', '0', s(assetField), '9', '0', s(leaves[0]), s(leaves[1])],
+      recipient, extAmount: s(ext), relayer, fee: s(fee), memo0: '0x', memo1: '0x',
+    },
+  };
+}
+
+await test('relay parsing: pays this keeper, no deposits, field ranges, recipient for withdrawals', () => {
+  const cfg = mkCfg();
+  const ok = parseRelaySubmission(relayTx(), { keeper: KEEPER, cfg });
+  assert.equal(ok.fee, 50n);
+  assert.equal(ok.args[5], -5000n);
+  assert.throws(() => parseRelaySubmission(relayTx({ relayer: REFUND }), { keeper: KEEPER, cfg }), /relayer must be this keeper/);
+  assert.throws(() => parseRelaySubmission(relayTx({ ext: 1n }), { keeper: KEEPER, cfg }), /deposits are not relayed/);
+  assert.throws(() => parseRelaySubmission(relayTx({ recipient: ETH }), { keeper: KEEPER, cfg }), /recipient/);
+  const bigPub = relayTx(); bigPub.tx.publicInputs[7] = (1n << 254n).toString();
+  assert.throws(() => parseRelaySubmission(bigPub, { keeper: KEEPER, cfg }), /out of range/);
+  const short = relayTx(); short.tx.publicInputs.pop();
+  assert.throws(() => parseRelaySubmission(short, { keeper: KEEPER, cfg }), /11 entries/);
+  assert.equal(parseRelaySubmission(relayTx({ ext: 0n, recipient: ETH }), { keeper: KEEPER, cfg }).args[4], ETH);
+});
+
+await test('quoteFee: the smallest fee coverCheck accepts', () => {
+  const cfg = mkCfg({ minFees: new Map([[ETH, 1000n]]), rates: new Map([[ETH, 10n ** 18n]]) });
+  const q = quoteFee({ token: ETH, gas: 400000n, gasPrice: 10n, cfg });
+  assert.equal(q, 4_800_000n);
+  assert.ok(coverCheck({ reward: q, token: ETH, gas: 400000n, gasPrice: 10n, cfg }).ok);
+  assert.ok(!coverCheck({ reward: q - 1n, token: ETH, gas: 400000n, gasPrice: 10n, cfg }).ok);
+  assert.equal(quoteFee({ token: ETH, gas: 1n, gasPrice: 1n, cfg }), 1000n, 'never below the floor');
+});
+
+await test('HTTP relay and receive: quote, submit, stale → 409, low fee → needFee, receive watch + nudge', async () => {
+  const cfg = mkCfg({ ratePerMin: 100 });
+  const store = openKeeperStore(':memory:');
+  const chain = mockChain();
+  const logs = [];
+  let t = T0;
+  const handler = createIntakeHandler({ store, chain, zk, assetField, cfg, now: () => t, log: (m) => logs.push(m) });
+  const server = createServer(handler);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}/evm-pool/keeper`;
+  const post = (path, body) => fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    const q = await (await fetch(`${base}/quote`)).json();
+    assert.equal(q.relayer, KEEPER);
+    assert.equal(q.fee, '10');
+
+    let r = await post('/relay', relayTx());
+    assert.equal(r.status, 200);
+    assert.match((await r.json()).txHash, /^0x/);
+    assert.equal(await chain.balanceOf(TOKEN, REFUND), 5000n);
+    assert.equal(await chain.balanceOf(TOKEN, KEEPER), 50n);
+
+    r = await post('/relay', relayTx({ fee: 5n }));
+    assert.equal(r.status, 400);
+    const low = await r.json();
+    assert.match(low.error, /fee too low/);
+    assert.equal(low.needFee, '10');
+
+    chain.transactRevert = 'StaleRoot';
+    r = await post('/relay', relayTx());
+    assert.equal(r.status, 409);
+    assert.equal((await r.json()).stale, true);
+    chain.transactRevert = 'AlreadyNullified';
+    r = await post('/relay', relayTx());
+    assert.equal(r.status, 400);
+    assert.match((await r.json()).error, /AlreadyNullified/);
+    chain.transactRevert = null;
+
+    r = await post('/receive', { chainId: CHAIN_ID, npk: receiveNpk.toString(), feeBps: 25 });
+    assert.equal(r.status, 200);
+    const w = await r.json();
+    assert.equal(w.status, 'watching');
+    assert.equal(w.box, await chain.receiveBoxOf(receiveNpk, 25));
+    store.update(w.box, { next_check: t + 5000 });
+    t += 10;
+    await post('/receive', { chainId: CHAIN_ID, npk: receiveNpk.toString(), feeBps: 25 });
+    assert.equal(store.get(w.box).next_check, t, 're-posting asks for a look now');
+    assert.equal(store.receiveCount(), 1);
+
+    const off = createServer(createIntakeHandler({ store, chain, zk, assetField, cfg: { ...cfg, relay: false } }));
+    await new Promise((res) => off.listen(0, res));
+    try {
+      assert.equal((await fetch(`http://127.0.0.1:${off.address().port}/evm-pool/keeper/relay`, { method: 'POST', body: '{}' })).status, 404);
+    } finally { off.close(); }
+  } finally { server.close(); }
 });
 
 console.log(`\n${n} passed`);

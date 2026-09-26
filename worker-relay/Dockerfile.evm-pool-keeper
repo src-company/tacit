@@ -1,0 +1,31 @@
+# tacit-evm-pool-keeper: keeper and relayer for the EVM pool (src/evm-pool-keeper.js). Completes deposit and wrap
+# boxes, sweeps receive boxes, and relays users' own withdrawals and transfers.
+# Build context is the repo root: the service imports the dapp's pool modules (dapp/evm-pool-*.js), so the runtime
+# image keeps that layout. The proving artifacts are not baked in: EVM_POOL_WASM / EVM_POOL_ZKEY / EVM_POOL_VK
+# point at the finalized ceremony files by URL, pinned by EVM_POOL_WASM_SHA256 / EVM_POOL_ZKEY_SHA256 /
+# EVM_POOL_VK_HASH, and are cached on the service disk.
+#   docker build -f worker-relay/Dockerfile.evm-pool-keeper .
+
+FROM node:20-bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+
+COPY dapp/package.json /app/dapp/package.json
+COPY dapp/*.js /app/dapp/
+COPY dapp/vendor/*.js /app/dapp/vendor/
+
+WORKDIR /app/worker-relay
+COPY worker-relay/package.json ./
+RUN npm install --omit=dev && npm cache clean --force
+COPY worker-relay/src ./src
+
+# The witness model must load and reproduce the canonical receive-address vector here, or the image is unusable.
+RUN node -e "Promise.all([import('./src/lib/evm-pool-keeper-prover.js'), import('../dapp/evm-pool-gateway.js')]).then(async ([p, g]) => { const zk = await p.loadZk(); const w = g.evmPoolWallet(zk, new Uint8Array(32).fill(0x11)); const a = g.receiveBoxAddress(g.receiveKeys(zk, w, 0).npk); if (a !== '0x52fc37ee7741468a15CE879320a7a41CEBaeb232') { console.error('receive vector mismatch', a); process.exit(1); } console.log('receive vector ok'); })"
+
+ENV NODE_ENV=production \
+    EVM_POOL_KEEPER_DB=/var/lib/tacit-evm-pool-keeper/keeper.db \
+    EVM_POOL_ARTIFACT_DIR=/var/lib/tacit-evm-pool-keeper/artifacts \
+    PORT=10000
+EXPOSE 10000
+CMD ["node", "src/evm-pool-keeper.js"]
