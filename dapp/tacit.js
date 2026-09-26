@@ -82,6 +82,7 @@ import { renderSendTab } from './confidential-send-tab.js';
 import { renderSwapTab } from './confidential-swap-tab.js';
 import { renderEarnTab } from './confidential-earn-tab.js';
 import { renderAirdropTab, mountAirdropAnnouncement } from './confidential-airdrop-claim.js';
+import { renderPointsTab } from './points-tab.js';
 import { mountEvmTradeLane } from './evm-trade-tile.js';
 import { renderGovernTab } from './confidential-govern-tab.js';
 import { renderFactoryTab } from './confidential-factory-tab.js';
@@ -46179,7 +46180,7 @@ function setupCeremonyHandlers() {
 // active group. Single-child groups (send, discover, protocol) have no
 // visible sub-row.
 const TAB_GROUP_OF = {
-  wallet: 'wallet', holdings: 'wallet', airdrop: 'wallet',
+  wallet: 'wallet', holdings: 'wallet', airdrop: 'wallet', points: 'wallet',
   csend: 'send', transfer: 'send',
   market: 'trade', cswap: 'trade', otc: 'trade', cdp: 'trade',
   earn: 'earn',
@@ -46359,6 +46360,7 @@ function _activateTab(name) {
   if (name === 'cswap') { try { renderSwapTab(wallet); } catch (e) { console.error('cswap tab', e); } }
   if (name === 'earn') { try { renderEarnTab(wallet); } catch (e) { console.error('earn tab', e); } }
   if (name === 'airdrop') { try { renderAirdropTab(wallet, { eth: ethNamesBridge }); } catch (e) { console.error('airdrop tab', e); } }
+  if (name === 'points') { try { renderPointsTab(wallet, { eth: evmTradeLaneWallet }); } catch (e) { console.error('points tab', e); } }
   if (name === 'factory') { try { renderFactoryTab(wallet); } catch (e) { console.error('factory tab', e); } }
   if (name === 'govern') { try { renderGovernTab(wallet, governanceApi()); } catch (e) { console.error('govern tab', e); } }
   if (name === 'ceremony') { try { renderEvmCeremonyTab(); } catch (e) { console.error('ceremony tab', e); } }
@@ -57996,7 +57998,7 @@ function _consumeClaimUrlHash() {
 // via URL but back/forward isn't polluted with every casual tab click.
 const _DEEPLINK_TABS = new Set([
   'wallet', 'holdings', 'transfer', 'discover', 'market', 'pool', 'farms', 'etch', 'factory', 'drops', 'claim', 'about', 'mixer',
-  'confidential-pool', 'otc', 'cdp', 'csend', 'cswap', 'earn', 'airdrop',
+  'confidential-pool', 'otc', 'cdp', 'csend', 'cswap', 'earn', 'airdrop', 'points',
 ]);
 // Whitelist of allowed `section=` values per tab. A free-form section name
 // would let any URL scroll to any element id (including form inputs that

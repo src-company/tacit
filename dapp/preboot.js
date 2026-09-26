@@ -98,7 +98,7 @@
     // a real tab this app can land on.
     var TABS = ['wallet', 'holdings', 'transfer', 'discover', 'market', 'pool',
       'farms', 'etch', 'factory', 'drops', 'claim', 'about', 'mixer',
-      'confidential-pool', 'otc', 'cdp', 'csend', 'cswap', 'earn', 'airdrop', 'govern'];
+      'confidential-pool', 'otc', 'cdp', 'csend', 'cswap', 'earn', 'airdrop', 'points', 'govern'];
     var m = window.location.pathname.match(/^\/([a-z][a-z-]*)\/?$/i);
     if (!m) return;
     var tab = m[1].toLowerCase();
@@ -139,7 +139,7 @@
       // _syncTabChromeFor() runs once tacit.js loads; this is just to avoid
       // a brief frame where the wrong sub-row is visible above the panel.
       var GROUP_OF = {
-        wallet: 'wallet', holdings: 'wallet',
+        wallet: 'wallet', holdings: 'wallet', points: 'wallet',
         transfer: 'send',
         market: 'trade', cswap: 'trade', otc: 'trade', cdp: 'trade',
         earn: 'earn',

@@ -9030,6 +9030,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 <div class="tabs subtabs" data-group="wallet">
   <button class="tab active" data-tab="wallet">Overview</button>
   <button class="tab" data-tab="holdings">Holdings</button>
+  <button class="tab" data-tab="points" title="Points earned from Ethereum-side activity, and the running TAC reward">Points</button>
   <button class="tab" data-tab="airdrop" title="Check and claim the one-shot TAC merkle airdrop">Airdrop</button>
 </div>
 
@@ -10094,6 +10095,12 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 <!-- AIRDROP TAB — one-shot TAC merkle distributor claim. Rendered by renderAirdropTab() on show;
      always present (like Docs), never a dead end: it explains its own state (not connected / not
      eligible / claimed / paused / claimable) instead of assuming the visitor came from the banner. -->
+<div class="tab-panel" id="tab-points">
+  <div style="max-width:560px;margin:0 auto;" id="points-body">
+    <div class="muted">Loading…</div>
+  </div>
+</div>
+
 <div class="tab-panel" id="tab-airdrop">
   <div class="section" style="max-width:560px;margin:0 auto;">
     <div class="section-header">TAC airdrop <span class="chain-badge eth" style="vertical-align:middle;"><span class="dot"></span>Ethereum</span></div>
