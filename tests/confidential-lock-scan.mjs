@@ -464,4 +464,29 @@ function encodePublicValuesPrefix({ leaves, lockSetRoot, lockLeaves, nullifiers 
   ok('scanLockLeaves: keeps every distinct memo a transaction offers for a lock, so none can be shadowed by the first');
 }
 
+// ── 9. SettleTipForwarder.settleWithTip(bytes,bytes,bytes[],address) — same three dynamic-param heads as
+// settle(), plus one extra static `tipTo` word after them. decodeSettleCalls must recognize its own selector
+// directly rather than falling through to decodeNestedSettles (which never finds a settle() selector inside,
+// since the forwarder's calldata IS the args, not a wrapped inner call) — a CDP position (or any other note)
+// settled through this path must stay recoverable by the same key-only scan as a direct settle() ──
+{
+  function encodeSettleWithTipCall({ publicValues, proof, memos, tipTo }) {
+    const pvEnc = encBytes(publicValues), proofEnc = encBytes(proof), memosEnc = encBytesArray(memos);
+    const offPv = 4 * 32, offProof = offPv + pvEnc.length / 2, offMemos = offProof + proofEnc.length / 2;
+    return '0x' + selector('settleWithTip(bytes,bytes,bytes[],address)')
+      + word(offPv) + word(offProof) + word(offMemos) + bytes32(tipTo) + pvEnc + proofEnc + memosEnc;
+  }
+  const pv = '0x' + 'aa'.repeat(37);
+  const proof = '0x' + 'bb'.repeat(64);
+  const memos = ['0x' + 'cc'.repeat(10)];
+  const calldata = encodeSettleWithTipCall({ publicValues: pv, proof, memos, tipTo: '0x' + '99'.repeat(20) });
+  const result = scan.decodeSettleCalls(calldata);
+  assert.ok(result, 'settleWithTip calldata is recognized, not skipped as "unavailable"');
+  assert.strictEqual(result.direct, false, 'the forwarder is not the pool itself, so it is not marked direct');
+  assert.strictEqual(result.calls.length, 1);
+  assert.strictEqual(result.calls[0].publicValues.toLowerCase(), pv.toLowerCase(), 'publicValues round-trips through settleWithTip');
+  assert.deepStrictEqual(result.calls[0].memos.map((m) => m.toLowerCase()), memos.map((m) => m.toLowerCase()));
+  ok('decodeSettleCalls: settleWithTip (SettleTipForwarder self-settle) decodes like a direct settle, untrusted');
+}
+
 console.log(`\n${n}/${n} confidential-lock-scan checks passed`);

@@ -29,10 +29,14 @@
 
 // Selectors: settle(bytes,bytes,bytes[]); relaySettle((bytes,bytes,bytes[])[],address[],uint256[],address[],uint256[]);
 // relaySettle((bytes32,bytes32,uint32)[],(bytes,bytes,bytes[])[],address[],uint256[],address[],uint256[]) (the
-// found-and-seed overload). Computed from TacitRelayer.sol's own SettleCall/PairInit struct declarations.
+// found-and-seed overload); settleWithTip(bytes,bytes,bytes[],address) — SettleTipForwarder's self-settle path,
+// same first three dynamic-param heads as settle() with one extra static `tipTo` word after them, so it decodes
+// with decodeSettleCalldata unchanged. Computed from TacitRelayer.sol's / SettleTipForwarder.sol's own
+// struct/function declarations.
 const SELECTOR_SETTLE = '717fd7f2';
 const SELECTOR_RELAY_SETTLE = 'fcccb833';
 const SELECTOR_RELAY_SETTLE_SEEDED = 'e2b28725';
+const SELECTOR_SETTLE_WITH_TIP = '70b16a7d';
 
 // Mainnet ConfidentialPool and TacitRelayer: a settle sent straight to either is exactly what that contract ran
 // (see scanLockLeaves on provenance). Per-deployment: both callers (confidential-pool-ux.js) rely on these as
@@ -162,6 +166,9 @@ export function makeConfidentialLockScan({ pool }) {
     try {
       if (selector === SELECTOR_SETTLE) calls = [decodeSettleCalldata(inputHex)];
       else if (selector === SELECTOR_RELAY_SETTLE || selector === SELECTOR_RELAY_SETTLE_SEEDED) calls = decodeRelaySettleCalldata(inputHex);
+      // SettleTipForwarder isn't the pool, so this is not treated as a direct pool call — the caller's own
+      // leaf/nullifier match against the chain is what actually confirms it, same as a nested settle.
+      else if (selector === SELECTOR_SETTLE_WITH_TIP) { direct = false; calls = [decodeSettleCalldata(inputHex)]; }
       else { direct = false; calls = decodeNestedSettles(inputHex); }
     } catch { return null; }
     return calls && calls.length ? { calls, direct } : null;
@@ -252,6 +259,11 @@ export function makeConfidentialLockScan({ pool }) {
         try { calls = [decodeSettleCalldata(input)]; } catch { return null; }
       } else if (selector === SELECTOR_RELAY_SETTLE || selector === SELECTOR_RELAY_SETTLE_SEEDED) {
         try { calls = decodeRelaySettleCalldata(input); } catch { return null; }
+      } else if (selector === SELECTOR_SETTLE_WITH_TIP) {
+        // Same shape as a nested settle for provenance purposes: SettleTipForwarder is neither the pool nor
+        // the relayer, so this is never "trusted" outright — the event corroboration below still confirms it.
+        direct = false;
+        try { calls = [decodeSettleCalldata(input)]; } catch { return null; }
       } else {
         direct = false;
         calls = decodeNestedSettles(input); // a settle reached through another contract, or none at all
