@@ -9011,13 +9011,15 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
      around which chain it lives on. Each note carries a chain badge instead
      of living in a per-chain silo. Bitcoin-side surfaces (order book, etch,
      mixer) are harmonized in alongside the Ethereum-side pool + DeFi. -->
-<!-- Production nav: the visible IA focuses on Bitcoin-native surfaces.
-     Ethereum-side routes stay reachable by direct link; DeFi/governance
-     surfaces are not shown in the top nav. -->
+<!-- Production nav: the visible IA leads with Bitcoin-native surfaces, with the
+     confidential pool's DeFi (Earn) and governance promoted alongside them now that
+     both are live on mainnet. A few Ethereum-side routes (pool swap, OTC, the asset
+     factory) still stay reachable by direct link only — not shown in the top nav. -->
 <div class="tabs tabs-primary">
   <button class="tab active" data-tab="wallet" data-group="wallet" title="Your unified balances across Bitcoin and Ethereum — plain coins, select tokens, and shielded notes">Wallet</button>
   <button class="tab" data-tab="transfer" data-group="send" title="Send privately on Bitcoin or Ethereum — tacit assets, plain sats, or shielded ETH/USDC/tacBTC/tacUSD">Send</button>
   <button class="tab" data-tab="market" data-group="trade" title="Trade on the Bitcoin order book — instant and atomic-intent listings settle non-custodially in one Bitcoin tx; some OTC listings require counterparty trust instead">Trade<span id="nav-open-orders-badge" style="display:none;margin-left:6px;font-size:9px;font-weight:600;padding:1px 6px;background:var(--ink,#0a0a0a);color:var(--bg,#f4efe6);border-radius:9px;letter-spacing:0.04em;vertical-align:middle;" title="You have open orders. Click to see them."></span></button>
+  <button class="tab" data-tab="earn" data-group="earn" title="Provide liquidity and farm TAC rewards on the confidential pools">Earn</button>
   <button class="tab" data-tab="discover" data-group="discover" title="Browse Bitcoin-native assets and public mints">Discover</button>
   <button class="tab" data-tab="etch" data-group="create" title="Create Bitcoin-native confidential assets and drops">Create</button>
   <button class="tab" data-tab="govern" data-group="govern" title="TAC governance: proposals, votes, and everything the ops multisig controls">Govern</button>
@@ -9047,7 +9049,9 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   <button class="tab" data-tab="cdp" title="Borrow cUSD against cBTC, or mint cBTC from a Bitcoin lock — in the confidential pool on Ethereum">CDP</button>
 </div>
 
-<!-- Earn: confidential-pool LP and farms. Not in the primary nav. -->
+<!-- Earn: confidential-pool LP and farms. Now in the primary nav (see .tabs-primary above);
+     the subtabs row still starts display:none like every other group's row — _syncTabChromeFor
+     shows it once 'earn' is the active group, same as every sibling row here. -->
 <div class="tabs subtabs" data-group="earn" style="display:none;">
   <button class="tab active" data-tab="earn" title="Provide liquidity and farm TAC rewards on the confidential pools">Farms &amp; LP</button>
 </div>

@@ -122,7 +122,7 @@
     var target = m && m[1] && m[1].toLowerCase();
     if (target === 'csend') target = 'transfer';
     else if (target === 'cswap' || target === 'otc' || target === 'cdp') target = 'market';
-    else if (target === 'earn' || target === 'farms') target = 'wallet';
+    else if (target === 'farms') target = 'earn'; // alias only — 'earn' itself now pre-activates directly (it's in the primary nav)
     else if (target === 'claim') target = 'wallet';
     else if (target === 'confidential-pool' || target === 'mixer' || target === 'pool') target = 'about';
     if (!target || target === 'wallet') return;
