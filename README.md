@@ -247,9 +247,12 @@ TAC is the protocol's native token: 21M fixed supply, issued on Bitcoin, bridged
 Holding it boosts points and lowers the dapp's private exit fee. TAC collected as relay fees is never sold,
 and a quarter of the relay's ETH surplus funds
 [TacBuyback](https://etherscan.io/address/0x6919cbEf0e70AFFA02Ae02c86c532A137154f250), which buys TAC on the
-open market for the protocol reserve. Holders govern everything the ops multisig controls, with votes weighed at a
-snapshot taken when each proposal opens; the dapp's Govern tab shows all of it live. See
-[`docs/TAC.md`](./docs/TAC.md).
+open market for the protocol reserve.
+
+TAC also governs: holders vote on proposals that bind the ops multisig, either privately by proving a Bitcoin
+TAC balance tier or in the open with an Ethereum wallet's exact ERC-20 balance, weighed at a snapshot taken
+when each proposal opens. The dapp's Govern tab is the portal for all of it — proposing, voting, and the
+Protocol view of reserve flows and buybacks. See [`docs/TAC.md`](./docs/TAC.md).
 
 ## Points and farms
 
