@@ -154,7 +154,7 @@ export async function mount(root, ctx) {
       el('p', { class: 'note' }, 'It opens when the trusted setup for its circuit closes. Anyone can add randomness to it in a few minutes.'),
       el('div', { class: 'row' },
         el('a', { class: 'btn', href: '/?evmpool=ceremony' }, 'Help with the setup'),
-        el('a', { class: 'btn quiet', href: '/ceremony' }, 'How it works')),
+        el('a', { class: 'btn quiet', href: '/ceremony/' }, 'How it works')),
     );
   }
 

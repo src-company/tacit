@@ -8848,7 +8848,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
      CSP is `script-src 'self' 'wasm-unsafe-eval'` — no 'unsafe-inline',
      so an inline <script> would be CSP-blocked. Same-origin .js file
      satisfies 'self'. See preboot.js for the activation logic. -->
-<script src="./preboot.js?cb=c19faaae"></script>
+<script src="./preboot.js?cb=dc220318"></script>
 </head>
 <body>
 
@@ -9079,8 +9079,8 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   <div class="section" style="max-width:640px;margin:0 auto;">
     <div class="section-header">Secret Sats EVM pool · trusted setup</div>
     <div class="section-body" style="font-size:13px;">
-      <p style="margin:0 0 10px 0;">The EVM side of <a href="/sats" target="_blank" rel="noopener">Secret Sats</a>: private ETH and other EVM assets on Ethereum, Base and Robinhood Chain, proved on your own device, alongside the Tacit V1 confidential pool. Every contribution mixes fresh randomness into the pool's proving key, and the key is sound as long as one contributor kept theirs secret. Open to everyone, in the browser, a few minutes per run, and you can contribute more than once.</p>
-      <p class="muted" style="margin:0 0 10px 0;font-size:11px;"><a href="/ceremony" target="_blank" rel="noopener">Ceremony page</a> · <a href="/secret-sats" target="_blank" rel="noopener">Lite paper</a> · <a href="/tacit-v1.pdf" target="_blank" rel="noopener">Tacit V1</a></p>
+      <p style="margin:0 0 10px 0;">The EVM side of <a href="/sats/" target="_blank" rel="noopener">Secret Sats</a>: private ETH and other EVM assets on Ethereum, Base and Robinhood Chain, proved on your own device, alongside the Tacit V1 confidential pool. Every contribution mixes fresh randomness into the pool's proving key, and the key is sound as long as one contributor kept theirs secret. Open to everyone, in the browser, a few minutes per run, and you can contribute more than once.</p>
+      <p class="muted" style="margin:0 0 10px 0;font-size:11px;"><a href="/ceremony/" target="_blank" rel="noopener">Ceremony page</a> · <a href="/secret-sats/" target="_blank" rel="noopener">Lite paper</a> · <a href="/tacit-v1.pdf" target="_blank" rel="noopener">Tacit V1</a></p>
       <div id="evm-cer-tab-status" class="evm-cer-status"><span class="muted">Loading ceremony state…</span></div>
       <div style="margin:12px 0;"><button id="evm-cer-tab-go" type="button" class="primary">Contribute</button></div>
       <div class="evm-cer-participants-wrap">
@@ -11055,12 +11055,12 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   <div class="pass-card" style="max-width: 580px;">
     <div id="evm-cer-title" class="pass-title">Secret Sats EVM pool · trusted setup</div>
     <div class="pass-reason" style="margin-bottom: 12px;">
-      <p style="margin:0 0 8px 0;">The EVM side of <a href="/sats" target="_blank" rel="noopener">Secret Sats</a>: the same private notes and the same address, for ETH and other EVM assets on Ethereum, Base and Robinhood Chain, with every transaction proved on your own device. Its circuit needs a one-time trusted setup. Add your randomness in a few minutes in this tab, phones included. The key is sound if any one contributor kept theirs secret, so every contribution, repeats included, only adds safety.</p>
+      <p style="margin:0 0 8px 0;">The EVM side of <a href="/sats/" target="_blank" rel="noopener">Secret Sats</a>: the same private notes and the same address, for ETH and other EVM assets on Ethereum, Base and Robinhood Chain, with every transaction proved on your own device. Its circuit needs a one-time trusted setup. Add your randomness in a few minutes in this tab, phones included. The key is sound if any one contributor kept theirs secret, so every contribution, repeats included, only adds safety.</p>
       <details style="margin:0;">
         <summary class="muted" style="cursor:pointer;font-size:11px;list-style:none;">▸ how this works</summary>
         <p class="muted" style="font-size:11px;margin:6px 0 0;">Your browser fetches the circuit and setup file while you wait in line, then the current key (about 125 MB in all). It checks every earlier contribution, mixes in randomness that never leaves the tab, and uploads the new key. The key that signs your place in line, your Tacit wallet's or one kept in this browser, is listed with your contribution.</p>
         <p class="muted" style="font-size:11px;margin:6px 0 0;">The circuit is frozen: one private-transaction relation, two notes in and two out, 44,414 constraints over the Hermez powers of tau. When the ceremony closes, a Bitcoin block hash seals it as a public beacon, anyone can verify the transcript, and the pool deploys at addresses already published. It works alongside the Tacit V1 confidential pool, and value moves between the two.</p>
-        <p class="muted" style="font-size:11px;margin:6px 0 0;"><a href="/ceremony" target="_blank" rel="noopener">Ceremony page</a> · <a href="/sats" target="_blank" rel="noopener">Secret Sats</a> · <a href="/secret-sats" target="_blank" rel="noopener">Lite paper</a> · <a href="/tacit-v1.pdf" target="_blank" rel="noopener">Tacit V1</a></p>
+        <p class="muted" style="font-size:11px;margin:6px 0 0;"><a href="/ceremony/" target="_blank" rel="noopener">Ceremony page</a> · <a href="/sats/" target="_blank" rel="noopener">Secret Sats</a> · <a href="/secret-sats/" target="_blank" rel="noopener">Lite paper</a> · <a href="/tacit-v1.pdf" target="_blank" rel="noopener">Tacit V1</a></p>
       </details>
     </div>
     <div id="evm-cer-status" class="evm-cer-status"></div>

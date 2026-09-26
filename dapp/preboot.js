@@ -22,6 +22,16 @@
 //      / `.tab-panel.active` sees the deep-linked tab as the
 //      source of truth. Then remove the stage-1 override style so
 //      future tab clicks aren't visually clamped by !important.
+// Standalone pages live in their own directories (dapp/<name>/index.html). Asked for without the trailing slash, the
+// host serves this app instead, so those paths go to the page, keeping the query and fragment.
+(function toStandalonePage() {
+  var PAGES = ['sats', 'secret-sats', 'ceremony', 'tacit-v1'];
+  var m = window.location.pathname.match(/^\/([a-z0-9-]+)$/i);
+  if (m && PAGES.indexOf(m[1].toLowerCase()) !== -1) {
+    window.location.replace('/' + m[1].toLowerCase() + '/' + window.location.search + window.location.hash);
+  }
+})();
+
 // The wallet only renders as a top-level page. A <meta> CSP cannot carry
 // frame-ancestors, so the check lives here: the page is hidden during head
 // parse and tacit.js does not boot on the same check. Comparing WindowProxy
