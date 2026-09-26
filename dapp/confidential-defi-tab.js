@@ -17,6 +17,7 @@ import { signSchnorr, G } from './bulletproofs.js';
 import { makeCbtcLockMint } from './cbtc-lock-mint.js';
 import { makeCdpPositionStore } from './confidential-secret-store.js';
 import { scanHealth, scanHealthHtml, inboundBadgeHtml, inboundSummaryHtml } from './confidential-scan-health.js';
+import { parseUnits, formatUnits } from './confidential-payout.js';
 
 let _ux = null;
 function getUx() {
@@ -144,11 +145,71 @@ function wireOpen(wallet, ux, notes) {
   const cfg = ux.cfg;
   const controller = cfg.collateralEngine;
   const statusEl = el('cdp-open-status');
+  const ratioEl = el('cdp-ratio-readout');
+  const cdp = makeConfidentialCdp({ keccak256: keccak_256, pool: ux.pool, signSchnorr });
+  // cUSD has its own decimals (8) like any other asset here — a plain BigInt(debtStr) would read a typed
+  // "100" as 100 base units (0.000001 cUSD) instead of 100 cUSD, so amounts go through the same decimal
+  // parser every other amount field in the dapp uses.
+  const debtDecimals = controller ? decOf(ux, cdp.debtAssetId(controller)) : 8;
   if (!controller) {
     btn.disabled = true;
     if (statusEl) statusEl.innerHTML = 'CDP minting goes live once a CollateralEngine is deployed for this pool. '
       + 'Your collateral notes are listed below and ready.';
   }
+
+  // Live collateralization-ratio readout. The engine's own thresholds (mint floor, liquidation trigger) are
+  // fetched once and cached; selected collateral is re-priced through the engine's own oracle (btcToUsd) on
+  // every checkbox/amount change, so what's shown here is never a locally-guessed number. Undercollateralized
+  // is the same check onCdpMint makes on-chain — showing it before submit turns an opaque revert into a
+  // plain-language stop.
+  const hexWord = (bi) => bi.toString(16).padStart(64, '0');
+  let ratioParams = null;
+  async function fetchRatioParams() {
+    if (ratioParams || !controller) return ratioParams;
+    try {
+      const [mintWord, liqWord] = await Promise.all([
+        ux.ethCall(controller, '0x4827ecb3'), // cdpRatioBps()
+        ux.ethCall(controller, '0x1432d93f'), // liqRatioBps()
+      ]);
+      ratioParams = { mintBps: Number(BigInt(mintWord)), liqBps: Number(BigInt(liqWord)) };
+    } catch { /* readout just stays quiet until it can price */ }
+    return ratioParams;
+  }
+  async function selectedCollateralSats() {
+    const checked = [...document.querySelectorAll('.cdp-collat-pick:checked')].map((c) => c.getAttribute('data-leaf'));
+    const byLeaf = new Map(notes.map((n) => [String(n.leafIndex), n]));
+    return checked.reduce((s, lf) => s + BigInt(byLeaf.get(lf)?.value || 0), 0n);
+  }
+  async function refreshRatio() {
+    if (!ratioEl || !controller) return;
+    const collatSats = await selectedCollateralSats();
+    if (collatSats <= 0n) { ratioEl.textContent = ''; return; }
+    const [params, collateralUsdWord] = await Promise.all([
+      fetchRatioParams(),
+      ux.ethCall(controller, '0xd5901347' + hexWord(collatSats)).catch(() => null), // btcToUsd(uint256)
+    ]);
+    if (!params || collateralUsdWord == null) { ratioEl.textContent = ''; return; }
+    const collateralUsd = BigInt(collateralUsdWord);
+    const debtStr = (el('cdp-debt-amount') && el('cdp-debt-amount').value || '').trim();
+    let debtUnits = 0n;
+    try { debtUnits = debtStr ? parseUnits(debtStr, debtDecimals) : 0n; } catch { /* shown as invalid by the submit path */ }
+    const collateralTxt = `${formatUnits(collateralUsd, debtDecimals)} cUSD of collateral`;
+    if (debtUnits <= 0n) {
+      ratioEl.textContent = `${collateralTxt} selected · needs ≤ ${(10000 / params.mintBps * 100).toFixed(0)}% of that as debt to mint (liquidates at ${(params.liqBps / 100).toFixed(0)}%)`;
+      ratioEl.style.color = '';
+      return;
+    }
+    const ratioPct = Number(collateralUsd * 10000n / debtUnits) / 100;
+    const safe = ratioPct * 100 >= params.mintBps;
+    ratioEl.textContent = `${collateralTxt} → ${ratioPct.toFixed(0)}% ratio`
+      + (safe ? ` (mint needs ≥ ${(params.mintBps / 100).toFixed(0)}%, liquidates at ${(params.liqBps / 100).toFixed(0)}%)`
+              : ` — below the ${(params.mintBps / 100).toFixed(0)}% mint floor; borrow less or add collateral`);
+    ratioEl.style.color = safe ? '' : 'var(--red, #b3261e)';
+  }
+  document.querySelectorAll('.cdp-collat-pick').forEach((cb) => cb.addEventListener('change', refreshRatio));
+  el('cdp-debt-amount')?.addEventListener('input', refreshRatio);
+  refreshRatio();
+
   btn.onclick = async () => {
     if (!wallet || !wallet.priv) { if (statusEl) statusEl.textContent = 'Unlock your wallet first.'; return; }
     if (!controller) return;
@@ -164,8 +225,25 @@ function wireOpen(wallet, ux, notes) {
     });
     if (!collateral.length) { if (statusEl) statusEl.textContent = 'Select at least one collateral note.'; return; }
     const debtStr = (el('cdp-debt-amount') && el('cdp-debt-amount').value || '').trim();
-    const debtValue = /^[0-9]+$/.test(debtStr) ? BigInt(debtStr) : 0n; // BigInt(string) directly — a round-trip through Number loses precision above 2^53-1
+    let debtValue;
+    try { debtValue = parseUnits(debtStr, debtDecimals); } catch (e) { if (statusEl) statusEl.textContent = e.message; return; }
     if (debtValue <= 0n) { if (statusEl) statusEl.textContent = 'Enter a cUSD amount to borrow.'; return; }
+    // Same check the engine makes on-chain (onCdpMint's Undercollateralized revert) — catch it here so a
+    // guaranteed-to-fail open never leaves the wallet to a relay round trip first.
+    const collatSatsNow = collateral.reduce((s, c) => s + BigInt(c.value), 0n);
+    const params = await fetchRatioParams();
+    if (params) {
+      try {
+        const collateralUsdWord = await ux.ethCall(controller, '0xd5901347' + hexWord(collatSatsNow));
+        const collateralUsd = BigInt(collateralUsdWord);
+        if (debtValue * BigInt(params.mintBps) > collateralUsd * 10000n) {
+          if (statusEl) statusEl.textContent = `That would open below the ${(params.mintBps / 100).toFixed(0)}% mint floor `
+            + `(this basket supports up to ${formatUnits(collateralUsd * 10000n / BigInt(params.mintBps), debtDecimals)} cUSD). `
+            + `Borrow less or select more collateral.`;
+          return;
+        }
+      } catch { /* fall through — worst case the chain re-checks and reverts with the same message */ }
+    }
     const root = byLeaf.get(checked[0]).root;
     // Fresh per-position owner (the unlinkable leaf owner the guest publishes for keeper liquidation); the
     // guest's own position-tree nonce is fixed to 0 (unrelated to keyNonce below). Deterministically derived
@@ -212,13 +290,23 @@ function wireOpen(wallet, ux, notes) {
         basket: collateral.map((c) => ({ asset: c.asset, value: String(BigInt(c.value)) })),
         openedAt: r && r.txHash || null,
       });
-      if (statusEl) statusEl.innerHTML = `Position opened — borrowed ${debtValue} cUSD`
+      if (statusEl) statusEl.innerHTML = `Position opened — borrowed ${formatUnits(debtValue, debtDecimals)} cUSD`
         + (r && r.txHash ? ` (<code class="addr">${esc(r.txHash)}</code>)` : '') + '.';
-      notify(`Position opened — borrowed ${debtValue} cUSD`, 'ok');
+      notify(`Position opened — borrowed ${formatUnits(debtValue, debtDecimals)} cUSD`, 'ok');
       setTimeout(() => renderCdpTab(wallet), 1500);
     } catch (e) {
+      // The pre-submit check above catches the common case; this remains for a price move between that
+      // check and settle, or the rare feed-just-changed grace window — decode the engine's own revert names
+      // rather than show a bare selector/string.
       const m = formatErr(e, 'Open');
-      if (statusEl) statusEl.textContent = m; notify(m, 'error');
+      const hint = /Undercollateralized/i.test(m)
+        ? `${m} — the collateral's price moved, or another action against it settled first. Refresh and try again.`
+        : /BadSnapshot/i.test(m)
+        ? `${m} — the engine's rate moved between build and settle. Retry.`
+        : /FeedChangeGrace/i.test(m)
+        ? `${m} — the price feed just changed; the engine pauses new mints briefly after that. Retry shortly.`
+        : m;
+      if (statusEl) statusEl.textContent = hint; notify(hint, 'error');
       btn.disabled = false;
     }
   };
@@ -379,9 +467,10 @@ export async function renderCdpTab(wallet) {
       <div style="font-weight:600;margin-bottom:8px;">Mint cUSD <span class="muted" style="font-weight:400;font-size:11px;">· the bitcoin-backed dollar · borrow against your collateral</span></div>
       <div id="cdp-collat-list" class="muted" style="font-size:12px;margin-bottom:8px;">—</div>
       <div class="field-row">
-        <input id="cdp-debt-amount" type="number" min="0" step="1" placeholder="cUSD to borrow">
+        <input id="cdp-debt-amount" type="number" min="0" step="any" placeholder="cUSD to borrow, e.g. 100.5">
         <button id="cdp-open-btn" class="primary">Open</button>
       </div>
+      <div id="cdp-ratio-readout" class="muted field-status"></div>
       <div id="cdp-open-status" class="muted field-status"></div>
     </div>
 
@@ -417,24 +506,32 @@ export async function renderCdpTab(wallet) {
     // left to read as "you have nothing to post".
     const health = scanHealth(diag);
     const banner = scanHealthHtml(diag, { style: 'margin:6px 0;' });
-    if (!notes || !notes.length) {
-      if (statusEl) statusEl.textContent = health.ok
-        ? 'No shielded notes to use as collateral — wrap into the pool first.'
-        : 'No collateral notes found in the channels this scan could finish.';
-      if (collat) collat.innerHTML = banner + '<span class="muted">No collateral notes yet.</span>';
+    // Only cBTC backs a position — CollateralEngine._basketUsd reverts NotCbtcCollateral on anything else —
+    // so filter here rather than let the picker offer a note that would fail after a full build + relay round
+    // trip with an opaque revert.
+    const cbtcAssetId = ux.pool.CBTC_ZK_ASSET_ID;
+    const allNotes = notes || [];
+    const collatNotes = allNotes.filter((n) => n.asset && n.asset.toLowerCase() === cbtcAssetId.toLowerCase());
+    if (!collatNotes.length) {
+      if (statusEl) statusEl.textContent = allNotes.length
+        ? 'You hold shielded notes, but none are cBTC — only cBTC can back a position. Lock BTC below to get some.'
+        : (health.ok
+          ? 'No shielded notes to use as collateral — wrap into the pool first.'
+          : 'No collateral notes found in the channels this scan could finish.');
+      if (collat) collat.innerHTML = banner + '<span class="muted">No cBTC collateral notes yet.</span>';
     } else {
-      if (statusEl) statusEl.textContent = `${notes.length} shielded note${notes.length === 1 ? '' : 's'} available as collateral`;
+      if (statusEl) statusEl.textContent = `${collatNotes.length} cBTC note${collatNotes.length === 1 ? '' : 's'} available as collateral`;
       if (collat) {
-        collat.innerHTML = banner + notes.map((n) => {
+        collat.innerHTML = banner + collatNotes.map((n) => {
           const ticker = ux.tickerOf(n.asset) || 'note';
           const dec = decOf(ux, n.asset);
           return `<label class="check-row" style="padding:5px 0;">
             <input type="checkbox" class="cdp-collat-pick" data-leaf="${n.leafIndex}">
             <span>${fmtUnits(n.value, dec)} ${esc(ticker)} <span class="muted">#${n.leafIndex}</span>${inboundBadgeHtml(n)}</span></label>`;
-        }).join('') + inboundSummaryHtml(notes);
+        }).join('') + inboundSummaryHtml(collatNotes);
       }
     }
-    wireOpen(wallet, ux, notes || []);
+    wireOpen(wallet, ux, collatNotes);
   } catch (e) {
     const statusEl = el('cdp-status');
     if (statusEl) statusEl.textContent = 'Could not scan the pool: ' + formatErr(e);
@@ -468,9 +565,11 @@ export async function renderCdpTab(wallet) {
   }
   if (posBox && positions.length) {
     posBox.style.display = '';
+    const posCdp = makeConfidentialCdp({ keccak256: keccak_256, pool: ux.pool, signSchnorr });
+    const posDebtDecimals = decOf(ux, posCdp.debtAssetId(ux.cfg.collateralEngine));
     posBox.innerHTML = `<div style="font-weight:600;margin-bottom:6px;">Your positions</div>`
       + positions.map((p, i) => `<div class="list-row">
-          <span>${p.debtValue} cUSD borrowed · ${p.basket.length} collateral leg${p.basket.length === 1 ? '' : 's'}${p.recovered ? ' · recovered from chain' : ''}</span>
+          <span>${formatUnits(BigInt(p.debtValue), posDebtDecimals)} cUSD borrowed · ${p.basket.length} collateral leg${p.basket.length === 1 ? '' : 's'}${p.recovered ? ' · recovered from chain' : ''}</span>
           <button class="cdp-close-one" data-pos="${i}" style="padding:3px 10px;font-size:10px;flex:0 0 auto;">Close</button></div>`).join('')
       + `<div id="cdp-close-status" class="muted field-status" style="margin-top:6px;"></div>`;
     wireClose(wallet, ux, positions);
@@ -501,6 +600,7 @@ function wireClose(wallet, ux, positions) {
       try {
         const controller = p.controller;
         const debtAsset = cdp.debtAssetId(controller);
+        const debtDecimals = decOf(ux, debtAsset);
         const debtValue = BigInt(p.debtValue);
         // The position leaf the proof must prove membership for (same derivation buildCdpCloseOp uses).
         const sortedBasket = [...p.basket].sort((a, b) => (BigInt(a.asset) < BigInt(b.asset) ? -1 : 1));
@@ -532,8 +632,8 @@ function wireClose(wallet, ux, positions) {
         }
         // The burned debt note is spent under its own secret nullifier key (the harness reads `nk`).
         const debtNotes = picked.map((n) => ({ cx: n.cx, cy: n.cy, value: n.value, blinding: n.blinding, leafIndex: n.leafIndex, path: n.path, owner: n.owner, nk: n.secret }));
-        if (sum > debtValue && !window.confirm(`Repaying ${debtValue} cUSD uses notes worth ${sum}; the extra ${sum - debtValue} is not returned. Split a note to the exact amount first to avoid that. Continue anyway?`)) { btn.disabled = false; return; }
-        if (sum < debtValue) { if (statusEl) statusEl.textContent = `Need ${debtValue} cUSD to repay; you hold ${sum}.`; btn.disabled = false; return; }
+        if (sum > debtValue && !window.confirm(`Repaying ${formatUnits(debtValue, debtDecimals)} cUSD uses notes worth ${formatUnits(sum, debtDecimals)}; the extra ${formatUnits(sum - debtValue, debtDecimals)} is not returned. Split a note to the exact amount first to avoid that. Continue anyway?`)) { btn.disabled = false; return; }
+        if (sum < debtValue) { if (statusEl) statusEl.textContent = `Need ${formatUnits(debtValue, debtDecimals)} cUSD to repay; you hold ${formatUnits(sum, debtDecimals)}.`; btn.disabled = false; return; }
         const root = (notes.find((x) => x.asset.toLowerCase() === debtAsset.toLowerCase()) || {}).root;
         // One blinding and nk per released leg, derived from the wallet key and the closed position's nullifier — the leaf owner
         // is H(nk), which is what the guest publishes. The opening (including this nk) also rides the sealed memo, so the notes
