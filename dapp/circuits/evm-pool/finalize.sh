@@ -164,6 +164,8 @@ Final key ready in $FINAL. Next (operator; nothing below has run):
 
 3. Install the artifacts:
      cp $SOL $REPO_DIR/contracts/src/TransactVerifier.sol
-     pin.json, transact_vk.json, transact.wasm and transact_final.zkey go where the client serves the evm-pool
-     artifacts; pinnedVkHash = $VK_HASH
+     mkdir -p $REPO_DIR/dapp/evm-pool && cp $FINAL/{pin.json,transact_vk.json,transact.wasm,transact_final.zkey} $REPO_DIR/dapp/evm-pool/
+   The Secret Sats ETH tab (dapp/sats/eth.js) reads them there and opens once the pool has code; set each chain's
+   deployBlock and keeper URL in its CHAINS after deploying. Keepers: EVM_POOL_ZKEY / _WASM / _VK at those URLs,
+   EVM_POOL_ZKEY_SHA256 / _WASM_SHA256 from pin.json, EVM_POOL_VK_HASH = $VK_HASH.
 EOF
