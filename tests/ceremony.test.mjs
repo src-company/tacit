@@ -121,9 +121,14 @@ function mockPinataFetch() {
       _pinLog.push(cid);
       return new Response(JSON.stringify({ IpfsHash: cid }), { status: 200 });
     }
+    if (url.startsWith('https://s3.filebase.com/')) {
+      _filebaseLog.push({ url, method: init.method, auth: !!init.headers?.Authorization, size: init.body?.byteLength ?? init.body?.length });
+      return new Response(null, { status: 200, headers: { 'x-amz-meta-cid': `QmFilebase${_filebaseLog.length}` } });
+    }
     throw new Error(`unmocked fetch: ${url}`);
   };
 }
+const _filebaseLog = [];
 mockPinataFetch();
 
 // ---- Env builder ----
@@ -189,14 +194,18 @@ async function postInit(env, { token, circuit_hash = CIRCUIT_HASH, files = true,
 async function getState(env, hash = CIRCUIT_HASH) {
   return worker.default.fetch(new Request(`http://localhost/ceremony/${hash}`), env);
 }
-async function postContribute(env, { hash = CIRCUIT_HASH, prev_cid, contributor = 'alice', contrib_hash = 'abc' } = {}) {
+async function enqueueHead(env, hash = CIRCUIT_HASH, token = 'head-token') {
+  await env.REGISTRY_KV.put(`ceremony-q:${hash}:${token}`, JSON.stringify({ token, joined_at: Date.now(), head_started_at: Date.now() }));
+  return token;
+}
+async function postContribute(env, { hash = CIRCUIT_HASH, prev_cid, contributor = 'alice', contrib_hash = 'abc', queue_token } = {}) {
   const fd = new FormData();
   fd.append('zkey', makeFile(magicBlob(_ZKEY_MAGIC), 'c.zkey'));
   fd.append('prev_cid', prev_cid);
   fd.append('contributor_name', contributor);
   fd.append('contribution_hash', contrib_hash);
   return worker.default.fetch(
-    new Request(`http://localhost/ceremony/${hash}/contribute`, { method: 'POST', body: fd }),
+    new Request(`http://localhost/ceremony/${hash}/contribute${queue_token ? `?queue_token=${queue_token}` : ''}`, { method: 'POST', body: fd }),
     env,
   );
 }
@@ -333,6 +342,20 @@ await test('init: success records state with contribution_count=0 and a genesis 
   return ar.attestations.length === 1 && ar.attestations[0].index === 0;
 });
 
+await test('init: with Filebase configured, inline files pin to Filebase and Pinata is not used', async () => {
+  const env = makeEnv();
+  delete env.PINATA_JWT;
+  Object.assign(env, { FILEBASE_KEY: 'k'.repeat(20), FILEBASE_SECRET: 's'.repeat(40), FILEBASE_BUCKET: 'bucket' });
+  const pinsBefore = _pinCount;
+  const logBefore = _filebaseLog.length;
+  const res = await postInit(env, { token: env.CEREMONY_INIT_TOKEN, initiator: 'alice' });
+  if (res.status !== 200) return false;
+  const body = await res.json();
+  const puts = _filebaseLog.slice(logBefore);
+  return _pinCount === pinsBefore && puts.length === 3 && puts.every((p) => p.method === 'PUT' && p.auth && p.url.includes('/bucket/ceremony/'))
+    && body.state.head_cid.startsWith('QmFilebase');
+});
+
 await test('init: second init on same circuit_hash returns 409 (no overwrite)', async () => {
   const env = makeEnv();
   const first = await postInit(env, { token: env.CEREMONY_INIT_TOKEN, initiator: 'alice' });
@@ -373,11 +396,20 @@ skip('contribute: is publicly reachable (no token gate)',
 skip('contribute: 400 when zkey lacks the snarkjs "zkey" magic-byte tag',
   'pending: chain-probe mocks — eligibility gate now runs before the magic-byte check');
 
+await test('contribute: 403 before reading the body without the queue head token', async () => {
+  const env = makeEnv();
+  await (await postInit(env, { token: env.CEREMONY_INIT_TOKEN })).json();
+  await enqueueHead(env, CIRCUIT_HASH, 'someone-else');
+  const none = await postContribute(env, { prev_cid: 'x' });
+  const notHead = await postContribute(env, { prev_cid: 'x', queue_token: 'not-the-head' });
+  return none.status === 403 && notHead.status === 403;
+});
+
 await test('contribute: 409 on stale prev_cid (does not match current head_cid)', async () => {
   const env = makeEnv();
   const init = await postInit(env, { token: env.CEREMONY_INIT_TOKEN });
   await init.json();
-  const res = await postContribute(env, { prev_cid: 'bafkreireallyoldsubmission', contributor: 'bob' });
+  const res = await postContribute(env, { prev_cid: 'bafkreireallyoldsubmission', contributor: 'bob', queue_token: await enqueueHead(env) });
   return res.status === 409;
 });
 

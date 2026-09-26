@@ -7949,6 +7949,20 @@ async function _pinFileToIpfs(env, bytes, contentType, filenameStem) {
 // MAX_BYTES env var caps total upload size; we want zkeys to fit so we
 // override locally to 16 MB minimum (the env default of 2 MB is for images).
 async function pinBinaryToIpfs(env, bytes, filename, contentType = 'application/octet-stream') {
+  if (_filebaseConfigured(env)) {
+    // Plain S3 upload: Filebase chunks and pins the object and returns its CID. The CID is not the
+    // byte-derived CIDv1 a local import would give, which is fine here: callers record whatever CID
+    // the provider returns, and zkey consumers verify content, not the CID.
+    const key = `ceremony/${String(filename).replace(/[^A-Za-z0-9._-]/g, '_')}`;
+    const r = await _filebaseS3(env, 'PUT', key, bytes, { 'content-type': contentType });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      throw new Error(`filebase ${r.status}: ${txt.slice(0, 240)}`);
+    }
+    const cid = r.headers.get('x-amz-meta-cid');
+    if (!cid) throw new Error('filebase returned no CID');
+    return cid;
+  }
   const pinFd = new FormData();
   pinFd.append('file', new Blob([bytes], { type: contentType }), filename);
   pinFd.append('pinataOptions', JSON.stringify({ cidVersion: 1 }));
@@ -8837,6 +8851,17 @@ async function handleCeremonyContribute(req, env, circuitHash, cors, ctx) {
   const prior = safeInt(await env.UPLOAD_KV.get(rlKey), 0, { min: 0 });
   if (prior >= 500) return jsonResponse({ error: 'rate limited (500/day per IP)' }, 429, cors);
 
+  // Only the head of the contribution queue may send a body. Checked before the multipart body is read,
+  // so a caller without the head slot cannot make the service buffer a contribution-sized upload.
+  const headToken = String(new URL(req.url).searchParams.get('queue_token') || '').trim().slice(0, 64);
+  {
+    const queue = await _listCeremonyQueue(env, circuitHash);
+    await _evictStaleQueueHeads(env, circuitHash, queue);
+    if (!headToken || !queue.length || queue[0].token !== headToken) {
+      return jsonResponse({ error: 'not at the head of the contribution queue — reserve first' }, 403, cors);
+    }
+  }
+
   let fd;
   try { fd = await req.formData(); }
   catch { return jsonResponse({ error: 'expected multipart form-data' }, 400, cors); }
@@ -8847,6 +8872,7 @@ async function handleCeremonyContribute(req, env, circuitHash, cors, ctx) {
   // wall-clock for 91MB swap_batch zkeys.
   const zkeyCidProvided = String(fd.get('zkey_cid') || '').trim();
   const queueTokenForm = String(fd.get('queue_token') || '').trim().slice(0, 64);
+  if (queueTokenForm && queueTokenForm !== headToken) return jsonResponse({ error: 'queue_token mismatch' }, 400, cors);
   const contributorName = String(fd.get('contributor_name') || 'anonymous').slice(0, 64);
   let contributorPubkey = String(fd.get('contributor_pubkey') || '').trim().toLowerCase();
   if (!/^0[23][0-9a-f]{64}$/.test(contributorPubkey)) contributorPubkey = null;
@@ -9447,6 +9473,7 @@ async function runCeremonyHeadVerifyPass(env) {
     '5a67cdcc9e432d8474147a212dabf35e65425522bac111f8a1805d9386afb701',
     '005a38bfe8acc4d644e600aa91d08e08dba87170f87279bfb5b087230a4399b1',
     '2d9db81d741e59d65e1b52ac3d37c5da521ef8c3728e9cd715c9a8a45bd495f4',
+    'b0a246d1790151c722e42ccfa89450cb96c7f5a9f4b70a2162b7d9fc79b6ddb3', // evm-pool transact
   ];
 
   for (const hash of stateHashes) {
