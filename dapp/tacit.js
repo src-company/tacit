@@ -44933,12 +44933,19 @@ function _evmCerPaint() {
   const banner = document.getElementById('evm-cer-banner');
   if (banner) {
     let hidden = false;
-    try { hidden = !!localStorage.getItem(_EVM_CER_BANNER_KEY()); } catch {}
+    try { hidden = !!sessionStorage.getItem(_EVM_CER_BANNER_KEY()); } catch {}
     const summary = document.getElementById('evm-cer-banner-summary');
     if (summary) summary.textContent = state ? _evmCerSummaryText(state) : '';
     const cta = document.getElementById('evm-cer-banner-contribute');
     if (cta) cta.textContent = contributed ? 'Contribute again' : 'Contribute';
     banner.style.display = (hidden || !state || finalized) ? 'none' : '';
+  }
+
+  for (const t of document.querySelectorAll('.tabs-primary .tab[data-tab="ceremony"]')) t.style.display = finalized ? 'none' : '';
+  if (document.querySelector('.tab.active[data-tab="ceremony"]')) {
+    _evmCerPaintDrawerStatus('evm-cer-tab-status');
+    const tabGo = document.getElementById('evm-cer-tab-go');
+    if (tabGo) { tabGo.textContent = contributed ? 'Contribute again' : 'Contribute'; tabGo.disabled = finalized; }
   }
 
   const chip = document.getElementById('evm-cer-chip');
@@ -44962,8 +44969,8 @@ function renderEvmPoolCeremony() {
   _evmCerRefreshState().then(_evmCerPaint).catch(() => {});
 }
 
-function _evmCerPaintDrawerStatus() {
-  const el = document.getElementById('evm-cer-status');
+function _evmCerPaintDrawerStatus(elId = 'evm-cer-status') {
+  const el = document.getElementById(elId);
   if (!el) return;
   const state = _evmCerState();
   const goBtn = document.getElementById('evm-cer-go');
@@ -44996,7 +45003,37 @@ const _evmCerShort = (h, a = 8, b = 6) => {
   return s.length > a + b + 1 ? `${s.slice(0, a)}…${s.slice(-b)}` : s;
 };
 
+function _evmCerRenderTabParticipants() {
+  const list = document.getElementById('evm-cer-tab-participants');
+  if (!list) return;
+  const countEl = document.getElementById('evm-cer-tab-count');
+  const total = Number(_evmCerState()?.contribution_count) || 0;
+  if (countEl) countEl.textContent = total ? `· ${total.toLocaleString('en-US')} total` : '';
+  const myPub = _evmCerMyPub();
+  const rows = _evmCer.rows
+    .filter(r => Number(r.index) > 0 && !r.is_beacon)
+    .sort((a, b) => Number(b.index) - Number(a.index))
+    .slice(0, 20);
+  if (!rows.length) { list.innerHTML = '<div class="muted" style="padding:6px 0;">No contributions yet. Be the first.</div>'; return; }
+  list.innerHTML = rows.map((r) => {
+    const pub = String(r.contributor_pubkey || '');
+    const you = myPub && pub.toLowerCase() === myPub ? ' <strong>★ you</strong>' : '';
+    return `<div class="evm-cer-row"><span>#${escapeHtml(String(r.index))}</span><span>${escapeHtml(String(r.contributor_name || 'anonymous'))}${you}</span>`
+      + `<code title="${escapeHtml(pub)}">${escapeHtml(_evmCerShort(pub, 10, 6))}</code><span class="muted">${escapeHtml(_evmCerFmtTime(r.contributed_at))}</span></div>`;
+  }).join('');
+}
+
+function renderEvmCeremonyTab() {
+  if (!_evmCerConfigured()) return;
+  _wireEvmCerOnce();
+  _evmCerPaintDrawerStatus('evm-cer-tab-status');
+  _evmCerRenderTabParticipants();
+  _evmCerRefreshState(true).then(() => { _evmCerPaintDrawerStatus('evm-cer-tab-status'); _evmCerPaint(); }).catch(() => {});
+  _evmCerLoadParticipants({ reset: !_evmCer.rows.length });
+}
+
 function _evmCerRenderParticipants() {
+  _evmCerRenderTabParticipants();
   const list = document.getElementById('evm-cer-participants');
   if (!list) return;
   const countEl = document.getElementById('evm-cer-participants-count');
@@ -45384,9 +45421,11 @@ function _wireEvmCerOnce() {
   document.getElementById('evm-cer-cancel')?.addEventListener('click', closeEvmPoolCeremonyDrawer);
   document.getElementById('evm-cer-go')?.addEventListener('click', _submitEvmPoolCeremonyContribution);
   document.getElementById('evm-cer-download')?.addEventListener('click', _evmCerDownloadParticipants);
+  document.getElementById('evm-cer-tab-download')?.addEventListener('click', _evmCerDownloadParticipants);
+  document.getElementById('evm-cer-tab-go')?.addEventListener('click', openEvmPoolCeremonyDrawer);
   document.getElementById('evm-cer-participants-more')?.addEventListener('click', () => _evmCerLoadParticipants());
   document.getElementById('evm-cer-banner-close')?.addEventListener('click', () => {
-    try { localStorage.setItem(_EVM_CER_BANNER_KEY(), '1'); } catch {}
+    try { sessionStorage.setItem(_EVM_CER_BANNER_KEY(), '1'); } catch {}
     const b = document.getElementById('evm-cer-banner');
     if (b) b.style.display = 'none';
   });
@@ -46183,6 +46222,7 @@ function _activateTab(name) {
   if (name === 'airdrop') { try { renderAirdropTab(wallet, { eth: ethNamesBridge }); } catch (e) { console.error('airdrop tab', e); } }
   if (name === 'factory') { try { renderFactoryTab(wallet); } catch (e) { console.error('factory tab', e); } }
   if (name === 'govern') { try { renderGovernTab(wallet, governanceApi()); } catch (e) { console.error('govern tab', e); } }
+  if (name === 'ceremony') { try { renderEvmCeremonyTab(); } catch (e) { console.error('ceremony tab', e); } }
   try { _renderOtcClaimBanner(); } catch {}
   try { mountAirdropAnnouncement({ eth: ethNamesBridge }); } catch (e) { console.error('airdrop banner', e); }
   try { _updateNavOpenOrdersBadge(); } catch {}

@@ -104,7 +104,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=f640a819">
+<link rel="modulepreload" href="./tacit.js?cb=26901898">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -3230,6 +3230,7 @@ label {
 }
 .tab.active { color: var(--ink); border-bottom-color: var(--orange); font-weight: 700; }
 .tab:hover:not(.active) { background: transparent; color: var(--ink); }
+.tab.active:hover { background: transparent; }
 
 .tabs.subtabs {
   border-bottom: 1px dashed var(--ink-faint);
@@ -7409,7 +7410,7 @@ body.tacit-amm-ceremony-ready [data-amm-gated] { display: block; }
   font-weight: 600;
 }
 .evm-cer-participants-head button { font-size: 10px; padding: 5px 10px; }
-#evm-cer-participants {
+#evm-cer-participants, #evm-cer-tab-participants {
   max-height: 260px;
   overflow-y: auto;
   border-top: 1px solid var(--ink-faint);
@@ -8933,6 +8934,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   <button class="tab" data-tab="discover" data-group="discover" title="Browse Bitcoin-native assets and public mints">Discover</button>
   <button class="tab" data-tab="etch" data-group="create" title="Create Bitcoin-native confidential assets and drops">Create</button>
   <button class="tab" data-tab="govern" data-group="govern" title="TAC governance: proposals, votes, and everything the ops multisig controls">Govern</button>
+  <button class="tab" data-tab="ceremony" data-group="ceremony" style="display:none;" title="The EVM pool trusted setup: progress, participants, and a one-click contribution">Ceremony</button>
   <button class="tab" data-tab="about" data-group="advanced" title="Protocol docs, security notes, and advanced references">Docs</button>
 </div>
 
@@ -8975,10 +8977,33 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   <button class="tab active" data-tab="govern" title="Create and vote on TAC governance proposals">Proposals</button>
 </div>
 
+<div class="tabs subtabs" data-group="ceremony" style="display:none;">
+  <button class="tab active" data-tab="ceremony" title="The EVM pool trusted setup">EVM pool setup</button>
+</div>
+
 <!-- Advanced/docs: production nav opens Docs. The confidential pool and legacy
      mixer panels are reachable by direct link, not normal nav. -->
 <div class="tabs subtabs" data-group="advanced" style="display:none;">
   <button class="tab active" data-tab="about" title="How tacit works — protocol, privacy, Bitcoin & cross-chain, cryptography, and the security reviews">Docs</button>
+</div>
+
+<!-- CEREMONY TAB: progress of the EVM pool trusted setup, shown only while it is open. -->
+<div class="tab-panel" id="tab-ceremony">
+  <div class="section" style="max-width:640px;margin:0 auto;">
+    <div class="section-header">Secret Sats EVM pool · trusted setup</div>
+    <div class="section-body" style="font-size:13px;">
+      <p style="margin:0 0 10px 0;">Every contribution mixes fresh randomness into the pool's proving key; the key is sound as long as one contributor kept theirs secret. Open to everyone, in the browser, a few minutes per run, and you can contribute more than once.</p>
+      <div id="evm-cer-tab-status" class="evm-cer-status"><span class="muted">Loading ceremony state…</span></div>
+      <div style="margin:12px 0;"><button id="evm-cer-tab-go" type="button" class="primary">Contribute</button></div>
+      <div class="evm-cer-participants-wrap">
+        <div class="evm-cer-participants-head">
+          <span>Latest participants <span id="evm-cer-tab-count" class="muted"></span></span>
+          <button id="evm-cer-tab-download" type="button">Download participants (JSON)</button>
+        </div>
+        <div id="evm-cer-tab-participants"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- WALLET TAB -->
@@ -10916,7 +10941,6 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 
 <footer>
   <span><a href="https://github.com/z0r0z/tacit" target="_blank" rel="noopener noreferrer">tacit</a> · open-source · <a href="#tab=about" title="Protocol documentation">docs</a></span>
-  <span>TAC · <a href="#tab=govern" title="Governance portal — proposals, voting, reserve flows">governance</a> · <a href="https://etherscan.io/token/0xA1313eb9f3A445606D9583bcAc3ebeB56a858279" target="_blank" rel="noopener noreferrer" title="TAC on Ethereum, ERC-20">ERC-20</a></span>
   <span><a href="https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki" target="_blank" rel="noopener noreferrer">BIP-341</a> · <a href="https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki" target="_blank" rel="noopener noreferrer">BIP-340</a> · <a href="https://blockstream.com/bitcoin17-final41.pdf" target="_blank" rel="noopener noreferrer">CT (Maxwell)</a></span>
 </footer>
 
@@ -11513,7 +11537,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=f640a819"></script>
+<script type="module" src="./tacit.js?cb=26901898"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for
