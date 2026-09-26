@@ -76492,6 +76492,31 @@ function _wireMarketPriceChartCursor(host) {
     }
   });
 
+  // Touch support: the crosshair readout above is mouse-only (hover), so a
+  // phone never sees it at all — a shaped price line with no way to read a
+  // value off it. Rather than intercept touchmove (which risks breaking
+  // page scroll if a drag on the chart is meant to scroll the page), this
+  // treats a tap as a request to pin the readout at that point: measure the
+  // distance between touchstart and touchend, and only fire when it's small
+  // enough to be a tap rather than a scroll/swipe. Both listeners stay
+  // passive (never preventDefault) so native scroll/zoom is untouched.
+  let _touchStartX = null, _touchStartY = null, _touchHideTimer = 0;
+  overlay.addEventListener('touchstart', (ev) => {
+    const t = ev.touches[0];
+    if (!t) return;
+    _touchStartX = t.clientX; _touchStartY = t.clientY;
+  }, { passive: true });
+  overlay.addEventListener('touchend', (ev) => {
+    const t = ev.changedTouches[0];
+    if (!t || _touchStartX == null) return;
+    const dx = Math.abs(t.clientX - _touchStartX), dy = Math.abs(t.clientY - _touchStartY);
+    _touchStartX = null; _touchStartY = null;
+    if (dx > 12 || dy > 12) return; // a scroll/swipe, not a tap on the chart
+    move({ clientX: t.clientX, clientY: t.clientY });
+    if (_touchHideTimer) clearTimeout(_touchHideTimer);
+    _touchHideTimer = setTimeout(() => { cross.style.display = 'none'; }, 4000);
+  }, { passive: true });
+
   // Replay last hover position if the chart was re-rendered while the
   // user was hovering. Defer to next frame so the SVG layout is settled
   // (so getScreenCTM returns the new transform). Skips silently when
