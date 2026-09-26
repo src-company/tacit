@@ -20,10 +20,13 @@ export const RECORD_KEY = 'finance.tacit';
 export const WNS = '0x0000000000696760E15f265e828DB644A0c242EB';
 export const GNS = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6';
 export const ENS_REGISTRY = '0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e';
+// Verified from an actual page origin (not just curl): llamarpc, cloudflare-eth and every other public
+// endpoint tried besides these three fail CORS or the eth_call itself from a browser. Keep this list to
+// ones actually confirmed reachable from tacit.finance's origin — a dead entry costs nothing under the
+// concurrent race above, but it's still one fewer real vote toward the quorum every single call.
 export const MAINNET_RPCS = [
   'https://ethereum-rpc.publicnode.com',
   'https://1rpc.io/eth',
-  'https://eth.llamarpc.com',
   'https://eth.drpc.org',
 ];
 
