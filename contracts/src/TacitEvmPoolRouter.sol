@@ -55,10 +55,11 @@ interface IConfidentialPoolWrap {
 ///      `tipTo` (or to the completer when it is zero).
 ///   5. POOL → V1 (withdrawToV1) — withdraw from this pool straight into a wrap box and complete it, one tx.
 ///   6. RECEIVE BOXES (receiveBoxOf / sweepReceive) — a standing address for one owner's note key `npk`, paid any
-///      number of times by anyone. Anyone sweeps any part of the box's balance into the pool; the router computes
-///      the note itself, leaf = Poseidon(asset, amount − fee, npk, rho) with rho fixed by the box and a per-box
-///      counter, so a sweeper can only credit `npk` and keeps at most `feeBps` of what it sweeps. The owner
-///      recovers every note from its keys and the Received events alone.
+///      number of times by anyone. Anyone sweeps the box's balance into the pool; the router computes the note
+///      itself, leaf = Poseidon(asset, amount − fee, npk, rho) with rho fixed by the box and a per-box counter, so
+///      a sweeper can only credit `npk` and keeps at most `feeBps` of what it sweeps. The box's code lives only
+///      within a sweep, so the address takes plain transfers between sweeps. The owner recovers every note from
+///      its keys and the Received events alone.
 ///
 /// Leaving this pool for anything else needs nothing here: a withdrawal whose recipient is a ConfidentialRouter
 /// exit-recipe escrow is run by that router's permissionless `activateExit`.
@@ -270,22 +271,27 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         return LibClone.predictDeterministicAddress_PUSH0(boxImpl, _receiveSalt(npk, feeBps), address(this));
     }
 
-    /// Permissionless. `t` deposits `t.extAmount` (any part of the box's balance) into one note for `npk`, with
-    /// no memos, paying `t.relayer` a fee of at most `feeBps` of the amount.
+    /// Permissionless. `t` deposits the box's whole balance of the pool asset (`t.extAmount`) into one note for
+    /// `npk`, with no memos, paying `t.relayer` a fee of at most `feeBps` of it. The box exists only within the
+    /// sweep: it is created, emptied and removed in the same transaction, so between sweeps the address has no
+    /// code and accepts any payment, including a plain 21,000-gas transfer.
     function sweepReceive(uint256 npk, uint16 feeBps, Tx calldata t) external nonReentrant {
         if (address(POSEIDON4) == address(0)) revert BadTarget();
+        if (npk >= P || feeBps > 10_000) revert BadIntent();
         uint256 amount = _depositAmount(t);
-        if (feeBps > 10_000 || t.fee * 10_000 > amount * feeBps) revert BadIntent();
+        if (t.fee * 10_000 > amount * feeBps) revert BadIntent();
         if (t.recipient != address(0) || t.memo0.length != 0 || t.memo1.length != 0 || t.publicInputs[10] != 0) {
             revert BadIntent();
         }
         address box = _deployBox(_receiveSalt(npk, feeBps));
+        if ((ASSET == address(0) ? box.balance : SafeTransferLib.balanceOf(ASSET, box)) != amount) revert BadIntent();
         uint256 n = receiveCount[box]++;
         uint256 rho = uint256(keccak256(abi.encode(RECEIVE_TAG, box, n))) % P;
         uint256 value = amount - t.fee;
         if (t.publicInputs[9] != POSEIDON4.hash([ASSET_FIELD, value, npk, rho])) revert BadIntent();
         uint256 index = POOL.nextIndex();
         TacitBox(payable(box)).release(ASSET, address(this), amount);
+        TacitBox(payable(box)).close();
         _deposit(t, amount);
         emit Received(box, n, index, value, rho, t.fee);
     }
@@ -431,6 +437,13 @@ contract TacitBox {
         if (msg.sender != ROUTER) revert NotRouter();
         if (token == address(0)) SafeTransferLib.forceSafeTransferETH(to, amount);
         else SafeTransferLib.safeTransfer(token, to, amount);
+    }
+
+    /// Removes a box created earlier in the same transaction (EIP-6780), leaving its address without code. Called
+    /// on an empty receive box only.
+    function close() external {
+        if (msg.sender != ROUTER) revert NotRouter();
+        selfdestruct(payable(ROUTER));
     }
 
     receive() external payable {}

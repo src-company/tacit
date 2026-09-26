@@ -1,6 +1,7 @@
 // SQLite state for the EVM pool box keeper: the intents it watches, and the pool's leaves up to a confirmed
 // block. A deposit hint is kept only while its box is live and cleared once the box reaches a terminal state.
-// A receive box ({ npk, feeBps }, no deadline) stays pending: it is swept whenever it holds enough.
+// A receive box ({ npk, feeBps }) stays pending while watched: it is swept whenever it holds enough, and its deadline
+// is when the watch lapses unless the box is registered again.
 
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -33,7 +34,8 @@ export function openKeeperStore(dbPath) {
     ins: db.prepare(`INSERT OR IGNORE INTO intents (box, kind, intent, hint, status, reward, token, deadline, created, updated, next_check)
                      VALUES (@box, @kind, @intent, @hint, 'pending', @reward, @token, @deadline, @now, @now, @now)`),
     get: db.prepare('SELECT * FROM intents WHERE box = ?'),
-    due: db.prepare("SELECT * FROM intents WHERE status = 'pending' AND next_check <= ? ORDER BY next_check LIMIT ?"),
+    due: db.prepare("SELECT * FROM intents WHERE status = 'pending' AND kind != 'receive' AND next_check <= ? ORDER BY next_check LIMIT ?"),
+    dueReceive: db.prepare("SELECT * FROM intents WHERE status = 'pending' AND kind = 'receive' AND next_check <= ? ORDER BY next_check LIMIT ?"),
     pending: db.prepare("SELECT COUNT(*) AS n FROM intents WHERE status = 'pending' AND kind != 'receive'"),
     receiving: db.prepare("SELECT COUNT(*) AS n FROM intents WHERE status = 'pending' AND kind = 'receive'"),
     leafCount: db.prepare('SELECT COUNT(*) AS n FROM leaves'),
@@ -59,14 +61,16 @@ export function openKeeperStore(dbPath) {
       return r.changes === 1;
     },
     get: (box) => row(st.get.get(box.toLowerCase())),
+    // Deposit and wrap boxes, and receive boxes, are due on separate quotas so neither can starve the other.
     due: (now, limit) => st.due.all(now, limit).map(row),
+    dueReceive: (now, limit) => st.dueReceive.all(now, limit).map(row),
     // Boxes awaiting completion; receive boxes, which are watched indefinitely, are counted apart.
     pendingCount: () => st.pending.get().n,
     receiveCount: () => st.receiving.get().n,
 
     // Only the listed columns can change; a terminal status also drops the hint.
     update(box, fields) {
-      const allowed = ['status', 'next_check', 'checks', 'attempts', 'funded_at', 'tx_hash', 'tx_sent_at', 'note', 'updated'];
+      const allowed = ['status', 'next_check', 'checks', 'attempts', 'funded_at', 'tx_hash', 'tx_sent_at', 'note', 'updated', 'deadline'];
       const keys = Object.keys(fields).filter((k) => allowed.includes(k));
       const sets = keys.map((k) => `${k} = @${k}`);
       if (TERMINAL.includes(fields.status)) sets.push('hint = NULL');

@@ -106,9 +106,9 @@ function mockChain({ log = [] } = {}) {
       if (t.publicInputs[9] !== zk.leafOf(assetField, amount - t.fee, npk, receiveRho(box, n))) throw revert('BadIntent');
       if (t.publicInputs[1] !== zk.tree(c.leaves).root) throw revert('StaleRoot');
       if (t.publicInputs[3] !== BigInt(c.leaves.length)) throw revert('WrongInsertionIndex');
-      if ((c.balances.get(key(TOKEN, box)) || 0n) < amount) throw revert('TransferFailed');
+      if ((c.balances.get(key(TOKEN, box)) || 0n) !== amount) throw revert('BadIntent');
       return () => {
-        c.balances.set(key(TOKEN, box), c.balances.get(key(TOKEN, box)) - amount);
+        c.balances.set(key(TOKEN, box), 0n);
         c.counts.set(box, Number(n) + 1);
         insert(t.publicInputs);
         c.fund(TOKEN, t.relayer, t.fee);
@@ -563,7 +563,7 @@ const receiveNpk = receiveKeys(zk, alice, 0).npk;
 async function addReceive(s, feeBps = 50) {
   const parsed = parseReceiveSubmission({ chainId: CHAIN_ID, npk: receiveNpk.toString(), feeBps }, { chainId: CHAIN_ID, cfg: s.cfg });
   const box = await s.chain.receiveBoxOf(parsed.intent.npk, parsed.intent.feeBps);
-  s.store.addIntent({ box, kind: 'receive', intent: parsed.intent, reward: 0n, token: TOKEN, deadline: 0, now: s.clock.t });
+  s.store.addIntent({ box, kind: 'receive', intent: parsed.intent, reward: 0n, token: TOKEN, deadline: s.clock.t + s.cfg.receiveWatchSecs, now: s.clock.t });
   return box;
 }
 
@@ -632,6 +632,14 @@ await test('a sweep raced by another transaction or another sweep is re-proven w
   assert.equal(s2.prover.calls, 2);
   assert.equal(s2.chain.sent.length, 1);
   assert.equal(await s2.chain.balanceOf(TOKEN, KEEPER), 300n, 'fee on what was left');
+});
+
+await test('an unfunded receive box stops being watched when its watch lapses', async () => {
+  const s = setup({ cfg: { receiveWatchSecs: 3000, receiveMaxBackoffSecs: 1000 } });
+  const box = await addReceive(s, 50);
+  for (let i = 0; i < 5; i++) { s.advance(1000); await s.keeper.tick(); }
+  assert.equal(s.store.get(box).status, 'expired');
+  assert.equal(s.store.receiveCount(), 0);
 });
 
 await test('receive boxes back off to their own cap and do not count against deposit capacity', async () => {
@@ -719,6 +727,16 @@ await test('HTTP relay and receive: quote, submit, stale → 409, low fee → ne
     assert.match((await r.json()).error, /AlreadyNullified/);
     chain.transactRevert = null;
 
+    // The same spend twice while the first is in flight: the second is refused, not sent to revert.
+    chain.receiptMode = 'pending';
+    const again = relayTx({ ext: -100n });
+    again.tx.publicInputs[7] = '4242';
+    assert.equal((await post('/relay', again)).status, 200);
+    const dup = await post('/relay', again);
+    assert.equal(dup.status, 409);
+    assert.match((await dup.json()).error, /already being relayed/);
+    chain.receiptMode = 'success';
+
     r = await post('/receive', { chainId: CHAIN_ID, npk: receiveNpk.toString(), feeBps: 25 });
     assert.equal(r.status, 200);
     const w = await r.json();
@@ -728,7 +746,19 @@ await test('HTTP relay and receive: quote, submit, stale → 409, low fee → ne
     t += 10;
     await post('/receive', { chainId: CHAIN_ID, npk: receiveNpk.toString(), feeBps: 25 });
     assert.equal(store.get(w.box).next_check, t, 're-posting asks for a look now');
+    assert.equal(store.get(w.box).deadline, t + cfg.receiveWatchSecs, 're-posting renews the watch');
     assert.equal(store.receiveCount(), 1);
+    // A lapsed box comes back when posted again, even at capacity.
+    store.update(w.box, { status: 'expired' });
+    const full = createServer(createIntakeHandler({ store, chain, zk, assetField, cfg: { ...cfg, maxReceive: 0 }, now: () => t }));
+    await new Promise((res) => full.listen(0, res));
+    try {
+      const again2 = await fetch(`http://127.0.0.1:${full.address().port}/evm-pool/keeper/receive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chainId: CHAIN_ID, npk: receiveNpk.toString(), feeBps: 25 }) });
+      assert.equal(again2.status, 200);
+      assert.equal((await again2.json()).status, 'watching');
+      const other = await fetch(`http://127.0.0.1:${full.address().port}/evm-pool/keeper/receive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chainId: CHAIN_ID, npk: '99', feeBps: 25 }) });
+      assert.equal(other.status, 503, 'a new box at capacity is refused');
+    } finally { full.close(); }
 
     const off = createServer(createIntakeHandler({ store, chain, zk, assetField, cfg: { ...cfg, relay: false } }));
     await new Promise((res) => off.listen(0, res));

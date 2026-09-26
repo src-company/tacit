@@ -229,15 +229,20 @@ export function createIntakeHandler({
     const t = now();
     let parsed, box, token;
     if (kind === 'receive') {
-      if (store.receiveCount() >= cfg.maxReceive) throw new IntakeError(503, 'the keeper is at capacity; try again later');
       parsed = parseReceiveSubmission(body, { chainId: chain.chainId, cfg });
       box = await chain.receiveBoxOf(parsed.intent.npk, parsed.intent.feeBps);
-      const fresh = store.addIntent({ box, kind, intent: parsed.intent, reward: 0n, token: chain.asset, deadline: 0, now: t });
-      const r = store.get(box);
-      if (r.kind !== kind) throw bad('box already registered under another kind');
-      if (fresh) log(`watching receive box ${box} (fee cap ${parsed.intent.feeBps} bps)`);
-      else if (r.kind === kind && r.status === 'pending' && r.next_check > t) store.update(box, { next_check: t, checks: 0 });
-      return view(r);
+      const watchUntil = t + cfg.receiveWatchSecs;
+      const known = store.get(box);
+      if (known) {
+        // Registering again renews the watch and asks for a look now.
+        if (known.kind !== kind) throw bad('box already registered under another kind');
+        store.update(box, { status: 'pending', next_check: t, checks: 0, deadline: watchUntil, updated: t });
+        return view(store.get(box));
+      }
+      if (store.receiveCount() >= cfg.maxReceive) throw new IntakeError(503, 'the keeper is at capacity; try again later');
+      store.addIntent({ box, kind, intent: parsed.intent, reward: 0n, token: chain.asset, deadline: watchUntil, now: t });
+      log(`watching receive box ${box} (fee cap ${parsed.intent.feeBps} bps)`);
+      return view(store.get(box));
     }
     if (store.pendingCount() >= cfg.maxPending) throw new IntakeError(503, 'the keeper is at capacity; try again later');
     if (kind === 'deposit') {
@@ -259,13 +264,33 @@ export function createIntakeHandler({
     return view(r);
   }
 
+  let gasCache = { at: 0, price: 0n };
+  const gasPrice = async () => {
+    const t = Date.now();
+    if (t - gasCache.at > 5000) gasCache = { at: t, price: BigInt(await chain.gasPrice()) };
+    return gasCache.price;
+  };
+  // Nullifiers (and, for a transaction that inserts, its insertion slot) of relays sent and not yet settled: a
+  // second submission of the same spend is refused instead of being sent to revert.
+  const inflight = new Map();
+  const relayKeys = (args) => {
+    const pub = args[3];
+    const keys = [pub[7], pub[8]].filter((x) => x !== 0n).map((x) => `nf:${x}`);
+    if (pub[9] !== 0n || pub[10] !== 0n) keys.push(`slot:${pub[1]}:${pub[3]}`);
+    return keys;
+  };
+  const busyKeys = (keys, t) => keys.some((k) => (inflight.get(k) ?? 0) > t);
+
   async function quote() {
-    const q = quoteFee({ token: chain.asset, gas: cfg.relayGas, gasPrice: await chain.gasPrice(), cfg });
+    const q = quoteFee({ token: chain.asset, gas: cfg.relayGas, gasPrice: await gasPrice(), cfg });
     return { chainId: chain.chainId, pool: chain.pool, relayer: chain.address, asset: chain.asset, fee: q.toString(), gas: cfg.relayGas.toString() };
   }
 
   async function relay(body) {
     const { args, fee } = parseRelaySubmission(body, { keeper: chain.address, cfg });
+    const keys = relayKeys(args);
+    const t0 = Date.now();
+    if (busyKeys(keys, t0)) throw Object.assign(new IntakeError(409, 'this spend is already being relayed'), { stale: true });
     let est;
     try { est = await chain.estimate('pool.transact', args); }
     catch (e) {
@@ -273,17 +298,25 @@ export function createIntakeHandler({
       if (STALE.has(name)) throw Object.assign(new IntakeError(409, `${name}: re-prove against the pool's current root`), { stale: true });
       throw bad(name ? `the transaction reverts: ${name}` : 'the transaction reverts');
     }
-    const gasPrice = await chain.gasPrice();
-    const cov = coverCheck({ reward: fee, token: chain.asset, gas: est, gasPrice, cfg });
-    if (!cov.ok) throw Object.assign(bad(`fee too low: ${cov.reason}`), { needFee: quoteFee({ token: chain.asset, gas: est, gasPrice, cfg }).toString() });
+    const price = await gasPrice();
+    const cov = coverCheck({ reward: fee, token: chain.asset, gas: est, gasPrice: price, cfg });
+    if (!cov.ok) throw Object.assign(bad(`fee too low: ${cov.reason}`), { needFee: quoteFee({ token: chain.asset, gas: est, gasPrice: price, cfg }).toString() });
     if (cfg.dryRun) return { dryRun: true, gas: est.toString() };
+    if (busyKeys(keys, Date.now())) throw Object.assign(new IntakeError(409, 'this spend is already being relayed'), { stale: true });
+    const hold = Date.now() + cfg.receiptWaitSecs * 1000;
+    for (const k of keys) inflight.set(k, hold);
     let hash;
     try { hash = await chain.send('pool.transact', args, { gas: cov.gas }); }
     catch (e) {
+      for (const k of keys) inflight.delete(k);
       const name = revertName(e);
-      if (STALE.has(name)) throw Object.assign(new IntakeError(409, `${name}: re-prove against the pool's current root`), { stale: true });
+      if (STALE.has(name) || name === 'AlreadyNullified') throw Object.assign(new IntakeError(409, `${name}: re-prove against the pool's current root`), { stale: true });
+      if (name) throw bad(`the transaction reverts: ${name}`);
       throw e;
     }
+    // Held until a receipt settles it; with none in time the hold simply lapses (a failed send is released above).
+    chain.waitReceipt(hash, cfg.receiptWaitSecs * 1000).then((rc) => { if (rc) for (const k of keys) inflight.delete(k); }).catch(() => {});
+    for (const [k, until] of inflight) if (until <= Date.now()) inflight.delete(k);
     log(`relayed ${args[5] < 0n ? 'withdrawal' : 'transfer'} ${hash} fee ${fee}`);
     return { txHash: hash };
   }
@@ -310,6 +343,7 @@ export function createIntakeHandler({
       }
       if (p === `${PREFIX}/quote` && req.method === 'GET') {
         if (!cfg.relay) return send(404, { error: 'relaying is off' });
+        if (!limited(clientKey(req))) throw new IntakeError(429, 'rate limited');
         return send(200, await quote());
       }
       if (p === `${PREFIX}/relay` && req.method === 'POST') {

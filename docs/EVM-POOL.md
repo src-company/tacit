@@ -139,11 +139,14 @@ the box as recipient.
 
 **Receive boxes: one standing address, paid any number of times.** `receiveBoxOf(npk, feeBps)` is an address
 tied to one note key of the owner and a fee cap in basis points. Anyone pays it ETH, as often as they like, from any
-wallet or exchange. Anyone then calls `sweepReceive(npk, feeBps, tx)` to move any part of its balance into the
-pool: the router computes the note itself, `leaf = Poseidon(asset, amount − fee, npk, rho)` with
+wallet or exchange. Anyone then calls `sweepReceive(npk, feeBps, tx)` to move its whole balance into the pool
+(a sweep proves exactly the balance it finds, so rebuild if a payment lands first): the router computes the note
+itself, `leaf = Poseidon(asset, amount − fee, npk, rho)` with
 `rho = keccak256(abi.encode(keccak256("tacit-evm-pool-receive-box-v1"), box, n)) mod p` for the box's `n`-th sweep
 (`receiveCount(box)`), so a sweeper can only credit the owner and keeps at most `feeBps` of what it sweeps. The
-sweep takes no memos and a single output. Each sweep emits `Received(box, n, index, value, rho, fee)`.
+sweep takes no memos and a single output. Each sweep emits `Received(box, n, index, value, rho, fee)`. The box's
+contract exists only inside a sweep (created, emptied and removed in one transaction), so between sweeps the address
+has no code and takes any payment, including a plain 21,000-gas transfer from an exchange.
 
 - Keys: `receiveKeys(zk, wallet, i)` gives box `i`'s note key. It derives from the wallet's nullifier secret, so a
   box cannot be tied to the wallet's shielded address, and a wallet can hand out a separate box per counterparty.

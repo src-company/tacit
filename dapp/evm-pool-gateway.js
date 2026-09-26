@@ -108,7 +108,9 @@ export function receiveKeys(zk, wallet, i = 0) {
 // receiveBoxOf(npk, feeBps) of `router`: the PUSH0 minimal-proxy clone (solady LibClone) of the router's box
 // implementation, which the router creates at nonce 1, at salt keccak256(abi.encode(RECEIVE_TAG, npk, feeBps)).
 export function receiveBoxAddress(npk, feeBps = RECEIVE_FEE_BPS, router = EVM_POOL_ROUTER) {
-  if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 0xffff) throw new Error('evm-pool-gateway: feeBps');
+  // The router sweeps only boxes with feeBps ≤ 10000 and npk < p; any other address could never be swept.
+  if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 10_000) throw new Error('evm-pool-gateway: feeBps must be in [0, 10000]');
+  if (BigInt(npk) <= 0n || BigInt(npk) >= P_FR) throw new Error('evm-pool-gateway: npk must be in (0, p)');
   const r = addrWord(router).slice(12);
   const impl = keccak_256(concatBytes(Uint8Array.of(0xd6, 0x94), r, Uint8Array.of(0x01))).slice(12);
   const initHash = keccak_256(concatBytes(hexBytes('602d5f8160095f39f35f5f365f5f37365f73'), impl, hexBytes('5af43d5f5f3e6029573d5ffd5b3d5ff3')));

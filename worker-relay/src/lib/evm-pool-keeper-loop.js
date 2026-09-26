@@ -202,8 +202,9 @@ export function createKeeper({
     const res = await sweep(r, t);
     if (res.out === 'completed') {
       log(`receive ${r.box}: swept ${res.amount} (fee ${res.fee})`);
-      return soon(r, t, { tx_hash: null, tx_sent_at: null, checks: 0, attempts: 0, note: 'swept' });
+      return soon(r, t, { tx_hash: null, tx_sent_at: null, checks: 0, attempts: 0, note: 'swept', deadline: t + cfg.receiveWatchSecs });
     }
+    if (res.idle && t > Number(r.deadline)) return finish(r, t, 'expired');
     if (res.out === 'inflight') return soon(r, t);
     if (res.out === 'dry') return backoff(r, t, 'dry run');
     if (res.stale) return soon(r, t, { note: 'stale' });
@@ -249,7 +250,7 @@ export function createKeeper({
   }
 
   async function tick() {
-    const rows = store.due(now(), cfg.maxChecksPerTick);
+    const rows = [...store.due(now(), cfg.maxChecksPerTick), ...store.dueReceive(now(), cfg.maxReceiveChecksPerTick)];
     for (const r of rows) {
       try { await processIntent(r); }
       catch (e) {

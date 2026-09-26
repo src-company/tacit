@@ -124,7 +124,10 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
     estimate: (functionName, args) => pub.estimateContractGas({ ...target(functionName), args, account }),
 
     // Private endpoints first; the read RPC last when public sends are allowed. Returns the tx hash.
+    // Re-simulated inside the queue, right before signing, so state that moved since the caller's estimate
+    // (another relay spending the same note, a new root) fails here instead of on chain.
     send: (functionName, args, { gas }) => serial(async () => {
+      await pub.estimateContractGas({ ...target(functionName), args, account });
       let lastErr;
       for (const url of sendUrls) {
         try {
