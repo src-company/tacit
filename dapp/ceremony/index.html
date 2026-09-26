@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Trusted setup: Secret Sats EVM pool</title>
-<meta name="description" content="Help secure the Secret Sats EVM pool: mix your own randomness into its proving key. A few minutes in your browser, no wallet needed, and you can contribute more than once.">
+<meta name="description" content="Help secure the Secret Sats EVM pool, private ETH and EVM assets proved on your own device: mix your randomness into its proving key. A few minutes in your browser, no wallet needed, and you can contribute more than once.">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="alternate icon" href="/favicon.ico">
 <link rel="canonical" href="https://tacit.finance/ceremony">
@@ -98,7 +98,7 @@ footer { font: 12px var(--mono); color: var(--dim); margin-top: 28px; }
   </div>
 
   <h1>Trusted setup<span>.</span></h1>
-  <p class="lead">The Secret Sats EVM pool lets anyone hold and send ETH privately, with every spend proved on their own device. Its proving key comes from one public ceremony: each contribution mixes in fresh randomness, and the key is sound as long as a single contributor kept theirs secret.</p>
+  <p class="lead">The EVM side of Secret Sats: the same private notes and the same address, for ETH and other EVM assets on Ethereum, Base and Robinhood Chain, with every transaction proved on your own device. Its proving key comes from one public ceremony: each contribution mixes in fresh randomness, and the key is sound as long as a single contributor kept theirs secret.</p>
 
   <div class="card" aria-live="polite">
     <div class="big"><span class="n" id="n">·</span><span class="l" id="nlabel">contributions</span></div>
@@ -112,7 +112,7 @@ footer { font: 12px var(--mono); color: var(--dim); margin-top: 28px; }
   <section>
     <h2>How it works</h2>
     <ol>
-      <li>Your browser downloads the current key, the circuit and the setup file, about 125 MB, and checks every earlier contribution.</li>
+      <li>Your browser fetches the circuit and setup file while you wait in line, then the current key, about 125 MB in all, and checks every earlier contribution.</li>
       <li>It mixes in randomness that never leaves your browser, then uploads the new key. A wallet's public key, or one kept in your browser, is recorded with it.</li>
       <li>When the ceremony closes, a Bitcoin block hash is mixed in as a public beacon. Anyone can then verify the whole transcript, and the pool's contracts deploy at addresses already published.</li>
     </ol>
@@ -124,9 +124,9 @@ footer { font: 12px var(--mono); color: var(--dim); margin-top: 28px; }
       <dt>The confidential pool</dt>
       <dd>Tacit's confidential DeFi zone: one shielded note across Bitcoin and Ethereum for private swaps, lending, liquidity and the bridge, all settled by one general-purpose prover in shared batches.</dd>
       <dt>Special-purpose pools</dt>
-      <dd>A pool that does one thing uses a small fixed circuit, so users prove their own spends in seconds and no prover ever sees an amount. <a href="/sats">Secret Sats</a> does private payments on Bitcoin; this pool does private ETH on Ethereum, Base and Robinhood Chain.</dd>
+      <dd>A pool that does one thing uses a small fixed circuit, so users prove their own spends in seconds and no prover ever sees an amount. <a href="/sats">Secret Sats</a> does private payments in sats on Bitcoin. This pool mirrors it in wei: one frozen circuit (two notes in, two out, 44,414 constraints) serves ETH and other EVM assets on Ethereum, Base and Robinhood Chain, under the same keys and the same address.</dd>
       <dt>Together</dt>
-      <dd>Value moves between them. A confidential-pool note can move into this pool and back, and deposits can come from any wallet, token or chain the pool is on.</dd>
+      <dd>They extend Tacit V1 rather than replace it. A confidential-pool note can move into this pool and back, and a standing private address takes deposits from any wallet or exchange on a chain the pool is on.</dd>
     </dl>
   </section>
 
@@ -134,6 +134,7 @@ footer { font: 12px var(--mono); color: var(--dim); margin-top: 28px; }
     <a href="/?evmpool=ceremony">Contribute</a>
     <a href="/sats">Secret Sats</a>
     <a href="/secret-sats">Lite paper</a>
+    <a href="/tacit-v1.pdf">Tacit V1</a>
     <a href="/">Tacit</a>
     <a href="https://github.com/z0r0z/tacit/blob/main/docs/EVM-POOL.md">Integration guide</a>
   </nav>
