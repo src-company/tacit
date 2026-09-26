@@ -45159,6 +45159,11 @@ function openEvmPoolCeremonyDrawer() {
   if (!_evmCerConfigured()) return;
   const drawer = document.getElementById('evm-cer-drawer');
   if (!drawer) return;
+  const welcome = document.getElementById('welcome-modal');
+  if (welcome && welcome.style.display !== 'none') {
+    welcome.style.display = 'none';
+    globalThis.__tacitWelcomeDeferred = () => { welcome.style.display = 'flex'; };
+  }
   drawer.style.display = 'flex';
   _evmCerMiniChip(false);
   const pubHint = document.getElementById('evm-cer-pubkey-hint');
@@ -45175,6 +45180,8 @@ function openEvmPoolCeremonyDrawer() {
 function closeEvmPoolCeremonyDrawer() {
   const drawer = document.getElementById('evm-cer-drawer');
   if (drawer) drawer.style.display = 'none';
+  const reveal = globalThis.__tacitWelcomeDeferred;
+  if (reveal) { globalThis.__tacitWelcomeDeferred = null; reveal(); }
   if (_evmCer.inFlight) _evmCerMiniChip(true);
   _evmCerPaint();
 }
@@ -92273,7 +92280,10 @@ function _showWelcomeModal() {
     if (cBtn) cBtn.onclick = () => close('crossnet');
     if (browseBtn) browseBtn.onclick = () => close('browse');
     if (iLink) iLink.onclick = (e) => { e.preventDefault(); close('import'); };
-    modal.style.display = 'flex';
+    // A visitor who arrived at the ceremony drawer finishes that first; the welcome picker follows on close.
+    const cerDrawer = document.getElementById('evm-cer-drawer');
+    if (cerDrawer && cerDrawer.style.display !== 'none') globalThis.__tacitWelcomeDeferred = () => { modal.style.display = 'flex'; };
+    else modal.style.display = 'flex';
   });
   // Return the pending promise so the caller awaits the user's choice. Without
   // this the first call (when nothing is in-flight yet) falls off the end and
