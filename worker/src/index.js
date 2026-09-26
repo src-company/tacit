@@ -8186,7 +8186,7 @@ async function handleCeremonyState(env, circuitHash, cors) {
   const queue = await _listCeremonyQueue(env, circuitHash).catch(() => []);
   const head = queue[0] || null;
   const headStartedAt = head ? Number(head.head_started_at) || Number(head.joined_at) : 0;
-  const headExpiresAt = headStartedAt ? headStartedAt + CEREMONY_MAX_HEAD_MS : 0;
+  const headExpiresAt = headStartedAt ? headStartedAt + _ceremonyMaxHeadMs(circuitHash) : 0;
   const reservation = head ? {
     contributor_name: head.name || 'anonymous',
     started_at: Math.floor(head.joined_at / 1000),
@@ -8219,6 +8219,14 @@ async function handleCeremonyState(env, circuitHash, cors) {
 // slack; lp_add and lp_remove finish well inside the same envelope so
 // one constant fits all three AMM circuits.
 const CEREMONY_MAX_HEAD_MS = 10 * 60 * 1000;
+// Open ceremonies download and verify a larger chain in the browser, which a phone or slow link can stretch
+// past ten minutes, so a head that keeps checking in gets longer. A head that stops checking in (the dapp
+// keeps alive every 4 min) is evicted after CEREMONY_HEAD_IDLE_MS regardless.
+const CEREMONY_OPEN_MAX_HEAD_MS = 30 * 60 * 1000;
+const CEREMONY_HEAD_IDLE_MS = 9 * 60 * 1000;
+function _ceremonyMaxHeadMs(circuitHash) {
+  return CEREMONY_OPEN_HASHES.has(circuitHash) ? CEREMONY_OPEN_MAX_HEAD_MS : CEREMONY_MAX_HEAD_MS;
+}
 async function _listCeremonyQueue(env, circuitHash) {
   const prefix = ceremonyQueuePrefix(circuitHash);
   const list = await env.REGISTRY_KV.list({ prefix });
@@ -8236,12 +8244,9 @@ async function _listCeremonyQueue(env, circuitHash) {
     return String(a.token).localeCompare(String(b.token));
   });
 }
-// Evict the head when it has held position 0 longer than CEREMONY_MAX_HEAD_MS.
-// Mutates the queue array so callers see the new head on this request.
-// The 15-min KV TTL still backstops walked-away heads that never poll
-// again; this deadline backstops heads that keep polling but never
-// upload — the indefinite-poll DoS that the older "no-op evict" left
-// open.
+// Evict the head when it has held position 0 longer than its ceremony's limit, or stopped checking in for
+// CEREMONY_HEAD_IDLE_MS. Mutates the queue array so callers see the new head on this request. The limit
+// backstops heads that keep polling but never upload; the idle check frees the slot of a closed tab early.
 async function _evictStaleQueueHeads(env, circuitHash, queue) {
   let evicted = 0;
   while (queue.length) {
@@ -8253,7 +8258,8 @@ async function _evictStaleQueueHeads(env, circuitHash, queue) {
     // who waited in line.
     const startedAt = Number(head.head_started_at) || 0;
     if (!startedAt) break;
-    if (Date.now() - startedAt <= CEREMONY_MAX_HEAD_MS) break;
+    const idleMs = Date.now() - (Number(head.last_poll_at) || startedAt);
+    if (Date.now() - startedAt <= _ceremonyMaxHeadMs(circuitHash) && idleMs <= CEREMONY_HEAD_IDLE_MS) break;
     await env.REGISTRY_KV.delete(head.key);
     queue.shift();
     evicted += 1;
@@ -8335,10 +8341,10 @@ async function handleCeremonyReserve(req, env, circuitHash, cors) {
   // join branch (which would re-stamp head_started_at). The deleted
   // KV row is NOT re-PUT — the contributor must rejoin from the back
   // of the queue, paying a fresh-join slot of their per-IP cap.
-  if (myEntry && myEntry.head_started_at && NOW - Number(myEntry.head_started_at) > CEREMONY_MAX_HEAD_MS) {
+  if (myEntry && myEntry.head_started_at && NOW - Number(myEntry.head_started_at) > _ceremonyMaxHeadMs(circuitHash)) {
     await env.REGISTRY_KV.delete(myKey);
     return jsonResponse({
-      error: `head slot expired (must call /contribute within ${Math.round(CEREMONY_MAX_HEAD_MS / 60000)} min of reaching position 0)`,
+      error: `head slot expired (must call /contribute within ${Math.round(_ceremonyMaxHeadMs(circuitHash) / 60000)} min of reaching position 0)`,
       evicted: true,
     }, 409, cors);
   }
@@ -8420,7 +8426,7 @@ async function handleCeremonyReserve(req, env, circuitHash, cors) {
   const total = queue.length;
   const head = queue[0];
   const headStartedAt = head ? Number(head.head_started_at) || Number(head.joined_at) : 0;
-  const headExpiresAt = headStartedAt ? headStartedAt + CEREMONY_MAX_HEAD_MS : 0;
+  const headExpiresAt = headStartedAt ? headStartedAt + _ceremonyMaxHeadMs(circuitHash) : 0;
   const active = (head && position > 0) ? {
     contributor_name: head.name || 'anonymous',
     started_at: Math.floor(head.joined_at / 1000),

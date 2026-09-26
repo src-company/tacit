@@ -430,6 +430,18 @@ await test('open ceremony: a pubkey that already contributed may contribute agai
   return !/already contributed/.test(err);
 });
 
+await test('open ceremony: a live head keeps its slot past ten minutes; an idle head is evicted', async () => {
+  const env = makeEnv();
+  const init = await (await postInit(env, { token: env.CEREMONY_INIT_TOKEN, circuit_hash: OPEN_HASH })).json();
+  const t = Date.now();
+  await env.REGISTRY_KV.put(`ceremony-q:${OPEN_HASH}:live`, JSON.stringify({ token: 'live', pubkey: PUB_A, joined_at: t - 15 * 60e3, head_started_at: t - 15 * 60e3, last_poll_at: t - 60e3 }));
+  const live = await postContribute(env, { hash: OPEN_HASH, prev_cid: init.state.head_cid, queue_token: 'live', pubkey: PUB_A });
+  const liveErr = (await live.json()).error || '';
+  await env.REGISTRY_KV.put(`ceremony-q:${OPEN_HASH}:live`, JSON.stringify({ token: 'live', pubkey: PUB_A, joined_at: t - 15 * 60e3, head_started_at: t - 15 * 60e3, last_poll_at: t - 10 * 60e3 }));
+  const idle = await postContribute(env, { hash: OPEN_HASH, prev_cid: init.state.head_cid, queue_token: 'live', pubkey: PUB_A });
+  return !/head of the contribution queue/.test(liveErr) && idle.status === 403;
+});
+
 await test('gated ceremony: still requires the TAC eligibility proof', async () => {
   const env = makeEnv();
   const init = await (await postInit(env, { token: env.CEREMONY_INIT_TOKEN })).json();
