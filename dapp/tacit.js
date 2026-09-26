@@ -43351,7 +43351,7 @@ async function _ammClaimReservationWithQueue(circuitHash, contributorName, contr
   }
   const url = `${WORKER_BASE}/ceremony/${circuitHash}/reserve`;
   const start = Date.now();
-  const MAX_WAIT_MS = 60 * 60_000;
+  const MAX_WAIT_MS = 3 * 60 * 60_000; // a busy open ceremony can queue for well over an hour; each poll keeps the slot
   const _basePayload = {
     contributor_name: String(contributorName || 'anonymous').slice(0, 64),
     contributor_pubkey: contributorPubkeyHex.toLowerCase(),
