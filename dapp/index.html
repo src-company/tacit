@@ -11043,7 +11043,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   <div class="welcome-card">
     <div class="welcome-title" id="welcome-title">welcome to <span class="accent">tacit</span></div>
     <div class="welcome-lede">
-      tacit is a private Bitcoin wallet and market for Bitcoin-native confidential assets. You can browse assets and order books without a wallet; to receive, send, trade, or create assets, set up a signing identity below. The safest quick start is a passkey when your browser supports it.
+      tacit is confidential money on Bitcoin that extends to Ethereum — one shielded note you can send, trade, borrow against, and bridge. Browse assets and order books without a wallet; set up a signing identity below only when you're ready to receive, send, trade, or create. Passkey is the safest quick start when your browser supports it.
     </div>
     <!-- Contextual prepend for visitors arriving via ?ceremony=… share links.
          Hidden by default; revealed in JS when the URL param is canonical.
@@ -11062,11 +11062,11 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
            matches passkey's same-priv-both-networks behavior. -->
       <button id="welcome-crossnet" class="welcome-option welcome-option--primary" type="button" style="display:none;">
         <span class="welcome-option-title" id="welcome-crossnet-title">use your existing wallet</span>
-        <span class="welcome-option-meta" id="welcome-crossnet-meta">unlock your other-network wallet and use the same signing key on this network too. matches the way passkey already works across networks; one passphrase, one identity.</span>
+        <span class="welcome-option-meta" id="welcome-crossnet-meta">unlock your other-network wallet and use the same signing key here too — the same idea as how passkey already spans networks.</span>
       </button>
       <button id="welcome-passkey" class="welcome-option welcome-option--primary" type="button">
         <span class="welcome-option-title">use a passkey<span class="welcome-option-rec" id="welcome-passkey-rec">(recommended)</span></span>
-        <span class="welcome-option-meta">Touch ID / Windows Hello / hardware key. Your passkey recovers the same tacit signing identity on this device, with no passphrase to retype.</span>
+        <span class="welcome-option-meta">Touch ID / Windows Hello / hardware key. Recovers the same tacit identity on this device, with no passphrase to retype.</span>
       </button>
       <div class="welcome-divider" style="margin-top:14px;">or use a passphrase</div>
       <button id="welcome-local" class="welcome-option" type="button">
@@ -11081,17 +11081,17 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
         <span class="welcome-option-title">connect ethereum wallet</span>
         <span class="welcome-option-meta">sign one message in MetaMask / Rainbow / Rabby to derive a tacit identity. no passphrase — your ETH wallet is the backup. same account = same tacit wallet on any device.</span>
       </button>
+      <button id="welcome-btc-id" class="welcome-option" type="button">
+        <span class="welcome-option-title">connect a bitcoin wallet</span>
+        <span class="welcome-option-meta">sign one message in Xverse / Leather / UniSat to derive a recoverable tacit identity — reconnect the same wallet on any device to restore it, no backup needed. Non-deterministic wallets fall back to a local key you fund instead.</span>
+      </button>
       <button id="welcome-xverse" class="welcome-option" type="button">
-        <span class="welcome-option-title">connect xverse / leather</span>
-        <span class="welcome-option-meta">tacit creates its own signing key bound to your xverse / leather address. your existing wallet stays separate — it's used for one-click funding only.</span>
+        <span class="welcome-option-title">fund from xverse / leather</span>
+        <span class="welcome-option-meta">tacit generates its own signing key here; xverse / leather only funds it with sats — your existing wallet is not the backup.</span>
       </button>
       <button id="welcome-unisat" class="welcome-option" type="button">
-        <span class="welcome-option-title">connect unisat</span>
-        <span class="welcome-option-meta">same as above, bound to your unisat address.</span>
-      </button>
-      <button id="welcome-btc-id" class="welcome-option" type="button">
-        <span class="welcome-option-title">bitcoin wallet as identity</span>
-        <span class="welcome-option-meta">sign one message in Xverse / Leather / UniSat to derive a recoverable tacit identity — reconnect the same wallet on any device to restore it, no backup file or passphrase. If your wallet signs non-deterministically, this falls back to a funding wallet with a local key.</span>
+        <span class="welcome-option-title">fund from unisat</span>
+        <span class="welcome-option-meta">same as above, funded from your unisat wallet.</span>
       </button>
       <div class="welcome-divider">not ready yet?</div>
       <button id="welcome-browse" class="welcome-option" type="button">
@@ -11195,45 +11195,35 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
     <div class="faq-body">
       <div class="faq-q">What is tacit?</div>
       <div class="faq-a">
-        Confidential money on Bitcoin that extends to Ethereum. Every transfer hides amounts by default, and <strong>shielded addresses</strong> hide who receives. The same note moves into the <strong>confidential pool</strong> on Ethereum, where it transfers, swaps on an AMM, backs a <strong>cUSD</strong> loan, and bridges back. <strong>cBTC / tacBTC</strong> is minted 1:1 from SP1-reflected Bitcoin locks. Everything settles in ordinary on-chain transactions, and your private key plus the chain rebuild your balance on any device.
+        Confidential money on Bitcoin that extends to Ethereum. Every transfer hides amounts by default, and <strong>shielded addresses</strong> hide who receives. The same note moves into the <strong>confidential pool</strong> on Ethereum, where it transfers, swaps on an AMM, backs a <strong>cUSD</strong> loan, and bridges back. <strong>cBTC / tacBTC</strong> is minted 1:1 from SP1-reflected Bitcoin locks. Your private key plus the chain rebuild your balance on any device.
       </div>
 
       <div class="faq-q">How is it different from other Bitcoin token protocols?</div>
       <div class="faq-a">
-        Tacit uses the same validation model as other indexer-based Bitcoin protocols: Bitcoin orders the data and indexers apply the rules. On top it hides amounts with Pedersen commitments and range proofs, keeps everything needed for validation on-chain (no off-chain proof files), and has no federation or sidechain. Bitcoin and Ethereum state cross by SP1 zero-knowledge reflection; no multisig or attestor set signs a bridge message.
+        Same validation model as other indexer-based Bitcoin protocols: Bitcoin orders the data, indexers apply the rules. On top, it hides amounts with Pedersen commitments and range proofs, keeps everything needed for validation on-chain, and has no federation or sidechain. Bitcoin and Ethereum state cross by SP1 zero-knowledge reflection — no multisig or attestor set signs a bridge message.
       </div>
 
       <div class="faq-q">What else can I do besides send / receive?</div>
       <div class="faq-a">
-        <strong>Trade on the order book</strong> — pre-signed sales, batched takes and atomic intents, each settling asset-for-sats atomically on Bitcoin through <code>T_AXFER</code>.
-        <strong>AMM</strong> — add liquidity and swap on Bitcoin (<code>T_LP_ADD</code> / <code>T_SWAP_VAR</code> / <code>T_SWAP_ROUTE</code>, SPEC §3.5) or in the confidential pool. LP shares are ordinary tacit assets and can be bonded into farms.
-        <strong>cUSD and cBTC</strong> — mint cBTC 1:1 from a reflected Bitcoin lock, backed by a slashable wstETH escrow (1.5× today), and borrow cUSD against it.
-        <strong>Fair-launch mints</strong> (<code>T_PETCH</code> / <code>T_PMINT</code>) — permissionless, cap-gated minting with public supply.
+        <strong>Trade on the order book</strong> — pre-signed sales, batched takes and atomic intents that settle asset-for-sats atomically, in one Bitcoin transaction.
+        <strong>Swap on an AMM</strong> — add liquidity and trade on Bitcoin or in the confidential pool. LP shares are ordinary tacit assets and can be bonded into farms.
+        <strong>Borrow against cBTC</strong> — mint cBTC 1:1 from a reflected Bitcoin lock, backed by a slashable wstETH escrow (1.5× today), and borrow cUSD against it.
+        <strong>Launch fair-launch mints</strong> — permissionless, cap-gated minting with public supply.
       </div>
 
-      <div class="faq-q">How does the order book work for a trader?</div>
+      <div class="faq-q">How does trading work, and can it be front-run?</div>
       <div class="faq-a">
-        Enter how much to buy or sell at a limit price. The dapp matches across the available offers for you. Whatever cannot fill at your limit can be posted as a resting order. Markets with no trades yet open the advanced bid / listing form so you can set the first price.
-      </div>
-
-      <div class="faq-q">Is there front-running?</div>
-      <div class="faq-a">
-        Order-book fills are pre-signed against specific outpoints and settle asset and sats in one Bitcoin transaction, so a fill completes in full or not at all at the signed terms. An atomic intent can be claimed by another buyer first. On the AMM, <code>T_SWAP_BATCH</code> clears a batch at one uniform price, and <code>T_SWAP_VAR</code> is recomputed by the indexer against the curve with strict equality. Pool swaps carry a minimum output and a signed deadline.
+        Enter how much to buy or sell at a limit price; the dapp matches you across available offers, and whatever doesn't fill posts as a resting order. Fills are pre-signed against specific outpoints and settle asset-for-sats in one Bitcoin transaction, so a fill completes in full or not at all at the signed terms — though an atomic intent can still be claimed by another buyer first. On the AMM, batch trades clear at one uniform price and per-trade swaps are recomputed against the curve with strict equality; pool swaps carry a minimum output and a signed deadline.
       </div>
 
       <div class="faq-q">How do I see my tacit balances?</div>
       <div class="faq-a">
-        Here in the dapp, or with any indexer that follows the spec. The dapp reads Bitcoin through public Esplora endpoints with fallbacks (or your own, under Manage wallet → Advanced: chain indexer), walks each coin's ancestry, and decrypts amounts from chain data. External wallets such as Xverse, UniSat or Leather can fund the tacit wallet; the tacit key stays in this browser, encrypted and separate from their seeds.
-      </div>
-
-      <div class="faq-q">Am I locked into your platform?</div>
-      <div class="faq-a">
-        No. The spec is open, any indexer reaches the same verdict from the chain, and anyone can host the dapp. Asset metadata is pinned to IPFS by content hash, so any gateway serves it. Anyone can prove a pool batch locally and call <code>settle</code> without a relayer.
+        Here in the dapp, or with any indexer that follows the spec. It reads Bitcoin through public Esplora endpoints (or your own, under Manage wallet → Advanced: chain indexer), walks each coin's ancestry, and decrypts amounts from chain data. External wallets like Xverse, UniSat or Leather can fund the tacit wallet; the tacit key stays in this browser, separate from their seeds.
       </div>
 
       <div class="faq-q">Can I recover from just my private key?</div>
       <div class="faq-a">
-        Yes. The dapp rebuilds Bitcoin balances by re-deriving blindings from your key and the chain, and pool notes by decrypting their on-chain memos. No share-link, sync server or counterparty is needed. If a marketplace commit confirms but its reveal fails, the stranded output is spendable back to your wallet, and Holdings shows a Recover button. <a href="https://github.com/z0r0z/tacit/blob/main/docs/RECOVERY.md" target="_blank" rel="noopener noreferrer">RECOVERY.md</a> lists the exact reads.
+        Yes. The dapp rebuilds Bitcoin balances by re-deriving blindings from your key and the chain, and pool notes by decrypting their on-chain memos — no share-link, sync server or counterparty needed. If a marketplace commit confirms but its reveal fails, the stranded output is spendable back to your wallet, and Holdings shows a Recover button. <a href="https://github.com/z0r0z/tacit/blob/main/docs/RECOVERY.md" target="_blank" rel="noopener noreferrer">RECOVERY.md</a> lists the exact reads.
       </div>
 
       <div class="faq-q">How much privacy do I get?</div>
@@ -11243,28 +11233,27 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
           <li><strong>Shielded address</strong> — <em>opt-in per receipt.</em> Paying a <code>tcs1…</code> address sends to a one-time key derived by ECDH, with no visible link to the recipient's published key.</li>
           <li><strong>Confidential pool</strong> — a pool spend does not reveal which note it consumes; only deposits and withdrawals at the pool boundary are public.</li>
         </ul>
-        Asset ids on Bitcoin, the Bitcoin transaction graph, AMM reserves and burn amounts stay public, so a pool swap's size shows in the reserve change. Whoever proves a pool batch sees its inputs; prove locally to keep them private.
+        Asset ids, the Bitcoin transaction graph, AMM reserves and burn amounts stay public — a pool swap's size shows in the reserve change. Whoever proves a pool batch sees its inputs; prove locally to keep them private.
       </div>
 
-      <div class="faq-q">How do I trust the announced supply when amounts are hidden?</div>
+      <div class="faq-q">Can I trade real BTC, and what backs cBTC?</div>
       <div class="faq-a">
-        By default the dapp pins the <code>(supply, blinding)</code> opening to IPFS with the asset's metadata, so anyone can check it against the on-chain commitment. An issuer can opt out. Discover shows a verified badge for attested assets.
-      </div>
-
-      <div class="faq-q">Can I trade BTC here?</div>
-      <div class="faq-a">
-        Yes. Every order-book trade pays in real bitcoin: asset and sats settle atomically in one Bitcoin transaction.
-        cBTC is for confidential BTC balances and AMM pairs. It is minted 1:1 against SP1-reflected Bitcoin locks, with no price feed in the peg; tacBTC is its ERC-20 form. A slashable wstETH escrow deters spending a lock; it does not back the peg.
+        Yes — every order-book trade pays in real bitcoin, settling asset and sats atomically in one transaction. cBTC is for confidential BTC balances and AMM pairs: minted 1:1 against SP1-reflected Bitcoin locks, with no price feed in the peg (tacBTC is its ERC-20 form). A slashable wstETH escrow deters spending the lock; it doesn't back the peg.
       </div>
 
       <div class="faq-q">What does a transfer cost?</div>
       <div class="faq-a">
-        A Bitcoin transfer is a commit/reveal pair whose size is mostly the range proof, so it costs more than a cleartext token transfer; the dapp shows the fee before you broadcast. Batching several order-book takes into one reveal shares that cost. Pool ops can be relayed gaslessly, paying a relay fee bound inside the proof.
+        A Bitcoin transfer is a commit/reveal pair whose size is mostly the range proof, so it costs more than a plain token transfer — the dapp shows the fee before you broadcast. Batching several order-book takes into one reveal shares that cost, and pool ops can be relayed gaslessly, with the relay fee bound inside the proof.
       </div>
 
-      <div class="faq-q">Is the API trust-bearing?</div>
+      <div class="faq-q">Do I need to trust tacit's app or hosting?</div>
       <div class="faq-a">
-        No. The hosted API is a cache and convenience layer (asset directory, image pinning, marketplace, relaying). It cannot make an invalid envelope or proof appear valid, because the dapp re-verifies range proofs, kernel signatures, mint signatures and openings itself, and the pool contract verifies every proof on-chain.
+        No. The spec is open, any indexer reaches the same verdict from the chain, and anyone can host the dapp. The hosted API is only a cache and convenience layer (asset directory, image pinning, marketplace, relaying) — it can't make an invalid envelope or proof appear valid, since the dapp re-verifies range proofs, kernel and mint signatures, and openings itself, and the pool contract verifies every proof on-chain. Asset metadata is pinned to IPFS by content hash, so any gateway serves it, and anyone can prove a pool batch locally and call <code>settle</code> without a relayer.
+      </div>
+
+      <div class="faq-q">How do I trust the announced supply when amounts are hidden?</div>
+      <div class="faq-a">
+        By default the dapp pins the <code>(supply, blinding)</code> opening to IPFS with the asset's metadata, so anyone can check it against the on-chain commitment. An issuer can opt out; Discover shows a verified badge for the ones that don't.
       </div>
 
       <div class="faq-q">License / source?</div>
