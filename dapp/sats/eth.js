@@ -4,6 +4,7 @@
 // Proofs run in a worker on this device and a relayer submits them, so no gas and no funded address are needed.
 // The proving key is the ceremony's: /evm-pool/pin.json names it and its files by SHA-256; until it is published
 // the panel says the pool opens when the ceremony closes.
+// Link: /sats#eth=<chain id>[&do=send|withdraw] opens this panel on that chain, at that form.
 
 import { makeEvmPoolZk } from '/evm-pool-zk.js?cb=e6515ded';
 import { evmPoolKeys, makeEvmPoolWallet, jsonRpc } from '/evm-pool-wallet.js?cb=2f896f62';
@@ -119,7 +120,11 @@ function prover(onProgress) {
 export async function mount(root, ctx) {
   const status = el('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
   const say = (msg, kind = '') => { status.replaceChildren(msg ? el('span', { class: kind === 'error' ? 'err' : '' }, msg) : ''); };
-  let chain = CHAINS.find((c) => String(c.chainId) === store.get(CHAIN_PREF)) || CHAINS[1] || CHAINS[0];
+  const link = new URLSearchParams(location.hash.replace(/^#/, ''));
+  const linked = CHAINS.find((c) => String(c.chainId) === link.get('eth'));
+  if (linked) store.set(CHAIN_PREF, String(linked.chainId));
+  const focus = { send: 'eth-to', withdraw: 'eth-wto' }[link.get('do')] || null;
+  let chain = linked || CHAINS.find((c) => String(c.chainId) === store.get(CHAIN_PREF)) || CHAINS[1] || CHAINS[0];
   let W = null;
   let live = null;
   let timer = null;
@@ -240,6 +245,7 @@ export async function mount(root, ctx) {
       refresh();
     });
     if (relayer) w.watchReceive().catch(() => {});
+    if (focus) root.querySelector('#' + focus)?.focus();
     refresh();
   }
 

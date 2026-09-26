@@ -1,10 +1,10 @@
 // Secret Sats page. The landing copy is static; everything that touches a key
 // or the chain comes from ../tacit.js, imported only once the user connects.
 
-const TACIT_URL = '/tacit.js?cb=18245ab6';
+const TACIT_URL = '/tacit.js?cb=809fa6b2';
 const SECRET_URL = '/sats/secret.js?cb=2e13e4ed';
 const MIX_URL = '/sats/mix.js?cb=52f7e8da';
-const ETH_URL = '/sats/eth.js?cb=69a58b5a';
+const ETH_URL = '/sats/eth.js?cb=a7d745fe';
 const POOL_STATUS = 'https://tacit-btc-pool.onrender.com/btc-pool/status';
 
 // tacit.js reads its network from this shared key once, at import. This page
@@ -120,10 +120,13 @@ function parseHash() {
   const sp = (h.get('sp') || '').toLowerCase();
   const st = (h.get('st') || '').toLowerCase();
   const net = h.get('net');
+  const eth = h.get('eth');
   return {
     sp: /^[0-9a-f]{64}$/.test(sp) ? sp : null,
     st: /^[0-9a-f]{64}$/.test(st) ? st : null,
     net: net === 'mainnet' || net === 'signet' ? net : null,
+    // #eth=<chain id> opens private ETH on that chain (it runs on mainnet).
+    eth: ['1', '8453', '4663'].includes(eth) ? eth : null,
   };
 }
 
@@ -1270,7 +1273,8 @@ function wireTabs() {
       selectTab(all[(j + all.length) % all.length].id.slice(4), { focus: true, remember: true });
     };
   });
-  selectTab(parseHash().sp || parseHash().st ? 'receive' : store.get(TAB_PREF) || (netPref() === 'signet' ? 'secret' : 'send'));
+  const h = parseHash();
+  selectTab(h.eth ? 'eth' : h.sp || h.st ? 'receive' : store.get(TAB_PREF) || (netPref() === 'signet' ? 'secret' : 'send'));
 }
 
 function refreshCreateLabel() {
@@ -1304,8 +1308,8 @@ function errorHook() {
 
 async function boot() {
   errorHook();
-  const { net } = parseHash();
-  if (net) store.set(NET_PREF, net);
+  const { net, eth } = parseHash();
+  if (net || eth) store.set(NET_PREF, net || 'mainnet');
   wire();
   wireTabs();
   renderNet();
