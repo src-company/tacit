@@ -54,7 +54,7 @@ export function createKeeper({
 }) {
   const backoff = (r, t, note) => {
     const checks = (r.checks || 0) + 1;
-    const cap = r.kind === 'receive' ? cfg.receiveMaxBackoffSecs : cfg.maxBackoffSecs;
+    const cap = r.kind !== 'receive' ? cfg.maxBackoffSecs : t > Number(r.deadline) ? cfg.receiveSlowSecs : cfg.receiveMaxBackoffSecs;
     const wait = Math.min(cfg.pollSecs * 2 ** Math.min(checks, 16), cap);
     store.update(r.box, { checks, next_check: t + wait, updated: t, ...(note !== undefined ? { note } : {}) });
   };
@@ -204,7 +204,6 @@ export function createKeeper({
       log(`receive ${r.box}: swept ${res.amount} (fee ${res.fee})`);
       return soon(r, t, { tx_hash: null, tx_sent_at: null, checks: 0, attempts: 0, note: 'swept', deadline: t + cfg.receiveWatchSecs });
     }
-    if (res.idle && t > Number(r.deadline)) return finish(r, t, 'expired');
     if (res.out === 'inflight') return soon(r, t);
     if (res.out === 'dry') return backoff(r, t, 'dry run');
     if (res.stale) return soon(r, t, { note: 'stale' });

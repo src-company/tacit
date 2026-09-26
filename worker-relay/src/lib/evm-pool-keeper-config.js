@@ -86,8 +86,11 @@ export function loadKeeperConfig(env = process.env) {
     minReceiveFeeBps: int(env, 'EVM_POOL_KEEPER_MIN_RECEIVE_FEE_BPS', 1),
     // An idle receive box is looked at least this often; re-posting it asks for a look now.
     receiveMaxBackoffSecs: int(env, 'EVM_POOL_KEEPER_RECEIVE_MAX_BACKOFF_SECS', 1800),
-    // A receive box is watched this long after its last registration or sweep; re-posting it renews the watch.
+    // A receive box is watched closely this long after its last registration or sweep (re-posting renews it), and
+    // after that checked at least every receiveSlowSecs. At capacity, the oldest lapsed box that was never swept
+    // makes room for a new one.
     receiveWatchSecs: int(env, 'EVM_POOL_KEEPER_RECEIVE_WATCH_SECS', 14 * 86400),
+    receiveSlowSecs: int(env, 'EVM_POOL_KEEPER_RECEIVE_SLOW_SECS', 86400),
     maxReceiveChecksPerTick: int(env, 'EVM_POOL_KEEPER_MAX_RECEIVE_CHECKS_PER_TICK', 100),
     // Public relaying of users' own transactions (withdrawals and transfers) at /evm-pool/keeper/relay.
     relay: str(env, 'EVM_POOL_KEEPER_RELAY', '1') !== '0',

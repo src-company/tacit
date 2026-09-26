@@ -239,7 +239,7 @@ export function createIntakeHandler({
         store.update(box, { status: 'pending', next_check: t, checks: 0, deadline: watchUntil, updated: t });
         return view(store.get(box));
       }
-      if (store.receiveCount() >= cfg.maxReceive) throw new IntakeError(503, 'the keeper is at capacity; try again later');
+      if (store.receiveCount() >= cfg.maxReceive && !store.evictLapsedReceive(t)) throw new IntakeError(503, 'the keeper is at capacity; try again later');
       store.addIntent({ box, kind, intent: parsed.intent, reward: 0n, token: chain.asset, deadline: watchUntil, now: t });
       log(`watching receive box ${box} (fee cap ${parsed.intent.feeBps} bps)`);
       return view(store.get(box));

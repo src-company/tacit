@@ -634,12 +634,25 @@ await test('a sweep raced by another transaction or another sweep is re-proven w
   assert.equal(await s2.chain.balanceOf(TOKEN, KEEPER), 300n, 'fee on what was left');
 });
 
-await test('an unfunded receive box stops being watched when its watch lapses', async () => {
-  const s = setup({ cfg: { receiveWatchSecs: 3000, receiveMaxBackoffSecs: 1000 } });
+await test('a receive box past its watch is still checked daily and swept when paid; at capacity a lapsed unfunded box makes room', async () => {
+  const s = setup({ cfg: { receiveWatchSecs: 3000, receiveMaxBackoffSecs: 1000, receiveSlowSecs: 50000 } });
   const box = await addReceive(s, 50);
-  for (let i = 0; i < 5; i++) { s.advance(1000); await s.keeper.tick(); }
-  assert.equal(s.store.get(box).status, 'expired');
-  assert.equal(s.store.receiveCount(), 0);
+  for (let i = 0; i < 16; i++) { s.advance(60000); await s.keeper.tick(); }
+  const r = s.store.get(box);
+  assert.equal(r.status, 'pending');
+  assert.ok(r.next_check - s.clock.t > 1000, 'lapsed boxes move to the slow check');
+  s.chain.fund(TOKEN, box, 100_000n);
+  s.advance(50000);
+  await s.keeper.tick();
+  assert.equal(s.chain.sent.length, 1, 'paid long after registration, still swept');
+  assert.ok(s.store.get(box).deadline > s.clock.t, 'a sweep renews the watch');
+
+  const idle = setup({ cfg: { receiveWatchSecs: 10 } });
+  const old = await addReceive(idle, 50);
+  idle.advance(100);
+  assert.equal(idle.store.evictLapsedReceive(idle.clock.t), true);
+  assert.equal(idle.store.get(old), undefined);
+  assert.equal(idle.store.evictLapsedReceive(idle.clock.t), false);
 });
 
 await test('receive boxes back off to their own cap and do not count against deposit capacity', async () => {

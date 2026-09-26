@@ -38,6 +38,7 @@ export function openKeeperStore(dbPath) {
     dueReceive: db.prepare("SELECT * FROM intents WHERE status = 'pending' AND kind = 'receive' AND next_check <= ? ORDER BY next_check LIMIT ?"),
     pending: db.prepare("SELECT COUNT(*) AS n FROM intents WHERE status = 'pending' AND kind != 'receive'"),
     receiving: db.prepare("SELECT COUNT(*) AS n FROM intents WHERE status = 'pending' AND kind = 'receive'"),
+    lapsed: db.prepare("SELECT box FROM intents WHERE status = 'pending' AND kind = 'receive' AND deadline < ? AND COALESCE(note, '') != 'swept' ORDER BY deadline LIMIT 1"),
     leafCount: db.prepare('SELECT COUNT(*) AS n FROM leaves'),
     leaves: db.prepare('SELECT leaf FROM leaves ORDER BY idx'),
     insLeaf: db.prepare('INSERT INTO leaves (idx, leaf, block) VALUES (?, ?, ?)'),
@@ -67,6 +68,13 @@ export function openKeeperStore(dbPath) {
     // Boxes awaiting completion; receive boxes, which are watched indefinitely, are counted apart.
     pendingCount: () => st.pending.get().n,
     receiveCount: () => st.receiving.get().n,
+    // Drops the receive box whose watch lapsed longest ago and that was never swept; false if there is none.
+    evictLapsedReceive(now) {
+      const r = st.lapsed.get(now);
+      if (!r) return false;
+      db.prepare('DELETE FROM intents WHERE box = ?').run(r.box);
+      return true;
+    },
 
     // Only the listed columns can change; a terminal status also drops the hint.
     update(box, fields) {
