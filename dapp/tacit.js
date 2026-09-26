@@ -5135,13 +5135,20 @@ const ethNamesBridge = {
 // `opts`). This is a plain public-ERC20/native-ETH trade against zRouter/Precision/the
 // Tacit AMM's public pool — not a Tacit identity derivation, so it just needs a connected
 // EOA and a mainnet send, same shape as ethNamesBridge above (chain-switch included).
+// Its own connected-address slot — NOT ethWallet.state, which only ever holds the derived
+// TACIT IDENTITY (set once the user signs the derivation message and unlocks a tacit1 wallet,
+// a separate flow this bridge doesn't drive). ethWallet.connect() itself never touches
+// ethWallet.state, so reading it here would silently see null forever, even after a real
+// wallet approves the connection — the tile would look like it hangs (the button just resets
+// back to "Connect wallet" with no error) since every subsequent balance/quote/send call
+// treats the wallet as never having connected at all.
+let _evmTradeLaneAddr = null;
 const evmTradeLaneWallet = {
-  address() {
-    return ethWallet.state?.address ? '0x' + String(ethWallet.state.address).replace(/^0x/, '') : null;
-  },
+  address() { return _evmTradeLaneAddr; },
   async connect() {
     const { address } = await ethWallet.connect();
-    return '0x' + String(address).replace(/^0x/, '');
+    _evmTradeLaneAddr = '0x' + String(address).replace(/^0x/, '');
+    return _evmTradeLaneAddr;
   },
   async sendTx({ from, to, data, value }) {
     const provider = _ethProvider();
@@ -93235,10 +93242,14 @@ async function init() {
   // consumers so those get first crack at their hashes (both self-clear
   // when they match, leaving the URL clean for a tab-deeplink to follow).
   _consumeTabUrlHash();
-  // The early consume above can land before the tab's click wiring exists, which leaves a cold #tab=govern
-  // showing an empty panel (the late consume is then deduped). Render it now that init is done.
+  // The early consume above can land before the tab's click wiring exists, which leaves a cold
+  // #tab=govern or #tab=points showing an empty panel (the late consume is then deduped). Render
+  // it now that init is done.
   if (/^#tab=govern\b/.test(location.hash || '')) {
     try { renderGovernTab(wallet, governanceApi()); } catch (e) { console.error('govern tab', e); }
+  }
+  if (/^#tab=points\b/.test(location.hash || '')) {
+    try { renderPointsTab(wallet, { eth: evmTradeLaneWallet }); } catch (e) { console.error('points tab', e); }
   }
   // Auto-fulfil bootstrap. If the user enabled the daemon in a prior
   // session, restart it now that the wallet is initialized. The daemon
