@@ -42094,6 +42094,7 @@ function ammCeremonyMarkContributed() {
 // are only inserted after a successful CID-match validation, so a malicious
 // gateway can't poison the cache with substituted content.
 const _ceremonyBlobCache = new Map();
+const _ceremonyBlobInflight = new Map();
 
 function _ceremonyLogToProgress(line) {
   const el = document.getElementById('ceremony-progress');
@@ -43003,6 +43004,19 @@ async function _ceremonyFetchBlobCached(cid, label, expectedSha256Hex, onBytes) 
     return cached;
   }
   if (!expectedSha256Hex) throw new Error(`internal: no expected sha256 for ${label}`);
+  const pending = _ceremonyBlobInflight.get(cid);
+  if (pending) {
+    _ceremonyLogToProgress(`Finishing the ${label} download already under way…`);
+    const b = await pending;
+    if (onBytes) { try { onBytes(b.length, b.length); } catch {} }
+    return b;
+  }
+  const run = _ceremonyFetchBlobUncached(cid, label, expectedSha256Hex, onBytes);
+  _ceremonyBlobInflight.set(cid, run);
+  try { return await run; } finally { _ceremonyBlobInflight.delete(cid); }
+}
+
+async function _ceremonyFetchBlobUncached(cid, label, expectedSha256Hex, onBytes) {
   const expected = expectedSha256Hex.toLowerCase();
   _ceremonyLogToProgress(`Fetching ${label} (${cid})…`);
   const bytes = await _ceremonyFetchIpfsWithFailover(
@@ -43416,6 +43430,16 @@ async function ceremonyContributeAmm({
   // CAS check at upload time. On 409, poll until the slot frees (or
   // the holder's TTL expires), then re-claim. ceremonyContributeAmm
   // owns the lifetime — release on success/error in the finally.
+  // The circuit and setup file never change during a ceremony: fetch them while waiting in line, so the turn
+  // itself only downloads the current key.
+  if (/^[0-9a-f]{64}$/i.test(String(expectedPtau || '')) && state.r1cs_cid && state.ptau_cid) {
+    const got = { r1cs: [0, 0], ptau: [0, 0] };
+    const report = () => _emit('prefetch-bytes', { done: got.r1cs[0] + got.ptau[0], total: got.r1cs[1] + got.ptau[1] });
+    Promise.all([
+      _ceremonyFetchBlobCached(state.r1cs_cid, 'r1cs', String(circuitHash).toLowerCase(), (d, t) => { got.r1cs = [d, t]; report(); }),
+      _ceremonyFetchBlobCached(state.ptau_cid, 'ptau', String(expectedPtau).toLowerCase(), (d, t) => { got.ptau = [d, t]; report(); }),
+    ]).then(() => _emit('prefetch-done')).catch(() => {});
+  }
   await _ammClaimReservationWithQueue(circuitHash, contributorName, contributorPubkeyHex, (phase, info) => _emit(phase, info));
   // The chain may have advanced while we waited in the queue; mix against the head as of our turn.
   {
@@ -44894,8 +44918,12 @@ async function _evmCerRefreshState(force = false) {
   if (_evmCer.inflight) return _evmCer.inflight;
   _evmCer.inflight = (async () => {
     try {
-      const s = await ceremonyFetchState(EVM_POOL_CEREMONY.hash);
-      if (s) _setAmmCeremonyStateMonotonic(EVM_POOL_CEREMONY.hash, s);
+      const r = await fetch(`${WORKER_BASE}/ceremony/${EVM_POOL_CEREMONY.hash}`, { cache: 'no-store' });
+      if (r.ok) {
+        const j = await r.json();
+        if (j.state) _setAmmCeremonyStateMonotonic(EVM_POOL_CEREMONY.hash, j.state);
+        _evmCer.live = { reservation: j.reservation || null, queue: Number(j.queue_length) || 0 };
+      }
     } catch {}
     _evmCer.fetchedAt = Date.now();
     _evmCer.inflight = null;
@@ -44914,11 +44942,22 @@ function _evmCerMilestoneHtml(n) {
   return { ms, pills };
 }
 
+// { busy, waiting } from the queue: a head counts as contributing only while inside its slot and still
+// checking in.
+function _evmCerLive() {
+  const r = _evmCer.live?.reservation;
+  const now = Date.now() / 1000;
+  const busy = !!r && (!r.head_expires_at || now < Number(r.head_expires_at)) && (!r.last_poll_at || now - Number(r.last_poll_at) < 540);
+  return { busy, waiting: Math.max(0, (Number(_evmCer.live?.queue) || 0) - (busy ? 1 : 0)) };
+}
+
 function _evmCerSummaryText(state) {
   const n = Number(state?.contribution_count) || 0;
   const { ms } = _evmCerMilestoneHtml(n);
   const head = `${n.toLocaleString('en-US')} contribution${n === 1 ? '' : 's'}`;
   if (state?.finalized) return `${head} · finalized`;
+  const live = _evmCerLive();
+  if (live.busy) return `${head} · someone contributing now${live.waiting ? ` · ${live.waiting} waiting` : ''}`;
   if (ms.next) return `${head} · next: ${ms.next.label} (${ms.next.count - n} to go)`;
   return `${head} · ${ms.reached ? ms.reached.label : ''} reached`;
 }
@@ -44986,6 +45025,8 @@ function _evmCerPaintDrawerStatus(elId = 'evm-cer-status') {
   else if (ms.next) line = `<strong>${n}</strong> contributions · past <strong>${escapeHtml(ms.reached.label)}</strong>; ${ms.next.count - n} more to reach <strong>${escapeHtml(ms.next.label)}</strong>.`;
   else line = `<strong>${n}</strong> contributions · every milestone reached. Contributions stay open until the beacon.`;
   const head = state.head_cid || '';
+  const live = state.finalized ? { busy: false } : _evmCerLive();
+  if (live.busy) line += ` <span class="evm-cer-live">● someone contributing now${live.waiting ? ` · ${live.waiting} waiting` : ''}</span>`;
   el.innerHTML =
     `<div>${line}</div>` +
     `<div class="evm-cer-pills">${pills}</div>` +
@@ -45018,7 +45059,7 @@ function _evmCerRenderTabParticipants() {
   list.innerHTML = rows.map((r) => {
     const pub = String(r.contributor_pubkey || '');
     const you = myPub && pub.toLowerCase() === myPub ? ' <strong>★ you</strong>' : '';
-    return `<div class="evm-cer-row"><span>#${escapeHtml(String(r.index))}</span><span>${escapeHtml(String(r.contributor_name || 'anonymous'))}${you}</span>`
+    return `<div class="evm-cer-row"><span>#${escapeHtml(String(r.index))}</span><span class="muted">anonymous${you}</span>`
       + `<code title="${escapeHtml(pub)}">${escapeHtml(_evmCerShort(pub, 10, 6))}</code><span class="muted">${escapeHtml(_evmCerFmtTime(r.contributed_at))}</span></div>`;
   }).join('');
 }
@@ -45055,10 +45096,9 @@ function _evmCerRenderParticipants() {
       const mine = !!myPub && pub === myPub;
       const orphan = !!onChain && !onChain.has(r);
       const hash = String(r.contribution_hash || '');
-      const name = r.contributor_name && r.contributor_name !== 'anonymous' ? r.contributor_name : '';
       return `<div class="evm-cer-row${mine ? ' is-mine' : ''}${orphan ? ' is-orphan' : ''}"${orphan ? ' title="Not on the canonical chain"' : ''}>`
         + `<span class="evm-cer-idx">#${escapeHtml(String(r.index))}</span>`
-        + `<span class="evm-cer-who">${name ? escapeHtml(name) : '<span class="muted">anonymous</span>'}${mine ? ' <span class="evm-cer-you">★ you</span>' : ''}${orphan ? ' <span class="muted">orphaned</span>' : ''}</span>`
+        + `<span class="evm-cer-who"><span class="muted">anonymous</span>${mine ? ' <span class="evm-cer-you">★ you</span>' : ''}${orphan ? ' <span class="muted">orphaned</span>' : ''}</span>`
         + (pub
           ? `<button type="button" class="evm-cer-copy evm-cer-pub" data-evm-cer-copy="${escapeHtml(pub)}" title="${escapeHtml(pub)} (click to copy)">${escapeHtml(_evmCerShort(pub, 10, 6))}</button>`
           : '<span class="evm-cer-pub muted">no pubkey</span>')
@@ -45224,6 +45264,12 @@ function _evmCerBrowserKey() {
   }
   return { priv, pubHex: bytesToHex(secp.getPublicKey(priv, true)) };
 }
+function _evmCerQueueSub() {
+  const p = Number(_evmCer.prefetchPct) || 0;
+  if (p >= 100) return 'ready · your turn starts automatically';
+  return p > 0 ? `getting ready while you wait · ${p}%` : 'your turn starts automatically · getting ready while you wait';
+}
+
 async function _submitEvmPoolCeremonyContribution() {
   const C = EVM_POOL_CEREMONY;
   if (!_evmCerConfigured() || _evmCer.inFlight || globalThis.__tacitEvmCerBusy) return;
@@ -45235,7 +45281,6 @@ async function _submitEvmPoolCeremonyContributionInner() {
   const goBtn = document.getElementById('evm-cer-go');
   const progEl = document.getElementById('evm-cer-progress');
   const resultEl = document.getElementById('evm-cer-result');
-  const nameEl = document.getElementById('evm-cer-name');
   const headline = document.getElementById('evm-cer-headline');
   const headLabel = document.getElementById('evm-cer-headline-label');
   const headSub = document.getElementById('evm-cer-headline-sub');
@@ -45259,7 +45304,7 @@ async function _submitEvmPoolCeremonyContributionInner() {
   }
   const eligibilityProofBytes = null;
   const pub = contributorPubkeyHex.toLowerCase();
-  const contributorName = (nameEl?.value || '').trim().slice(0, 64) || 'anonymous';
+  const contributorName = 'anonymous';
 
   const log = (line) => { progEl.style.display = 'block'; progEl.textContent += line + '\n'; progEl.scrollTop = progEl.scrollHeight; };
   let creep = null;
@@ -45290,6 +45335,8 @@ async function _submitEvmPoolCeremonyContributionInner() {
   window.addEventListener('beforeunload', onBeforeUnload);
   _evmCer.inFlight = true;
   _evmCer.lastQueueLine = '';
+  _evmCer.queued = false;
+  _evmCer.prefetchPct = 0;
   _evmCer.startedAt = Date.now();
   _evmCer.pct = 0;
   if (fill) fill.style.width = '0%';
@@ -45317,11 +45364,18 @@ async function _submitEvmPoolCeremonyContributionInner() {
           const pos = Number(info?.position || 0);
           const total = Number(info?.total || 0);
           const where = pos > 0 && total > 0 ? ` · position ${pos} of ${total}` : '';
-          setPhase(`Queued — ${info?.heldName || 'someone'} is contributing${where}`, 'your turn starts automatically · checking every 10s');
+          _evmCer.queued = true;
+          setPhase(`Queued — someone is contributing${where}`, _evmCerQueueSub());
           const line = `  queued behind ${info?.heldName || 'another contributor'}${where}`;
           if (line !== _evmCer.lastQueueLine) { _evmCer.lastQueueLine = line; log(line); }
         }
-        else if (phase === 'reserve-ok') log('  ✓ your turn');
+        else if (phase === 'prefetch-bytes') {
+          const t = Number(info?.total) || 0;
+          _evmCer.prefetchPct = t ? Math.min(99, Math.floor((Number(info?.done) || 0) / t * 100)) : 0;
+          if (_evmCer.queued && headSub) headSub.textContent = _evmCerQueueSub();
+        }
+        else if (phase === 'prefetch-done') { _evmCer.prefetchPct = 100; if (_evmCer.queued && headSub) headSub.textContent = _evmCerQueueSub(); log('  circuit and setup file ready'); }
+        else if (phase === 'reserve-ok') { _evmCer.queued = false; log('  ✓ your turn'); }
         else if (phase === 'reserve-timeout') log('  queue wait timed out; continuing');
         else if (phase === 'reserve-error') log(`  queue skipped (${info?.msg || 'error'}); continuing`);
         else if (phase === 'fetch-head') { setPhase('Downloading the current key', 'about 28 MB', 4); log('  1/4 downloading the current key…'); }

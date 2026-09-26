@@ -104,7 +104,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=66de8305">
+<link rel="modulepreload" href="./tacit.js?cb=f360bc6f">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -7421,6 +7421,7 @@ body.tacit-amm-ceremony-ready [data-amm-gated] { display: block; }
   border-bottom: 0.5px solid var(--hairline);
 }
 .evm-cer-row:last-child { border-bottom: 0; }
+.evm-cer-live { display: inline-block; color: var(--orange); white-space: nowrap; }
 .evm-cer-row.is-mine { background: var(--bg-warm); box-shadow: inset 3px 0 0 var(--orange); }
 .evm-cer-row.is-orphan { opacity: 0.5; }
 .evm-cer-idx { color: var(--ink-mid); }
@@ -10964,12 +10965,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
     <div id="evm-cer-status" class="evm-cer-status"></div>
     <div id="evm-cer-eligibility-banner" style="display:none; margin-bottom: 10px; padding: 8px 10px; border: 1px solid var(--ink-faint); background: var(--bg-warm); font-size: 11px; line-height: 1.45;"></div>
     <div id="evm-cer-mine" class="evm-cer-mine" style="display:none;"></div>
-    <div style="margin-bottom: 10px;">
-      <label style="display:block; font-size: 11px; margin-bottom: 4px;">Display name (optional)
-        <input id="evm-cer-name" type="text" maxlength="64" placeholder="anonymous" style="width:100%; font-size:12px; padding:4px 6px;">
-      </label>
-      <div class="muted" style="font-size:11px; margin-top:4px;">Recorded with <span id="evm-cer-pubkey-hint" style="font-family:var(--mono);"></span></div>
-    </div>
+    <div class="muted" style="font-size:11px; margin-bottom: 10px;">Listed anonymously under <span id="evm-cer-pubkey-hint" style="font-family:var(--mono);"></span></div>
     <div id="evm-cer-headline" style="display:none; margin-bottom: 10px;">
       <div style="display:flex; align-items:center; gap:8px; margin-bottom: 4px;">
         <span class="amm-cer-heartbeat evm-cer-heartbeat" aria-hidden="true"></span>
@@ -11515,7 +11511,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=66de8305"></script>
+<script type="module" src="./tacit.js?cb=f360bc6f"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for

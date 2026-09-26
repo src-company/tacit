@@ -67,7 +67,7 @@ h1 span { color: var(--orange); }
 .cta:hover { background: var(--ink); }
 .note { font: 12.5px var(--mono); color: var(--mid); margin: 12px 0 0; }
 .recent { margin: 24px 0 0; padding: 0; list-style: none; font: 12.5px var(--mono); color: var(--mid); }
-.recent li { display: grid; grid-template-columns: 3em minmax(0, 1fr) 7.5em 6.5em; gap: 12px; padding: 7px 0; border-top: 1px solid var(--faint); align-items: baseline; }
+.recent li { display: grid; grid-template-columns: 3em minmax(0, 1fr) 6.5em; gap: 12px; padding: 7px 0; border-top: 1px solid var(--faint); align-items: baseline; }
 .recent li .who { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent li .ago { color: var(--dim); min-width: 5.5em; text-align: right; }
 .recent li.new { animation: arrive 2.4s ease-out; }
@@ -84,7 +84,7 @@ footer { font: 12px var(--mono); color: var(--dim); margin-top: 28px; }
 @media (max-width: 480px) {
   body { font-size: 18px; } main { padding-top: 32px; } .lead { font-size: 20px; } h1 { margin-top: 40px; }
   .big .n { font-size: 54px; } .card { padding: 20px 18px; }
-  .recent li { grid-template-columns: 2.6em minmax(0, 1fr) 6.5em; } .recent li .pk { display: none; }
+  .recent li { grid-template-columns: 2.6em minmax(0, 1fr) 6.5em; }
   .cta { padding: 13px 16px; font-size: 14px; letter-spacing: .02em; }
 }
 @media (prefers-reduced-motion: reduce) { .dot, .track .head { animation: none; } .track .fill, .track .head { transition: none; } .recent li.new { animation: none; } }
@@ -193,7 +193,7 @@ footer { font: 12px var(--mono); color: var(--dim); margin-top: 28px; }
     const lastAt = rows.length ? Number(rows[0].contributed_at) : Number(state.last_contributed_at || 0);
     let line;
     if (state.finalized) line = 'Closed and finalized. Thank you to everyone who contributed.';
-    else if (busy) line = `<span class="hot">Contributing now</span> · <b>${esc(live.reservation.contributor_name || 'anonymous')}</b> · ${dur(live.reservation.head_started_at || live.reservation.started_at)}` + (waiting ? ` · ${waiting} waiting` : '');
+    else if (busy) line = `<span class="hot">Contributing now</span> · ${dur(live.reservation.head_started_at || live.reservation.started_at)}` + (waiting ? ` · ${waiting} waiting` : '');
     else line = (lastAt ? `Last contribution <b>${ago(lastAt)}</b>` : 'Be the first to contribute') + (next ? ` · ${next[0] - n} more to reach ${next[1]}` : ' · every milestone reached');
     $('now').innerHTML = line;
     $('dot').classList.toggle('idle', !busy && !state.finalized && !(lastAt && Date.now() / 1000 - lastAt < 900));
@@ -206,7 +206,7 @@ footer { font: 12px var(--mono); color: var(--dim); margin-top: 28px; }
     ul.innerHTML = rows.slice(0, 6).map((r) => {
       const pk = String(r.contributor_pubkey || '');
       const fresh = !firstLoad && !known.has(String(r.index));
-      return `<li data-t="${Number(r.contributed_at)}" class="${fresh ? 'new' : ''}"><span>#${esc(r.index)}</span><span class="who">${esc(r.contributor_name || 'anonymous')}</span><span class="pk" title="${esc(pk)}">${esc(pk.slice(0, 8))}…</span><span class="ago"></span></li>`;
+      return `<li data-t="${Number(r.contributed_at)}" class="${fresh ? 'new' : ''}"><span>#${esc(r.index)}</span><span class="who" title="${esc(pk)}">${pk ? esc(pk.slice(0, 10)) + '…' + esc(pk.slice(-6)) : 'anonymous'}</span><span class="ago"></span></li>`;
     }).join('');
     for (const r of rows) known.add(String(r.index));
     firstLoad = false;
