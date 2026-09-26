@@ -66625,7 +66625,7 @@ function _renderSoftCancelRiskStrip() {
       : '';
     return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--ink-faint);background:var(--bg);font-size:11px;flex-wrap:wrap;font-family:var(--mono, monospace);">
       <strong style="color:var(--red-warn);">${escapeHtml(amtStr)} ${ticker}</strong>
-      <span class="muted" style="font-size:10px;font-family:inherit;">@ ${priceStr} sats &middot; UTXO ${escapeHtml(outpointShort)} &middot; soft-cancelled ${ageLabel}</span>
+      <span class="muted" style="font-size:10px;font-family:inherit;">@ ${priceStr} sats &middot; UTXO ${escapeHtml(outpointShort)} &middot; ${r.expired ? 'expired' : 'soft-cancelled'} ${ageLabel}</span>
       <span style="margin-left:auto;display:inline-flex;gap:6px;">
         <button data-act="soft-cancel-hard-finish" data-sid="${escapeHtml(r.sale_id)}" data-aid="${escapeHtml(r.asset_id)}" data-price="${Number(r.price_sats) || 0}" data-ticker="${ticker}" data-amount="${escapeHtml(r.amount || '0')}" data-dec="${Number(r.decimals) || 0}" type="button" class="primary" style="font-size:10px;padding:4px 10px;font-family:inherit;" title="Self-spend the asset UTXO on Bitcoin so the pre-signed sale bytes become unbroadcastable. Costs ~800 sats Bitcoin fee.">Hard cancel</button>
         <button data-act="soft-cancel-dismiss" data-sid="${escapeHtml(r.sale_id)}" type="button" style="font-size:10px;padding:4px 10px;background:transparent;color:var(--ink-mid);border:1px solid var(--ink-faint);font-family:inherit;" title="Dismiss without invalidating the pre-signed bytes. Use only if you're certain the UTXO has already been consumed elsewhere (another device, a different cancel path) or that you accept the residual replay risk.">Dismiss</button>
@@ -66635,8 +66635,8 @@ function _renderSoftCancelRiskStrip() {
   const html = `
     <div style="margin-bottom:14px;padding:10px 12px;border:1px dashed var(--orange, #c97a1a);background:rgba(201,122,26,0.05);">
       <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
-        <strong style="font-size:12px;color:var(--orange, #c97a1a);">&#9888; Soft-cancelled &middot; still replayable</strong>
-        <span class="muted" style="font-size:10px;">${arr.length} listing${arr.length === 1 ? '' : 's'} you soft-cancelled still have an unspent asset UTXO. The pre-signed sale bytes remain valid until the UTXO is consumed &mdash; anyone who saved the listing earlier can still broadcast at the original price. Hard cancel = one Bitcoin tx to invalidate.</span>
+        <strong style="font-size:12px;color:var(--orange, #c97a1a);">&#9888; Off the market &middot; still replayable</strong>
+        <span class="muted" style="font-size:10px;">${arr.length} listing${arr.length === 1 ? '' : 's'} — cancelled or expired — still have an unspent asset UTXO. The pre-signed sale bytes remain valid until the UTXO is consumed &mdash; anyone who saved the listing earlier can still broadcast at the original price. Hard cancel = one Bitcoin tx to invalidate.</span>
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;">
         ${itemsHtml}
@@ -66700,6 +66700,8 @@ function _snapshotMyListings(myPubHex) {
       ticker: l._asset?.ticker || '?',
       decimals: Number.isInteger(l._asset?.decimals) ? l._asset.decimals : 0,
       kind: l.kind,
+      saleId: l.sale_id || null,
+      sellerPubkey: sellerPub,
       expiry: Number(l.expiry || 0),
       priceSats: Number(l.min_price_sats || l.price_sats || 0),
       utxoTxid: (utxoTxid && /^[0-9a-f]{64}$/i.test(utxoTxid)) ? String(utxoTxid).toLowerCase() : null,
@@ -67465,7 +67467,34 @@ function _startMarketAutoRefresh() {
         // Step 2: add new candidates discovered this tick.
         for (const [key, snap] of beforeMine) {
           if (afterMine.has(key)) continue;
-          if (snap.expiry > 0 && snap.expiry <= nowSec) continue;
+          if (snap.expiry > 0 && snap.expiry <= nowSec) {
+            // Naturally expired, not sold — but for a preauth listing this is
+            // exactly the same replay risk an explicit cancel warns about:
+            // the pre-signed sale bytes stay valid and broadcastable for as
+            // long as the worker keeps serving the record (days), and
+            // indefinitely for anyone who already fetched a copy. Explicit
+            // cancel already surfaces this via the Holdings risk strip
+            // (_addSoftCancelRecord); a lapsed listing got no equivalent
+            // warning before this, so the seller had no signal their
+            // signature was still live. _addSoftCancelRecord dedupes by
+            // sale_id, so this is safe to call again on a later tick.
+            if (snap.kind === 'preauth' && snap.saleId && snap.utxoTxid && Number.isInteger(snap.utxoVout)) {
+              try {
+                _addSoftCancelRecord({
+                  sale_id: snap.saleId,
+                  asset_id: snap.aid,
+                  asset_outpoint: { txid: snap.utxoTxid, vout: snap.utxoVout },
+                  ticker: snap.ticker, decimals: snap.decimals,
+                  amount: snap.amount?.toString?.() ?? String(snap.amount || '0'),
+                  price_sats: snap.priceSats,
+                  seller_pubkey: snap.sellerPubkey || myPubHex,
+                  soft_cancelled_at: nowSec,
+                  expired: true,
+                });
+              } catch {}
+            }
+            continue;
+          }
           if (_recentLocalListingCancels.has(key)) continue;
           if (_vanishCandidateListings.has(key)) continue;
           _vanishCandidateListings.set(key, { snap, firstAbsentTs: Date.now() });
