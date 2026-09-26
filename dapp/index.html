@@ -54,7 +54,7 @@
   not read that file, so these headers must be mirrored into the Render
   Dashboard's static-site header config for them to actually take effect.
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ipfs.filebase.io https://mempool.space https://*.mempool.space https://mempool.bisq.services https://mempool.emzy.de https://mempool.bitaroo.net https://blockstream.info https://api.coinbase.com https://api.kraken.com https://api.coingecko.com https://cloudflare-eth.com https://api.tacit.finance https://tacit-api.onrender.com https://tacit-points.onrender.com https://tacit-pin.rosscampbell9.workers.dev https://www.tacitscan.io https://content.wrappr.wtf https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link https://uploads.pinata.cloud https://gateway.pinata.cloud https://gateway.liquify.com https://ethereum-sepolia-rpc.publicnode.com https://ethereum-rpc.publicnode.com https://1rpc.io https://eth.llamarpc.com https://eth.drpc.org https://sepolia.drpc.org https://mainnet.gateway.tenderly.co https://sepolia.gateway.tenderly.co; img-src 'self' data: https://ipfs.filebase.io https://content.wrappr.wtf https://api.tacit.finance https://tacit-api.onrender.com https://tacit-pin.rosscampbell9.workers.dev https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ipfs.filebase.io https://10mz1z2351rzze-8080.proxy.runpod.net https://mempool.space https://*.mempool.space https://mempool.bisq.services https://mempool.emzy.de https://mempool.bitaroo.net https://blockstream.info https://api.coinbase.com https://api.kraken.com https://api.coingecko.com https://cloudflare-eth.com https://api.tacit.finance https://tacit-api.onrender.com https://tacit-points.onrender.com https://tacit-pin.rosscampbell9.workers.dev https://www.tacitscan.io https://content.wrappr.wtf https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link https://uploads.pinata.cloud https://gateway.pinata.cloud https://gateway.liquify.com https://ethereum-sepolia-rpc.publicnode.com https://ethereum-rpc.publicnode.com https://1rpc.io https://eth.llamarpc.com https://eth.drpc.org https://sepolia.drpc.org https://mainnet.gateway.tenderly.co https://sepolia.gateway.tenderly.co; img-src 'self' data: https://ipfs.filebase.io https://content.wrappr.wtf https://api.tacit.finance https://tacit-api.onrender.com https://tacit-pin.rosscampbell9.workers.dev https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'">
 <title>tacit</title>
 <meta name="description" content="Confidential money across Bitcoin and Ethereum — one shielded note you can send privately, swap, borrow against, and bridge. Mint cBTC/tacBTC from SP1-reflected Bitcoin locks and borrow cUSD against it.">
 <meta name="theme-color" content="#f7931a">
@@ -104,7 +104,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=3e66eded">
+<link rel="modulepreload" href="./tacit.js?cb=9636b6be">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -4996,6 +4996,7 @@ body[data-market-mode="asset"] [data-market-asset-pane="activity"]:not(.active) 
    floating above the page card. */
 body > header,
 body > #tac-airdrop-claim-banner,
+body > #evm-cer-banner,
 body > #global-tape,
 body > #mainnet-banner,
 body > #bpp-signet-banner,
@@ -7312,6 +7313,150 @@ body.tacit-amm-ceremony-ready [data-amm-gated] { display: block; }
   }
 }
 
+/* EVM pool ceremony: banner, milestone pills, participants list and result
+   card. The chip, mini chip and heartbeat reuse the .amm-cer-* rules above. */
+.evm-cer-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  border: 0.5px solid var(--orange);
+  color: var(--ink);
+}
+.evm-cer-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--orange);
+  flex: 0 0 auto;
+  animation: amm-cer-pulse 2.5s ease-in-out infinite;
+}
+.evm-cer-banner-summary { font-family: var(--mono); color: var(--ink-mid); }
+.evm-cer-banner-links a {
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 0.5px dashed var(--ink-faint);
+}
+.evm-cer-heartbeat {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--orange);
+  flex: 0 0 auto;
+}
+.evm-cer-status { margin-bottom: 12px; font-size: 12px; line-height: 1.5; }
+.evm-cer-pills { margin-top: 6px; line-height: 1.9; }
+.evm-cer-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  margin-right: 6px;
+  border: 1px solid var(--ink-faint);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--ink-mid);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.evm-cer-pill--reached { border-color: var(--green-positive); color: var(--green-positive); }
+.evm-cer-pill--next { border-color: var(--orange); background: var(--bg-warm); color: var(--ink); }
+.evm-cer-pill-togo { opacity: 0.7; }
+.evm-cer-head { margin-top: 2px; font-size: 10px; color: var(--ink-mid); }
+.evm-cer-mine {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--green-positive);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.evm-cer-result {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.evm-cer-result--ok { border-color: var(--green-positive); color: var(--ink); }
+.evm-cer-result--err { border-color: var(--red); color: var(--red); }
+.evm-cer-result--info { color: var(--ink-mid); }
+.evm-cer-result code { word-break: break-all; }
+.evm-cer-result-title {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 22px;
+  line-height: 1.1;
+  margin-bottom: 6px;
+}
+.evm-cer-result-sub {
+  font-family: var(--serif);
+  font-size: 12px;
+  color: var(--ink-mid);
+  margin-bottom: 8px;
+}
+.evm-cer-result-label {
+  margin-top: 8px;
+  font-size: 10px;
+  color: var(--ink-mid);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.evm-cer-participants-wrap { margin-bottom: 14px; }
+.evm-cer-participants-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.evm-cer-participants-head button { font-size: 10px; padding: 5px 10px; }
+#evm-cer-participants {
+  max-height: 260px;
+  overflow-y: auto;
+  border-top: 1px solid var(--ink-faint);
+  border-bottom: 1px solid var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.evm-cer-row {
+  display: grid;
+  grid-template-columns: 3.5em minmax(0, 1fr) auto auto auto;
+  gap: 4px 10px;
+  align-items: center;
+  padding: 4px 6px;
+  border-bottom: 0.5px solid var(--hairline);
+}
+.evm-cer-row:last-child { border-bottom: 0; }
+.evm-cer-row.is-mine { background: var(--bg-warm); box-shadow: inset 3px 0 0 var(--orange); }
+.evm-cer-row.is-orphan { opacity: 0.5; }
+.evm-cer-idx { color: var(--ink-mid); }
+.evm-cer-who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.evm-cer-you { color: var(--orange); font-weight: 600; }
+.evm-cer-time { font-size: 10px; color: var(--ink-mid); white-space: nowrap; }
+.evm-cer-empty { padding: 10px 6px; color: var(--ink-mid); }
+button.evm-cer-copy {
+  padding: 0;
+  border: 0;
+  border-bottom: 0.5px dashed var(--ink-faint);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: copy;
+}
+button.evm-cer-copy:hover { background: transparent; color: var(--orange); }
+button.evm-cer-result-hash { display: block; white-space: normal; word-break: break-all; text-align: left; }
+.evm-cer-more { margin-top: 6px; font-size: 10px; padding: 5px 10px; }
+.evm-cer-export-note { margin-top: 6px; font-size: 11px; color: var(--ink-mid); }
+.evm-cer-export-note:empty { display: none; }
+@media (max-width: 600px) {
+  .evm-cer-row { grid-template-columns: 3em minmax(0, 1fr) auto; }
+  .evm-cer-row .evm-cer-hash { grid-column: 2 / 3; justify-self: start; }
+  .evm-cer-row .evm-cer-time { grid-column: 3 / 4; }
+  #evm-cer-progress { max-height: 30dvh; font-size: 10px; padding: 6px; }
+}
+
 /* First-load welcome modal — shown only when this network has no burner key
    AND no remembered ext-wallet mode. Forces a deliberate choice (connect
    external vs. generate local) before init() falls into the passphrase prompt,
@@ -8762,6 +8907,16 @@ body.tacit-amm-ceremony-ready [data-amm-gated] { display: block; }
   entirely JS-driven (mountAirdropAnnouncement, called once at boot) — this is just the mount point.
 -->
 <div id="tac-airdrop-claim-banner" style="display:none;position:relative;"></div>
+
+<!-- EVM pool ceremony banner. renderEvmPoolCeremony() shows it only while EVM_POOL_CEREMONY is
+     configured and the chain is open. -->
+<div id="evm-cer-banner" class="tacit-warn-banner evm-cer-banner" style="display:none;position:relative;">
+  <button id="evm-cer-banner-close" type="button" aria-label="Hide" title="Hide" class="tacit-warn-banner__close">×</button>
+  <span class="evm-cer-dot" aria-hidden="true"></span>
+  <strong>Secret Sats EVM pool trusted setup is open.</strong>
+  <span id="evm-cer-banner-summary" class="evm-cer-banner-summary"></span>
+  <span class="evm-cer-banner-links"><a href="#" id="evm-cer-banner-contribute">Contribute</a> · <a href="#" id="evm-cer-banner-participants">Participants</a></span>
+</div>
 
 <!-- "One note, two chains": the top-level IA is organized around what you
      DO with a confidential note (hold / trade / send / pool / create), not
@@ -10783,6 +10938,64 @@ body.tacit-amm-ceremony-ready [data-amm-gated] { display: block; }
   </div>
 </div>
 
+<!-- EVM pool ceremony: floating chip, in-flight mini chip and the contribute drawer with the
+     participants list. Driven by renderEvmPoolCeremony() / openEvmPoolCeremonyDrawer(). -->
+<div id="evm-cer-chip" class="amm-cer-chip" role="button" tabindex="0" style="display:none;" title="Contribute to the Secret Sats EVM pool trusted setup, a few minutes in your browser.">
+  <span class="amm-cer-chip-dot"></span>
+  <span class="amm-cer-chip-text"><span class="amm-cer-chip-text-full">contribute to the EVM pool ceremony</span><span class="amm-cer-chip-text-short">EVM ✦</span></span>
+  <span class="amm-cer-chip-count" id="evm-cer-chip-count"></span>
+</div>
+<div id="evm-cer-mini-chip" class="amm-cer-mini-chip" role="button" tabindex="0" style="display:none;" title="Contribution in progress. Click to reopen.">
+  <span class="amm-cer-heartbeat evm-cer-heartbeat" aria-hidden="true"></span>
+  <span class="amm-cer-mini-chip-label">contributing…</span>
+  <span class="amm-cer-mini-chip-pct" id="evm-cer-mini-chip-pct">0%</span>
+  <span class="amm-cer-mini-chip-elapsed" id="evm-cer-mini-chip-elapsed">0s</span>
+</div>
+<div id="evm-cer-drawer" class="pass-modal" role="dialog" aria-modal="true" aria-labelledby="evm-cer-title" style="display:none;">
+  <div class="pass-card" style="max-width: 580px;">
+    <div id="evm-cer-title" class="pass-title">Secret Sats EVM pool · trusted setup</div>
+    <div class="pass-reason" style="margin-bottom: 12px;">
+      <p style="margin:0 0 8px 0;">Mix your own randomness into the proving key for the EVM pool's spend circuit. The key is sound as long as <strong>one</strong> contributor kept their randomness secret. Your browser downloads about 125 MB (the current key, the circuit and the setup file), checks every earlier contribution, then adds yours. A few minutes on most devices, phones included. Keep the tab open while it runs.</p>
+      <p style="margin:0;font-size:11px;color:var(--ink-mid);">Contributing requires holding <strong>≥ 1 TAC</strong>. Your wallet signs a one-time proof of the threshold; your balance stays private. The proof binds to your wallet pubkey, which is recorded with the contribution and listed below. One slot per address.</p>
+    </div>
+    <div id="evm-cer-status" class="evm-cer-status"></div>
+    <div id="evm-cer-eligibility-banner" style="display:none; margin-bottom: 10px; padding: 8px 10px; border: 1px solid var(--ink-faint); background: var(--bg-warm); font-size: 11px; line-height: 1.45;"></div>
+    <div id="evm-cer-mine" class="evm-cer-mine" style="display:none;"></div>
+    <div style="margin-bottom: 10px;">
+      <label style="display:block; font-size: 11px; margin-bottom: 4px;">Display name (optional)
+        <input id="evm-cer-name" type="text" maxlength="64" placeholder="anonymous" style="width:100%; font-size:12px; padding:4px 6px;">
+      </label>
+      <div class="muted" style="font-size:11px; margin-top:4px;">Recorded with your wallet pubkey <span id="evm-cer-pubkey-hint" style="font-family:var(--mono);"></span></div>
+    </div>
+    <div id="evm-cer-headline" style="display:none; margin-bottom: 10px;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom: 4px;">
+        <span class="amm-cer-heartbeat evm-cer-heartbeat" aria-hidden="true"></span>
+        <span id="evm-cer-headline-label" style="font-family:var(--serif); font-style:italic; font-size:14px; color:var(--ink); flex:1 1 auto; line-height:1.2;"></span>
+        <span id="evm-cer-headline-elapsed" style="font-family:var(--mono); font-size:11px; color:var(--ink-mid); flex:0 0 auto;"></span>
+      </div>
+      <div style="height:6px; background:var(--ink-faint); position:relative; overflow:hidden;">
+        <div id="evm-cer-progressbar-fill" style="position:absolute; left:0; top:0; height:100%; width:0%; background:var(--ink); transition:width 200ms linear;"></div>
+      </div>
+      <div id="evm-cer-headline-sub" style="font-family:var(--serif); font-style:italic; font-size:11px; color:var(--ink-mid); margin-top: 4px;"></div>
+    </div>
+    <div id="evm-cer-progress" style="display:none; margin-bottom: 12px; font-family: var(--mono); font-size: 11px; color: var(--ink-mid); max-height: 200px; overflow-y: auto; padding: 8px; border: 1px solid var(--ink-faint); background: var(--bg-warm); white-space: pre-wrap;"></div>
+    <div id="evm-cer-result" class="evm-cer-result" style="display:none;"></div>
+    <div id="evm-cer-participants-wrap" class="evm-cer-participants-wrap">
+      <div class="evm-cer-participants-head">
+        <span>Participants <span id="evm-cer-participants-count" class="muted"></span></span>
+        <button id="evm-cer-download" type="button">Download participants (JSON)</button>
+      </div>
+      <div id="evm-cer-participants"></div>
+      <button id="evm-cer-participants-more" type="button" class="evm-cer-more" style="display:none;">Show more</button>
+      <div id="evm-cer-export-note" class="evm-cer-export-note"></div>
+    </div>
+    <div class="pass-actions">
+      <button id="evm-cer-cancel" type="button">Close</button>
+      <button id="evm-cer-go" type="button">Contribute</button>
+    </div>
+  </div>
+</div>
+
 
 <!-- Notification log: persistent record of recent toasts. Bell icon in the header
      opens a dropdown with the last 30 entries (24h retention, localStorage-
@@ -11299,7 +11512,7 @@ body.tacit-amm-ceremony-ready [data-amm-gated] { display: block; }
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=3e66eded"></script>
+<script type="module" src="./tacit.js?cb=9636b6be"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for

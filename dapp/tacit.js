@@ -370,6 +370,25 @@ const AMM_CEREMONY_CIRCUIT_HASHES = Object.freeze([
   { key: 'amm_lp_remove',  hash: '005a38bfe8acc4d644e600aa91d08e08dba87170f87279bfb5b087230a4399b1', label: 'AMM · LP remove' },
   { key: 'amm_swap_batch', hash: '2d9db81d741e59d65e1b52ac3d37c5da521ef8c3728e9cd715c9a8a45bd495f4', label: 'AMM · swap batch' },
 ]);
+
+// Phase 2 ceremony for the EVM pool's transact circuit (dapp/circuits/evm-pool/transact.circom).
+// Filled in after the coordinator's POST /ceremony/init:
+//   hash            sha256 of dapp/circuits/evm-pool/build/transact.r1cs (the genesis manifest's circuit_hash)
+//   ptauSha256      sha256 of powersOfTau28_hez_final_16.ptau (the chain's ptau_cid)
+//   finalizedVkCid  CID of the finalized verifying key, set after the beacon; hides the ceremony UI
+// While hash or ptauSha256 is null the ceremony UI renders nothing and makes no requests.
+const EVM_POOL_CEREMONY = Object.freeze({
+  key: 'evm_pool_transact',
+  hash: 'b0a246d1790151c722e42ccfa89450cb96c7f5a9f4b70a2162b7d9fc79b6ddb3',
+  ptauSha256: '1c401abb57c9ce531370f3015c3e75c0892e0f32b8b1e94ace0f6682d9695922',
+  finalizedVkCid: null,  // set once finalized
+  label: 'Secret Sats EVM pool',
+  milestones: [
+    { count: 5,   label: 'floor',   desc: 'minimum sound: one honest contributor is enough' },
+    { count: 30,  label: 'comfort', desc: 'a credible spread of independent contributors' },
+    { count: 100, label: 'strong',  desc: 'target for this ceremony' },
+  ],
+});
 // ============================================================================
 
 const PIN_URL      = WORKER_BASE ? WORKER_BASE + '/pin'      : '';
@@ -569,6 +588,9 @@ let IPFS_GATEWAY = _ipfsGateway();
 // the worker proxy is unreachable. Worker is the preferred primary (handles
 // the race internally + edge-caches); direct gateways stay in the list so
 // disabled-worker dapps still have a path.
+// Tacit's own IPFS node: holds the ceremony genesis files (ptau, r1cs, first zkey), which the ceremony fetch
+// tries first. Everything fetched from it is content-checked (sha256 pins, zkey chain verification).
+const TACIT_IPFS_NODE_GATEWAY = 'https://10mz1z2351rzze-8080.proxy.runpod.net/ipfs/';
 const IPFS_GATEWAYS_FALLBACK = [
   IPFS_GATEWAY,
   'https://ipfs.filebase.io/ipfs/',
@@ -42299,6 +42321,7 @@ async function _ceremonyFetchIpfsWithFailover(cid, validate, onProgress, onBytes
     try {
       if (gw.includes('tacit-pin')) return 'tacit cache';
       if (gw.includes('ipfs.filebase.io')) return 'filebase';
+      if (gw === TACIT_IPFS_NODE_GATEWAY) return 'tacit node';
       if (gw.includes('ipfs.io')) return 'ipfs.io';
       if (gw.includes('w3s.link')) return 'w3s';
       if (gw.includes('dweb.link')) return 'dweb';
@@ -42306,7 +42329,7 @@ async function _ceremonyFetchIpfsWithFailover(cid, validate, onProgress, onBytes
       return h.replace(/^www\./, '').split('.')[0];
     } catch { return 'gateway'; }
   };
-  for (const gw of IPFS_GATEWAYS_FALLBACK) {
+  for (const gw of [TACIT_IPFS_NODE_GATEWAY, ...IPFS_GATEWAYS_FALLBACK]) {
     if (_skip && _skip.has(gw)) continue;
     const url = `${gw}${cid}`;
     const label = _gwLabel(gw);
@@ -43337,7 +43360,8 @@ async function _ammReleaseReservation(circuitHash, _unusedPubkey) {
 
 async function ceremonyContributeAmm({
   circuitHash, contributorName = 'anonymous', contributorPubkeyHex = null,
-  eligibilityProofBytes = null, onProgress = null,
+  eligibilityProofBytes = null, onProgress = null, expectedPtau = TACIT_AMM_PTAU_SHA256,
+  directPinThreshold = 16 * 1024 * 1024,
 }) {
   if (!/^[0-9a-f]{64}$/.test(String(circuitHash || ''))) {
     throw new Error('circuitHash must be 64 hex chars');
@@ -43461,7 +43485,7 @@ async function ceremonyContributeAmm({
         entropy,
         state,
         (phase, info) => _emit('mix-phase', { phase, info }),
-        { expectedR1cs: String(circuitHash).toLowerCase(), expectedPtau: TACIT_AMM_PTAU_SHA256 },
+        { expectedR1cs: String(circuitHash).toLowerCase(), expectedPtau },
       );
     } catch (e) {
       const msg = String(e?.message || e || '');
@@ -43488,9 +43512,8 @@ async function ceremonyContributeAmm({
   // only the resulting CID. Worker streams the first 256 bytes to
   // verify the snarkjs magic, then adopts the CID. Smaller circuits
   // stay on the relay path (one HTTP round-trip, no Pinata key churn).
-  const PINATA_DIRECT_THRESHOLD = 16 * 1024 * 1024;
   let prePinnedCid = null;
-  if (mixed.newZkey.length > PINATA_DIRECT_THRESHOLD) {
+  if (mixed.newZkey.length > directPinThreshold) {
     const DIRECT_MAX_ATTEMPTS = 3;
     for (let dpAttempt = 1; dpAttempt <= DIRECT_MAX_ATTEMPTS && !prePinnedCid; dpAttempt++) {
       try {
@@ -43550,7 +43573,7 @@ async function ceremonyContributeAmm({
   };
   const _doUpload = (fd) => new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${WORKER_BASE}/ceremony/${circuitHash}/contribute`);
+    xhr.open('POST', `${WORKER_BASE}/ceremony/${circuitHash}/contribute${_ammQueueToken ? `?queue_token=${encodeURIComponent(_ammQueueToken)}` : ''}`);
     // Explicit XHR timeout: 180s. Without it, default 0 = no timeout, so a
     // hung CF<->Pinata leg can sit for minutes. 180s is generous enough
     // for a slow Pinata upload but lets the retry path catch true hangs.
@@ -43819,8 +43842,14 @@ function _ammMiniChipSetPct(pct, label) {
 // Mutates only the banner element + the Contribute button's disabled
 // state. Safe to call repeatedly (idempotent + fast).
 function _renderAmmCerEligibilityBanner() {
-  const banner = document.getElementById('amm-cer-eligibility-banner');
-  const goBtn = document.getElementById('amm-cer-go');
+  _renderCerEligibilityBanner({
+    bannerId: 'amm-cer-eligibility-banner', goBtnId: 'amm-cer-go', ceremonyName: 'AMM ceremony',
+    reuseNote: 'reused across all three circuits.',
+  });
+}
+function _renderCerEligibilityBanner({ bannerId, goBtnId, ceremonyName, reuseNote }) {
+  const banner = document.getElementById(bannerId);
+  const goBtn = document.getElementById(goBtnId);
   if (!banner) return;
   let status, balance;
   if (!wallet?.pub) {
@@ -43847,7 +43876,7 @@ function _renderAmmCerEligibilityBanner() {
     banner.innerHTML =
       `<strong style="color:var(--green-positive);">✓ Eligible.</strong> Holds ≥ ${escapeHtml(CER_ELIGIBILITY_MIN_TAC_DISPLAY)} ` +
       `(<code style="font-size:10px;">${escapeHtml(haveTac)} TAC</code> on file). A one-time bulletproof will be ` +
-      `minted on first contribute; reused across all three circuits.`;
+      `minted on first contribute; ${reuseNote}`;
     if (goBtn) { goBtn.disabled = false; goBtn.title = ''; }
   } else if (status === 'insufficient') {
     const haveTac = fmtAssetAmount(balance ?? 0n, 8);
@@ -43863,7 +43892,7 @@ function _renderAmmCerEligibilityBanner() {
     banner.style.borderColor = 'var(--orange)';
     banner.style.color = 'var(--ink)';
     banner.innerHTML =
-      `<strong>Wrong network.</strong> The AMM ceremony is mainnet-only and reads ` +
+      `<strong>Wrong network.</strong> The ${escapeHtml(ceremonyName)} is mainnet-only and reads ` +
       `your mainnet TAC balance. This dapp is currently on ` +
       `<code style="font-size:10px;">${escapeHtml(currentNetworkName())}</code>; ` +
       `switch the network selector to <code style="font-size:10px;">mainnet</code> ` +
@@ -44054,23 +44083,17 @@ let _ammContribPendingSwitch = null;
 // session can mark prior wins as ✓ even after fresh round-robin picks
 // move on. Cleared on full page reload (sessionless).
 const _ammCeremonyCompletedThisSession = new Set();
-async function _submitAmmCeremonyContribution() {
-  const goBtn = document.getElementById('amm-cer-go');
-  const cancelBtn = document.getElementById('amm-cer-cancel');
-  const progEl = document.getElementById('amm-cer-progress');
-  const resultEl = document.getElementById('amm-cer-result');
-  const nameEl = document.getElementById('amm-cer-name');
-  const attrCb = document.getElementById('amm-cer-attribute-pubkey');
-  if (!goBtn || !progEl || !resultEl) return;
+// Wallet, unlock, TAC balance and eligibility envelope for a ceremony
+// contribute. Writes failures into resultEl and returns null; otherwise
+// { contributorPubkeyHex, eligibilityProofBytes }.
+async function _ceremonyPrepareEligibility({ progEl, resultEl, ceremonyName }) {
   // Eligibility gate: under the post-farming policy, contribute requires
   //   (a) a wallet (so the airdrop layer has a pubkey to credit), AND
   //   (b) holdings of ≥ 1 TAC under that pubkey, proven via a bulletproof
   //       envelope the worker verifies against the chain.
   // The worker rejects anonymous contributes, so attrCb is force-checked +
-  // disabled by _renderAmmCerEligibilityBanner; `wantsAttribution` is always
-  // true and exists only to route the wallet-onboarding hop when wallet.pub
-  // is missing.
-  const wantsAttribution = true;
+  // disabled by the eligibility banner; a missing wallet.pub routes through the
+  // onboarding hop.
   if (!wallet?.pub) {
     try {
       if (typeof _showWelcomeModal === 'function') {
@@ -44083,8 +44106,8 @@ async function _submitAmmCeremonyContribution() {
       resultEl.style.display = 'block';
       resultEl.style.color = 'var(--ink-mid)';
       resultEl.textContent =
-        'No wallet loaded. Set up a wallet from the Holdings tab first — the AMM ceremony now requires ≥ 1 TAC for sybil resistance.';
-      return;
+        `No wallet loaded. Set up a wallet from the Holdings tab first — the ${ceremonyName} now requires ≥ 1 TAC for sybil resistance.`;
+      return null;
     }
   }
   // Eligibility envelope needs wallet.priv for the BIP-340 sig + bulletproof
@@ -44096,7 +44119,7 @@ async function _submitAmmCeremonyContribution() {
     resultEl.style.color = 'var(--ink-mid)';
     resultEl.textContent = 'Unlocking the wallet is required to mint the TAC eligibility proof. ' +
       (e?.message ? `(${e.message})` : '') + ' Try again to retry.';
-    return;
+    return null;
   }
   // Holdings cache populated? Without it, _ammCerPickTacUtxosForProof
   // returns null and we can't build the proof. Trigger a scan inline —
@@ -44110,7 +44133,7 @@ async function _submitAmmCeremonyContribution() {
       resultEl.style.display = 'block';
       resultEl.style.color = 'var(--ink-mid)';
       resultEl.textContent = `Holdings scan failed: ${e?.message || 'unknown'}. Retry from the Holdings tab, then come back.`;
-      return;
+      return null;
     }
   }
   const tacBalance = _ammCerReadTacBalance() ?? 0n;
@@ -44124,22 +44147,20 @@ async function _submitAmmCeremonyContribution() {
     // holdings panel showed a balance.
     if (typeof currentNetworkName === 'function' && currentNetworkName() !== 'mainnet') {
       resultEl.textContent =
-        `Wrong network: the AMM ceremony is mainnet-only and reads your mainnet TAC balance. ` +
+        `Wrong network: the ${ceremonyName} is mainnet-only and reads your mainnet TAC balance. ` +
         `This dapp is currently on ${currentNetworkName()} — switch the network selector to ` +
         `mainnet to contribute. Signet-TAC doesn't count.`;
-      return;
+      return null;
     }
     resultEl.textContent =
       `Insufficient TAC: this wallet holds ${fmtAssetAmount(tacBalance, 8)} TAC; ≥ ${CER_ELIGIBILITY_MIN_TAC_DISPLAY} ` +
       `is required to contribute — keeps the contributor set to real holders.`;
-    return;
+    return null;
   }
-  const contributorName = (nameEl?.value || '').trim().slice(0, 64) || 'anonymous';
-  const attributePub = !!wallet?.pub;
-  const contributorPubkeyHex = attributePub ? bytesToHex(wallet.pub) : null;
+  const contributorPubkeyHex = bytesToHex(wallet.pub);
   // Mint (or reuse) the eligibility envelope. SessionStorage cache keys
-  // on (holderPubHex, tip bucket) so all three circuit contributions in
-  // a session reuse one envelope; days roll over via the 144-block
+  // on (holderPubHex, tip bucket) so every contribution in a session
+  // reuses one envelope; days roll over via the 144-block
   // bucket. If the cached envelope's bucket has rotated, the cache miss
   // forces a fresh proof which is cheap (~50ms) compared to the mix step.
   let eligibilityProofBytes;
@@ -44168,8 +44189,22 @@ async function _submitAmmCeremonyContribution() {
     resultEl.style.color = 'var(--ink-mid)';
     resultEl.textContent = `Could not build TAC eligibility proof: ${e?.message || 'unknown'}. ` +
       `If your TAC moved recently, click ↻ Rescan in Holdings, then retry.`;
-    return;
+    return null;
   }
+  return { contributorPubkeyHex, eligibilityProofBytes };
+}
+async function _submitAmmCeremonyContribution() {
+  const goBtn = document.getElementById('amm-cer-go');
+  const cancelBtn = document.getElementById('amm-cer-cancel');
+  const progEl = document.getElementById('amm-cer-progress');
+  const resultEl = document.getElementById('amm-cer-result');
+  const nameEl = document.getElementById('amm-cer-name');
+  const attrCb = document.getElementById('amm-cer-attribute-pubkey');
+  if (!goBtn || !progEl || !resultEl) return;
+  const elig = await _ceremonyPrepareEligibility({ progEl, resultEl, ceremonyName: 'AMM ceremony' });
+  if (!elig) return;
+  const contributorName = (nameEl?.value || '').trim().slice(0, 64) || 'anonymous';
+  const { contributorPubkeyHex, eligibilityProofBytes } = elig;
   // Round-robin: pick whichever AMM chain currently has the fewest contributions.
   await refreshAmmCeremonyStatesIfStale(true).catch(() => {});
   // Forced-circuit override: when the user rotated via the "try lp_add"
@@ -44722,6 +44757,636 @@ function _wireAmmCeremonyChipOnce() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && drawer && drawer.style.display !== 'none') closeAmmCeremonyDrawer();
   });
+}
+
+// ============== EVM POOL CEREMONY (single circuit, EVM_POOL_CEREMONY) ==============
+// Banner + chip + drawer + participants list for the EVM pool's transact
+// circuit. Reuses the AMM machinery: ceremonyContributeAmm (queue, verify,
+// mix, upload), the TAC eligibility envelope and the per-hash state cache.
+
+function _evmCerConfigured() {
+  const c = EVM_POOL_CEREMONY;
+  return /^[0-9a-f]{64}$/.test(String(c.hash || ''))
+    && /^[0-9a-f]{64}$/.test(String(c.ptauSha256 || ''))
+    && !c.finalizedVkCid
+    && !!WORKER_BASE;
+}
+
+function ceremonyMilestoneStatus(n, milestones) {
+  const count = Math.max(0, Number(n) || 0);
+  const next = milestones.find(m => count < m.count) || null;
+  const reached = [...milestones].reverse().find(m => count >= m.count) || null;
+  const pills = milestones.map(m => ({
+    ...m,
+    state: count >= m.count ? 'reached' : (next && m.count === next.count ? 'next' : 'todo'),
+    toGo: Math.max(0, m.count - count),
+  }));
+  return { count, next, reached, pills };
+}
+
+// Canonical chain: the prev_cid walk from the head back to genesis. Records
+// off that walk (a losing upload, a stale retry, a record whose cid equals its
+// prev_cid) are orphans. A cid listed twice resolves to its lowest-index
+// record. Without a head CID the highest-index record is the head.
+function ceremonyCanonicalChain(records, headCid) {
+  const list = (Array.isArray(records) ? records : []).filter(r => r && typeof r.cid === 'string' && r.cid);
+  const byCid = new Map();
+  for (const r of list) {
+    if (r.prev_cid === r.cid) continue;
+    const prev = byCid.get(r.cid);
+    if (!prev || Number(r.index) < Number(prev.index)) byCid.set(r.cid, r);
+  }
+  const warnings = [];
+  let head = headCid ? byCid.get(headCid) || null : null;
+  if (headCid && !head) warnings.push(`head ${headCid} is not in the attestation list`);
+  if (!head) head = [...byCid.values()].reduce((best, r) => (!best || Number(r.index) > Number(best.index) ? r : best), null);
+  const chain = [];
+  const seen = new Set();
+  for (let cur = head; cur;) {
+    if (seen.has(cur.cid)) { warnings.push(`cycle at ${cur.cid}`); break; }
+    seen.add(cur.cid);
+    chain.push(cur);
+    if (!cur.prev_cid) break;
+    const prev = byCid.get(cur.prev_cid);
+    if (!prev) { warnings.push(`prev_cid ${cur.prev_cid} is not in the attestation list`); break; }
+    cur = prev;
+  }
+  chain.reverse();
+  const complete = chain.length > 0 && !chain[0].prev_cid && Number(chain[0].index) === 0 && !warnings.some(w => w.startsWith('cycle') || w.startsWith('prev_cid'));
+  const onChain = new Set(chain);
+  const orphans = list.filter(r => !onChain.has(r));
+  return { chain, orphans, warnings, complete };
+}
+
+// Participants of a canonical chain: every contribution after genesis,
+// excluding a beacon record.
+function ceremonyParticipantsExport(chain) {
+  return (Array.isArray(chain) ? chain : [])
+    .filter(r => Number(r.index) > 0 && !r.is_beacon)
+    .map(r => ({
+      index: Number(r.index),
+      contributor_pubkey: r.contributor_pubkey ? String(r.contributor_pubkey).toLowerCase() : null,
+      contribution_hash: r.contribution_hash || '',
+      contributed_at: Number.isFinite(Number(r.contributed_at)) ? Number(r.contributed_at) : null,
+      cid: r.cid,
+    }));
+}
+
+async function ceremonyFetchAttestationPage(circuitHash, cursor, limit) {
+  const resp = await fetch(
+    `${WORKER_BASE}/ceremony/${circuitHash}/attestations?limit=${limit}&cursor=${encodeURIComponent(cursor || '')}`,
+    { cache: 'no-store' },
+  );
+  if (!resp.ok) throw new Error(`attestations HTTP ${resp.status}`);
+  const j = await resp.json();
+  return {
+    attestations: Array.isArray(j.attestations) ? j.attestations : [],
+    cursor: j.list_complete === false && j.cursor ? j.cursor : null,
+  };
+}
+
+async function ceremonyFetchAllAttestations(circuitHash, maxPages = 200) {
+  const all = [];
+  let cursor = '';
+  for (let p = 0; p < maxPages; p++) {
+    const page = await ceremonyFetchAttestationPage(circuitHash, cursor, 800);
+    all.push(...page.attestations);
+    if (!page.cursor) return all;
+    cursor = page.cursor;
+  }
+  throw new Error('attestation list exceeded the page cap');
+}
+
+const EVM_CER_STATE_TTL_MS = 30 * 1000;
+const EVM_CER_PAGE_SIZE = 100;
+const _evmCer = {
+  fetchedAt: 0, inflight: null,
+  rows: [], cursor: '', complete: false, loading: false, canonical: null,
+  inFlight: false, startedAt: 0, pct: 0, tick: null,
+};
+const _evmCerState = () => _ammCeremonyStateByCircuit.get(EVM_POOL_CEREMONY.hash) || null;
+const _evmCerMyPub = () => (wallet?.pub ? bytesToHex(wallet.pub).toLowerCase() : null);
+const _evmCerAckKey = (pub) => `tacit-evm-cer-contributed-v1:${EVM_POOL_CEREMONY.hash}:${pub}`;
+function _evmCerContributed(pub) {
+  if (!pub) return false;
+  try { return !!localStorage.getItem(_evmCerAckKey(pub)); } catch { return false; }
+}
+function _evmCerMarkContributed(pub) {
+  try { if (pub) localStorage.setItem(_evmCerAckKey(pub), String(Date.now())); } catch {}
+}
+const _EVM_CER_BANNER_KEY = () => `tacit-evm-cer-banner-hidden-v1:${EVM_POOL_CEREMONY.hash}`;
+
+async function _evmCerRefreshState(force = false) {
+  if (!_evmCerConfigured()) return null;
+  if (!force && Date.now() - _evmCer.fetchedAt < EVM_CER_STATE_TTL_MS) return _evmCerState();
+  if (_evmCer.inflight) return _evmCer.inflight;
+  _evmCer.inflight = (async () => {
+    try {
+      const s = await ceremonyFetchState(EVM_POOL_CEREMONY.hash);
+      if (s) _setAmmCeremonyStateMonotonic(EVM_POOL_CEREMONY.hash, s);
+    } catch {}
+    _evmCer.fetchedAt = Date.now();
+    _evmCer.inflight = null;
+    return _evmCerState();
+  })();
+  return _evmCer.inflight;
+}
+
+function _evmCerMilestoneHtml(n) {
+  const ms = ceremonyMilestoneStatus(n, EVM_POOL_CEREMONY.milestones);
+  const pills = ms.pills.map(p => {
+    const icon = p.state === 'reached' ? '✓' : (p.state === 'next' ? '●' : '○');
+    const togo = p.state === 'next' ? ` <span class="evm-cer-pill-togo">(${p.toGo} to go)</span>` : '';
+    return `<span class="evm-cer-pill evm-cer-pill--${p.state}" title="${escapeHtml(p.desc)}">${icon} ${p.count} ${escapeHtml(p.label)}${togo}</span>`;
+  }).join('');
+  return { ms, pills };
+}
+
+function _evmCerSummaryText(state) {
+  const n = Number(state?.contribution_count) || 0;
+  const { ms } = _evmCerMilestoneHtml(n);
+  const head = `${n.toLocaleString('en-US')} contribution${n === 1 ? '' : 's'}`;
+  if (state?.finalized) return `${head} · finalized`;
+  if (ms.next) return `${head} · next: ${ms.next.label} (${ms.next.count - n} to go)`;
+  return `${head} · ${ms.reached ? ms.reached.label : ''} reached`;
+}
+
+function _evmCerPaint() {
+  if (!_evmCerConfigured() || typeof document === 'undefined') return;
+  const state = _evmCerState();
+  const myPub = _evmCerMyPub();
+  const contributed = _evmCerContributed(myPub);
+  const finalized = !!state?.finalized;
+
+  const banner = document.getElementById('evm-cer-banner');
+  if (banner) {
+    let hidden = false;
+    try { hidden = !!localStorage.getItem(_EVM_CER_BANNER_KEY()); } catch {}
+    const summary = document.getElementById('evm-cer-banner-summary');
+    if (summary) summary.textContent = state ? _evmCerSummaryText(state) : '';
+    const cta = document.getElementById('evm-cer-banner-contribute');
+    if (cta) cta.textContent = contributed ? 'Your contribution' : 'Contribute';
+    banner.style.display = (hidden || !state || finalized) ? 'none' : '';
+  }
+
+  const chip = document.getElementById('evm-cer-chip');
+  if (chip) {
+    const tab = _ammCerActiveTab();
+    const show = !finalized && !contributed && !_evmCer.inFlight && tab !== 'market';
+    chip.style.display = show ? 'inline-flex' : 'none';
+    const countEl = document.getElementById('evm-cer-chip-count');
+    const n = Number(state?.contribution_count) || 0;
+    if (countEl) countEl.textContent = n > 0 ? `· ${n.toLocaleString('en-US')}` : '';
+  }
+
+  const drawer = document.getElementById('evm-cer-drawer');
+  if (drawer && drawer.style.display !== 'none') _evmCerPaintDrawerStatus();
+}
+
+function renderEvmPoolCeremony() {
+  if (!_evmCerConfigured()) return;
+  _wireEvmCerOnce();
+  _evmCerPaint();
+  _evmCerRefreshState().then(_evmCerPaint).catch(() => {});
+}
+
+function _evmCerPaintDrawerStatus() {
+  const el = document.getElementById('evm-cer-status');
+  if (!el) return;
+  const state = _evmCerState();
+  const goBtn = document.getElementById('evm-cer-go');
+  if (!state) {
+    el.innerHTML = '<span class="muted">Loading ceremony state…</span>';
+    return;
+  }
+  const n = Number(state.contribution_count) || 0;
+  const { ms, pills } = _evmCerMilestoneHtml(n);
+  let line;
+  if (state.finalized) line = `<strong>${n}</strong> contributions · finalized. The chain is closed.`;
+  else if (!ms.reached) line = `<strong>${n}</strong> contribution${n === 1 ? '' : 's'} so far; ${ms.next.count - n} more to reach the ${escapeHtml(ms.next.label)} milestone.`;
+  else if (ms.next) line = `<strong>${n}</strong> contributions · past <strong>${escapeHtml(ms.reached.label)}</strong>; ${ms.next.count - n} more to reach <strong>${escapeHtml(ms.next.label)}</strong>.`;
+  else line = `<strong>${n}</strong> contributions · every milestone reached. Contributions stay open until the beacon.`;
+  const head = state.head_cid || '';
+  el.innerHTML =
+    `<div>${line}</div>` +
+    `<div class="evm-cer-pills">${pills}</div>` +
+    (head ? `<div class="evm-cer-head">current key <code title="${escapeHtml(head)}">${escapeHtml(head.slice(0, 18))}…</code></div>` : '');
+  if (goBtn && state.finalized) { goBtn.disabled = true; goBtn.title = 'Ceremony finalized; the chain is closed.'; }
+}
+
+function _evmCerFmtTime(sec) {
+  const n = Number(sec);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  try { return new Date(n * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'; } catch { return ''; }
+}
+const _evmCerShort = (h, a = 8, b = 6) => {
+  const s = String(h || '');
+  return s.length > a + b + 1 ? `${s.slice(0, a)}…${s.slice(-b)}` : s;
+};
+
+function _evmCerRenderParticipants() {
+  const list = document.getElementById('evm-cer-participants');
+  if (!list) return;
+  const countEl = document.getElementById('evm-cer-participants-count');
+  const moreBtn = document.getElementById('evm-cer-participants-more');
+  const myPub = _evmCerMyPub();
+  const onChain = _evmCer.canonical ? new Set(_evmCer.canonical.chain) : null;
+  const rows = _evmCer.rows
+    .filter(r => Number(r.index) > 0 && !r.is_beacon)
+    .sort((a, b) => (Number(a.index) - Number(b.index)) || String(a.cid).localeCompare(String(b.cid)));
+  if (countEl) {
+    const total = Number(_evmCerState()?.contribution_count) || 0;
+    countEl.textContent = total ? `${total.toLocaleString('en-US')}` : '';
+  }
+  if (!rows.length) {
+    list.innerHTML = `<div class="evm-cer-empty">${_evmCer.loading ? 'Loading participants…' : 'No contributions yet. Be the first.'}</div>`;
+  } else {
+    list.innerHTML = rows.map(r => {
+      const pub = String(r.contributor_pubkey || '').toLowerCase();
+      const mine = !!myPub && pub === myPub;
+      const orphan = !!onChain && !onChain.has(r);
+      const hash = String(r.contribution_hash || '');
+      const name = r.contributor_name && r.contributor_name !== 'anonymous' ? r.contributor_name : '';
+      return `<div class="evm-cer-row${mine ? ' is-mine' : ''}${orphan ? ' is-orphan' : ''}"${orphan ? ' title="Not on the canonical chain"' : ''}>`
+        + `<span class="evm-cer-idx">#${escapeHtml(String(r.index))}</span>`
+        + `<span class="evm-cer-who">${name ? escapeHtml(name) : '<span class="muted">anonymous</span>'}${mine ? ' <span class="evm-cer-you">★ you</span>' : ''}${orphan ? ' <span class="muted">orphaned</span>' : ''}</span>`
+        + (pub
+          ? `<button type="button" class="evm-cer-copy evm-cer-pub" data-evm-cer-copy="${escapeHtml(pub)}" title="${escapeHtml(pub)} (click to copy)">${escapeHtml(_evmCerShort(pub, 10, 6))}</button>`
+          : '<span class="evm-cer-pub muted">no pubkey</span>')
+        + (hash
+          ? `<button type="button" class="evm-cer-copy evm-cer-hash" data-evm-cer-copy="${escapeHtml(hash)}" title="contribution hash ${escapeHtml(hash)} (click to copy)">${escapeHtml(hash.length > 16 ? hash.slice(0, 16) + '…' : hash)}</button>`
+          : '<span class="evm-cer-hash"></span>')
+        + `<span class="evm-cer-time">${escapeHtml(_evmCerFmtTime(r.contributed_at))}</span>`
+        + `</div>`;
+    }).join('');
+  }
+  if (moreBtn) {
+    moreBtn.style.display = _evmCer.complete ? 'none' : '';
+    moreBtn.disabled = _evmCer.loading;
+    moreBtn.textContent = _evmCer.loading ? 'Loading…' : 'Show more';
+  }
+}
+
+async function _evmCerLoadParticipants({ reset = false } = {}) {
+  if (!_evmCerConfigured() || _evmCer.loading) return;
+  if (reset) { _evmCer.rows = []; _evmCer.cursor = ''; _evmCer.complete = false; _evmCer.canonical = null; }
+  if (_evmCer.complete) { _evmCerRenderParticipants(); return; }
+  _evmCer.loading = true;
+  _evmCerRenderParticipants();
+  try {
+    const page = await ceremonyFetchAttestationPage(EVM_POOL_CEREMONY.hash, _evmCer.cursor, EVM_CER_PAGE_SIZE);
+    const seen = new Set(_evmCer.rows.map(r => `${r.index}:${r.cid}`));
+    for (const r of page.attestations) if (r && !seen.has(`${r.index}:${r.cid}`)) _evmCer.rows.push(r);
+    _evmCer.cursor = page.cursor || '';
+    _evmCer.complete = !page.cursor;
+    if (_evmCer.complete) _evmCer.canonical = ceremonyCanonicalChain(_evmCer.rows, _evmCerState()?.head_cid || null);
+  } catch (e) {
+    const note = document.getElementById('evm-cer-export-note');
+    if (note) note.textContent = `Could not load participants: ${e?.message || e}`;
+  } finally {
+    _evmCer.loading = false;
+    _evmCerRenderParticipants();
+  }
+}
+
+async function _evmCerDownloadParticipants() {
+  const btn = document.getElementById('evm-cer-download');
+  const note = document.getElementById('evm-cer-export-note');
+  if (!_evmCerConfigured() || !btn) return;
+  btn.disabled = true;
+  if (note) note.textContent = 'Walking the full chain…';
+  try {
+    const state = await _evmCerRefreshState(true);
+    const records = await ceremonyFetchAllAttestations(EVM_POOL_CEREMONY.hash);
+    const walk = ceremonyCanonicalChain(records, state?.head_cid || null);
+    if (!walk.complete) throw new Error(`the chain does not walk back to genesis (${walk.warnings.join('; ') || 'no records'})`);
+    const participants = ceremonyParticipantsExport(walk.chain);
+    _evmCer.rows = records; _evmCer.cursor = ''; _evmCer.complete = true; _evmCer.canonical = walk;
+    _evmCerRenderParticipants();
+    const blob = new Blob([JSON.stringify(participants, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `evm-pool-ceremony-participants-${EVM_POOL_CEREMONY.hash.slice(0, 8)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    const extra = walk.orphans.length ? ` · ${walk.orphans.length} orphaned record${walk.orphans.length === 1 ? '' : 's'} left out` : '';
+    if (note) note.textContent = `Exported ${participants.length} participant${participants.length === 1 ? '' : 's'} on the canonical chain${extra}.`;
+  } catch (e) {
+    if (note) note.textContent = `Export failed: ${e?.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function _evmCerPubkeyStatus(pub) {
+  try {
+    const r = await fetch(`${WORKER_BASE}/ceremony/${EVM_POOL_CEREMONY.hash}/pubkey-status/${pub}`, { cache: 'no-store' });
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+}
+
+async function _evmCerPaintMine() {
+  const el = document.getElementById('evm-cer-mine');
+  if (!el) return;
+  const pub = _evmCerMyPub();
+  if (!pub) { el.style.display = 'none'; return; }
+  const st = await _evmCerPubkeyStatus(pub);
+  if (st?.contributed) {
+    _evmCerMarkContributed(pub);
+    el.style.display = 'block';
+    el.innerHTML = `This wallet contributed as <strong>#${escapeHtml(String(st.slot ?? '?'))}</strong> · <code title="${escapeHtml(pub)}">${escapeHtml(_evmCerShort(pub, 10, 6))}</code>. One slot per address.`;
+    const goBtn = document.getElementById('evm-cer-go');
+    if (goBtn && !_evmCer.inFlight) { goBtn.disabled = true; goBtn.title = 'This wallet already contributed.'; }
+    _evmCerPaint();
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+function openEvmPoolCeremonyDrawer() {
+  if (!_evmCerConfigured()) return;
+  const drawer = document.getElementById('evm-cer-drawer');
+  if (!drawer) return;
+  drawer.style.display = 'flex';
+  _evmCerMiniChip(false);
+  const pubHint = document.getElementById('evm-cer-pubkey-hint');
+  if (pubHint) pubHint.textContent = wallet?.pub ? `(${bytesToHex(wallet.pub).slice(0, 12)}…)` : '';
+  if (!_evmCer.inFlight) {
+    _renderCerEligibilityBanner({
+      bannerId: 'evm-cer-eligibility-banner', goBtnId: 'evm-cer-go', ceremonyName: 'EVM pool ceremony',
+      reuseNote: 'cached for this session.',
+    });
+  }
+  _evmCerPaintDrawerStatus();
+  _evmCerRefreshState(true).then(() => { _evmCerPaintDrawerStatus(); _evmCerPaint(); }).catch(() => {});
+  if (!_evmCer.inFlight) _evmCerPaintMine().catch(() => {});
+  if (!_evmCer.rows.length || !_evmCer.complete) _evmCerLoadParticipants({ reset: !_evmCer.rows.length });
+  else _evmCerRenderParticipants();
+}
+
+function closeEvmPoolCeremonyDrawer() {
+  const drawer = document.getElementById('evm-cer-drawer');
+  if (drawer) drawer.style.display = 'none';
+  if (_evmCer.inFlight) _evmCerMiniChip(true);
+  _evmCerPaint();
+}
+
+function _evmCerMiniChip(show) {
+  const chip = document.getElementById('evm-cer-mini-chip');
+  if (!chip) return;
+  chip.style.display = show ? 'inline-flex' : 'none';
+  if (show) _evmCerTick();
+}
+
+function _evmCerTick() {
+  const sec = _evmCer.startedAt ? Math.floor((Date.now() - _evmCer.startedAt) / 1000) : 0;
+  const elapsed = sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  const pctEl = document.getElementById('evm-cer-mini-chip-pct');
+  const elEl = document.getElementById('evm-cer-mini-chip-elapsed');
+  const headEl = document.getElementById('evm-cer-headline-elapsed');
+  if (pctEl) pctEl.textContent = Math.round(_evmCer.pct) + '%';
+  if (elEl) elEl.textContent = elapsed;
+  if (headEl) headEl.textContent = elapsed;
+}
+
+function _evmCerShowResult(kind, text) {
+  const el = document.getElementById('evm-cer-result');
+  if (!el) return;
+  el.style.display = 'block';
+  el.className = `evm-cer-result evm-cer-result--${kind}`;
+  el.textContent = text;
+}
+
+async function _submitEvmPoolCeremonyContribution() {
+  const C = EVM_POOL_CEREMONY;
+  if (!_evmCerConfigured() || _evmCer.inFlight) return;
+  const goBtn = document.getElementById('evm-cer-go');
+  const progEl = document.getElementById('evm-cer-progress');
+  const resultEl = document.getElementById('evm-cer-result');
+  const nameEl = document.getElementById('evm-cer-name');
+  const headline = document.getElementById('evm-cer-headline');
+  const headLabel = document.getElementById('evm-cer-headline-label');
+  const headSub = document.getElementById('evm-cer-headline-sub');
+  const fill = document.getElementById('evm-cer-progressbar-fill');
+  if (!goBtn || !progEl || !resultEl) return;
+  resultEl.style.display = 'none';
+  resultEl.className = 'evm-cer-result';
+  progEl.textContent = '';
+
+  const elig = await _ceremonyPrepareEligibility({ progEl, resultEl, ceremonyName: 'EVM pool ceremony' });
+  if (!elig) return;
+  const { contributorPubkeyHex, eligibilityProofBytes } = elig;
+  const pub = contributorPubkeyHex.toLowerCase();
+  const prior = await _evmCerPubkeyStatus(pub);
+  if (prior?.contributed) {
+    _evmCerMarkContributed(pub);
+    _evmCerShowResult('info', `This wallet already contributed (slot #${prior.slot ?? '?'}). One slot per address.`);
+    _evmCerPaint();
+    return;
+  }
+  const contributorName = (nameEl?.value || '').trim().slice(0, 64) || 'anonymous';
+
+  const log = (line) => { progEl.style.display = 'block'; progEl.textContent += line + '\n'; progEl.scrollTop = progEl.scrollHeight; };
+  let creep = null;
+  const stopCreep = () => { if (creep) { clearInterval(creep); creep = null; } };
+  const setPct = (pct) => {
+    _evmCer.pct = Math.max(_evmCer.pct, Math.min(100, pct));
+    if (fill) fill.style.width = _evmCer.pct.toFixed(1) + '%';
+  };
+  const setPhase = (label, sub, pct) => {
+    if (headline) headline.style.display = '';
+    if (headLabel && label != null) headLabel.textContent = label;
+    if (headSub) headSub.textContent = sub || '';
+    if (pct != null) setPct(pct);
+  };
+  const creepTo = (from, to, estSec) => {
+    stopCreep();
+    const t0 = Date.now();
+    setPct(from);
+    creep = setInterval(() => setPct(from + Math.min(0.95, (Date.now() - t0) / 1000 / estSec) * (to - from)), 1000);
+  };
+  const bytesTo = (a, b, done, total) => { if (total > 0) setPct(a + Math.min(1, done / total) * (b - a)); };
+
+  const onBeforeUnload = (e) => {
+    e.preventDefault();
+    e.returnValue = 'A ceremony contribution is in progress. Leaving now discards it.';
+    return e.returnValue;
+  };
+  window.addEventListener('beforeunload', onBeforeUnload);
+  _evmCer.inFlight = true;
+  _evmCer.startedAt = Date.now();
+  _evmCer.pct = 0;
+  if (fill) fill.style.width = '0%';
+  _evmCer.tick = setInterval(_evmCerTick, 1000);
+  _evmCerTick();
+  goBtn.disabled = true;
+  const origLabel = goBtn.textContent;
+  goBtn.textContent = 'Working…';
+  _evmCerPaint();
+  log(`→ Contributing to the ${C.label} ceremony. Keep this tab open.`);
+
+  let landed = false;
+  try {
+    const result = await ceremonyContributeAmm({
+      circuitHash: C.hash,
+      contributorName,
+      contributorPubkeyHex,
+      eligibilityProofBytes,
+      expectedPtau: C.ptauSha256,
+      // ~28.5 MB fits the coordinator's inline upload, which pins to Filebase server-side.
+      directPinThreshold: Infinity,
+      onProgress: (phase, info) => {
+        if (phase === 'refresh') { setPhase('Preparing', 'reading the ceremony state', 2); log('  reading the ceremony state…'); }
+        else if (phase === 'reserve-wait') {
+          const pos = Number(info?.position || 0);
+          const total = Number(info?.total || 0);
+          const where = pos > 0 && total > 0 ? ` · position ${pos} of ${total}` : '';
+          setPhase(`Queued — ${info?.heldName || 'someone'} is contributing${where}`, 'your turn starts automatically · checking every 10s');
+          log(`  queued behind ${info?.heldName || 'another contributor'}${where}`);
+        }
+        else if (phase === 'reserve-ok') log('  ✓ your turn');
+        else if (phase === 'reserve-timeout') log('  queue wait timed out; continuing');
+        else if (phase === 'reserve-error') log(`  queue skipped (${info?.msg || 'error'}); continuing`);
+        else if (phase === 'fetch-head') { setPhase('Downloading the current key', 'about 28 MB', 4); log('  1/4 downloading the current key…'); }
+        else if (phase === 'fetch-head-log') log('  ' + (info?.msg || ''));
+        else if (phase === 'fetch-head-bytes') bytesTo(4, 20, info?.done || 0, info?.total || 0);
+        else if (phase === 'mix-phase') {
+          const p = info?.phase;
+          const b = info?.info;
+          if (p === 'download-r1cs') { if (b?.total) bytesTo(20, 30, b.done || 0, b.total); else { setPhase('Downloading the circuit', 'checked against the pinned hash'); log('  2/4 downloading the circuit and setup file…'); } }
+          else if (p === 'download-ptau') { if (b?.total) bytesTo(30, 55, b.done || 0, b.total); else setPhase('Downloading the setup file', 'checked against the pinned hash'); }
+          else if (p === 'verify') { setPhase('Verifying the chain', 'every prior contribution is checked before yours', 55); creepTo(55, 70, 40); log('  3/4 verifying every prior contribution…'); }
+          else if (p === 'contribute') { setPhase('Mixing your randomness', 'heavy compute · keep this tab open', 70); creepTo(70, 88, 25); log('  4/4 mixing your randomness into the key…'); }
+        }
+        else if (phase === 'upload') { stopCreep(); setPhase('Uploading your contribution', `${((info?.bytes || 0) / 1048576).toFixed(1)} MB`, 88); log('  uploading…'); }
+        else if (phase === 'upload-bytes') bytesTo(88, 99, info?.done || 0, info?.total || 0);
+        else if (phase === 'upload-retry') { if (headSub) headSub.textContent = info?.reason || 'retrying upload'; log(`  ${info?.reason || 'retrying upload'}`); }
+        else if (phase === 'done') { stopCreep(); setPhase('Contribution landed', '', 100); log('  ✓ contribution landed'); }
+      },
+    });
+    landed = true;
+    _evmCerMarkContributed(pub);
+    const rec = result?.contribution || {};
+    const idx = rec.index ?? result?.state?.contribution_count ?? _evmCerState()?.contribution_count;
+    const hash = String(rec.contribution_hash || '');
+    resultEl.style.display = 'block';
+    resultEl.className = 'evm-cer-result evm-cer-result--ok';
+    resultEl.textContent = '';
+    const title = document.createElement('div');
+    title.className = 'evm-cer-result-title';
+    title.textContent = 'Contribution landed.';
+    const sub = document.createElement('div');
+    sub.className = 'evm-cer-result-sub';
+    sub.textContent = `You are contributor #${idx ?? '?'} to the ${C.label} ceremony. The key is sound as long as one contributor, you included, kept their randomness secret.`;
+    const hashLabel = document.createElement('div');
+    hashLabel.className = 'evm-cer-result-label';
+    hashLabel.textContent = 'contribution hash';
+    const hashVal = document.createElement('button');
+    hashVal.type = 'button';
+    hashVal.className = 'evm-cer-copy evm-cer-result-hash';
+    hashVal.dataset.evmCerCopy = hash;
+    hashVal.title = 'click to copy';
+    hashVal.textContent = hash || '(not returned)';
+    const pubLabel = document.createElement('div');
+    pubLabel.className = 'evm-cer-result-label';
+    pubLabel.textContent = 'recorded pubkey';
+    const pubVal = document.createElement('code');
+    pubVal.textContent = pub;
+    resultEl.append(title, sub, hashLabel, hashVal, pubLabel, pubVal);
+    goBtn.textContent = 'Contributed';
+    _evmCerLoadParticipants({ reset: true });
+  } catch (e) {
+    try { _ammReleaseReservation(C.hash, contributorPubkeyHex); } catch {}
+    let msg;
+    if (e?.code === 'DUPEPUB') {
+      _evmCerMarkContributed(pub);
+      msg = 'This wallet already contributed to this ceremony (one slot per address).';
+    } else if (e?.code === 'INELIGIBLE') {
+      try { sessionStorage.removeItem(_AMM_CER_ELIGIBILITY_CACHE_KEY); } catch {}
+      msg = `The TAC eligibility proof was rejected: ${String(e?.message || '').replace(/^eligibility_proof:\s*/i, '')}. If your TAC moved recently, rescan in Holdings and retry; a fresh proof is minted automatically.`;
+    } else if (e?.code === 'CASRACE') {
+      msg = 'Another contribution landed just before yours. Click Contribute to mix against the new key.';
+    } else if (e?.code === 'RATELIMIT') {
+      msg = 'This network address hit the daily contribution limit. Try again after 00:00 UTC.';
+    } else if (/network|aborted|fetch|timeout/i.test(String(e?.message || ''))) {
+      msg = `Network error (${e?.message || e}). Click Contribute to retry.`;
+    } else {
+      msg = `Could not finish: ${e?.message || e}. Click Contribute to retry.`;
+    }
+    _evmCerShowResult('err', `✗ ${msg}`);
+    goBtn.textContent = origLabel;
+    if (headSub) headSub.textContent = 'stopped';
+  } finally {
+    stopCreep();
+    clearInterval(_evmCer.tick);
+    _evmCer.tick = null;
+    _evmCer.inFlight = false;
+    window.removeEventListener('beforeunload', onBeforeUnload);
+    goBtn.disabled = landed || _evmCerContributed(pub);
+    _evmCerMiniChip(false);
+    _evmCerRefreshState(true).then(_evmCerPaint).catch(() => {});
+    const drawer = document.getElementById('evm-cer-drawer');
+    if ((!drawer || drawer.style.display === 'none') && typeof toast === 'function') {
+      const msg = landed
+        ? `Your ${C.label} ceremony contribution landed. Click to view.`
+        : `The ${C.label} ceremony contribution did not finish. Click to view.`;
+      try { toast(msg, landed ? 'success' : '', 12000, { onClick: () => { try { openEvmPoolCeremonyDrawer(); } catch {} } }); } catch {}
+    }
+  }
+}
+
+function _wireEvmCerOnce() {
+  if (_wireEvmCerOnce._done) return;
+  _wireEvmCerOnce._done = true;
+  const drawer = document.getElementById('evm-cer-drawer');
+  const onKey = (fn) => (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } };
+  for (const id of ['evm-cer-chip', 'evm-cer-mini-chip']) {
+    const el = document.getElementById(id);
+    if (el) { el.addEventListener('click', openEvmPoolCeremonyDrawer); el.addEventListener('keydown', onKey(openEvmPoolCeremonyDrawer)); }
+  }
+  document.getElementById('evm-cer-cancel')?.addEventListener('click', closeEvmPoolCeremonyDrawer);
+  document.getElementById('evm-cer-go')?.addEventListener('click', _submitEvmPoolCeremonyContribution);
+  document.getElementById('evm-cer-download')?.addEventListener('click', _evmCerDownloadParticipants);
+  document.getElementById('evm-cer-participants-more')?.addEventListener('click', () => _evmCerLoadParticipants());
+  document.getElementById('evm-cer-banner-close')?.addEventListener('click', () => {
+    try { localStorage.setItem(_EVM_CER_BANNER_KEY(), '1'); } catch {}
+    const b = document.getElementById('evm-cer-banner');
+    if (b) b.style.display = 'none';
+  });
+  for (const id of ['evm-cer-banner-contribute', 'evm-cer-banner-participants']) {
+    document.getElementById(id)?.addEventListener('click', (e) => {
+      e.preventDefault();
+      openEvmPoolCeremonyDrawer();
+      if (id === 'evm-cer-banner-participants') {
+        setTimeout(() => { try { document.getElementById('evm-cer-participants-wrap')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch {} }, 50);
+      }
+    });
+  }
+  if (drawer) {
+    drawer.addEventListener('click', (e) => {
+      if (e.target === drawer) { closeEvmPoolCeremonyDrawer(); return; }
+      const copyEl = e.target.closest?.('[data-evm-cer-copy]');
+      if (!copyEl) return;
+      const val = copyEl.getAttribute('data-evm-cer-copy') || '';
+      if (!val) return;
+      try {
+        navigator.clipboard.writeText(val).then(
+          () => { if (typeof toast === 'function') toast('Copied', 'success', 1500); },
+          () => {},
+        );
+      } catch {}
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && drawer && drawer.style.display !== 'none') closeEvmPoolCeremonyDrawer();
+  });
+  try {
+    const qs = new URLSearchParams(window.location.search || '');
+    if (qs.get('evmpool') === 'ceremony') setTimeout(openEvmPoolCeremonyDrawer, 250);
+  } catch {}
 }
 
 async function ceremonyContribute() {
@@ -45489,6 +46154,7 @@ function _activateTab(name) {
   try { _updateNavOpenOrdersBadge(); } catch {}
   try { _wireNavOpenOrdersBadge(); } catch {}
   try { _wireAmmCeremonyChipOnce(); renderAmmCeremonyChip(); } catch {}
+  try { renderEvmPoolCeremony(); } catch {}
 }
 
 function setupTabs() {
@@ -91983,6 +92649,7 @@ async function init() {
   // without needing to switch tabs first. renderAmmCeremonyChip itself
   // checks ack + finalized state so it's a no-op when irrelevant.
   try { _wireAmmCeremonyChipOnce(); renderAmmCeremonyChip(); } catch {}
+  try { renderEvmPoolCeremony(); } catch {}
   setupFaqModal();
   setupProtocolToc();
   setupCommandPalette();

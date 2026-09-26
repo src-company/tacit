@@ -264,6 +264,7 @@ await test('sha256-anchored validator: rejects substituted bytes (gateway-substi
       () => { throw new Error('Load failed'); },
       () => { throw new Error('Load failed'); },
       () => { throw new Error('Load failed'); },
+      () => { throw new Error('Load failed'); },
     ],
     async (calls) => {
       const validate = (b) => {
@@ -278,15 +279,16 @@ await test('sha256-anchored validator: rejects substituted bytes (gateway-substi
       // message; subsequent gateways then fail with network errors.
       if (!/sha256\(.*\) does not match expected/.test(caught.message)) return false;
       if (!/Load failed/.test(caught.message)) return false;
-      if (calls.length !== 5) return false;
+      if (calls.length !== 6) return false;
       return true;
     },
   );
 });
 
-await test('all 5 gateways failing throws a concatenated error', async () => {
+await test('all 6 gateways failing throws a concatenated error', async () => {
   return withFetchStub(
     [
+      () => { throw new Error('Load failed'); },
       () => { throw new Error('Load failed'); },
       () => { throw new Error('Load failed'); },
       () => { throw new Error('Load failed'); },
@@ -299,7 +301,7 @@ await test('all 5 gateways failing throws a concatenated error', async () => {
         await ceremonyFetchIpfsWithFailover(FAKE_CID, async () => null);
       } catch (e) { caught = e; }
       if (!caught) return false;
-      if (calls.length !== 5) return false;
+      if (calls.length !== 6) return false;
       // Sanity-check the format the dapp's UI surfaces to contributors.
       if (!/all 5 IPFS gateways failed/.test(caught.message)) return false;
       if (!/Load failed/.test(caught.message)) return false;

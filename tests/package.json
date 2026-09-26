@@ -35,7 +35,7 @@
     "test:mixer-state": "node mixer-state.test.mjs",
     "test:mixer-conservation": "node mixer-conservation.test.mjs",
     "test:mixer-e2e": "node mixer-e2e.test.mjs",
-    "test:ceremony": "node ceremony.test.mjs && node ceremony-fetch-failover.test.mjs && node ceremony-live-fetch.test.mjs",
+    "test:ceremony": "node ceremony.test.mjs && node ceremony-fetch-failover.test.mjs && node ceremony-live-fetch.test.mjs && node ceremony-evm-pool.test.mjs",
     "test:ceremony-fetch-failover": "node ceremony-fetch-failover.test.mjs",
     "test:ceremony-live-fetch": "node ceremony-live-fetch.test.mjs",
     "test:airdrop": "node airdrop.test.mjs",
