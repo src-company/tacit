@@ -695,7 +695,11 @@ export async function renderSendTab(wallet, helpers = {}) {
   if (!confidentialPoolReady()) { body.innerHTML = confidentialUnavailableHTML('Confidential Send'); return; }
   const ux = getUx();
   if (!wallet || !wallet.priv) {
-    body.innerHTML = '<div class="muted">Unlock a wallet to send a shielded note.</div>';
+    body.innerHTML = `<div class="csend-empty">
+      <div class="csend-empty-icon">\u{1F512}</div>
+      <div class="csend-empty-title">Unlock a wallet to send</div>
+      <div class="csend-empty-sub">Your keys stay in this browser. Unlock to view your shielded balance and send a private note.</div>
+    </div>`;
     return;
   }
   const id = ux.identity(wallet.priv);
@@ -725,13 +729,18 @@ export async function renderSendTab(wallet, helpers = {}) {
       wallet funds first makes that wrap amount public on-chain, same as any wrap. They don't need to be online
       now, and you can refund it to yourself if they never claim it. The composer spends matching shielded notes
       first, and wraps public funds only if it needs to.</div>
-    <div>Your Tacit address <span class="muted">(one handle, both chains — share to receive)</span>:
+    <div class="csend-account">
+      <div class="csend-account-label">Your Tacit address <span class="muted">(one handle, both chains — share to receive)</span></div>
+      <div class="csend-address-row">
       ${myTacit
         ? `<code id="csend-myaddr" class="addr">${esc(myTacit)}</code>
-           <button id="csend-copyaddr" type="button" class="btn-copy" style="font-size:10px;padding:2px 8px;margin-left:6px;">Copy</button>
-           <div class="muted" style="font-size:10px;margin-top:2px;">Pays you on <span class="btc-word">Bitcoin</span> or <span class="eth-word">Ethereum</span> from a single string. <details style="display:inline;"><summary style="display:inline;cursor:pointer;list-style:none;">Ethereum-only pubkey ▾</summary> <code class="addr" style="font-size:10px;">${id.pubHex}</code></details></div>
+           <button id="csend-copyaddr" type="button" class="btn-copy">Copy</button>`
+        : `<code id="csend-myaddr" class="addr">${id.pubHex}</code>`}
+      </div>
+      ${myTacit ? `
+           <div class="muted" style="font-size:10px;margin-top:6px;">Pays you on <span class="btc-word">Bitcoin</span> or <span class="eth-word">Ethereum</span> from a single string. <details style="display:inline;"><summary style="display:inline;cursor:pointer;list-style:none;">Ethereum-only pubkey ▾</summary> <code class="addr" style="font-size:10px;">${id.pubHex}</code></details></div>
            <div class="muted" style="font-size:10px;margin-top:2px;">Sharing this links your own two lanes to whoever receives it (inherent to a “pay me anywhere” handle) — it doesn’t weaken anyone else’s unlinkability. Want lane isolation? Use a per-lane address instead.</div>
-           ${canPublishName ? `<details style="margin-top:6px;">
+           ${canPublishName ? `<details style="margin-top:8px;">
              <summary class="muted" style="font-size:11px;cursor:pointer;list-style:none;">Publish my Tacit address to my name ▾</summary>
              <div class="details-body">
                <div class="muted" style="font-size:11px;margin-bottom:6px;">Store this address on your primary .wei, .gwei or .eth name so people can pay you by typing the name. Needs your Ethereum wallet and a small mainnet transaction.</div>
@@ -739,12 +748,11 @@ export async function renderSendTab(wallet, helpers = {}) {
                <div id="csend-name-out" style="margin-top:6px;"></div>
                <div id="csend-name-status" class="muted field-status" style="margin-top:4px;"></div>
              </div>
-           </details>` : ''}`
-        : `<code id="csend-myaddr" class="addr">${id.pubHex}</code>`}
+           </details>` : ''}` : ''}
+      <div id="csend-balance" class="muted">Scanning your notes…</div>
     </div>
-    <div id="csend-balance" class="muted">Scanning your notes…</div>
 
-    <div class="divider">
+    <div class="csend-hero">
       <label class="field-label" for="csend-asset">Asset</label>
       <select id="csend-asset">
         <optgroup label="Ethereum · shielded pool">${assetOptions}</optgroup>
@@ -752,7 +760,7 @@ export async function renderSendTab(wallet, helpers = {}) {
           <option value="__btc__">Bitcoin-native asset or plain sats…</option>
         </optgroup>
       </select>
-      <div id="csend-asset-badge" style="display:none;align-items:center;gap:6px;margin-top:8px;font-weight:600;"></div>
+      <div id="csend-asset-badge" class="csend-asset-badge"></div>
       <div class="muted" style="font-size:10px;margin-top:3px;">Pick what you're sending — the lane follows the asset.</div>
 
       <div id="csend-evm-controls" style="margin-top:12px;">
@@ -795,7 +803,9 @@ export async function renderSendTab(wallet, helpers = {}) {
       </div>
     </div>
 
-    <div class="divider">
+    <div class="csend-tools">
+    <div class="csend-tools-label">More ways to move value</div>
+    <div>
       <div style="font-weight:600;margin-bottom:4px;">Just hold it privately <span class="muted" style="font-weight:400;font-size:11px;">· wrap in, no recipient</span></div>
       <div class="muted" style="font-size:11px;margin-bottom:6px;">Turn public ETH, USDC, tacBTC, or tacUSD into a shielded note you own — nothing is sent, your balance just becomes private.</div>
       <div class="field-row">
@@ -848,6 +858,7 @@ export async function renderSendTab(wallet, helpers = {}) {
         <div id="csend-pending-list"></div>
       </div>
     </details>
+    </div>
     </div>`;
 
   wireInvoice(wallet, ux);
