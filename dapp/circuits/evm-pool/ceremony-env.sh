@@ -6,7 +6,7 @@ SNARKJS_VERSION=0.7.6
 CIRCOMLIB_VERSION=2.0.5
 N_PUBLIC=11
 BEACON_ITERS_DEFAULT=10
-MIN_CONTRIBUTIONS_DEFAULT=1000
+MIN_CONTRIBUTIONS_DEFAULT=10
 
 EVM_POOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CIRCUITS_DIR="$(cd "$EVM_POOL_DIR/.." && pwd)"
@@ -16,7 +16,7 @@ OUT=${OUT:-$EVM_POOL_DIR/ceremony}
 GENESIS="$OUT/genesis"
 FINAL="$OUT/final"
 WORKER=${WORKER:-https://api.tacit.finance}
-GATEWAY=${GATEWAY:-https://content.wrappr.wtf/ipfs}
+GATEWAY=${GATEWAY:-https://ipfs.filebase.io/ipfs}
 
 # Phase 1: Hermez powers of tau, BLAKE2b as published in the snarkjs README. The ceremony uses the 2^16
 # truncation. 2^18 is the file already pinned for the AMM ceremony (../pin-pot18.sh), accepted for local dry

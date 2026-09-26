@@ -13,7 +13,7 @@
 #   BEACON_HEIGHT=<h> BEACON_HASH=<64 hex> bash finalize.sh head.zkey       # given hash, no explorer lookup
 #
 # The beacon follows ../finalize-amm.sh: a Bitcoin block at least 12 deep, its hash taken from two explorers
-# that must agree, 2^10 iterations. Env: BEACON_ITERS (10..63), MIN_CONTRIBUTIONS (default 1000), OUT, PTAU,
+# that must agree, 2^10 iterations. Env: BEACON_ITERS (10..63), MIN_CONTRIBUTIONS (default 10), OUT, PTAU,
 # FORCE=1 to replace an existing $OUT/final. Makes no coordinator or pinning calls; prints them.
 set -euo pipefail
 source "$(dirname "$0")/ceremony-env.sh"
@@ -148,8 +148,9 @@ cat <<EOF
 
 Final key ready in $FINAL. Next (operator; nothing below has run):
 
-1. Pin the bundle (the final zkey exceeds /finalize's inline cap, so it goes in by CID):
-     bash $CIRCUITS_DIR/pin-bundle.sh $FINAL
+1. Pin the bundle on the local node, the RunPod node and Filebase (the final zkey exceeds /finalize's inline cap,
+   so it goes in by CID):
+     bash $EVM_POOL_DIR/pin-final.sh
    Confirm transact_final.zkey resolves at ${zf_cid:-its CID}: curl -sI $GATEWAY/${zf_cid:-<cid>}
 
 2. Seal the chain on the coordinator (\$CFG holds the X-Tacit-Init-Token header, as in ceremony-init.sh):
