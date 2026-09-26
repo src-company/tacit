@@ -17,7 +17,8 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, copyToClipboard, evmAccountHint } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, copyToClipboard, evmAccountHint, decOf } from './confidential-deployments.js';
+import { formatUnits, parseUnits } from './confidential-payout.js';
 import { makeConfidentialOtc } from './confidential-otc.js';
 import { randomScalar } from './bulletproofs-plus.js';
 import { scanHealth, scanHealthHtml, inboundBadgeHtml, inboundSummaryHtml } from './confidential-scan-health.js';
@@ -92,7 +93,7 @@ function wireSubmit(wallet, ux) {
     try {
       result = otcLib.verifyOtc(otc, { merkleRootFrom: ux.pool.merkleRootFrom });
     } catch (e) {
-      if (statusEl) statusEl.textContent = 'Offer rejected: ' + (e && e.message || e);
+      if (statusEl) statusEl.textContent = 'Offer rejected: ' + formatErr(e);
       return;
     }
     // The relay's box proves this op with contracts/sp1/confidential/harnesses/exec-otc, which reads a
@@ -104,7 +105,7 @@ function wireSubmit(wallet, ux) {
     try {
       wireOp = otcLib.toWireOp(otc);
     } catch (e) {
-      if (statusEl) statusEl.textContent = 'Offer incomplete: ' + (e && e.message || e);
+      if (statusEl) statusEl.textContent = 'Offer incomplete: ' + formatErr(e);
       return;
     }
     // Settling is NOT wired, and is refused here rather than attempted.
@@ -134,7 +135,7 @@ function wireSubmit(wallet, ux) {
 function wireComposer(wallet, ux, notes) {
   const otc = makeConfidentialOtc({ keccak256: keccak_256, pool: ux.pool });
   const byLeaf = new Map((notes || []).map((n) => [String(n.leafIndex), n]));
-  const noteOpt = (n) => `<option value="${n.leafIndex}">${n.value} ${ux.tickerOf(n.asset) || n.asset.slice(0, 8)} #${n.leafIndex}</option>`;
+  const noteOpt = (n) => `<option value="${n.leafIndex}">${esc(formatUnits(n.value, decOf(ux, n.asset)))} ${esc(ux.tickerOf(n.asset) || n.asset.slice(0, 8))} #${n.leafIndex}</option>`;
   ['otc-mk-note', 'otc-tk-note'].forEach((sel) => {
     const e = document.getElementById(sel);
     if (e) e.innerHTML = (notes || []).map(noteOpt).join('');
@@ -145,12 +146,25 @@ function wireComposer(wallet, ux, notes) {
     const st = document.getElementById('otc-compose-status');
     try {
       const n = byLeaf.get((document.getElementById('otc-mk-note') || {}).value);
-      const vA = BigInt((document.getElementById('otc-mk-give') || {}).value || '0');
       const assetB = ((document.getElementById('otc-mk-wantasset') || {}).value || '').trim();
-      const vB = BigInt((document.getElementById('otc-mk-wantamt') || {}).value || '0');
-      if (!n || vA <= 0n || vB <= 0n || !/^0x[0-9a-fA-F]{64}$/.test(assetB)) { if (st) st.textContent = 'Fill in the give note + amount and the want asset + amount.'; return; }
+      if (!n || !/^0x[0-9a-fA-F]{64}$/.test(assetB)) { if (st) st.textContent = 'Fill in the give note and the want asset.'; return; }
+      // Both amounts are typed as decimal (e.g. "1.5"), each in its OWN asset's places — the give note's
+      // for vA, the chosen want asset's for vB — not raw base units. A plain BigInt() here (the earlier
+      // bug) would silently propose 1e-8 of what was typed on an 8-decimal asset.
+      let vA, vB;
+      try { vA = parseUnits((document.getElementById('otc-mk-give') || {}).value || '', decOf(ux, n.asset)); }
+      catch (e) { if (st) st.textContent = `Give amount: ${e.message || e}`; return; }
+      try { vB = parseUnits((document.getElementById('otc-mk-wantamt') || {}).value || '', decOf(ux, assetB)); }
+      catch (e) { if (st) st.textContent = `Want amount: ${e.message || e}`; return; }
+      if (vA <= 0n || vB <= 0n) { if (st) st.textContent = 'Fill in the give amount and the want amount.'; return; }
       if (n.asset.toLowerCase() === assetB.toLowerCase()) { if (st) st.textContent = 'Pick a different want asset than the one you give.'; return; }
-      if (vA > BigInt(n.value)) { if (st) st.textContent = 'Give amount exceeds the selected note.'; return; }
+      if (vA > BigInt(n.value)) { if (st) st.textContent = `Give amount exceeds the selected note (${formatUnits(n.value, decOf(ux, n.asset))} ${ux.tickerOf(n.asset) || ''}).`; return; }
+      // The draft slot is single — creating a new offer before an in-flight one finalizes silently
+      // strands it (its random blinding is gone, so a later countersignature for it can never assemble).
+      if (await loadOtcDraft(wallet.priv)) {
+        const proceed = window.confirm('You have an unfinished OTC offer waiting on a countersignature. Creating a new one discards it permanently — the old offer can never be finalized after this.\n\nContinue and discard it?');
+        if (!proceed) { if (st) st.textContent = 'Kept the existing draft — finalize or abandon it before creating another.'; return; }
+      }
       const recvR = randomScalar();
       const inVal = BigInt(n.value);
       const changeR = inVal > vA ? randomScalar() : null;
@@ -177,6 +191,7 @@ function wireComposer(wallet, ux, notes) {
       if (!n) { if (st) st.textContent = 'Pick the note you give as the taker.'; return; }
       const vA = BigInt(offer.vA), vB = BigInt(offer.vB);
       const inVal = BigInt(n.value);
+      if (vB > inVal) { if (st) st.textContent = `This offer needs ${formatUnits(vB, decOf(ux, n.asset))} ${ux.tickerOf(n.asset) || ''} to countersign; the selected note only has ${formatUnits(inVal, decOf(ux, n.asset))}.`; return; }
       const recvR = randomScalar();
       const changeR = inVal > vB ? randomScalar() : null;
       // Same as the maker leg: bind to the SELECTED note's own owner + nk, not the wallet's default
@@ -259,12 +274,12 @@ export async function renderOtcTab(wallet) {
         <label class="field-label" for="otc-mk-note">From (give)</label>
         <div class="field-row" style="margin-bottom:6px;">
           <select id="otc-mk-note" style="flex:1 1 160px;"></select>
-          <input id="otc-mk-give" type="number" min="0" placeholder="amount" style="flex:0 0 90px;width:90px;">
+          <input id="otc-mk-give" type="number" min="0" step="any" placeholder="amount">
         </div>
         <label class="field-label" for="otc-mk-wantasset">To (want)</label>
         <div class="field-row" style="margin-bottom:6px;">
           <select id="otc-mk-wantasset" style="flex:1 1 160px;">${assetOptions}</select>
-          <input id="otc-mk-wantamt" type="number" min="0" placeholder="amount" style="flex:0 0 90px;width:90px;">
+          <input id="otc-mk-wantamt" type="number" min="0" step="any" placeholder="amount">
           <button id="otc-mk-btn">Create</button>
         </div>
         <textarea id="otc-mk-out" rows="3" readonly placeholder="offer to send the taker" style="${taFont}"></textarea>
@@ -311,7 +326,7 @@ export async function renderOtcTab(wallet) {
       box.innerHTML = banner + '<div style="font-weight:600;margin-bottom:4px;color:var(--ink);">Your tradeable notes</div>'
         + notes.map((n) => {
           const ticker = ux.tickerOf(n.asset) || 'note';
-          return `<div style="padding:3px 0;">${n.value} ${esc(ticker)} <span class="muted">#${n.leafIndex}</span>${inboundBadgeHtml(n)}</div>`;
+          return `<div style="padding:3px 0;">${esc(formatUnits(n.value, decOf(ux, n.asset)))} ${esc(ticker)} <span class="muted">#${n.leafIndex}</span>${inboundBadgeHtml(n)}</div>`;
         }).join('') + inboundSummaryHtml(notes);
     }
     wireComposer(wallet, ux, notes || []);
