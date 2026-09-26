@@ -3366,18 +3366,12 @@ details.protocol-section > summary.protocol-h3:hover { color: var(--orange); }
 .protocol-docnav > div { display: flex; flex-direction: column; }
 .protocol-docnav strong { margin-bottom: 4px; margin-right: 0; }
 .protocol-docnav a { margin-right: 0; line-height: 1.8; }
-/* Audits attestation box — the models line is the headline credential, the
-   verdict reads underneath. Bordered warm surface so it stands out in-page. */
+/* Audits attestation box — bordered warm surface so the verdict stands out in-page. */
 .audit-attest {
   border: 1px solid var(--ink);
   border-left: 3px solid var(--orange);
   background: var(--bg-warm);
   padding: 12px 14px;
-}
-.protocol-body .audit-attest .audit-models {
-  margin-top: 0;
-  font-size: 15px;
-  letter-spacing: 0.01em;
 }
 .protocol-body .audit-attest .audit-verdict {
   margin-top: 8px;
@@ -10898,26 +10892,9 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
       <details class="protocol-section" id="proto-audits" open>
         <summary class="protocol-h3">Audits &amp; reviews</summary>
         <div class="audit-attest" style="margin-top:10px;">
-          <p class="audit-models">Reviewed by <strong>GPT-5.5 Pro</strong>, <strong>Claude Opus 4.8</strong>, <strong>Claude Fable 5.1</strong> &amp; <strong>Claude Opus 5</strong></p>
-          <p class="audit-verdict">Independent, adversarial reviews of the immutable contracts, the SP1 guests and the relayed cross-chain ops, before and after deployment. The deployed bytecode was checked byte for byte against source. <strong>No open fund-impacting findings</strong>: every finding is fixed or dispositioned in the published report.</p>
+          <p class="audit-verdict" style="margin-top:0;">Independent, adversarial reviews of the immutable contracts, the SP1 guests and the relayed cross-chain ops, before and after deployment. The deployed bytecode was checked byte for byte against source. <strong>No open fund-impacting findings</strong>: every finding is fixed or dispositioned in its report.</p>
         </div>
-        <p style="margin-top:12px;">Each report pins the exact commit and cites <code>file:line</code>, and the maintainer responses are in the repo. Areas covered include:</p>
-        <ul style="margin-left:20px;margin-top:8px;">
-          <li>Bitcoin witness-commitment binding and Merkle/txid malleability checks.</li>
-          <li>Relayed-op authorization: every op's amounts, recipient, fee and output owner are bound in an op-specific proof context.</li>
-          <li>Cross-chain burn→mint provenance and the spent-set check before any Bitcoin-homed spend.</li>
-          <li>Classic Bulletproofs and Bulletproofs+ dispatch, so older TAC notes and new notes verify under the same guest.</li>
-          <li>Collateral oracle bounds, relayed settles, and the in-guest swap-batch verifier.</li>
-        </ul>
-        <p style="margin-top:12px;">
-          <a href="https://github.com/z0r0z/tacit/blob/main/audit/AUDIT-2026-09-20-v1-launch-review.md" target="_blank" rel="noopener noreferrer">Launch review →</a>
-          &nbsp;·&nbsp;
-          <a href="https://github.com/z0r0z/tacit/blob/main/audit/AUDIT-2026-09-19-public-release-review.md" target="_blank" rel="noopener noreferrer">Public-release review →</a>
-          &nbsp;·&nbsp;
-          <a href="https://chatgpt.com/share/6a3d6968-5e2c-83ec-ad1b-535279feeccc" target="_blank" rel="noopener noreferrer">GPT-5.5 Pro transcript →</a>
-          &nbsp;·&nbsp;
-          <a href="https://github.com/z0r0z/tacit/blob/main/audit/AUDITS.md" target="_blank" rel="noopener noreferrer">All reports &amp; responses →</a>
-        </p>
+        <p style="margin-top:12px;">Full review history: <a href="https://github.com/z0r0z/tacit/blob/main/audit/AUDITS.md" target="_blank" rel="noopener noreferrer">AUDITS.md</a>. The v1 release's agentic audits: <a href="https://github.com/z0r0z/tacit/blob/main/audit/AUDIT-2026-09-16-17-fable51-lock-checkpoint.md" target="_blank" rel="noopener noreferrer">Fable 5.1 lock checkpoint</a> (the review that gated the deploy), an <a href="https://github.com/z0r0z/tacit/blob/main/audit/AUDIT-2026-09-21-gpt-astra-external-review.md" target="_blank" rel="noopener noreferrer">external automated review</a>, and the <a href="https://github.com/z0r0z/tacit/blob/main/audit/AUDIT-2026-09-24-pashov-solidity-auditor-v4.md" target="_blank" rel="noopener noreferrer">Pashov <code>solidity-auditor</code> v4 round</a> (24-agent, post-deploy, extended to the zkVM guest) — run after a week of live mainnet use.</p>
       </details>
 
       <details class="protocol-section" id="proto-trust">
