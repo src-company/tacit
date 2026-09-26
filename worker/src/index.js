@@ -7507,6 +7507,10 @@ function ceremonyDrainKey(hash)         { return `ceremony:${hash}:drain_until`;
 // state.contribution_count, but the rollback path sets drain first so
 // /contribute is gated out during the window.
 function ceremonyVerifiedKey(hash)      { return `ceremony:${hash}:verified`; }
+// Ceremonies open to any contributor: no ≥ 1 TAC proof, pubkey proven by the reserve signature instead.
+const CEREMONY_OPEN_HASHES = new Set([
+  'b0a246d1790151c722e42ccfa89450cb96c7f5a9f4b70a2162b7d9fc79b6ddb3', // evm-pool transact
+]);
 function ceremonyContribKey(hash, idx, cid) {
   return `ceremony:${hash}:contrib:${String(idx).padStart(8, '0')}:${cid}`;
 }
@@ -8854,12 +8858,14 @@ async function handleCeremonyContribute(req, env, circuitHash, cors, ctx) {
   // Only the head of the contribution queue may send a body. Checked before the multipart body is read,
   // so a caller without the head slot cannot make the service buffer a contribution-sized upload.
   const headToken = String(new URL(req.url).searchParams.get('queue_token') || '').trim().slice(0, 64);
+  let headEntry;
   {
     const queue = await _listCeremonyQueue(env, circuitHash);
     await _evictStaleQueueHeads(env, circuitHash, queue);
     if (!headToken || !queue.length || queue[0].token !== headToken) {
       return jsonResponse({ error: 'not at the head of the contribution queue — reserve first' }, 403, cors);
     }
+    headEntry = queue[0];
   }
 
   let fd;
@@ -8911,33 +8917,41 @@ async function handleCeremonyContribute(req, env, circuitHash, cors, ctx) {
       error: 'eligibility_proof: contributor_pubkey is required (the eligibility proof binds to it)',
     }, 403, cors);
   }
-  const proofField = fd.get('eligibility_proof');
-  let proofBytes = null;
-  if (proofField instanceof File) {
-    proofBytes = new Uint8Array(await proofField.arrayBuffer());
-  } else if (typeof proofField === 'string' && proofField.length) {
-    // Accept hex string for clients that prefer text fields; binary File
-    // form is the canonical / cheaper path.
-    const h = proofField.trim().toLowerCase();
-    if (!/^[0-9a-f]+$/.test(h) || h.length % 2 !== 0) {
-      return jsonResponse({ error: 'eligibility_proof: malformed hex' }, 400, cors);
+  // Open ceremonies take no TAC proof. The contributor's pubkey is still proven: it must be the pubkey
+  // whose Schnorr signature claimed the queue head in /reserve.
+  if (CEREMONY_OPEN_HASHES.has(circuitHash)) {
+    if (String(headEntry?.pubkey || '').toLowerCase() !== contributorPubkey) {
+      return jsonResponse({ error: 'contributor_pubkey is not the pubkey that reserved the queue head' }, 403, cors);
     }
-    proofBytes = hexToBytes(h);
-  }
-  if (!proofBytes || proofBytes.length === 0) {
-    return jsonResponse({
-      error: 'eligibility_proof: missing (contributions now require a ≥ 1 TAC range-proof envelope; see dapp ceremonyContributeAmm for the wire format)',
-    }, 403, cors);
-  }
-  // Cap envelope size: a legitimate envelope is ≤ ~1.5 KB. Generous ceiling
-  // here protects against ridiculous attestation_len values getting through
-  // the per-field decoder.
-  if (proofBytes.length > 8192) {
-    return jsonResponse({ error: 'eligibility_proof: oversize envelope (max 8 KB)' }, 413, cors);
-  }
-  const eligibility = await verifyCeremonyEligibilityProof(env, proofBytes, contributorPubkey);
-  if (!eligibility.ok) {
-    return jsonResponse({ error: eligibility.reason }, eligibility.status || 403, cors);
+  } else {
+    const proofField = fd.get('eligibility_proof');
+    let proofBytes = null;
+    if (proofField instanceof File) {
+      proofBytes = new Uint8Array(await proofField.arrayBuffer());
+    } else if (typeof proofField === 'string' && proofField.length) {
+      // Accept hex string for clients that prefer text fields; binary File
+      // form is the canonical / cheaper path.
+      const h = proofField.trim().toLowerCase();
+      if (!/^[0-9a-f]+$/.test(h) || h.length % 2 !== 0) {
+        return jsonResponse({ error: 'eligibility_proof: malformed hex' }, 400, cors);
+      }
+      proofBytes = hexToBytes(h);
+    }
+    if (!proofBytes || proofBytes.length === 0) {
+      return jsonResponse({
+        error: 'eligibility_proof: missing (contributions now require a ≥ 1 TAC range-proof envelope; see dapp ceremonyContributeAmm for the wire format)',
+      }, 403, cors);
+    }
+    // Cap envelope size: a legitimate envelope is ≤ ~1.5 KB. Generous ceiling
+    // here protects against ridiculous attestation_len values getting through
+    // the per-field decoder.
+    if (proofBytes.length > 8192) {
+      return jsonResponse({ error: 'eligibility_proof: oversize envelope (max 8 KB)' }, 413, cors);
+    }
+    const eligibility = await verifyCeremonyEligibilityProof(env, proofBytes, contributorPubkey);
+    if (!eligibility.ok) {
+      return jsonResponse({ error: eligibility.reason }, eligibility.status || 403, cors);
+    }
   }
 
   // One-slot-per-pubkey-per-circuit dedup. The eligibility proof gates

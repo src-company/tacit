@@ -194,12 +194,13 @@ async function postInit(env, { token, circuit_hash = CIRCUIT_HASH, files = true,
 async function getState(env, hash = CIRCUIT_HASH) {
   return worker.default.fetch(new Request(`http://localhost/ceremony/${hash}`), env);
 }
-async function enqueueHead(env, hash = CIRCUIT_HASH, token = 'head-token') {
-  await env.REGISTRY_KV.put(`ceremony-q:${hash}:${token}`, JSON.stringify({ token, joined_at: Date.now(), head_started_at: Date.now() }));
+async function enqueueHead(env, hash = CIRCUIT_HASH, token = 'head-token', pubkey = undefined) {
+  await env.REGISTRY_KV.put(`ceremony-q:${hash}:${token}`, JSON.stringify({ token, pubkey, joined_at: Date.now(), head_started_at: Date.now() }));
   return token;
 }
-async function postContribute(env, { hash = CIRCUIT_HASH, prev_cid, contributor = 'alice', contrib_hash = 'abc', queue_token } = {}) {
+async function postContribute(env, { hash = CIRCUIT_HASH, prev_cid, contributor = 'alice', contrib_hash = 'abc', queue_token, pubkey } = {}) {
   const fd = new FormData();
+  if (pubkey) fd.append('contributor_pubkey', pubkey);
   fd.append('zkey', makeFile(magicBlob(_ZKEY_MAGIC), 'c.zkey'));
   fd.append('prev_cid', prev_cid);
   fd.append('contributor_name', contributor);
@@ -403,6 +404,28 @@ await test('contribute: 403 before reading the body without the queue head token
   const none = await postContribute(env, { prev_cid: 'x' });
   const notHead = await postContribute(env, { prev_cid: 'x', queue_token: 'not-the-head' });
   return none.status === 403 && notHead.status === 403;
+});
+
+const OPEN_HASH = 'b0a246d1790151c722e42ccfa89450cb96c7f5a9f4b70a2162b7d9fc79b6ddb3';
+const PUB_A = '02' + 'a1'.repeat(32);
+const PUB_B = '03' + 'b2'.repeat(32);
+await test('open ceremony: no TAC proof needed, but the pubkey must be the one that reserved the head', async () => {
+  const env = makeEnv();
+  const init = await (await postInit(env, { token: env.CEREMONY_INIT_TOKEN, circuit_hash: OPEN_HASH })).json();
+  const tok = await enqueueHead(env, OPEN_HASH, 'open-head', PUB_A);
+  const other = await postContribute(env, { hash: OPEN_HASH, prev_cid: init.state.head_cid, queue_token: tok, pubkey: PUB_B });
+  const otherErr = (await other.json()).error;
+  const own = await postContribute(env, { hash: OPEN_HASH, prev_cid: init.state.head_cid, queue_token: tok, pubkey: PUB_A });
+  const ownErr = (await own.json()).error || '';
+  return other.status === 403 && /reserved the queue head/.test(otherErr) && !/eligibility/.test(ownErr);
+});
+
+await test('gated ceremony: still requires the TAC eligibility proof', async () => {
+  const env = makeEnv();
+  const init = await (await postInit(env, { token: env.CEREMONY_INIT_TOKEN })).json();
+  const tok = await enqueueHead(env, CIRCUIT_HASH, 'gated-head', PUB_A);
+  const res = await postContribute(env, { prev_cid: init.state.head_cid, queue_token: tok, pubkey: PUB_A });
+  return res.status === 403 && /eligibility_proof: missing/.test((await res.json()).error);
 });
 
 await test('contribute: 409 on stale prev_cid (does not match current head_cid)', async () => {
