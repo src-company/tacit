@@ -43279,15 +43279,18 @@ let _ammQueueToken = '';
 // assigned token, so a captured sig is only valid for its exact
 // (circuit, identity, slot) triple.
 const _CEREMONY_RESERVE_DOMAIN = new TextEncoder().encode('tacit-ceremony-reserve-v1');
+// Set while a contribution signs with a key other than the wallet's (the EVM pool ceremony without a wallet).
+let _ceremonySignerPriv = null;
 function _ceremonyReserveSig(circuitHash, contributorPubkeyHex, queueToken) {
-  if (!wallet?.priv) throw new Error('wallet privkey not loaded — unlock to sign the queue join');
+  const signer = _ceremonySignerPriv || wallet?.priv;
+  if (!signer) throw new Error('wallet privkey not loaded — unlock to sign the queue join');
   const msg = sha256(concatBytes(
     _CEREMONY_RESERVE_DOMAIN,
     hexToBytes(circuitHash),
     hexToBytes(contributorPubkeyHex.toLowerCase()),
     new TextEncoder().encode(queueToken || ''),
   ));
-  return bytesToHex(signSchnorr(msg, wallet.priv));
+  return bytesToHex(signSchnorr(msg, signer));
 }
 async function _ammClaimReservationWithQueue(circuitHash, contributorName, contributorPubkeyHex, onPhase) {
   _ammQueueToken = '';
@@ -45113,13 +45116,9 @@ function openEvmPoolCeremonyDrawer() {
   drawer.style.display = 'flex';
   _evmCerMiniChip(false);
   const pubHint = document.getElementById('evm-cer-pubkey-hint');
-  if (pubHint) pubHint.textContent = wallet?.pub ? `(${bytesToHex(wallet.pub).slice(0, 12)}…)` : '';
-  if (!_evmCer.inFlight) {
-    _renderCerEligibilityBanner({
-      bannerId: 'evm-cer-eligibility-banner', goBtnId: 'evm-cer-go', ceremonyName: 'EVM pool ceremony',
-      reuseNote: 'cached for this session.',
-    });
-  }
+  if (pubHint) pubHint.textContent = wallet?.pub
+    ? `your wallet pubkey (${bytesToHex(wallet.pub).slice(0, 12)}…)`
+    : `this browser's key (${_evmCerBrowserKey().pubHex.slice(0, 12)}…)`;
   _evmCerPaintDrawerStatus();
   _evmCerRefreshState(true).then(() => { _evmCerPaintDrawerStatus(); _evmCerPaint(); }).catch(() => {});
   if (!_evmCer.inFlight) _evmCerPaintMine().catch(() => {});
@@ -45160,6 +45159,18 @@ function _evmCerShowResult(kind, text) {
   el.textContent = text;
 }
 
+// A secp256k1 key kept in this browser for contributors without a wallet: signs the queue slot and is the pubkey
+// recorded with the contribution.
+function _evmCerBrowserKey() {
+  const KEY = 'tacit-evm-cer-key-v1';
+  let priv = null;
+  try { const h = localStorage.getItem(KEY); if (h && /^[0-9a-f]{64}$/.test(h)) priv = hexToBytes(h); } catch {}
+  if (!priv) {
+    do { priv = crypto.getRandomValues(new Uint8Array(32)); } while (!(() => { try { secp.getPublicKey(priv, true); return true; } catch { return false; } })());
+    try { localStorage.setItem(KEY, bytesToHex(priv)); } catch {}
+  }
+  return { priv, pubHex: bytesToHex(secp.getPublicKey(priv, true)) };
+}
 async function _submitEvmPoolCeremonyContribution() {
   const C = EVM_POOL_CEREMONY;
   if (!_evmCerConfigured() || _evmCer.inFlight) return;
@@ -45176,9 +45187,19 @@ async function _submitEvmPoolCeremonyContribution() {
   resultEl.className = 'evm-cer-result';
   progEl.textContent = '';
 
-  const elig = await _ceremonyPrepareEligibility({ progEl, resultEl, ceremonyName: 'EVM pool ceremony' });
-  if (!elig) return;
-  const { contributorPubkeyHex, eligibilityProofBytes } = elig;
+  // Open to everyone: no TAC proof. A loaded wallet's pubkey is recorded with the contribution; without one
+  // (or if unlocking is declined) a key kept in this browser signs the queue slot instead.
+  let contributorPubkeyHex;
+  _ceremonySignerPriv = null;
+  if (wallet?.pub) {
+    try { await ensurePrivkey(); contributorPubkeyHex = bytesToHex(wallet.pub); } catch { /* fall back below */ }
+  }
+  if (!contributorPubkeyHex) {
+    const k = _evmCerBrowserKey();
+    _ceremonySignerPriv = k.priv;
+    contributorPubkeyHex = k.pubHex;
+  }
+  const eligibilityProofBytes = null;
   const pub = contributorPubkeyHex.toLowerCase();
   const prior = await _evmCerPubkeyStatus(pub);
   if (prior?.contributed) {
@@ -45320,6 +45341,7 @@ async function _submitEvmPoolCeremonyContribution() {
     goBtn.textContent = origLabel;
     if (headSub) headSub.textContent = 'stopped';
   } finally {
+    _ceremonySignerPriv = null;
     stopCreep();
     clearInterval(_evmCer.tick);
     _evmCer.tick = null;

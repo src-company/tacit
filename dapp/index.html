@@ -104,7 +104,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=9636b6be">
+<link rel="modulepreload" href="./tacit.js?cb=a5c33461">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -10956,7 +10956,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
     <div id="evm-cer-title" class="pass-title">Secret Sats EVM pool · trusted setup</div>
     <div class="pass-reason" style="margin-bottom: 12px;">
       <p style="margin:0 0 8px 0;">Mix your own randomness into the proving key for the EVM pool's spend circuit. The key is sound as long as <strong>one</strong> contributor kept their randomness secret. Your browser downloads about 125 MB (the current key, the circuit and the setup file), checks every earlier contribution, then adds yours. A few minutes on most devices, phones included. Keep the tab open while it runs.</p>
-      <p style="margin:0;font-size:11px;color:var(--ink-mid);">Contributing requires holding <strong>≥ 1 TAC</strong>. Your wallet signs a one-time proof of the threshold; your balance stays private. The proof binds to your wallet pubkey, which is recorded with the contribution and listed below. One slot per address.</p>
+      <p style="margin:0;font-size:11px;color:var(--ink-mid);">Open to everyone. With a Tacit wallet loaded, its pubkey is recorded with your contribution and listed below; without one, a key kept in this browser signs your slot instead. One contribution per key.</p>
     </div>
     <div id="evm-cer-status" class="evm-cer-status"></div>
     <div id="evm-cer-eligibility-banner" style="display:none; margin-bottom: 10px; padding: 8px 10px; border: 1px solid var(--ink-faint); background: var(--bg-warm); font-size: 11px; line-height: 1.45;"></div>
@@ -10965,7 +10965,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
       <label style="display:block; font-size: 11px; margin-bottom: 4px;">Display name (optional)
         <input id="evm-cer-name" type="text" maxlength="64" placeholder="anonymous" style="width:100%; font-size:12px; padding:4px 6px;">
       </label>
-      <div class="muted" style="font-size:11px; margin-top:4px;">Recorded with your wallet pubkey <span id="evm-cer-pubkey-hint" style="font-family:var(--mono);"></span></div>
+      <div class="muted" style="font-size:11px; margin-top:4px;">Recorded with <span id="evm-cer-pubkey-hint" style="font-family:var(--mono);"></span></div>
     </div>
     <div id="evm-cer-headline" style="display:none; margin-bottom: 10px;">
       <div style="display:flex; align-items:center; gap:8px; margin-bottom: 4px;">
@@ -11512,7 +11512,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=9636b6be"></script>
+<script type="module" src="./tacit.js?cb=a5c33461"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for
