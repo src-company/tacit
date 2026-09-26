@@ -97,3 +97,33 @@ circuits/
 ├── pin-*.sh                 IPFS pinning for ptau and ceremony bundles
 └── package.json
 ```
+
+## EVM pool ceremony
+
+`evm-pool/transact.circom` gets its own Phase-2 chain on the same coordinator. Phase 1 is the Hermez 2^16
+truncation (`powersOfTau28_hez_final_16.ptau`, BLAKE2b pinned in `evm-pool/ceremony-env.sh`). The scripts
+take every hash from the r1cs they compile, so a circuit change only means re-running them. None of them
+calls the coordinator or a pinning service; each prints the commands to run next. Outputs go to
+`evm-pool/ceremony/` (gitignored, `OUT=` to move).
+
+```sh
+cd evm-pool
+PTAU=/path/to/pot16_final.ptau bash ceremony-init.sh   # compile twice (circom 2.2.3, outputs must match),
+                                                       # groth16 setup, genesis/ + manifest.json, init command
+bash ceremony-verify.sh <zkey>                         # replay the transcript against r1cs + ptau,
+                                                       # list contributions, zkey/vk hashes
+HEAD_CID=<head> bash finalize.sh head.zkey             # Bitcoin block beacon (tip - 12, 2^10 iterations),
+                                                       # verify, vk, TransactVerifier.sol, pin.json, bundle
+```
+
+1. `ceremony-init.sh` writes `genesis/{transact.r1cs, transact.wasm, transact_0000.zkey, manifest.json}`. The
+   genesis zkey is deterministic, so anyone can rebuild it from the manifest's toolchain and sources. The r1cs,
+   genesis zkey and ptau go to `/ceremony/init` by CID; the script prints the CIDs to expect.
+2. Contributors extend the chain from the dapp. `ceremony-verify.sh` checks any head at any time.
+3. At close, drain the chain, download the head and run `finalize.sh` on it. It refuses fewer than
+   `MIN_CONTRIBUTIONS` (1000) contributions, and it checks that the beacon is the last contribution.
+4. Pin `final/`, POST `/finalize` with `zkey_cid`, then install `TransactVerifier.sol` in place of
+   `TransactVerifierDev` and serve `pin.json` with the key. The client passes `pin.json`'s `vk_hash` to
+   `makeGroth16System({ pinnedVkHash })`.
+
+`evm-pool/build-dev-zkey.sh` stays a single-contributor key for tests only.
