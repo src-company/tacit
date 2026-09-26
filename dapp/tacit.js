@@ -58102,24 +58102,36 @@ window.addEventListener('hashchange', () => {
 // clobbering an unconsumed share-link / claim hash during init — those
 // consumers clear themselves; once cleared, tab clicks own the hash.
 //
+// Renders as a clean path (`/market`, `/market/<assetId>`) rather than
+// `#tab=market&aid=...` — the hash is still what every reader in this file
+// parses (_parseTabHash, the hashchange listener, the early-init deep-link
+// checks), so nothing downstream changed; this just swaps what ends up
+// visible in the address bar once a hash has already been acted on.
+// preboot.js does the reverse translation (path → hash) on cold load.
+//
 // Market tab special-case: preserve any `&aid=<assetId>` already in the URL
 // so a deep-link landing flow doesn't erase the focused-asset signal. The
 // click that _consumeTabUrlHash fires during deep-link consumption goes
 // through here BEFORE renderMarket has had a chance to consume
 // pendingMarketFilter; without preservation the URL silently downgraded
-// to "#tab=market", losing the aid for reload + share.
+// to "/market", losing the aid for reload + share.
 function _writeTabHash(tabName) {
   const cur = location.hash || '';
   if (cur.startsWith('#recv=') || cur.startsWith('#claim=')) return;
-  let target = `#tab=${tabName}`;
+  let aid = null;
   if (tabName === 'market' && cur.startsWith('#tab=market')) {
     try {
       const params = new URLSearchParams(cur.slice(1));
-      const aid = params.get('aid') || '';
-      if (/^[0-9a-f]{64}$/i.test(aid)) target = `#tab=market&aid=${aid.toLowerCase()}`;
+      const rawAid = params.get('aid') || '';
+      if (/^[0-9a-f]{64}$/i.test(rawAid)) aid = rawAid.toLowerCase();
     } catch {}
   }
-  if (cur === target) return;
+  const path = tabName === 'wallet' ? '/' : `/${tabName}`;
+  const qs = new URLSearchParams(location.search);
+  if (aid) qs.set('aid', aid); else qs.delete('aid');
+  const qsStr = qs.toString();
+  const target = path + (qsStr ? `?${qsStr}` : '');
+  if (location.pathname + location.search === target && !location.hash) return;
   try { history.replaceState(null, '', target); } catch {}
 }
 
@@ -65497,7 +65509,7 @@ function renderDiscoverCard(card, a, verify, imgUrl, extras) {
       // supporting context.
       return `<div class="discover-card__market" title="${unitSource === 'mark' ? 'Mark price: outlier-guarded fair-market reference. Ignores obvious dust and fat-finger prints in the orderbook.' : 'Best ask: cheapest current open listing. Confidential holders not actively listing are invisible by design — there may be tighter prices off-orderbook.'}">
         ${priceFragment ? `<span class="discover-card__market-price">${priceFragment}</span>` : '<span class="discover-card__market-price">no listed price yet</span>'}
-        <a href="#tab=market&aid=${escapeHtml(safeAssetId)}" data-act="discover-view-offers" data-aid="${escapeHtml(safeAssetId)}" class="discover-card__cta">${linkLabel}</a>
+        <a href="#tab=market&aid=${escapeHtml(safeAssetId)}" data-act="discover-view-offers" data-aid="${escapeHtml(safeAssetId)}" class="discover-card__cta${offerCount > 0 ? '' : ' discover-card__cta--quiet'}">${linkLabel}</a>
       </div>`;
     })()}
     ${(() => {
@@ -68465,16 +68477,19 @@ function _saveMarketOrderbookSide(side) {
     if (side === 'asks' || side === 'bids') localStorage.setItem(_MARKET_ORDERBOOK_SIDE_KEY, side);
   } catch {}
 }
-// Mirror Market navigation into the URL hash so a tile click produces a
-// shareable deep-link (#tab=market&aid=<aid>) and browser navigation can
-// restore the asset view without a fresh search.
+// Mirror Market navigation into the URL so a tile click produces a
+// shareable deep-link (/market?aid=<aid>) and browser navigation can
+// restore the asset view without a fresh search. See _writeTabHash for why
+// this is a clean path + query rather than a #tab=market&aid=... hash, and
+// why the aid is a query param (?aid=) rather than a second path segment.
 function _writeMarketHash(aidOrNull) {
   const cur = location.hash || '';
   if (cur.startsWith('#recv=') || cur.startsWith('#claim=')) return;
-  const target = aidOrNull
-    ? `#tab=market&aid=${aidOrNull}`
-    : `#tab=market`;
-  if (cur === target) return;
+  const qs = new URLSearchParams(location.search);
+  if (aidOrNull) qs.set('aid', aidOrNull); else qs.delete('aid');
+  const qsStr = qs.toString();
+  const target = '/market' + (qsStr ? `?${qsStr}` : '');
+  if (location.pathname + location.search === target && !location.hash) return;
   try { history.replaceState(null, '', target); } catch {}
 }
 function marketViewScope() {

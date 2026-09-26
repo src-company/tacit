@@ -104,7 +104,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=f360bc6f">
+<link rel="modulepreload" href="./tacit.js?cb=4fae0b8f">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -3591,6 +3591,16 @@ details.protocol-section > summary.protocol-h3:hover { color: var(--orange); }
   text-decoration: none;
   font-size: 11px;
   letter-spacing: 0.04em;
+}
+/* Quiet variant: no live price or offer to report yet. Same affordance,
+   same click target, but the solid green fill is reserved for assets
+   with a real market signal — matching the color discipline applied
+   to the orderbook rows elsewhere (green = best-in-class, not default). */
+.discover-card__cta--quiet {
+  background: transparent;
+  color: var(--ink-mid);
+  border-color: var(--ink-faint);
+  font-weight: 500;
 }
 .discover-card__details {
   border-top: 0.5px dashed rgba(26,26,26,0.18);
@@ -8624,6 +8634,19 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   letter-spacing: 0 !important;
   box-shadow: none !important;
 }
+/* A banner action (Connect wallet, Claim, Open Holdings...) reads as part
+   of the banner's own message, not a competing button — a solid .btn-go
+   fill drags in an unrelated saturated green next to whichever color the
+   banner itself is making (red/amber/green), which is what reads as
+   jarring with two or three banners stacked. Outline in the banner's own
+   current color instead; same click target, no new color introduced. */
+.tacit-warn-banner .btn-go {
+  background: transparent;
+  color: inherit;
+  border: 1px solid currentColor;
+  font-weight: 600;
+}
+.tacit-warn-banner .btn-go:hover { background: rgba(0,0,0,0.06); }
 @media (max-width: 640px) {
   .tacit-warn-banner {
     font-size: 10px;
@@ -8756,7 +8779,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
      CSP is `script-src 'self' 'wasm-unsafe-eval'` — no 'unsafe-inline',
      so an inline <script> would be CSP-blocked. Same-origin .js file
      satisfies 'self'. See preboot.js for the activation logic. -->
-<script src="./preboot.js?cb=5e9058ba"></script>
+<script src="./preboot.js?cb=cf895157"></script>
 </head>
 <body>
 
@@ -10959,8 +10982,11 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   <div class="pass-card" style="max-width: 580px;">
     <div id="evm-cer-title" class="pass-title">Secret Sats EVM pool · trusted setup</div>
     <div class="pass-reason" style="margin-bottom: 12px;">
-      <p style="margin:0 0 8px 0;">Mix your own randomness into the proving key for the EVM pool's spend circuit. The key is sound as long as <strong>one</strong> contributor kept their randomness secret. Your browser downloads about 125 MB (the current key, the circuit and the setup file), checks every earlier contribution, then adds yours. A few minutes on most devices, phones included. Keep the tab open while it runs.</p>
-      <p style="margin:0;font-size:11px;color:var(--ink-mid);">Open to everyone. With a Tacit wallet loaded, its pubkey is recorded with your contribution and listed below; without one, a key kept in this browser signs your slot instead. Contribute as many times as you like; each run adds fresh randomness.</p>
+      <p style="margin:0 0 8px 0;">Add a few seconds of fresh randomness to the EVM pool's setup — a few minutes in this tab, phones included. It only takes <strong>one</strong> honest contributor out of everyone who's ever run it to keep the key sound, so contributing (even more than once) only ever adds safety.</p>
+      <details style="margin:0;">
+        <summary class="muted" style="cursor:pointer;font-size:11px;list-style:none;">▸ how this works</summary>
+        <p class="muted" style="font-size:11px;margin:6px 0 0;">Your browser downloads about 125 MB (the current key, the circuit and the setup file), verifies every earlier contribution, then adds yours. Open to everyone — with a Tacit wallet loaded, its pubkey is recorded with your contribution and listed below; without one, a key kept in this browser signs your slot instead.</p>
+      </details>
     </div>
     <div id="evm-cer-status" class="evm-cer-status"></div>
     <div id="evm-cer-eligibility-banner" style="display:none; margin-bottom: 10px; padding: 8px 10px; border: 1px solid var(--ink-faint); background: var(--bg-warm); font-size: 11px; line-height: 1.45;"></div>
@@ -11500,7 +11526,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=f360bc6f"></script>
+<script type="module" src="./tacit.js?cb=4fae0b8f"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for

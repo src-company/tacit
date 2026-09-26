@@ -80,6 +80,47 @@
   } catch (_) { /* never break boot */ }
 })();
 
+// Clean-path deep links (tacit.finance/market?aid=<assetId> instead of
+// tacit.finance/#tab=market&aid=<assetId>). Translated into the
+// equivalent #tab= hash before preActivateTabFromHash reads it below, so
+// both forms share the one parser and everything downstream in tacit.js
+// (_parseTabHash / _consumeTabUrlHash / _writeTabHash / _writeMarketHash)
+// needs no separate path-aware code. An explicit hash always wins
+// untouched — including a secret-bearing one like #recv=/#claim=/#gate=,
+// which must never move into the path: unlike a hash fragment, a path is
+// sent to the server on every request.
+//
+// The path is a single segment (`/market`), never `/market/<id>`. Every
+// script/font/image reference in this page is a bare relative path
+// (`./tacit.js`, not `/tacit.js`) so the same bytes work unmodified when
+// pinned to IPFS and served from a gateway's own `/ipfs/<cid>/` prefix —
+// there's no fixed site root to anchor a `<base>` tag or root-relative URLs
+// to. A second path segment changes the browser's relative-URL "directory"
+// for the page (`/market/<id>/` instead of `/`), which breaks every one of
+// those bare-relative loads the instant Render's rewrite serves this same
+// index.html at that deeper path. A query string doesn't have that problem
+// — the asset id rides in `?aid=` instead.
+(function normalizePathRoute() {
+  try {
+    if (window.location.hash) return;
+    // Mirrors _DEEPLINK_TABS in tacit.js, plus 'govern' (deep-links via its
+    // own init-time check rather than that whitelist) — every name here is
+    // a real tab this app can land on.
+    var TABS = ['wallet', 'holdings', 'transfer', 'discover', 'market', 'pool',
+      'farms', 'etch', 'factory', 'drops', 'claim', 'about', 'mixer',
+      'confidential-pool', 'otc', 'cdp', 'csend', 'cswap', 'earn', 'airdrop', 'govern'];
+    var m = window.location.pathname.match(/^\/([a-z][a-z-]*)\/?$/i);
+    if (!m) return;
+    var tab = m[1].toLowerCase();
+    if (TABS.indexOf(tab) === -1) return;
+    var qs = new URLSearchParams(window.location.search);
+    var aid = qs.get('aid') || '';
+    var hash = '#tab=' + tab;
+    if (/^[0-9a-f]{64}$/i.test(aid)) hash += '&aid=' + aid.toLowerCase();
+    window.history.replaceState(null, '', window.location.pathname + window.location.search + hash);
+  } catch (e) { /* never break boot on a path parse */ }
+})();
+
 (function preActivateTabFromHash() {
   try {
     var m = (window.location.hash || '').match(/[#&]tab=([a-z-]+)/i);
