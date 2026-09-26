@@ -34453,26 +34453,49 @@ function _bidOverCommitCheck(assetIdHex, addedSats) {
   if (typeof wallet === 'undefined' || !wallet?.pub) return { ok: true };
   let myPubHex;
   try { myPubHex = bytesToHex(wallet.pub); } catch { return { ok: true }; }
-  let existingSats = 0;
+  const nowSec = Math.floor(Date.now() / 1000);
+  let sameAssetSats = 0;
   try {
     const cached = (typeof _bidCachePeek === 'function') ? _bidCachePeek(assetIdHex) : null;
     if (Array.isArray(cached)) {
-      const nowSec = Math.floor(Date.now() / 1000);
       for (const b of cached) {
         if (b?.buyer_pubkey !== myPubHex) continue;
         if (b?._isReserved) continue;
         if (Number(b?.expiry || 0) <= nowSec) continue;
-        existingSats += Number(b?.price_sats || 0);
+        sameAssetSats += Number(b?.price_sats || 0);
       }
     }
   } catch {}
+  // Bids on OTHER assets don't show up in the per-asset cache above unless
+  // the user has navigated to them this session — walk the cross-asset
+  // index (see _loadMyBidsIndex) so a bid on asset B still counts toward
+  // wallet-wide over-commitment while publishing on asset A. Entries may
+  // lag an already-filled/cancelled bid until the index self-heals on the
+  // next visit to that asset; erring toward an extra warning here is the
+  // safe direction for a fund-safety check.
+  let otherAssetSats = 0;
+  for (const e of (typeof _loadMyBidsIndex === 'function' ? _loadMyBidsIndex() : [])) {
+    try {
+      if (!e || e.aid === assetIdHex) continue;
+      if (e.buyer_pubkey !== myPubHex) continue;
+      if (Number(e.expiry || 0) <= nowSec) continue;
+      if (e.kind === 'bid-var') {
+        otherAssetSats += Number(BigInt(e.max_fill || '0') * BigInt(e.price_per_unit || '0'));
+      } else {
+        otherAssetSats += Number(e.price_sats || 0);
+      }
+    } catch {}
+  }
+  const existingSats = sameAssetSats + otherAssetSats;
   const walletSats = Number(_walletCardState?.balance || 0);
-  if (walletSats <= 0 || existingSats <= 0) return { ok: true, existingSats, walletSats };
+  if (walletSats <= 0 || existingSats <= 0) return { ok: true, existingSats, sameAssetSats, otherAssetSats, walletSats };
   const totalCommitted = existingSats + Number(addedSats || 0);
-  if (totalCommitted <= walletSats) return { ok: true, existingSats, walletSats, totalCommitted };
+  if (totalCommitted <= walletSats) return { ok: true, existingSats, sameAssetSats, otherAssetSats, walletSats, totalCommitted };
   return {
     ok: false,
     existingSats,
+    sameAssetSats,
+    otherAssetSats,
     walletSats,
     totalCommitted,
     overBy: totalCommitted - walletSats,
@@ -34507,13 +34530,16 @@ async function publishBidIntent({ assetIdHex, amount, priceSats, expiry, minFill
       const _ticker = (typeof _marketCache === 'object' && _marketCache?.listings)
         ? (_marketCache.listings.find(l => l?._asset?.asset_id === assetIdHex)?._asset?.ticker || 'this asset')
         : 'this asset';
+      const _existingDesc = _oc.otherAssetSats > 0
+        ? `${_oc.existingSats.toLocaleString()} sats across your open bids (${_oc.sameAssetSats.toLocaleString()} on ${_ticker}, ${_oc.otherAssetSats.toLocaleString()} on other assets)`
+        : `${_oc.existingSats.toLocaleString()} sats on ${_ticker}`;
       const _proceed = await tacitConfirm({
-        title: `Over-committing wallet — at most one of your bids on ${_ticker} can settle`,
+        title: `Over-committing wallet — at most one of your open bids can settle`,
         body:
-          `You already have bids on ${_ticker} promising ${_oc.existingSats.toLocaleString()} sats. ` +
+          `You already have bids promising ${_existingDesc}. ` +
           `Adding this ${Number(priceSats).toLocaleString()}-sat bid brings your total to ${_oc.totalCommitted.toLocaleString()} sats — but your wallet only holds ${_oc.walletSats.toLocaleString()} sats.\n\n` +
-          `Tacit bids are signed promises, not escrowed. When a seller takes your bid, your wallet's sats UTXO funds it atomically. After the first match settles ~${_oc.walletSats.toLocaleString()} sats are gone — your remaining bids reference a wallet that's now ${_oc.overBy.toLocaleString()} sats short, and the next seller's tx will fail to broadcast.\n\n` +
-          `Either: cancel one of your existing bids before posting this one, OR proceed knowing only one of your bids on ${_ticker} can actually fill (the rest are dead-on-arrival once the first matches).`,
+          `Tacit bids are signed promises, not escrowed. When a seller takes any one of them, your wallet's sats UTXO funds it atomically. After the first match settles, your remaining bids reference a wallet that's now short — the next seller's tx will fail to broadcast.\n\n` +
+          `Either: cancel one of your existing bids before posting this one, OR proceed knowing only one of your open bids can actually fill (the rest are dead-on-arrival once the first matches).`,
         confirmLabel: 'Post anyway (only one will fill)',
       });
       if (!_proceed) throw _newUnlockCancelledError();
