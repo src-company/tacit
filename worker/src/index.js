@@ -7719,7 +7719,7 @@ function _base64ToU8(b64) {
 // that as "skip the peek" so a gateway outage doesn't break uploads.
 async function _peekCidPrefix(cid, n) {
   const gateways = [
-    'https://content.wrappr.wtf/ipfs/',
+    'https://ipfs.filebase.io/ipfs/',
     'https://ipfs.io/ipfs/',
     'https://w3s.link/ipfs/',
     'https://dweb.link/ipfs/',
@@ -10381,7 +10381,6 @@ function faucetKeys(env) {
 // bytes). Cuts asset-metadata p99 from ~5-15s (slow-primary case) to
 // ~500ms-2s (fastest healthy gateway).
 const IPFS_GATEWAYS = [
-  'https://content.wrappr.wtf/ipfs/',
   'https://ipfs.filebase.io/ipfs/',
   'https://ipfs.io/ipfs/',
   'https://w3s.link/ipfs/',
@@ -10523,7 +10522,6 @@ async function handleIpfsBatch(req, env, cors) {
 // an error object. Aborts losers when winner returns. 24h cf.cacheTtl on
 // the gateway hit so popular metadata gets served from CF edge on next call.
 const _IPFS_GATEWAYS_BATCH = [
-  'https://content.wrappr.wtf/ipfs/',
   'https://ipfs.filebase.io/ipfs/',
   'https://ipfs.io/ipfs/',
   'https://w3s.link/ipfs/',

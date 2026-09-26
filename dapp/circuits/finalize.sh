@@ -108,7 +108,7 @@ trap on_exit EXIT
 BLOCK_HEIGHT="${1:-}"
 CIRCUIT_HASH="${2:-1373a3bc34153c291d057b44edaba11d5a4aa779d0998e0d0c0e400dfc89129d}"
 WORKER="${WORKER:-https://tacit-pin.rosscampbell9.workers.dev}"
-GATEWAY="${GATEWAY:-https://content.wrappr.wtf/ipfs}"
+GATEWAY="${GATEWAY:-https://ipfs.filebase.io/ipfs}"
 # Pinned snarkjs version. Audit reproducibility depends on contributors
 # and finalizer agreeing on the exact CLI release — different versions
 # can produce structurally-different (but cryptographically-equivalent)

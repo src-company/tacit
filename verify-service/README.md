@@ -56,4 +56,4 @@ API's environment.
 | `VERIFY_SERVICE_TOKEN` | (none) | If set, requires `Authorization: Bearer <token>` |
 | `MAX_BYTES` | 500 MB | Per-blob cap before refusing to download |
 | `FETCH_TIMEOUT_MS` | 180000 | Per-gateway HTTP timeout |
-| `IPFS_GATEWAYS` | wrappr, ipfs.io, w3s.link, dweb.link | Comma-separated, tried in order |
+| `IPFS_GATEWAYS` | runpod, filebase, ipfs.io, w3s.link, dweb.link | Comma-separated, tried in order |

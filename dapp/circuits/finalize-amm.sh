@@ -98,7 +98,7 @@ trap 'on_exit' EXIT
 # --- args + env ---
 BLOCK_HEIGHT="${1:-}"
 WORKER="${WORKER:-https://tacit-pin.rosscampbell9.workers.dev}"
-GATEWAY="${GATEWAY:-https://content.wrappr.wtf/ipfs}"
+GATEWAY="${GATEWAY:-https://ipfs.filebase.io/ipfs}"
 SNARKJS="${SNARKJS:-npx --yes snarkjs@0.7.6}"
 BUNDLE_ONLY="${BUNDLE_ONLY:-0}"
 MIN_QUIET_SECONDS="${MIN_QUIET_SECONDS:-60}"
