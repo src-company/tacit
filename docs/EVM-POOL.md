@@ -154,6 +154,35 @@ sweep takes no memos and a single output. Each sweep emits `Received(box, n, ind
   are not: they reveal nullifiers, never the note key.
 - Only the pool's asset leaves a receive box. Anything else sent to it stays there.
 
+**Receive address (canonical, every app shows the same one).** The address a wallet displays depends on every
+value below, so all apps use exactly these:
+
+| | |
+|---|---|
+| Pool wallet seed | `HMAC-SHA256(key = Tacit identity private key (32 bytes), msg = "tacit-btc-pool-seed-v1")` |
+| Wallet keys | `walletKeys(seed, "mainnet")` (`dapp/btc-pool-zk.js`), the `"mainnet"` tag on every EVM chain |
+| Box key | `receiveKeys(zk, wallet, 0)`: tweak seed `0x00 ‖ keccak256("tacit-evm-pool-receive-key-v1" ‖ be32(n) ‖ be32(i))`, `i = 0` |
+| Fee cap | `feeBps = 25` |
+| Address | `receiveBoxOf(npk, 25)` on the router; offline, `receiveBoxAddress(npk)`. The same address on every chain. |
+
+`evmPoolWallet(zk, identityKey)` and `receiveBoxAddress(npk)` in `dapp/evm-pool-gateway.js` implement this.
+Vectors (identity key `0x11` × 32):
+
+```
+a      = 0x030d4f8c609bcd6f5c961113e9a379b14b5eacfe0cb693e3ee3a21f148144d9e
+n      = 0x04b517b015712270664ae5481e694562bb14b28685c492be2436898a8ec97306
+npk(0) = 4783613888947850950044057964142544727340891053660060203316524895455918575012
+npk(1) = 2799937100355739972349309475928188484188423058204235589221587582372656968697
+address (box 0, feeBps 25) = 0x52fc37ee7741468a15CE879320a7a41CEBaeb232
+address (box 0, feeBps 0)  = 0x7ABc01dEAC9A65A0d2480a87DB6F22EbC1342639
+```
+
+**Keeper intake for receive boxes.** A payment to a box that has never been swept emits no event, so a keeper
+sweeps only boxes it has been told about: `POST /evm-pool/keeper/receive` with `{ chainId, npk, feeBps }`
+(idempotent; endpoint published at launch). The keeper then watches the box's balance and sweeps whenever the
+capped fee covers its gas. Registering tells the keeper which box belongs to which note key, which the first sweep
+makes public anyway; it never learns anything that spends. The owner can always sweep without a keeper.
+
 **Zaps.** `zapTokenToDepositWithPermit2(tx, amountIn, permit, sig, swapData)` swaps any ERC-20 to ETH through the
 pinned aggregator and deposits exactly the proven amount, refunding the rest.
 

@@ -1,14 +1,14 @@
 // Client side of contracts/src/TacitEvmPoolRouter.sol: deposit-box intents, the proof a keeper builds to complete
-// one, receive boxes, and withdrawals whose recipient is a box or an exit-recipe escrow. Box and escrow addresses
-// come from the contracts' own views (depositBoxOf / wrapBoxOf / receiveBoxOf / escrowAddressFor), never computed
-// here.
+// one, receive boxes, and withdrawals whose recipient is a box or an exit-recipe escrow. Deposit-box, wrap-box and
+// escrow addresses come from the contracts' own views (depositBoxOf / wrapBoxOf / escrowAddressFor); a receive box
+// address is also computed here (receiveBoxAddress), matching receiveBoxOf on the canonical router.
 //
 // A deposit intent fixes the amount, both output leaves and both memo hashes. Its hint (each output's v, npk,
 // rho) is what a keeper needs to prove the deposit. It tells the keeper how the deposit splits across the two
 // outputs, which the leaves hide; it cannot link later spends, which need the owner's nk. The keeper's fee is
 // amount − Σ v.
 
-import { keccak_256, concatBytes } from './vendor/tacit-deps.min.js';
+import { keccak_256, sha256, hmac, concatBytes } from './vendor/tacit-deps.min.js';
 import { extDataHash, EVM_N_OUT, EVM_VALUE_BITS } from './evm-pool-zk.js';
 import { P_FR, be32 } from './btc-pool-zk.js';
 
@@ -74,13 +74,27 @@ export function withdrawalWitness(zk, { asset, leaves, inputs, change = null, am
 // recovers every box and every note swept into one: receiveKeys(i) → receiveBoxOf(npk, feeBps) → its Received
 // events → receivedNote.
 
+// Canonical receive address, identical in every app: the pool wallet from the Tacit identity key, box index 0,
+// fee cap RECEIVE_FEE_BPS, on the canonical router (the same address on every chain).
+export const EVM_POOL_ROUTER = '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5';
+export const RECEIVE_FEE_BPS = 25;
+export const RECEIVE_INDEX = 0;
+
 const te = new TextEncoder();
+const POOL_SEED_TAG = te.encode('tacit-btc-pool-seed-v1');
 const RECEIVE_KEY_TAG = te.encode('tacit-evm-pool-receive-key-v1');
 const RECEIVE_TAG = keccak_256(te.encode('tacit-evm-pool-receive-box-v1'));
 const addrWord = (a) => {
   if (!/^0x[0-9a-fA-F]{40}$/.test(String(a))) throw new Error('evm-pool-gateway: bad address');
   return be32(BigInt(a));
 };
+
+// The pool wallet of a Tacit identity key (32 bytes): seed = HMAC-SHA256(key, "tacit-btc-pool-seed-v1"), the
+// Bitcoin pool's seed, with the "mainnet" key tag on every EVM chain (notes are chain-bound by their asset).
+export function evmPoolWallet(zk, identityPriv) {
+  if (!(identityPriv instanceof Uint8Array) || identityPriv.length !== 32) throw new Error('evm-pool-gateway: identity key must be 32 bytes');
+  return zk.walletKeys(hmac(sha256, identityPriv, POOL_SEED_TAG), 'mainnet');
+}
 
 // The note key of receive box i: { npk, sk, nk }. The 33-byte tweak seed starts with 0x00, which no shared
 // secret (a compressed point) does.
@@ -89,6 +103,24 @@ export function receiveKeys(zk, wallet, i = 0) {
   const s = concatBytes(Uint8Array.of(0), keccak_256(concatBytes(RECEIVE_KEY_TAG, be32(wallet.n), be32(i))));
   const { npk, sk, nk } = zk.ownedKeys(wallet, s);
   return { npk, sk, nk };
+}
+
+// receiveBoxOf(npk, feeBps) of `router`: the PUSH0 minimal-proxy clone (solady LibClone) of the router's box
+// implementation, which the router creates at nonce 1, at salt keccak256(abi.encode(RECEIVE_TAG, npk, feeBps)).
+export function receiveBoxAddress(npk, feeBps = RECEIVE_FEE_BPS, router = EVM_POOL_ROUTER) {
+  if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 0xffff) throw new Error('evm-pool-gateway: feeBps');
+  const r = addrWord(router).slice(12);
+  const impl = keccak_256(concatBytes(Uint8Array.of(0xd6, 0x94), r, Uint8Array.of(0x01))).slice(12);
+  const initHash = keccak_256(concatBytes(hexBytes('602d5f8160095f39f35f5f365f5f37365f73'), impl, hexBytes('5af43d5f5f3e6029573d5ffd5b3d5ff3')));
+  const salt = keccak_256(concatBytes(RECEIVE_TAG, be32(BigInt(npk)), be32(BigInt(feeBps))));
+  const a = keccak_256(concatBytes(Uint8Array.of(0xff), r, salt, initHash)).slice(12);
+  return toChecksum(a);
+}
+const hexBytes = (h) => Uint8Array.from(h.match(/../g), (b) => parseInt(b, 16));
+function toChecksum(a20) {
+  const hex = Array.from(a20, (x) => x.toString(16).padStart(2, '0')).join('');
+  const h = keccak_256(te.encode(hex));
+  return '0x' + [...hex].map((c, i) => (((h[i >> 1] >> (i % 2 ? 0 : 4)) & 0xf) >= 8 ? c.toUpperCase() : c)).join('');
 }
 
 // rho of the n-th sweep of `box`: keccak256(abi.encode(RECEIVE_TAG, box, n)) mod p, as the router computes it.

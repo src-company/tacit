@@ -51,6 +51,12 @@ contract DeployEvmPoolCreateXTest is Test {
         assertEq(address(router.POOL()), address(pool));
         assertEq(address(router.V1()), 0x000000000Ed1eabD231Be41d93b719056F7febFC);
         assertEq(router.ASSET(), address(0));
+        assertEq(address(router.POSEIDON4()), 0x555333f3f677Ca3930Bf7c56ffc75144c51D9767);
+
+        // Receive-address vectors from dapp/evm-pool-gateway.js receiveBoxAddress (identity key 0x11…11, box 0).
+        uint256 npk0 = 4783613888947850950044057964142544727340891053660060203316524895455918575012;
+        assertEq(router.receiveBoxOf(npk0, 25), 0x52fc37ee7741468a15CE879320a7a41CEBaeb232);
+        assertEq(router.receiveBoxOf(npk0, 0), 0x7ABc01dEAC9A65A0d2480a87DB6F22EbC1342639);
     }
 
     function test_refuses_an_unpinned_verifier() public {

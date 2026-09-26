@@ -7,7 +7,7 @@ import * as snarkjs from 'snarkjs';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7 } from 'poseidon-lite';
 import { makeEvmPoolZk, poolAsset } from '../dapp/evm-pool-zk.js';
 import { proveTransact, verifyTransact } from '../dapp/evm-pool-zk-prover.js';
-import { depositIntent, completionWitness, withdrawalWitness, receiveKeys, receiveRho, sweepWitness, receivedNote } from '../dapp/evm-pool-gateway.js';
+import { depositIntent, completionWitness, withdrawalWitness, receiveKeys, receiveRho, sweepWitness, receivedNote, evmPoolWallet, receiveBoxAddress, RECEIVE_FEE_BPS, RECEIVE_INDEX } from '../dapp/evm-pool-gateway.js';
 
 const DIR = new URL('../dapp/circuits/evm-pool/build/', import.meta.url).pathname;
 const wasm = readFileSync(DIR + 'transact_js/transact.wasm');
@@ -74,6 +74,19 @@ console.log('receive boxes (real proof)');
 {
   assert.strictEqual(receiveRho(BOX, 3), 219055354919591748091452618626282574578616910022296641843963426678570215164n);
   ok('receiveRho matches keccak256(abi.encode(tag, box, n)) mod p');
+
+  // Spec vectors (docs/EVM-POOL.md "Receive address"); the box addresses are also asserted against the router's
+  // receiveBoxOf in contracts/test/DeployEvmPoolCreateX.t.sol.
+  const vw = evmPoolWallet(zk, new Uint8Array(32).fill(0x11));
+  assert.strictEqual(vw.a, 0x30d4f8c609bcd6f5c961113e9a379b14b5eacfe0cb693e3ee3a21f148144d9en);
+  assert.strictEqual(vw.n, 0x4b517b015712270664ae5481e694562bb14b28685c492be2436898a8ec97306n);
+  const k0 = receiveKeys(zk, vw, RECEIVE_INDEX);
+  assert.strictEqual(k0.npk, 4783613888947850950044057964142544727340891053660060203316524895455918575012n);
+  assert.strictEqual(receiveKeys(zk, vw, 1).npk, 2799937100355739972349309475928188484188423058204235589221587582372656968697n);
+  assert.strictEqual(RECEIVE_FEE_BPS, 25);
+  assert.strictEqual(receiveBoxAddress(k0.npk), '0x52fc37ee7741468a15CE879320a7a41CEBaeb232');
+  assert.strictEqual(receiveBoxAddress(k0.npk, 0), '0x7ABc01dEAC9A65A0d2480a87DB6F22EbC1342639');
+  ok('canonical receive address vectors: identity key → wallet → box 0 → address');
 
   const r0 = receiveKeys(zk, alice, 0);
   const r1 = receiveKeys(zk, alice, 1);
