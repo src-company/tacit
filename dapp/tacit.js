@@ -46166,7 +46166,13 @@ const TAB_GROUP_OF = {
 // nav signal and the panel content never disagree. Everything not listed is a live
 // Bitcoin-native (or always-on) surface.
 function _tabLiveOnNet(name) {
-  const d = CROSSLANE_DEPLOYMENTS[currentNetworkName()] || {};
+  const net = currentNetworkName();
+  // The EVM confidential-pool family (wrap/swap/OTC/CDP/farms/asset-factory) is a mainnet-only product
+  // surface. The Sepolia pilot pool stays configured in CROSSLANE_DEPLOYMENTS for dev/test tooling
+  // (cdp-lifecycle-signet.mjs and friends) — this only keeps it out of the dapp's own nav on other networks,
+  // it doesn't touch confidentialPoolReady() or the deployment config those scripts import.
+  if (net !== 'mainnet' && ['csend', 'otc', 'earn', 'cswap', 'cdp', 'factory', 'confidential-pool'].includes(name)) return false;
+  const d = CROSSLANE_DEPLOYMENTS[net] || {};
   switch (name) {
     case 'claim':
       return false;                                      // airdrop recipient portal parked for now

@@ -17,7 +17,7 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, copyToClipboard } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, copyToClipboard, evmAccountHint } from './confidential-deployments.js';
 import { makeConfidentialOtc } from './confidential-otc.js';
 import { randomScalar } from './bulletproofs-plus.js';
 import { scanHealth, scanHealthHtml, inboundBadgeHtml, inboundSummaryHtml } from './confidential-scan-health.js';
@@ -248,6 +248,7 @@ export async function renderOtcTab(wallet) {
       Instant and note-to-note: you end up holding a <b>shielded note</b>, cleared on the <span class="eth-word">Ethereum</span>
       lane. For <span class="btc-word">real sats</span>, use the <a href="#tab=market">order book</a>.</div>
     <div>Account: <code class="addr" style="font-size:11px;">${acct.address}</code></div>
+    ${evmAccountHint()}
     <div id="otc-notes" class="muted">Scanning your notes…</div>
 
     <details class="divider">

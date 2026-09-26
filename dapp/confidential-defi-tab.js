@@ -9,7 +9,7 @@
 
 import { secp, sha256, keccak_256, hmac } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, proveUpdater, protectOutpoint, listProtectedOutpoints, listReservedLocks, reservedLockSats } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, proveUpdater, protectOutpoint, listProtectedOutpoints, listReservedLocks, reservedLockSats, evmAccountHint } from './confidential-deployments.js';
 import { makeConfidentialCdp } from './confidential-cdp.js';
 import { makeConfidentialFarm } from './confidential-farm.js';
 import { makeConfidentialDefiActions } from './confidential-defi-actions.js';
@@ -461,6 +461,7 @@ export async function renderCdpTab(wallet) {
       wstETH escrow (1.5× the lock today) deters spending the lock; it does not back the peg. Both are ordinary
       shielded notes that transfer, trade and exit like anything else in the pool.</div>
     <div>Account: <code class="addr" style="font-size:11px;">${acct.address}</code></div>
+    ${evmAccountHint()}
     <div id="cdp-status" class="muted">Scanning the pool for collateral…</div>
 
     <div class="divider">
@@ -707,8 +708,12 @@ function wireTopup(wallet, ux, positions) {
         const cbtcNotes = (notes || []).filter((n) => n.asset && n.asset.toLowerCase() === cbtcAssetId.toLowerCase());
         rowNotes.set(i, cbtcNotes);
         if (!listEl) return;
+        // Radio, not checkbox: OP_CDP_TOPUP reads one added leg per distinct asset (strictly asset-sorted,
+        // no duplicates — contracts/sp1/confidential/src/main.rs's added-legs loop), and v1 has exactly one
+        // collateral asset (cBTC), so at most one note can ever be added per top-up. Checking two would always
+        // fail deep in proof-building with no clear message, after "Confirm" was already clicked.
         listEl.innerHTML = cbtcNotes.length ? cbtcNotes.map((n) => `<label class="check-row" style="padding:3px 0;">
-            <input type="checkbox" class="cdp-topup-pick" data-pos="${i}" data-leaf="${n.leafIndex}">
+            <input type="radio" name="cdp-topup-pick-${i}" class="cdp-topup-pick" data-pos="${i}" data-leaf="${n.leafIndex}">
             <span>${fmtUnits(n.value, decOf(ux, n.asset))} cBTC <span class="muted">#${n.leafIndex}</span></span></label>`).join('')
           : `<span class="muted">No spare cBTC notes — lock more BTC above first.</span>`;
       } catch (e) {

@@ -372,6 +372,19 @@ export function formatErr(e, verb) {
   return (verb ? verb + ' failed: ' : '') + msg;
 }
 
+// The account every confidential/EVM tab shows (pool, DeFi/CDP, OTC, send) is `ux.account(walletPriv)` — an
+// address DERIVED from the Tacit wallet's own key (see evm-account.js / BUILD-A-TACIT-DAPP.md §5), not an
+// injected/connected wallet. There is no "Connect wallet" step to look for on these tabs, by design — but
+// nothing on the page says so, so a user used to the MetaMask-connect pattern elsewhere (the airdrop claim,
+// the bridge deposit modal — both genuinely need a real external wallet) has no way to tell these tabs are
+// different. One line, always visible (not a hover tooltip — this is load-bearing, not supplementary).
+export function evmAccountHint() {
+  // These tabs are nav-gated to mainnet only in the dapp (tacit.js:_tabLiveOnNet) — the Sepolia pilot pool
+  // stays reachable in confidential-deployments.js for dev/test tooling (cdp-lifecycle-signet.mjs and
+  // friends), just not surfaced as a product surface — so there's exactly one network this ever renders for.
+  return `<div class="muted" style="font-size:10.5px;margin:2px 0 6px;">Derived from your Tacit wallet key — no separate wallet connection needed. Send ETH (or any supported asset) here to use it.</div>`;
+}
+
 // Surface a terminal success/failure in the app's shared toast + notification bell, so confidential-tab
 // actions are logged like the core flows. `kind` is '' | 'ok' | 'error' (matches tacit.js toast()). No-op
 // if the host bundle hasn't wired the hook yet (e.g. under node tests).

@@ -5,7 +5,7 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, proveUpdater } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, proveUpdater, evmAccountHint } from './confidential-deployments.js';
 import { classifyFinality, finalityBadgeHtml, listProvisional } from './confidential-finality.js';
 import { scanHealthHtml, inboundBadgeHtml, inboundSummaryHtml, pendingWrapsText, recoveryCoverageHtml, recoveryCoverage } from './confidential-scan-health.js';
 import { renderLanePanel } from './cross-chain-lane.js';
@@ -204,6 +204,7 @@ function renderPoolPanel() {
     `<div class="note-concept"><b>One note, two chains.</b> Wrap <span class="eth-word">ETH</span> (or any token) into a shielded note here, or bring value over from <span class="btc-word">Bitcoin</span> — it becomes the same shielded note you can transfer, trade, or borrow against from either side.</div>`
     + `<div class="muted" style="font-size:11px;"><span style="color:var(--green)">●</span> Independently reviewed — no open fund-impacting findings · <a href="#tab=about">details →</a></div>`
     + `<div>Your confidential account: <code id="cpool-address" class="addr" style="font-size:11px;">—</code></div>`
+    + evmAccountHint()
     + `<div id="cpool-status" class="muted">—</div>`
     + `<div id="cpool-balance"></div>`
     + `<div style="margin-top:6px;"><button id="cpool-restore-btn" style="padding:4px 10px;font-size:10px;">Restore everything from my key</button></div>`
@@ -217,7 +218,7 @@ function renderPoolPanel() {
     + `<button id="cpool-wrap-btn" class="primary">Wrap</button>`
     + `</div>`
     + `<div id="cpool-wrap-status" class="muted field-status" style="margin-top:6px;"></div>`
-    + `<div class="muted" style="font-size:11px;margin-top:6px;">Fund your confidential account (above) with Sepolia ETH first. The deposit escrows ETH; your cETH note appears after the settle.</div>`;
+    + `<div class="muted" style="font-size:11px;margin-top:6px;">Fund your confidential account (above) with ETH first. The deposit escrows ETH; your cETH note appears after the settle.</div>`;
 
   const exitBody =
     `<input id="cpool-exit-recipient" type="text" placeholder="Recipient address (default: your account)">`
