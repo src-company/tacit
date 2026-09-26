@@ -92415,6 +92415,10 @@ async function init() {
     const w = document.getElementById('file-protocol-warning');
     if (w) w.style.display = 'block';
   }
+  // The EVM pool ceremony needs no wallet, so it renders before wallet onboarding (which can wait on the
+  // visitor) and keeps its count fresh.
+  try { renderEvmPoolCeremony(); } catch {}
+  setInterval(() => { try { renderEvmPoolCeremony(); } catch {} }, 60_000);
   // Deep-link pre-fetch: when the URL points at a market page, kick off
   // fetchMarketData() in parallel with the wallet sync. Without this,
   // _consumeTabUrlHash (which runs at the END of init, after the wallet's
