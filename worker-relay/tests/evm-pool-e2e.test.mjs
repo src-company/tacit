@@ -1,0 +1,157 @@
+// End to end on a local anvil chain: deploy the pool (DEV verifier), PoseidonT5 and the router; run the keeper
+// (src/evm-pool-keeper.js) against them; drive two wallets (dapp/evm-pool-wallet.js) through a payment to a receive
+// box that the keeper sweeps, a private send the keeper relays, and a relayed withdrawal to a fresh address. Also
+// checks the receive box stays code-free, so a plain 21,000-gas transfer lands after a sweep.
+// Needs anvil, the forge build (contracts/out) and the DEV circuit artifacts; skips without them.
+//   node worker-relay/tests/evm-pool-e2e.test.mjs
+
+import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createPublicClient, createWalletClient, defineChain, encodeDeployData, http, parseEther } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { loadZk } from '../src/lib/evm-pool-keeper-prover.js';
+import { proveTransact } from '../../dapp/evm-pool-zk-prover.js';
+import { evmPoolKeys, makeEvmPoolWallet, jsonRpc } from '../../dapp/evm-pool-wallet.js';
+
+const ROOT = new URL('../../', import.meta.url).pathname;
+const OUT = join(ROOT, 'contracts/out');
+const BUILD = join(ROOT, 'dapp/circuits/evm-pool/build');
+const artifact = (f, c) => JSON.parse(readFileSync(join(OUT, f, `${c}.json`), 'utf8'));
+const need = [join(OUT, 'TacitEvmPool.sol/TacitEvmPool.json'), join(OUT, 'TransactVerifierDev.sol/TransactVerifierDev.json'), join(BUILD, 'transact_dev_final.zkey')];
+if (spawnSync('anvil', ['--version']).status !== 0 || !need.every(existsSync)) {
+  console.log('skip - needs anvil, forge build and the DEV circuit artifacts');
+  process.exit(0);
+}
+
+let n = 0;
+const test = async (name, fn) => { await fn(); n++; console.log(`ok - ${name}`); };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const PORT = 18545 + Math.floor(Math.random() * 1000);
+const KPORT = PORT + 1;
+const RPC = `http://127.0.0.1:${PORT}`;
+const KEYS = [
+  '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+  '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
+  '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a',
+];
+const chain = defineChain({ id: 31337, name: 'anvil', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [RPC] } } });
+const pub = createPublicClient({ chain, transport: http(RPC) });
+const wallet = (k) => createWalletClient({ account: privateKeyToAccount(k), chain, transport: http(RPC) });
+const [deployer, , payer] = KEYS.map(wallet);
+
+const procs = [];
+const tmp = mkdtempSync(join(tmpdir(), 'evm-pool-e2e-'));
+const cleanup = () => { for (const p of procs) p.kill('SIGKILL'); rmSync(tmp, { recursive: true, force: true }); };
+process.on('exit', cleanup);
+
+async function until(fn, what, ms = 120_000) {
+  const t0 = Date.now();
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() - t0 > ms) throw new Error(`timed out: ${what}`);
+    await sleep(1000);
+  }
+}
+async function deploy(abi, bytecode, args = []) {
+  const hash = await deployer.sendTransaction({ data: encodeDeployData({ abi, bytecode, args }) });
+  return (await pub.waitForTransactionReceipt({ hash })).contractAddress;
+}
+
+procs.push(spawn('anvil', ['--port', String(PORT), '--silent', '--hardfork', 'cancun'], { stdio: 'ignore' }));
+await until(async () => { try { return await pub.getChainId(); } catch { return false; } }, 'anvil');
+
+const v = artifact('TransactVerifierDev.sol', 'TransactVerifierDev');
+const verifier = await deploy(v.abi, v.bytecode.object);
+const require = createRequire(import.meta.url);
+const poseidonT5 = require(join(ROOT, 'node_modules/poseidon-solidity/deploy/PoseidonT5.js'));
+await pub.waitForTransactionReceipt({ hash: await deployer.sendTransaction({ to: poseidonT5.proxyAddress, data: poseidonT5.data }) });
+const p = artifact('TacitEvmPool.sol', 'TacitEvmPool');
+const pool = await deploy(p.abi, p.bytecode.object, [verifier, '0x0000000000000000000000000000000000000000']);
+const r = artifact('TacitEvmPoolRouter.sol', 'TacitEvmPoolRouter');
+const ZERO = '0x0000000000000000000000000000000000000000';
+const router = await deploy(r.abi, r.bytecode.object, [pool, ZERO, ZERO, ZERO, poseidonT5.address]);
+
+const keeperLog = [];
+const keeper = spawn('node', ['src/evm-pool-keeper.js'], {
+  cwd: join(ROOT, 'worker-relay'),
+  env: {
+    ...process.env, EVM_POOL_ADDR: pool, EVM_POOL_ROUTER_ADDR: router, EVM_POOL_RPC_URL: RPC, EVM_POOL_CHAIN_ID: '31337',
+    EVM_POOL_KEEPER_PRIV: KEYS[1], EVM_POOL_KEEPER_DB: join(tmp, 'keeper.db'), PORT: String(KPORT),
+    EVM_POOL_KEEPER_POLL_SECS: '1', EVM_POOL_KEEPER_MIN_FEES: 'eth:1000', EVM_POOL_CONFIRMATIONS: '0',
+  },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+procs.push(keeper);
+keeper.stdout.on('data', (d) => keeperLog.push(String(d)));
+keeper.stderr.on('data', (d) => keeperLog.push(String(d)));
+const KEEPER = `http://127.0.0.1:${KPORT}/evm-pool/keeper`;
+await until(async () => { try { return (await fetch(`http://127.0.0.1:${KPORT}/health`)).ok; } catch { return false; } }, 'keeper');
+
+const zk = await loadZk();
+const snarkjs = await import('snarkjs');
+const wasm = readFileSync(join(BUILD, 'transact_js/transact.wasm'));
+const zkey = readFileSync(join(BUILD, 'transact_dev_final.zkey'));
+const prove = (input) => proveTransact(input, { wasm, zkey, snarkjs });
+const chainCfg = { chainId: 31337, pool, router, rpc: jsonRpc(RPC), deployBlock: 0, confirmations: 0 };
+const alice = makeEvmPoolWallet({ zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(0x11)), chain: chainCfg, keeper: KEEPER, prove });
+const bob = makeEvmPoolWallet({ zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(0x22)), chain: chainCfg, keeper: KEEPER, prove });
+
+try {
+  await test('a payment to the receive box is swept by the keeper into a note the wallet finds', async () => {
+    await pub.waitForTransactionReceipt({ hash: await payer.sendTransaction({ to: alice.receiveBox, value: parseEther('1') }) });
+    const w = await alice.watchReceive();
+    assert.equal(w.status, 200);
+    const s = await until(async () => { const x = await alice.sync(); return x.balance > 0n && x; }, 'sweep');
+    assert.equal(s.balance, parseEther('1') - parseEther('1') * 25n / 10000n, 'one ETH less the 25 bps cap');
+    assert.equal(await pub.getCode({ address: alice.receiveBox }), undefined, 'the box keeps no code');
+  });
+
+  await test('after a sweep the box still takes a plain 21,000-gas transfer, and is swept again', async () => {
+    const hash = await payer.sendTransaction({ to: alice.receiveBox, value: parseEther('0.5'), gas: 21000n });
+    assert.equal((await pub.waitForTransactionReceipt({ hash })).status, 'success');
+    await alice.watchReceive();
+    const s = await until(async () => { const x = await alice.sync(); return x.notes === 2 && x; }, 'second sweep');
+    assert.equal(s.balance, parseEther('1.5') - parseEther('1.5') * 25n / 10000n);
+  });
+
+  let sent;
+  await test('a private send to a Secret Sats address, proved here and relayed by the keeper', async () => {
+    const before = (await alice.sync()).balance;
+    const steps = [];
+    sent = await alice.send({ to: bob.address, amount: parseEther('0.3'), onStep: (m) => steps.push(m) });
+    assert.match(sent, /^0x[0-9a-f]{64}$/);
+    assert.equal((await pub.waitForTransactionReceipt({ hash: sent })).status, 'success');
+    const b = await until(async () => { const x = await bob.sync(); return x.balance > 0n && x; }, 'bob sees the payment');
+    assert.equal(b.balance, parseEther('0.3'));
+    const a = await alice.sync();
+    assert.ok(a.balance < before - parseEther('0.3') && a.balance > before - parseEther('0.31'), 'alice keeps her change less the relay fee');
+    assert.ok(steps.includes('proving on this device'));
+  });
+
+  await test('a relayed withdrawal to a fresh address pays it exactly, with bob\'s change kept', async () => {
+    const fresh = privateKeyToAccount('0x' + '42'.repeat(32)).address;
+    const hash = await bob.withdraw({ to: fresh, amount: parseEther('0.1') });
+    assert.equal((await pub.waitForTransactionReceipt({ hash })).status, 'success');
+    assert.equal(await pub.getBalance({ address: fresh }), parseEther('0.1'));
+    const b = await bob.sync();
+    assert.ok(b.balance < parseEther('0.2') && b.balance > parseEther('0.19'));
+  });
+
+  await test('a spend cannot be replayed: the same calldata reverts on chain', async () => {
+    const tx = await pub.getTransaction({ hash: sent });
+    await assert.rejects(pub.call({ account: payer.account, to: pool, data: tx.input }), /AlreadyNullified|StaleRoot|revert/);
+  });
+} catch (e) {
+  console.error(keeperLog.join('').split('\n').slice(-30).join('\n'));
+  throw e;
+} finally {
+  cleanup();
+}
+
+console.log(`\n${n} passed`);
+process.exit(0);

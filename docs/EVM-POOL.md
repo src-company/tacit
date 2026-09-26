@@ -71,7 +71,22 @@ publicAmount = extAmount − fee mod p
 Σ inputs + publicAmount = Σ outputs
 ```
 
-Keys and stealth derivation are the Bitcoin shielded pool's (`dapp/btc-pool-zk.js`): one wallet seed serves both.
+Keys and stealth derivation are the Bitcoin shielded pool's (`dapp/btc-pool-zk.js`): one wallet seed serves both,
+and one Secret Sats address (`bp1…`) receives in both pools.
+
+Each output note carries a 65-byte memo in `memo0` / `memo1` so its recipient can find it
+(`dapp/evm-pool-wallet.js` `sealNote` / `openNote`):
+
+```
+memo = pk_eph (33) ‖ ct (16) ‖ tag (16)
+s    = compress(e·V)  (sender)  =  compress(v·pk_eph)  (recipient)      V = the address's view key
+npk, rho = outputKeys(A, N, s)                                          (the Bitcoin pool's per-note keys)
+k    = keccak256("tacit-evm-pool-aead-v1" ‖ s)
+ct   = be16(value) ⊕ keccak256(k ‖ 0x0000)[0..16)
+tag  = keccak256("tacit-evm-pool-aead-tag-v1" ‖ k ‖ ct)[0..16)
+```
+
+A wallet accepts a memo only if `Poseidon(asset, value, npk, rho)` equals the output's leaf.
 Public signal order: `root, oldRoot, newRoot, startIndex, publicAmount, extDataHash, asset, nf[2], outLeaf[2]`.
 
 ## Calling the pool
