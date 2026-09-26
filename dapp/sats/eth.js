@@ -11,7 +11,7 @@ import { evmPoolKeys, makeEvmPoolWallet, jsonRpc } from '/evm-pool-wallet.js?cb=
 import { vkHash } from '/evm-pool-zk-prover.js?cb=00ff69c2';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7 } from '../vendor/tacit-poseidon.min.js';
 
-const WORKER_URL = '/evm-pool-prove-worker.js?cb=8c71f2a2';
+const WORKER_URL = '/evm-pool-prove-worker.js?cb=7f41e5e0';
 const O = globalThis.__TACIT_EVM_POOL__ || {};
 const POOL = O.pool || '0x000000c2A20657CE25f2Ba99737933D031AFBEE9';
 const ROUTER = O.router || '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5';
@@ -245,6 +245,9 @@ export async function mount(root, ctx) {
       refresh();
     });
     if (relayer) w.watchReceive().catch(() => {});
+    // The proving key (about 33 MB the first time, cached after) starts downloading once a form is in use.
+    const warm = () => { prover((name, got, total) => say(`Getting the proving key once: ${name} ${total ? Math.floor((got / total) * 100) + '%' : ''}`)).then(() => say('')).catch(() => {}); };
+    for (const id of ['eth-to', 'eth-amt', 'eth-wto', 'eth-wamt']) root.querySelector('#' + id)?.addEventListener('focus', warm, { once: true });
     if (focus) root.querySelector('#' + focus)?.focus();
     refresh();
   }

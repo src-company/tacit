@@ -2,6 +2,8 @@
 // the page.
 //   { op: 'init', wasm, zkey, vk } → {}
 //   { op: 'prove', input }         → { proof, publicSignals }   self-verified against vk
+// Threaded proving is about four times faster but holds a wasm heap per thread; if it fails (low memory), the proof
+// is retried on one thread.
 
 import { proveTransact, verifyTransact } from './evm-pool-zk-prover.js';
 
@@ -16,7 +18,10 @@ self.onmessage = async ({ data: m }) => {
     } else if (!art) {
       throw new Error('prover not initialised');
     } else if (m.op === 'prove') {
-      const { proof, publicSignals } = await proveTransact(m.input, { wasm: art.wasm, zkey: art.zkey });
+      let out;
+      try { out = await proveTransact(m.input, { wasm: art.wasm, zkey: art.zkey }); }
+      catch { out = await proveTransact(m.input, { wasm: art.wasm, zkey: art.zkey, singleThread: true }); }
+      const { proof, publicSignals } = out;
       if (!(await verifyTransact(art.vk, publicSignals, proof))) throw new Error('fresh proof does not verify');
       reply({ proof, publicSignals });
     } else {
