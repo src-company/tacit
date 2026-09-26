@@ -570,9 +570,18 @@ export async function renderCdpTab(wallet) {
     posBox.innerHTML = `<div style="font-weight:600;margin-bottom:6px;">Your positions</div>`
       + positions.map((p, i) => `<div class="list-row">
           <span>${formatUnits(BigInt(p.debtValue), posDebtDecimals)} cUSD borrowed · ${p.basket.length} collateral leg${p.basket.length === 1 ? '' : 's'}${p.recovered ? ' · recovered from chain' : ''}</span>
-          <button class="cdp-close-one" data-pos="${i}" style="padding:3px 10px;font-size:10px;flex:0 0 auto;">Close</button></div>`).join('')
+          <span style="flex:0 0 auto;display:inline-flex;gap:6px;">
+            <button class="cdp-topup-toggle" data-pos="${i}" style="padding:3px 10px;font-size:10px;">Add collateral</button>
+            <button class="cdp-close-one" data-pos="${i}" style="padding:3px 10px;font-size:10px;">Close</button>
+          </span></div>
+        <div class="cdp-topup-form" data-pos="${i}" style="display:none;padding:6px 0 10px;">
+          <div class="cdp-topup-collat-list muted" data-pos="${i}" style="font-size:11.5px;margin-bottom:6px;">loading your cBTC notes…</div>
+          <button class="cdp-topup-confirm" data-pos="${i}" style="font-size:10px;padding:3px 10px;">Confirm add</button>
+          <div class="cdp-topup-status muted field-status" data-pos="${i}" style="margin-top:4px;"></div>
+        </div>`).join('')
       + `<div id="cdp-close-status" class="muted field-status" style="margin-top:6px;"></div>`;
     wireClose(wallet, ux, positions);
+    wireTopup(wallet, ux, positions);
   } else if (posBox) {
     // Empty: collapse so the bare .divider top-border doesn't render a stray rule.
     posBox.innerHTML = '';
@@ -657,6 +666,113 @@ function wireClose(wallet, ux, positions) {
         setTimeout(() => renderCdpTab(wallet), 1500);
       } catch (e) {
         const m = formatErr(e, 'Close');
+        if (statusEl) statusEl.textContent = m; notify(m, 'error');
+        btn.disabled = false;
+      }
+    };
+  }
+}
+
+// Add collateral to an open position (topupCdp). Same membership-proof shape as close (rebuild the position
+// tree, prove the CURRENT leaf), but the position is REPLACED rather than spent: onCdpTopup requires the new
+// basket to be worth strictly more than the old one and re-checks the health ratio against it, then the guest
+// folds any added leg of an asset the basket already holds into that same leg rather than appending a second
+// one (cxfer-core::cdp_topup — v1 only ever has one leg since only cBTC is accepted collateral). Both the old
+// and new position leaves use nonce = 0: the wallet-key recovery walk (confidential-recovery.js:walkCdpPositions)
+// hardcodes nonce = 0 for every leaf it tries to match, mint or topup alike, because the basket/debt/rate
+// differences already make each leaf in a position's lineage unique — a topup that used a different nonce
+// would compute a leaf recovery could never find after a wiped browser. Confirmed against the real fixture
+// (contracts/sp1/confidential/fixtures/cdp_topup_op.json): oldNonce and newNonce are both zero there too.
+function wireTopup(wallet, ux, positions) {
+  const cdp = makeConfidentialCdp({ keccak256: keccak_256, pool: ux.pool, signSchnorr });
+  const defi = makeConfidentialDefiActions({
+    pool: ux.pool, cdp, farm: makeConfidentialFarm({ keccak256: keccak_256, pool: ux.pool }), relay: ux.relay,
+    id: ux.identity(wallet.priv), chainBindingHex: ux.chainBindingHex, secp,
+  });
+  const cbtcAssetId = ux.pool.CBTC_ZK_ASSET_ID;
+  // Per-row cache of the fresh cBTC notes fetched when that row's form first opens, so Confirm doesn't have
+  // to re-scan (and so the checked leaves stay stable while the user is picking).
+  const rowNotes = new Map();
+  for (const btn of document.querySelectorAll('.cdp-topup-toggle')) {
+    btn.onclick = async () => {
+      const i = btn.getAttribute('data-pos');
+      const form = document.querySelector(`.cdp-topup-form[data-pos="${i}"]`);
+      if (!form) return;
+      const opening = form.style.display === 'none';
+      form.style.display = opening ? '' : 'none';
+      if (!opening || rowNotes.has(i)) return;
+      const listEl = document.querySelector(`.cdp-topup-collat-list[data-pos="${i}"]`);
+      try {
+        const { notes } = await ux.balance(wallet.priv);
+        const cbtcNotes = (notes || []).filter((n) => n.asset && n.asset.toLowerCase() === cbtcAssetId.toLowerCase());
+        rowNotes.set(i, cbtcNotes);
+        if (!listEl) return;
+        listEl.innerHTML = cbtcNotes.length ? cbtcNotes.map((n) => `<label class="check-row" style="padding:3px 0;">
+            <input type="checkbox" class="cdp-topup-pick" data-pos="${i}" data-leaf="${n.leafIndex}">
+            <span>${fmtUnits(n.value, decOf(ux, n.asset))} cBTC <span class="muted">#${n.leafIndex}</span></span></label>`).join('')
+          : `<span class="muted">No spare cBTC notes — lock more BTC above first.</span>`;
+      } catch (e) {
+        if (listEl) listEl.textContent = 'Could not load collateral: ' + formatErr(e);
+      }
+    };
+  }
+  for (const btn of document.querySelectorAll('.cdp-topup-confirm')) {
+    btn.onclick = async () => {
+      const i = btn.getAttribute('data-pos');
+      const p = positions[Number(i)];
+      const statusEl = document.querySelector(`.cdp-topup-status[data-pos="${i}"]`);
+      if (!p) return;
+      const checked = [...document.querySelectorAll(`.cdp-topup-pick[data-pos="${i}"]:checked`)].map((c) => c.getAttribute('data-leaf'));
+      if (!checked.length) { if (statusEl) statusEl.textContent = 'Select at least one cBTC note to add.'; return; }
+      const notes = rowNotes.get(i) || [];
+      const byLeaf = new Map(notes.map((n) => [String(n.leafIndex), n]));
+      const idNow = ux.identity(wallet.priv);
+      const addedCollateral = checked.map((lf) => {
+        const n = byLeaf.get(lf);
+        return { asset: n.asset, cx: n.cx, cy: n.cy, value: n.value, blinding: n.blinding, leafIndex: n.leafIndex, path: n.path, owner: n.owner || idNow.owner, nk: n.secret };
+      });
+      const root = byLeaf.get(checked[0]).root;
+      btn.disabled = true;
+      if (statusEl) statusEl.textContent = 'Rebuilding the position tree…';
+      try {
+        const controller = p.controller;
+        const debtAsset = cdp.debtAssetId(controller);
+        const debtValue = BigInt(p.debtValue);
+        const sortedBasket = [...p.basket].sort((a, b) => (BigInt(a.asset) < BigInt(b.asset) ? -1 : 1));
+        const basketRootHex = cdp.basketRoot(sortedBasket.map((l) => cdp.basketLeg(l.asset, l.value)));
+        const pOwner = p.positionOwner || idNow.owner;
+        const pOwnerPriv = await _posStore.ownerPrivFor(wallet.priv, p);
+        if (!pOwnerPriv) { if (statusEl) statusEl.textContent = 'This position predates owner-authorized actions (no saved key) — cannot top up.'; btn.disabled = false; return; }
+        const positionLeaf = cdp.positionLeaf(controller, debtAsset, basketRootHex, debtValue, p.rateSnapshot, pOwner, ZERO32);
+        const posTree = await ux.cdpPositionTree();
+        const positionIndex = posTree.indexOf(positionLeaf);
+        if (positionIndex < 0) { if (statusEl) statusEl.textContent = 'Position not found on-chain yet (still settling?).'; btn.disabled = false; return; }
+        const positionPath = posTree.pathFor(positionIndex).path;
+        if (statusEl) statusEl.textContent = 'Building + settling the top-up via the relayer…';
+        await defi.topupCdp({
+          controller, debtValue, rateSnapshot: p.rateSnapshot, oldBasket: sortedBasket, addedCollateral,
+          positionIndex, positionPath, spendRoot: root, cdpPositionRoot: posTree.root,
+          positionOwner: pOwner, positionOwnerPriv: pOwnerPriv, oldNonce: ZERO32, newNonce: ZERO32,
+          waitOpts: { onUpdate: proveUpdater(statusEl, 'Adding collateral') },
+        });
+        // Same-asset legs fold into one (mirrors buildCdpTopupOp's merge) — v1 collateral is cBTC-only so this
+        // is always a single leg in practice, but the merge is written general.
+        const merged = new Map(sortedBasket.map((l) => [l.asset.toLowerCase(), BigInt(l.value)]));
+        for (const c of addedCollateral) {
+          const k = c.asset.toLowerCase();
+          merged.set(k, (merged.get(k) || 0n) + BigInt(c.value));
+        }
+        const newBasket = [...merged.entries()].map(([asset, value]) => ({ asset, value: value.toString() }));
+        _posStore.remove((x) => x.controller === p.controller && (x.positionOwner || '') === (p.positionOwner || '') && x.debtValue === p.debtValue);
+        await _posStore.add(wallet.priv, {
+          controller, debtValue: p.debtValue, nonce: ZERO32, keyNonce: p.keyNonce, positionOwner: pOwner,
+          rateSnapshot: p.rateSnapshot, debtAnchor: p.debtAnchor, basket: newBasket, openedAt: p.openedAt,
+        });
+        if (statusEl) statusEl.textContent = 'Collateral added ✓';
+        notify('Collateral added to position', 'ok');
+        setTimeout(() => renderCdpTab(wallet), 1500);
+      } catch (e) {
+        const m = formatErr(e, 'Add collateral');
         if (statusEl) statusEl.textContent = m; notify(m, 'error');
         btn.disabled = false;
       }
