@@ -14,6 +14,7 @@
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
 import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater } from './confidential-deployments.js';
+import { formatUnits as fmtUnits } from './confidential-payout.js';
 import { makeConfidentialInvoice } from './confidential-invoice.js';
 import { makeConfidentialNames, makeMainnetCall, NameError } from './confidential-names.js';
 import { payoutPanelHtml, wirePayout } from './confidential-payout-panel.js';
@@ -143,13 +144,6 @@ async function attachRegisteredExternalSendAssets(ux) {
     added.push(meta);
   }
   return added;
-}
-
-function fmtUnits(v, decimals) {
-  const s = BigInt(v).toString().padStart(decimals + 1, '0');
-  const i = s.slice(0, -decimals) || '0';
-  const f = s.slice(-decimals).replace(/0+$/, '');
-  return f ? `${i}.${f}` : i;
 }
 
 // Parse a decimal entry into in-system base units at `dec` decimals. Returns 0n on any malformed input.

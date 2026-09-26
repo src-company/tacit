@@ -16,7 +16,7 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatSpecErr, notify } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatSpecErr, notify, decOf } from './confidential-deployments.js';
 import { formatUnits } from './confidential-payout.js';
 import { scanHealth, scanHealthHtml, inboundBadgeText, inboundSummaryHtml } from './confidential-scan-health.js';
 
@@ -25,10 +25,6 @@ function getUx() {
   return _ux || (_ux = makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256}));
 }
 const el = (id) => document.getElementById(id);
-function decOf(ux, assetId) {
-  const m = (ux.assets || []).find((x) => x.assetId && String(x.assetId).toLowerCase() === String(assetId).toLowerCase());
-  return m ? Number(m.tacitDecimals ?? m.decimals ?? 8) : 8;
-}
 
 // Fee tiers probed for best execution, most-liquid first. A single confidential-AMM venue today, so
 // "best route" == best tier; the seam generalizes to cross-venue-router.bestExactIn when more venues exist.

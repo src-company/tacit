@@ -9,7 +9,7 @@
 
 import { secp, sha256, keccak_256, hmac } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, proveUpdater, protectOutpoint, listProtectedOutpoints, listReservedLocks, reservedLockSats, evmAccountHint } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater, protectOutpoint, listProtectedOutpoints, listReservedLocks, reservedLockSats, evmAccountHint, decOf } from './confidential-deployments.js';
 import { makeConfidentialCdp } from './confidential-cdp.js';
 import { makeConfidentialFarm } from './confidential-farm.js';
 import { makeConfidentialDefiActions } from './confidential-defi-actions.js';
@@ -54,13 +54,6 @@ function derivePositionOwnerPriv(walletPriv, controller, keyNonce) {
   let b = 0n; for (const x of raw) b = (b << 8n) | BigInt(x);
   b %= secp.CURVE.n;
   return '0x' + (b === 0n ? 1n : b).toString(16).padStart(64, '0');
-}
-
-function fmtUnits(v, decimals) {
-  const s = BigInt(v).toString().padStart(decimals + 1, '0');
-  const i = s.slice(0, -decimals) || '0';
-  const f = s.slice(-decimals).replace(/0+$/, '');
-  return f ? `${i}.${f}` : i;
 }
 
 // Persist the opening of each position so it can be closed later. This descriptor is a CACHE, not the record:
@@ -131,11 +124,6 @@ function reverseHex(hex) {
 }
 function cbtcOutpoint(pool, lockTxidDisplay, lockVout) {
   return pool.outpointKey('0x' + reverseHex(lockTxidDisplay), lockVout);
-}
-
-function decOf(ux, assetId) {
-  const m = ux.assets.find((x) => x.assetId.toLowerCase() === String(assetId).toLowerCase());
-  return m ? (m.tacitDecimals ?? m.decimals) : 8; // note values are in-system units
 }
 
 // Open a CDP: lock the selected collateral notes → mint a cUSD debt note (gasless via the relay).
@@ -298,7 +286,7 @@ function wireOpen(wallet, ux, notes) {
       // The pre-submit check above catches the common case; this remains for a price move between that
       // check and settle, or the rare feed-just-changed grace window — decode the engine's own revert names
       // rather than show a bare selector/string.
-      const m = formatErr(e, 'Open');
+      const m = formatSpecErr(e, 'Open');
       const hint = /Undercollateralized/i.test(m)
         ? `${m} — the collateral's price moved, or another action against it settled first. Refresh and try again.`
         : /BadSnapshot/i.test(m)
@@ -375,7 +363,7 @@ function wireCbtc(wallet, ux) {
       // reflection fold before OP_CBTC_MINT recognizes it (cbtcLockCommitment[outpoint] unset until then) —
       // surface that plainly rather than a raw revert string, and leave the pending record so retry needs
       // no re-entry.
-      const m = formatErr(e, 'cBTC mint');
+      const m = formatSpecErr(e, 'cBTC mint');
       const hint = /CbtcLockMismatch|revert/i.test(m)
         ? `${m} — likely still waiting on Bitcoin confirmations + the reflection fold; safe to retry in a few minutes.`
         : m;
@@ -423,7 +411,7 @@ function wireCbtc(wallet, ux) {
           + `confirmations + the reflection fold, then click Mint below.`;
         notify(`cBTC lock broadcast — ${res.vBtc} sats`, 'ok');
       } catch (e) {
-        const m = formatErr(e, 'cBTC lock');
+        const m = formatSpecErr(e, 'cBTC lock');
         if (statusEl) statusEl.textContent = m; notify(m, 'error');
       } finally {
         lockBtn.disabled = false;
@@ -528,7 +516,7 @@ export async function renderCdpTab(wallet) {
           const dec = decOf(ux, n.asset);
           return `<label class="check-row" style="padding:5px 0;">
             <input type="checkbox" class="cdp-collat-pick" data-leaf="${n.leafIndex}">
-            <span>${fmtUnits(n.value, dec)} ${esc(ticker)} <span class="muted">#${n.leafIndex}</span>${inboundBadgeHtml(n)}</span></label>`;
+            <span>${formatUnits(n.value, dec)} ${esc(ticker)} <span class="muted">#${n.leafIndex}</span>${inboundBadgeHtml(n)}</span></label>`;
         }).join('') + inboundSummaryHtml(collatNotes);
       }
     }
@@ -666,7 +654,7 @@ function wireClose(wallet, ux, positions) {
         notify('Position closed — collateral released', 'ok');
         setTimeout(() => renderCdpTab(wallet), 1500);
       } catch (e) {
-        const m = formatErr(e, 'Close');
+        const m = formatSpecErr(e, 'Close');
         if (statusEl) statusEl.textContent = m; notify(m, 'error');
         btn.disabled = false;
       }
@@ -714,7 +702,7 @@ function wireTopup(wallet, ux, positions) {
         // fail deep in proof-building with no clear message, after "Confirm" was already clicked.
         listEl.innerHTML = cbtcNotes.length ? cbtcNotes.map((n) => `<label class="check-row" style="padding:3px 0;">
             <input type="radio" name="cdp-topup-pick-${i}" class="cdp-topup-pick" data-pos="${i}" data-leaf="${n.leafIndex}">
-            <span>${fmtUnits(n.value, decOf(ux, n.asset))} cBTC <span class="muted">#${n.leafIndex}</span></span></label>`).join('')
+            <span>${formatUnits(n.value, decOf(ux, n.asset))} cBTC <span class="muted">#${n.leafIndex}</span></span></label>`).join('')
           : `<span class="muted">No spare cBTC notes — lock more BTC above first.</span>`;
       } catch (e) {
         if (listEl) listEl.textContent = 'Could not load collateral: ' + formatErr(e);
@@ -777,7 +765,7 @@ function wireTopup(wallet, ux, positions) {
         notify('Collateral added to position', 'ok');
         setTimeout(() => renderCdpTab(wallet), 1500);
       } catch (e) {
-        const m = formatErr(e, 'Add collateral');
+        const m = formatSpecErr(e, 'Add collateral');
         if (statusEl) statusEl.textContent = m; notify(m, 'error');
         btn.disabled = false;
       }

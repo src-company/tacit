@@ -366,6 +366,16 @@ export function esc(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// The decimal places to format/parse an asset's note values at — tacitDecimals when the asset registers
+// one (in-system display places, e.g. 8 for cETH/cBTC/cUSD/cTAC even though the underlying token may carry
+// more), falling back to the asset's own `decimals`, then 8. Every confidential/EVM tab needs this to avoid
+// showing/parsing raw base-unit BigInts (the bug already found and fixed on the CDP and swap tabs) — was
+// duplicated per-file before this; call ux.assets through here instead of writing a local copy.
+export function decOf(ux, assetId) {
+  const m = (ux.assets || []).find((x) => x.assetId && String(x.assetId).toLowerCase() === String(assetId).toLowerCase());
+  return m ? Number(m.tacitDecimals ?? m.decimals ?? 8) : 8;
+}
+
 // Normalize a caught error into a short human string. `verb` (e.g. "Swap") yields "Swap failed: <reason>".
 export function formatErr(e, verb) {
   const msg = (e && e.message) ? e.message : String(e || 'unknown error');
