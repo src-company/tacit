@@ -420,6 +420,16 @@ await test('open ceremony: no TAC proof needed, but the pubkey must be the one t
   return other.status === 403 && /reserved the queue head/.test(otherErr) && !/eligibility/.test(ownErr);
 });
 
+await test('open ceremony: a pubkey that already contributed may contribute again', async () => {
+  const env = makeEnv();
+  const init = await (await postInit(env, { token: env.CEREMONY_INIT_TOKEN, circuit_hash: OPEN_HASH })).json();
+  await env.REGISTRY_KV.put(`ceremony:${OPEN_HASH}:pubkey:${PUB_A}`, '1');
+  const tok = await enqueueHead(env, OPEN_HASH, 'again-head', PUB_A);
+  const res = await postContribute(env, { hash: OPEN_HASH, prev_cid: init.state.head_cid, queue_token: tok, pubkey: PUB_A });
+  const err = (await res.json()).error || '';
+  return !/already contributed/.test(err);
+});
+
 await test('gated ceremony: still requires the TAC eligibility proof', async () => {
   const env = makeEnv();
   const init = await (await postInit(env, { token: env.CEREMONY_INIT_TOKEN })).json();

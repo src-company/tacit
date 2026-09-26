@@ -7507,7 +7507,8 @@ function ceremonyDrainKey(hash)         { return `ceremony:${hash}:drain_until`;
 // state.contribution_count, but the rollback path sets drain first so
 // /contribute is gated out during the window.
 function ceremonyVerifiedKey(hash)      { return `ceremony:${hash}:verified`; }
-// Ceremonies open to any contributor: no ≥ 1 TAC proof, pubkey proven by the reserve signature instead.
+// Ceremonies open to any contributor: no ≥ 1 TAC proof (pubkey proven by the reserve signature instead) and
+// repeat contributions accepted.
 const CEREMONY_OPEN_HASHES = new Set([
   'b0a246d1790151c722e42ccfa89450cb96c7f5a9f4b70a2162b7d9fc79b6ddb3', // evm-pool transact
 ]);
@@ -8977,7 +8978,10 @@ async function handleCeremonyContribute(req, env, circuitHash, cors, ctx) {
     // grandfathered duplicate gets one more slot than intended.
   }
   const dupKey = ceremonyPubkeyKey(circuitHash, contributorPubkey);
-  const existingSlot = await env.REGISTRY_KV.get(dupKey);
+  // Open ceremonies accept repeat contributions from a pubkey: each mixes in fresh randomness. The index
+  // still records the pubkey's latest slot.
+  const repeatAllowed = CEREMONY_OPEN_HASHES.has(circuitHash);
+  const existingSlot = repeatAllowed ? null : await env.REGISTRY_KV.get(dupKey);
   if (existingSlot && existingSlot !== 'pending') {
     return jsonResponse({
       error: `this pubkey already contributed to this circuit (slot #${existingSlot}). One slot per address per circuit — contribute to the other two circuits if you haven't yet.`,
@@ -8995,8 +8999,8 @@ async function handleCeremonyContribute(req, env, circuitHash, cors, ctx) {
   // slot index (no TTL), keeping the dedup entry permanent for landed
   // contributions. _releaseClaim is called inline before each error
   // return between here and the final state.put.
-  await env.REGISTRY_KV.put(dupKey, 'pending', { expirationTtl: 60 });
-  const _releaseClaim = async () => { try { await env.REGISTRY_KV.delete(dupKey); } catch {} };
+  if (!repeatAllowed) await env.REGISTRY_KV.put(dupKey, 'pending', { expirationTtl: 60 });
+  const _releaseClaim = async () => { if (repeatAllowed) return; try { await env.REGISTRY_KV.delete(dupKey); } catch {} };
 
   let newCid;
   let newConstHdr = null;  // extracted below; used for header-continuity check after CAS
