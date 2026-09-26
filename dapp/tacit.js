@@ -43417,6 +43417,15 @@ async function ceremonyContributeAmm({
   // the holder's TTL expires), then re-claim. ceremonyContributeAmm
   // owns the lifetime — release on success/error in the finally.
   await _ammClaimReservationWithQueue(circuitHash, contributorName, contributorPubkeyHex, (phase, info) => _emit(phase, info));
+  // The chain may have advanced while we waited in the queue; mix against the head as of our turn.
+  {
+    const fresh = await ceremonyFetchState(circuitHash);
+    if (fresh) {
+      if (fresh.finalized) throw new Error('ceremony has been finalized; chain is locked');
+      Object.assign(state, fresh, { circuit_hash: String(circuitHash).toLowerCase() });
+      _setAmmCeremonyStateMonotonic(circuitHash, state);
+    }
+  }
 
   // Mid-mix keepalive. Worker's queue entry has a 15-min KV TTL and
   // doesn't auto-refresh during mix (we're not polling reserve while
@@ -45173,7 +45182,12 @@ function _evmCerBrowserKey() {
 }
 async function _submitEvmPoolCeremonyContribution() {
   const C = EVM_POOL_CEREMONY;
-  if (!_evmCerConfigured() || _evmCer.inFlight) return;
+  if (!_evmCerConfigured() || _evmCer.inFlight || globalThis.__tacitEvmCerBusy) return;
+  globalThis.__tacitEvmCerBusy = true;
+  try { await _submitEvmPoolCeremonyContributionInner(); } finally { globalThis.__tacitEvmCerBusy = false; }
+}
+async function _submitEvmPoolCeremonyContributionInner() {
+  const C = EVM_POOL_CEREMONY;
   const goBtn = document.getElementById('evm-cer-go');
   const progEl = document.getElementById('evm-cer-progress');
   const resultEl = document.getElementById('evm-cer-result');
@@ -45238,6 +45252,7 @@ async function _submitEvmPoolCeremonyContribution() {
   };
   window.addEventListener('beforeunload', onBeforeUnload);
   _evmCer.inFlight = true;
+  _evmCer.lastQueueLine = '';
   _evmCer.startedAt = Date.now();
   _evmCer.pct = 0;
   if (fill) fill.style.width = '0%';
@@ -45266,7 +45281,8 @@ async function _submitEvmPoolCeremonyContribution() {
           const total = Number(info?.total || 0);
           const where = pos > 0 && total > 0 ? ` · position ${pos} of ${total}` : '';
           setPhase(`Queued — ${info?.heldName || 'someone'} is contributing${where}`, 'your turn starts automatically · checking every 10s');
-          log(`  queued behind ${info?.heldName || 'another contributor'}${where}`);
+          const line = `  queued behind ${info?.heldName || 'another contributor'}${where}`;
+          if (line !== _evmCer.lastQueueLine) { _evmCer.lastQueueLine = line; log(line); }
         }
         else if (phase === 'reserve-ok') log('  ✓ your turn');
         else if (phase === 'reserve-timeout') log('  queue wait timed out; continuing');
@@ -45360,9 +45376,11 @@ async function _submitEvmPoolCeremonyContribution() {
   }
 }
 
+// The page can evaluate a second copy of this module (amm-farm-ui.js imports './tacit.js' by bare path), so the
+// ceremony's wiring, refresh timer and in-flight lock are page-wide rather than per module copy.
 function _wireEvmCerOnce() {
-  if (_wireEvmCerOnce._done) return;
-  _wireEvmCerOnce._done = true;
+  if (globalThis.__tacitEvmCerWired) return;
+  globalThis.__tacitEvmCerWired = true;
   const drawer = document.getElementById('evm-cer-drawer');
   const onKey = (fn) => (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } };
   for (const id of ['evm-cer-chip', 'evm-cer-mini-chip']) {
@@ -92418,7 +92436,7 @@ async function init() {
   // The EVM pool ceremony needs no wallet, so it renders before wallet onboarding (which can wait on the
   // visitor) and keeps its count fresh.
   try { renderEvmPoolCeremony(); } catch {}
-  setInterval(() => { try { renderEvmPoolCeremony(); } catch {} }, 60_000);
+  if (!globalThis.__tacitEvmCerTimer) globalThis.__tacitEvmCerTimer = setInterval(() => { try { renderEvmPoolCeremony(); } catch {} }, 60_000);
   // Deep-link pre-fetch: when the URL points at a market page, kick off
   // fetchMarketData() in parallel with the wallet sync. Without this,
   // _consumeTabUrlHash (which runs at the END of init, after the wallet's
