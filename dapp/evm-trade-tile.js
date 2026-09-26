@@ -13,7 +13,7 @@
 
 import { getConfidentialDeployment, esc, formatErr, notify } from './confidential-deployments.js';
 import {
-  TAC_ERC20, VENUES, makeEvmTradeVenues,
+  TAC_ERC20, VENUES, makeEvmTradeVenues, zswapDeepLink,
   encErc20Allowance, encErc20Approve, encErc20BalanceOf, decUint256,
 } from './evm-trade-venues.js';
 import { keccak_256 } from './vendor/tacit-deps.min.js';
@@ -24,6 +24,11 @@ const RECEIPT_POLL_MS = 3000;
 const RECEIPT_TIMEOUT_MS = 240000;
 const ETHERSCAN_TX = (h) => `https://etherscan.io/tx/${h}`;
 const ETHERSCAN_TOKEN = `https://etherscan.io/token/${TAC_ERC20}`;
+// zswap.wei.limo — zfi's own deploy, confirmed live today (v0.3): reads #token=/out=/amount=,
+// no #chain= support yet (mainnet-only page anyway, so that's moot here). Used only as an
+// informational "fill there instead" link for resting board orders this tile doesn't execute
+// itself — never for the venues this tile already quotes and sends directly.
+const ZSWAP_HOST = 'https://zswap.wei.limo';
 
 // ── mainnet RPC — same fallback list confidential-pool-ux.js uses, called
 // directly here since this module has no pool deployment and doesn't want to
@@ -221,13 +226,22 @@ export function mountEvmTradeLane(host, opts) {
     const outTicker = state.dir === 'ETH_TO_TAC' ? 'TAC' : 'ETH';
     const row = (label, out) => `<div class="evm-lane-compare-row"><span>${esc(label)}</span><span>${out}</span></div>`;
     const amt = (v) => v ? `${esc(formatUnitsStr(v.amountOut, 18, 6))} ${esc(outTicker)}` : 'no route';
+    const restingOrders = q.boards && q.boards.restingOrders > 0 ? q.boards.restingOrders : 0;
+    // Boards are quote-only here (no fill recipe ported — see evm-trade-venues.js), so a
+    // resting order that might beat the executed venue gets a "fill there instead" link rather
+    // than a number this tile can't act on itself.
+    const boardsOut = restingOrders > 0
+      ? (() => {
+          const link = zswapDeepLink({ host: ZSWAP_HOST, dir: state.dir, amount: state.amountStr || undefined });
+          const label = `${restingOrders} resting order${restingOrders === 1 ? '' : 's'}`;
+          return link ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(label)} — fill on zSwap ↗</a>` : esc(label);
+        })()
+      : 'no resting orders';
     const rows = [
       row('Precision', amt(q.precision)),
       row('Tacit AMM', amt(q.tacitAmm)),
       row('zQuoter', (q.zquoter && q.zquoter.status === 'ok') ? amt(q.zquoter) : 'no route'),
-      row('Order boards', (q.boards && q.boards.restingOrders > 0)
-        ? `${q.boards.restingOrders} resting order${q.boards.restingOrders === 1 ? '' : 's'}`
-        : 'no resting orders'),
+      row('Order boards', boardsOut),
     ];
     return rows.join('');
   }
