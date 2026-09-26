@@ -73,7 +73,7 @@ export function sealNote(zk, { to, value, asset, e = randomScalar() }) {
   return { v, npk: o.npk, rho: o.rho, leaf: zk.leafOf(asset, v, o.npk, o.rho), memo: concatBytes(G.multiply(BigInt(e)).toRawBytes(true), seal(s, v)) };
 }
 
-// The owned note behind (memo, leaf), or null: { v, rho, sk, nk, npk }.
+// The owned note behind (memo, leaf), or null: { v, rho, sk, nk, npk, s }.
 export function openNote(zk, keys, { memo, leaf, asset }) {
   const m = memo instanceof Uint8Array ? memo : unhex(memo);
   if (m.length !== MEMO_LEN) return null;
@@ -83,7 +83,7 @@ export function openNote(zk, keys, { memo, leaf, asset }) {
   if (v === null || v >= VMAX) return null;
   const o = zk.ownedKeys(keys.zkWallet, s);
   if (zk.leafOf(asset, v, o.npk, o.rho) !== BigInt(leaf)) return null;
-  return { v, rho: o.rho, sk: o.sk, nk: o.nk, npk: o.npk };
+  return { v, rho: o.rho, sk: o.sk, nk: o.nk, npk: o.npk, s };
 }
 
 // A recipient from a Secret Sats address string.
@@ -137,7 +137,8 @@ function decodeReceived(log) {
 
 // chain: { chainId, pool, router, rpc (a jsonRpc), deployBlock, logChunk?, confirmations? }
 // keeper: base URL of a keeper (…/evm-pool/keeper) or null; prove(input) → { proof, publicSignals } (snarkjs shape);
-// store: { get(k), set(k, v) } for the synced state, or null to keep it in memory.
+// store: { get(k), set(k, v) } for the synced state, or null to keep it in memory. What is stored is view-level only
+// (leaves, and each owned note's position, value, rho and shared secret); spend keys are derived in memory.
 export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store = null, fetchImpl = globalThis.fetch?.bind(globalThis) }) {
   const asset = poolAsset({ chainId: BigInt(chain.chainId), pool: chain.pool, token: ZERO });
   const box = receiveBoxAddress(receiveKeys(zk, keys.zkWallet, RECEIVE_INDEX).npk, RECEIVE_FEE_BPS, chain.router);
@@ -150,7 +151,18 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   try { const j = store?.get(skey); if (j) saved = JSON.parse(j); } catch {}
   let view = null; // saved state plus the unconfirmed tail, from the last sync
 
-  const persist = () => { try { store?.set(skey, JSON.stringify(saved)); } catch {} };
+  // Spend and nullifier keys of a stored note, from the wallet keys: never stored.
+  const recvKeys = () => receiveKeys(zk, keys.zkWallet, RECEIVE_INDEX);
+  function withKeys(n) {
+    if (n.nk) return n;
+    const k = n.kind === 'receive' ? recvKeys() : zk.ownedKeys(keys.zkWallet, unhex(n.s));
+    return { ...n, sk: k.sk.toString(), nk: k.nk.toString(), nf: zk.nullifier(k.nk, BigInt(n.leaf), n.index).toString() };
+  }
+  saved = { ...saved, notes: saved.notes.map(withKeys) };
+  const persist = () => {
+    const bare = { ...saved, notes: saved.notes.map(({ sk, nk, nf, ...rest }) => rest) };
+    try { store?.set(skey, JSON.stringify(bare)); } catch {}
+  };
   const noteKey = (n) => `${n.index}`;
 
   function absorb(state, transacts, receipts) {
@@ -167,7 +179,7 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
         const o = openNote(zk, keys, { memo: t.memo[k], leaf: t.outLeaf[k], asset });
         if (o && o.v > 0n) {
           const index = t.firstIndex + k;
-          notes.set(`${index}`, { index, leaf: t.outLeaf[k].toString(), v: o.v.toString(), rho: o.rho.toString(), sk: o.sk.toString(), nk: o.nk.toString(), nf: zk.nullifier(o.nk, t.outLeaf[k], index).toString(), block: t.block, tx: t.tx, kind: 'memo' });
+          notes.set(`${index}`, withKeys({ index, leaf: t.outLeaf[k].toString(), v: o.v.toString(), rho: o.rho.toString(), s: hex(o.s), block: t.block, tx: t.tx, kind: 'memo' }));
         }
       }
     }
@@ -175,7 +187,7 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       const n = receivedNote(zk, keys.zkWallet, RECEIVE_INDEX, r);
       const leaf = BigInt(leaves[r.index] ?? -1);
       if (leaf < 0n || n.v === 0n) continue;
-      notes.set(`${r.index}`, { index: r.index, leaf: leaf.toString(), v: n.v.toString(), rho: n.rho.toString(), sk: n.sk.toString(), nk: n.nk.toString(), nf: zk.nullifier(n.nk, leaf, r.index).toString(), block: r.block, tx: r.tx, kind: 'receive' });
+      notes.set(`${r.index}`, withKeys({ index: r.index, leaf: leaf.toString(), v: n.v.toString(), rho: n.rho.toString(), block: r.block, tx: r.tx, kind: 'receive' }));
     }
     return { ...state, leaves, notes: [...notes.values()].sort((a, b) => a.index - b.index), spent: [...spent] };
   }

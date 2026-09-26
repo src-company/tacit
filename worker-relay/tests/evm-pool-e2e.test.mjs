@@ -98,7 +98,9 @@ const wasm = readFileSync(join(BUILD, 'transact_js/transact.wasm'));
 const zkey = readFileSync(join(BUILD, 'transact_dev_final.zkey'));
 const prove = (input) => proveTransact(input, { wasm, zkey, snarkjs });
 const chainCfg = { chainId: 31337, pool, router, rpc: jsonRpc(RPC), deployBlock: 0, confirmations: 0 };
-const alice = makeEvmPoolWallet({ zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(0x11)), chain: chainCfg, keeper: KEEPER, prove });
+const saved = new Map();
+const store = { get: (k) => saved.get(k), set: (k, v) => saved.set(k, v) };
+const alice = makeEvmPoolWallet({ zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(0x11)), chain: chainCfg, keeper: KEEPER, prove, store });
 const bob = makeEvmPoolWallet({ zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(0x22)), chain: chainCfg, keeper: KEEPER, prove });
 
 try {
@@ -140,6 +142,14 @@ try {
     assert.equal(await pub.getBalance({ address: fresh }), parseEther('0.1'));
     const b = await bob.sync();
     assert.ok(b.balance < parseEther('0.2') && b.balance > parseEther('0.19'));
+  });
+
+  await test('stored state is view-level only, and a wallet rebuilt from it matches', async () => {
+    const blob = [...saved.values()].join('');
+    assert.ok(blob.length > 0);
+    assert.ok(!/"(sk|nk)"/.test(blob), 'no spend or nullifier keys are stored');
+    const again = makeEvmPoolWallet({ zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(0x11)), chain: chainCfg, keeper: KEEPER, prove, store });
+    assert.equal((await again.sync()).balance, (await alice.sync()).balance);
   });
 
   await test('a spend cannot be replayed: the same calldata reverts on chain', async () => {

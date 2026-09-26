@@ -567,7 +567,8 @@ services:
   # Always-on web service, one per chain: the EVM pool keeper and relayer (src/evm-pool-keeper.js), serving
   # /evm-pool/keeper/{info,quote,relay,receive,deposit,wrap,status}. Enable once the suite is deployed on the chain
   # (the router must have code) and the ceremony artifacts are pinned; copy the block for Base (8453) and Robinhood
-  # (4663), changing name, disk, EVM_POOL_CHAIN_ID, the RPC and the start block. Each copy signs with its own
+  # (4663) as tacit-evm-pool-keeper-base / -robinhood (the names dapp/sats/index.html's CSP allows), changing
+  # disk, EVM_POOL_CHAIN_ID, the RPC and the start block. Each copy signs with its own
   # EVM_POOL_KEEPER_PRIV, funded for gas on that chain only; the keeper refuses the shared relay key.
   # - type: web
   #   name: tacit-evm-pool-keeper
