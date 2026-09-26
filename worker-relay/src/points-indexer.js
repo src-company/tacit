@@ -14,6 +14,9 @@ import Database from 'better-sqlite3';
 import { openStore } from './lib/points-store.js';
 import { parseBoostTiers, openTacBoost, scanTacTransfers } from './lib/tac-holder-boost.js';
 import { build as buildMerkleTree, formatTac } from './lib/points-merkle.js';
+import {
+  openEvmPoolPointsState, scanEvmPoolChain, resolvePendingBoxes, explorerGet, isV1WrapViaEvmRouter, WRAP_BOX_COMPLETED_EVENT,
+} from './lib/evm-pool-points.js';
 
 const log = (...a) => console.log(`[points ${new Date().toISOString()}]`, ...a);
 
@@ -658,6 +661,40 @@ async function scanZRouterCycle(store, { chainId, client, wethAddr, signal1 = tr
   store.saveZrouterCursor(confirmedTip, chainId);
 }
 
+function pointsForEvmPoolDeposit(amountWei, priorCount) {
+  return (Number(amountWei) / 1e18) * CFG.pointsBasePerEvmPoolEth * earlyAdopterBonus(priorCount);
+}
+
+// Public ETH deposited into the EVM pool, per chain (see lib/evm-pool-points.js for attribution). Boosts are
+// judged at the deposit's own mainnet block, or for an L2 at the last mainnet block at or before its
+// timestamp, the same rule scanZRouterCycle uses.
+function evmPoolCtx(store, evmState, { chainId, client }) {
+  const evalCache = new Map();
+  let mainnetTip = null;
+  return {
+    store, state: evmState, chainId, client,
+    apiBase: CFG.evmPoolExplorerApis[chainId],
+    startBlock: CFG.evmPoolPointsStartBlocks[chainId],
+    pool: CFG.evmPoolAddr, router: CFG.evmPoolRouterAddr, v1Pool: ADDR.pool, v1Router: ADDR.router,
+    excluded: new Set(CFG.evmPoolPointsExclude),
+    confirmations: CFG.pointsConfirmations, chunk: CFG.pointsScanChunk,
+    maxChunks: CFG.evmPoolScanMaxChunks, resolvePerCycle: CFG.evmPoolResolvePerCycle,
+    capTip: chainId === 1 ? capToBoostCoverage : null,
+    explorerGet, pointsFor: pointsForEvmPoolDeposit, log,
+    async evalBlock(chain, blockNumber, blockTime) {
+      if (chain === 1) return BigInt(blockNumber);
+      const t = Number(blockTime);
+      if (!evalCache.has(t)) {
+        if (mainnetTip == null) mainnetTip = BigInt(await publicClient.getBlockNumber()) - BigInt(CFG.pointsConfirmations);
+        evalCache.set(t, await mainnetBlockAtOrBefore(t, mainnetTip));
+      }
+      return evalCache.get(t);
+    },
+    covered: (b) => capToBoostCoverage(b) >= b,
+    multipliers: (address, b) => ({ tacB: tacMultiplier(address, b), zShareB: zShareMultiplier(address, b) }),
+  };
+}
+
 async function scanCycle(store) {
   const cursor = store.loadCursor() ?? {
     lastScannedBlock: BigInt(CFG.pointsStartBlock) - 1n,
@@ -676,7 +713,7 @@ async function scanCycle(store) {
   while (from <= confirmedTip) {
     const to = from + chunk - 1n > confirmedTip ? confirmedTip : from + chunk - 1n;
 
-    const [logs, tipLogs] = await Promise.all([
+    const [logs, tipLogs, wrapBoxLogs] = await Promise.all([
       publicClient.getLogs({
         address: ADDR.pool,
         event: WRAP_EVENT,
@@ -687,7 +724,9 @@ async function scanCycle(store) {
       ADDR.wrapTipForwarder
         ? publicClient.getLogs({ address: ADDR.wrapTipForwarder, event: WRAPPED_WITH_TIP_EVENT, fromBlock: from, toBlock: to })
         : [],
+      publicClient.getLogs({ address: CFG.evmPoolRouterAddr, event: WRAP_BOX_COMPLETED_EVENT, fromBlock: from, toBlock: to }),
     ]);
+    const wrapBoxTxs = new Set(wrapBoxLogs.map((l) => l.transactionHash));
     // Keyed by tx hash: the forwarder makes exactly one pool.wrap() call per invocation, so a tx has at
     // most one Wrap and at most one WrappedWithTip, and they always share a tx hash when both are present.
     const tipByTx = new Map(tipLogs.map((t) => [t.transactionHash, { tipWei: t.args.tip.toString(), tipRecipient: t.args.tipRecipient.toLowerCase() }]));
@@ -703,6 +742,9 @@ async function scanCycle(store) {
         tx = await publicClient.getTransaction({ hash: evt.transactionHash });
         txCache.set(evt.transactionHash, tx);
       }
+      // Value leaving the EVM pool (or a wrap box) into V1 is not new public ETH, and crediting it would let
+      // the same ETH earn again on every V1 -> pool -> V1 round.
+      if (isV1WrapViaEvmRouter(tx, evt.transactionHash, wrapBoxTxs, CFG.evmPoolRouterAddr)) continue;
 
       const priorDepositCount = cursor.ethDepositCount;
       const depositor = tx.from.toLowerCase();
@@ -865,7 +907,7 @@ export async function settleCycle(store) {
   log(`published points root ${tree.root} (${formatTac(totalWei)} TAC across ${tree.count} addresses), tx ${hash}`);
 }
 
-function startHttp(store) {
+function startHttp(store, evmState) {
   const server = createServer(async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'application/json');
@@ -883,6 +925,10 @@ function startHttp(store) {
           const c = store.loadZrouterCursor(chainId);
           return [chainId, c != null ? c.toString() : null];
         }));
+        const evmPoolCursors = Object.fromEntries(ZROUTER_CHAINS.map(({ chainId }) => {
+          const c = evmState.loadCursor(chainId);
+          return [chainId, { lastScannedBlock: c != null ? c.toString() : null, pendingBoxes: evmState.countPending(chainId) }];
+        }));
         res.end(JSON.stringify({
           ok: true,
           lastScannedBlock: cursor ? cursor.lastScannedBlock.toString() : null,
@@ -896,6 +942,7 @@ function startHttp(store) {
           pmLastScannedBlock: pmCursor != null ? pmCursor.toString() : null,
           zrouterLastScannedBlock: zrouterCursors[1],
           zrouterLastScannedBlockByChain: zrouterCursors,
+          evmPoolByChain: evmPoolCursors,
           // TAC transfer replay behind the holder boost; every other scan waits for it. null when the boost is off.
           tacBoostLastScannedBlock: tacBoost ? String(tacBoost.coveredThrough()) : null,
           // Same, for the Z-share holder boost.
@@ -1029,7 +1076,8 @@ async function main() {
       catch (err) { log('Z-share boost Blockscout backfill failed, falling back to the incremental scan:', err?.message || err); }
     }
   }
-  startHttp(store);
+  const evmState = openEvmPoolPointsState(store.db);
+  startHttp(store, evmState);
 
   for (;;) {
     // First, so every scan below can score up to the block each replay reached.
@@ -1069,6 +1117,19 @@ async function main() {
         await scanZRouterCycle(store, chain);
       } catch (err) {
         log(`zRouter scan cycle failed (chain ${chain.chainId}):`, err?.message || err);
+      }
+    }
+    for (const chain of ZROUTER_CHAINS) {
+      const ctx = evmPoolCtx(store, evmState, chain);
+      try {
+        await scanEvmPoolChain(ctx);
+      } catch (err) {
+        log(`EVM pool scan cycle failed (chain ${chain.chainId}):`, err?.message || err);
+      }
+      try {
+        await resolvePendingBoxes(ctx);
+      } catch (err) {
+        log(`EVM pool box resolution failed (chain ${chain.chainId}):`, err?.message || err);
       }
     }
     try {

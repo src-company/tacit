@@ -451,6 +451,30 @@ export const CFG = {
   robinhoodRpcUrl: opt('ROBINHOOD_RPC_URL', 'https://rpc.mainnet.chain.robinhood.com'),
   robinhoodWethAddr: opt('ROBINHOOD_WETH_ADDR', '0x0Bd7D308F8E1639FaB988DF18A8011f41EAcaD73'),
 
+  // ── EVM pool deposit activity (src/lib/evm-pool-points.js) ──
+  // Public ETH deposited into the native-ETH EVM pool, per chain. Off on a chain until its start block is set,
+  // and a no-op there while the pool has no code. The pool and router share one address on every chain.
+  evmPoolAddr: opt('EVM_POOL_ADDR', '0x000000c2A20657CE25f2Ba99737933D031AFBEE9'),
+  evmPoolRouterAddr: opt('EVM_POOL_ROUTER_ADDR', '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5'),
+  evmPoolPointsStartBlocks: {
+    1: opt('EVM_POOL_POINTS_START_BLOCK_1', ''),
+    8453: opt('EVM_POOL_POINTS_START_BLOCK_8453', ''),
+    4663: opt('EVM_POOL_POINTS_START_BLOCK_4663', ''),
+  },
+  pointsBasePerEvmPoolEth: num('POINTS_BASE_PER_EVM_POOL_ETH', 1000),
+  // Explorer API per chain, used to find who funded a deposit box. Robinhood's refuses requests without a
+  // browser-like user agent (see evm-pool-points.js's explorerGet).
+  evmPoolExplorerApis: {
+    1: opt('EVM_POOL_EXPLORER_API_1', 'https://eth.blockscout.com/api/v2'),
+    8453: opt('EVM_POOL_EXPLORER_API_8453', 'https://base.blockscout.com/api/v2'),
+    4663: opt('EVM_POOL_EXPLORER_API_4663', 'https://robinhoodchain.blockscout.com/api/v2'),
+  },
+  // Senders never credited for an EVM pool deposit or a box funding (the shared relay EOA, plus any keeper).
+  evmPoolPointsExclude: opt('EVM_POOL_POINTS_EXCLUDE', '0x68575B073DE49a94e3E3ACf6F3A0d6E3b66267C7')
+    .split(',').map((a) => a.trim().toLowerCase()).filter(Boolean),
+  evmPoolScanMaxChunks: num('EVM_POOL_SCAN_MAX_CHUNKS', 20),
+  evmPoolResolvePerCycle: num('EVM_POOL_RESOLVE_PER_CYCLE', 10),
+
   // ── PM prediction-market activity (src/points-indexer.js's scanPmCycle) ──
   // A fifth way to earn points: creating or betting in an ETH-denominated PM market (asset == address(0) at
   // creation — a market using any other collateral earns nothing here). Scored at Bet/Created time with no
