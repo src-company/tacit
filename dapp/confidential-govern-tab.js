@@ -80,7 +80,7 @@ async function renderList(body) {
       Weight is taken at a snapshot when a proposal opens, so TAC moved afterwards cannot vote twice. Results are
       advisory; the multisig carries them out. See <b>Protocol</b> for everything under its control.</div>
     <div class="gov-toolbar">
-      <div id="gov-filters" style="display:flex;gap:6px;"></div>
+      <div id="gov-filters" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
       <span style="flex:1;"></span>
       <button id="gov-protocol-btn" class="btn">Protocol</button>
       <button id="gov-new-btn" class="btn">+ New proposal</button>
