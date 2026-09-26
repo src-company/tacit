@@ -234,15 +234,13 @@ const MAINNET_ALLOW_MINTABLE = true;
 
 // "User has been onboarded" sticky flag. Toggled true on the first
 // meaningful interaction (asset etched / received / transferred / ext
-// wallet connected / share-link imported / welcome "browse first" /
-// hero × dismissed) so the 3-step "Getting started" hero strip
-// auto-hides. Declared up here
-// rather than alongside isOnboarded()/markOnboarded() at the bottom of
-// the file because init() — which transitively reads this via
-// setupHero → applyHeroVisibility — is called BEFORE the bottom-of-
-// file declarations execute. Without this hoist, a fresh signet load
-// could hit "Cannot access 'ONBOARDED_KEY' before initialization"
-// during init's synchronous prologue.
+// wallet connected / share-link imported / welcome "browse first") so a
+// "browse first" visitor isn't re-shown the welcome modal on a later load.
+// Declared up here rather than alongside isOnboarded()/markOnboarded() at
+// the bottom of the file because init()'s synchronous prologue reads it
+// (via isOnboarded()) before the bottom-of-file declarations execute —
+// without this hoist, a fresh load could hit "Cannot access 'ONBOARDED_KEY'
+// before initialization".
 const ONBOARDED_KEY = 'tacit-onboarded-v1';
 
 // Convenience Worker (image upload, demo faucet, asset directory).
@@ -2197,11 +2195,18 @@ async function ensureSatsFunded(targetSats, opLabel) {
       toast(`Your ${fmt(spTotal)} sats of silent-payment credits can't cover ~${fmt(targetSats)} + the consolidation fee.`, 'warn', 8000);
     }
     if (spUnspent.length && balance + spTotal >= targetSats + 1000) {
-      const ok = confirm(
-        `${opLabel} needs ~${fmt(targetSats)} sats. You have ${fmt(balance)} at your tacit address ` +
-        `plus ${fmt(spTotal)} in ${spUnspent.length} silent-payment credit${spUnspent.length === 1 ? '' : 's'}.\n\n` +
-        `Consolidate the silent credit${spUnspent.length === 1 ? '' : 's'} to your tacit address now (one Bitcoin tx) so this can proceed?`,
-      );
+      // tacitConfirm, not native confirm() — this fires on a brand-new user's
+      // first funded action, exactly the moment they're most likely to be on
+      // mobile Chrome (silently suppresses stacked native dialogs) or an
+      // in-app browser (blocks them outright). See tacitConfirm's own comment.
+      const ok = await tacitConfirm({
+        title: 'Consolidate silent-payment credits?',
+        body:
+          `${opLabel} needs ~${fmt(targetSats)} sats. You have ${fmt(balance)} at your tacit address ` +
+          `plus ${fmt(spTotal)} in ${spUnspent.length} silent-payment credit${spUnspent.length === 1 ? '' : 's'}.\n\n` +
+          `Consolidate the silent credit${spUnspent.length === 1 ? '' : 's'} to your tacit address now (one Bitcoin tx) so this can proceed?`,
+        confirmLabel: 'Consolidate',
+      });
       if (ok) {
         try {
           const res = await buildAndBroadcastSatsSend({ recipientAddr: wallet.address(), amountSats: targetSats });
@@ -2234,10 +2239,13 @@ async function ensureSatsFunded(targetSats, opLabel) {
   // Path 1: ext wallet connected → one popup, sendBitcoin, then poll for indexing.
   if (wallet.ext) {
     const provLabel = wallet.ext.provider === 'sats-connect' ? 'Xverse / Leather' : wallet.ext.provider;
-    const ok = confirm(
-      `${opLabel} needs ~${fmt(targetSats)} sats for fees (you have ${fmt(balance)}).\n\n` +
-      `Send ${fmt(padded)} sats from your ${provLabel} wallet to your tacit address now?`,
-    );
+    const ok = await tacitConfirm({
+      title: 'Fund tacit wallet?',
+      body:
+        `${opLabel} needs ~${fmt(targetSats)} sats for fees (you have ${fmt(balance)}).\n\n` +
+        `Send ${fmt(padded)} sats from your ${provLabel} wallet to your tacit address now?`,
+      confirmLabel: 'Send',
+    });
     if (!ok) return false;
     let txid;
     try { txid = await extWallet.sendSats(wallet.address(), padded); }
@@ -2263,10 +2271,13 @@ async function ensureSatsFunded(targetSats, opLabel) {
 
   // Path 2: signet, no ext wallet → faucet drip (if configured + ready).
   if (onSignet && FAUCET_URL) {
-    const ok = confirm(
-      `${opLabel} needs ~${fmt(targetSats)} sats for fees (you have ${fmt(balance)}).\n\n` +
-      `Pull a faucet drip (~20,000 signet sats) to your tacit address now?`,
-    );
+    const ok = await tacitConfirm({
+      title: 'Pull a faucet drip?',
+      body:
+        `${opLabel} needs ~${fmt(targetSats)} sats for fees (you have ${fmt(balance)}).\n\n` +
+        `Pull a faucet drip (~20,000 signet sats) to your tacit address now?`,
+      confirmLabel: 'Pull drip',
+    });
     if (!ok) return false;
     try {
       const resp = await fetch(FAUCET_URL, {
@@ -49768,7 +49779,13 @@ function setupWalletButtons() {
     // gate on wallet.pub instead so the warning still fires for returning users
     // who reload and haven't signed yet this session.
     if (wallet.pub) {
-      if (!confirm('Importing replaces the wallet currently loaded in this slot. If you haven\'t exported the existing key, the tokens it controls will become unrecoverable.\n\nProceed?')) return;
+      const proceed = await tacitConfirm({
+        title: 'Replace loaded wallet?',
+        body: 'Importing replaces the wallet currently loaded in this slot. If you haven\'t exported the existing key, the tokens it controls will become unrecoverable.',
+        confirmLabel: 'Import anyway',
+        kind: 'danger',
+      });
+      if (!proceed) return;
     }
     // DOM modal instead of native prompt(). Chrome/Edge mobile silently
     // suppress stacked native prompts after the welcome flow; the modal
@@ -49852,7 +49869,13 @@ function setupWalletButtons() {
     });
   };
   $('#btn-regen').onclick = async () => {
-    if (!confirm('Generate a new wallet? Your old key will be replaced (export it first if you want to keep it).')) return;
+    const proceed = await tacitConfirm({
+      title: 'Generate a new wallet?',
+      body: 'Your old key will be replaced (export it first if you want to keep it).',
+      confirmLabel: 'Generate',
+      kind: 'danger',
+    });
+    if (!proceed) return;
     try {
       await wallet.regenerate(wallet.ext?.address || null);
       // Pin active mode so reload restores this fresh privkey instead of
@@ -49877,11 +49900,15 @@ function setupWalletButtons() {
   const forgetBtn = $('#btn-forget');
   if (forgetBtn) forgetBtn.onclick = async () => {
     if (wallet.mode === 'passkey') {
-      if (!confirm(
-        'Forget this passkey wallet on this device?\n\n' +
-        'The passkey credential itself stays in your OS/browser keychain — reconnecting it from the welcome screen restores the exact same wallet. ' +
-        'To permanently delete the credential, use your browser\'s passkey settings.'
-      )) return;
+      const proceed = await tacitConfirm({
+        title: 'Forget this passkey wallet?',
+        body:
+          'The passkey credential itself stays in your OS/browser keychain — reconnecting it from the welcome screen restores the exact same wallet.\n\n' +
+          'To permanently delete the credential, use your browser\'s passkey settings.',
+        confirmLabel: 'Forget on this device',
+        kind: 'danger',
+      });
+      if (!proceed) return;
       const label = prfWallet.state?.label;
       const map = loadPrfMap();
       if (label && map[label]) { delete map[label]; savePrfMap(map); }
@@ -49893,7 +49920,13 @@ function setupWalletButtons() {
       return;
     }
     if (wallet.mode === 'eth') {
-      if (!confirm('Disconnect Ethereum wallet?\n\nYour tacit identity is re-derivable any time you reconnect the same Ethereum account and sign the derivation message again.')) return;
+      const proceed = await tacitConfirm({
+        title: 'Disconnect Ethereum wallet?',
+        body: 'Your tacit identity is re-derivable any time you reconnect the same Ethereum account and sign the derivation message again.',
+        confirmLabel: 'Disconnect',
+        kind: 'danger',
+      });
+      if (!proceed) return;
       ethWallet.disconnect();
       ethWallet.lock();
       invalidateHoldingsCache();
@@ -49902,12 +49935,16 @@ function setupWalletButtons() {
       return;
     }
     if (!wallet.pub) { toast('No wallet to forget.', ''); return; }
-    if (!confirm(
-      'Forget this wallet?\n\n' +
-      'The encrypted private key will be deleted from this browser. ' +
-      'Any tacit assets controlled by this key become unrecoverable unless you have a backup.\n\n' +
-      'You\'ll be returned to the welcome screen.'
-    )) return;
+    const proceedForget = await tacitConfirm({
+      title: 'Forget this wallet?',
+      body:
+        'The encrypted private key will be deleted from this browser. ' +
+        'Any tacit assets controlled by this key become unrecoverable unless you have a backup.\n\n' +
+        'You\'ll be returned to the welcome screen.',
+      confirmLabel: 'Forget wallet',
+      kind: 'danger',
+    });
+    if (!proceedForget) return;
     // Force one last export view before destruction. ensurePrivkey may prompt
     // for the passphrase under lazy-unlock; isUnlockCancelled distinguishes a
     // user dismiss from a real failure.
@@ -56384,6 +56421,13 @@ function _showEthProviderChooser() {
     const modal = document.createElement('div');
     modal.className = 'welcome-modal';
     modal.style.zIndex = '1020';
+    // Every other modal in this dapp is static HTML with role="dialog"
+    // aria-modal="true" aria-labelledby="…" — this one is built dynamically
+    // (the choice set depends on which wallets are installed) but should
+    // still declare itself as a dialog to assistive tech.
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'eth-chooser-title');
     // Idempotent removal: button onclick + cancel both can fire (rapid
     // clicks, ESC handler, etc). Without this guard, the second remove
     // throws "Node was not found" because the modal is no longer a child.
@@ -56393,7 +56437,7 @@ function _showEthProviderChooser() {
     const card = document.createElement('div');
     card.className = 'welcome-card';
     card.innerHTML = `
-      <div class="welcome-title">choose <span class="accent">wallet</span></div>
+      <div class="welcome-title" id="eth-chooser-title">choose <span class="accent">wallet</span></div>
       <div class="welcome-lede">Multiple Ethereum wallets are installed in this browser. Pick the one you want to connect.</div>
       <div class="welcome-options" id="eth-chooser-options"></div>
       <div class="welcome-footer" style="display:flex;justify-content:flex-end;">
@@ -90921,8 +90965,13 @@ function setupExtWalletButtons() {
       },
     });
   };
-  if (discBtn) discBtn.onclick = () => {
-    if (!confirm('Disconnect external wallet? Your tacit identity stays bound to it locally — reconnecting later will restore it.')) return;
+  if (discBtn) discBtn.onclick = async () => {
+    const proceed = await tacitConfirm({
+      title: 'Disconnect external wallet?',
+      body: 'Your tacit identity stays bound to it locally — reconnecting later will restore it.',
+      confirmLabel: 'Disconnect',
+    });
+    if (!proceed) return;
     applyExtDisconnect();
     toast('External wallet disconnected', 'success');
   };
@@ -90977,8 +91026,13 @@ function renderBtcWalletPanel() {
 
 function setupBtcWalletButtons() {
   const disconnectBtn = $('#btn-btc-id-disconnect');
-  if (disconnectBtn) disconnectBtn.onclick = () => {
-    if (!confirm('Disconnect Bitcoin wallet? Your tacit identity is re-derivable any time by reconnecting the same wallet and signing the derivation message.')) return;
+  if (disconnectBtn) disconnectBtn.onclick = async () => {
+    const proceed = await tacitConfirm({
+      title: 'Disconnect Bitcoin wallet?',
+      body: 'Your tacit identity is re-derivable any time by reconnecting the same wallet and signing the derivation message.',
+      confirmLabel: 'Disconnect',
+    });
+    if (!proceed) return;
     btcWallet.disconnect();
     btcWallet.lock();
     extWallet.disconnect();
@@ -91009,8 +91063,13 @@ function setupEthWalletButtons() {
       connectBtn.textContent = orig;
     }
   };
-  if (disconnectBtn) disconnectBtn.onclick = () => {
-    if (!confirm('Disconnect Ethereum wallet? Your tacit identity is re-derivable any time from the same ETH account.')) return;
+  if (disconnectBtn) disconnectBtn.onclick = async () => {
+    const proceed = await tacitConfirm({
+      title: 'Disconnect Ethereum wallet?',
+      body: 'Your tacit identity is re-derivable any time from the same ETH account.',
+      confirmLabel: 'Disconnect',
+    });
+    if (!proceed) return;
     ethWallet.disconnect();
     ethWallet.lock();
     invalidateHoldingsCache();
@@ -91781,14 +91840,20 @@ async function autoImportShareLink() {
   // (passphrase or biometric) with no explanation and may dismiss it
   // thinking it's a duplicate of the import confirm.
   const needsUnlock = !!wallet.pub && !wallet.priv;
-  const ok = confirm(
-    `Import received share-link?\n\n` +
-    `Claim: ${human}\nAsset: ${claim.assetIdHex.slice(0, 16)}…\nUTXO: ${claim.txid.slice(0, 16)}…:${claim.vout}\n\n` +
-    `Importing will validate the claim against on-chain data and (if valid) record an opening in your local wallet. Cancel if you didn't expect this link.` +
-    (needsUnlock
-      ? `\n\nAfter you click OK, you'll be prompted to unlock your wallet — the import needs your key to derive the recipient blinding.`
-      : ''),
-  );
+  // tacitConfirm, not native confirm() — share links are routinely opened
+  // from an in-app browser (Twitter/Telegram/Discord), which blocks native
+  // confirm() outright, silently dropping the very first asset a recipient
+  // ever receives.
+  const ok = await tacitConfirm({
+    title: 'Import received share-link?',
+    body:
+      `Claim: ${human}\nAsset: ${claim.assetIdHex.slice(0, 16)}…\nUTXO: ${claim.txid.slice(0, 16)}…:${claim.vout}\n\n` +
+      `Importing will validate the claim against on-chain data and (if valid) record an opening in your local wallet. Cancel if you didn't expect this link.` +
+      (needsUnlock
+        ? `\n\nAfter you confirm, you'll be prompted to unlock your wallet — the import needs your key to derive the recipient blinding.`
+        : ''),
+    confirmLabel: 'Import',
+  });
   // Always strip the hash so a refusal isn't re-prompted on every reload.
   history.replaceState(null, '', location.pathname + location.search);
   if (!ok) {
@@ -91886,21 +91951,23 @@ function setupNetworkSelect() {
       if (typeof applyExtDisconnect === 'function') applyExtDisconnect();
     };
   }
-  sel.onchange = () => {
+  sel.onchange = async () => {
     const next = sel.value === 'mainnet' ? 'mainnet' : 'signet';
     if (next === NET.name) return;
     // Mainnet flip uses real BTC. Make the user explicitly opt in once;
     // remember the consent so subsequent toggles don't re-prompt.
     if (next === 'mainnet' && !localStorage.getItem(MAINNET_OK_KEY)) {
-      const ok = confirm(
-        '⚠ Switch to Bitcoin MAINNET?\n\n' +
-        'This is real money. Tacit is experimental software with no warranty. ' +
-        'You may lose funds to bugs, fee miscalculation, lost private keys, ' +
-        'or any number of issues that haven\'t shown up on signet yet.\n\n' +
-        'Recommended: test thoroughly on signet first. Only put amounts on mainnet ' +
-        'that you can afford to lose.\n\n' +
-        'Continue to mainnet?',
-      );
+      const ok = await tacitConfirm({
+        title: '⚠ Switch to Bitcoin mainnet?',
+        body:
+          'This is real money. Tacit is experimental software with no warranty. ' +
+          'You may lose funds to bugs, fee miscalculation, lost private keys, ' +
+          'or any number of issues that haven\'t shown up on signet yet.\n\n' +
+          'Recommended: test thoroughly on signet first. Only put amounts on mainnet ' +
+          'that you can afford to lose.',
+        confirmLabel: 'Continue to mainnet',
+        kind: 'danger',
+      });
       if (!ok) { sel.value = NET.name; return; }
       localStorage.setItem(MAINNET_OK_KEY, '1');
     }
@@ -93047,12 +93114,10 @@ if (!globalThis.__TACIT_NO_INIT__) {
   init().catch(e => { toast('Init error: ' + e.message, 'error'); console.error(e); });
 }
 
-// Hero strip = the 3-step "Connect → Etch → Transfer" funnel on the Wallet
-// tab. It's onboarding scaffolding — once a user is past step 1 in any
-// meaningful way (external wallet connected, burner key acknowledged as
-// backed up, asset etched / transferred / received), the hero becomes
-// noise. Hide it persistently and surface a small "↺ show getting started"
-// link next to it so it can be brought back.
+// Tracks whether the visitor has gotten past first-run setup (external wallet
+// connected, burner key acknowledged as backed up, asset etched / transferred
+// / received) — gates whether a "browse first" visitor sees the welcome modal
+// again on a later load (see _runFirstLoadChoice).
 // (ONBOARDED_KEY is hoisted to the top-of-file constants section so init's
 // synchronous prologue can read it without hitting TDZ — see comment there.)
 function isOnboarded() {
@@ -93061,50 +93126,6 @@ function isOnboarded() {
 function markOnboarded() {
   if (isOnboarded()) return;
   localStorage.setItem(ONBOARDED_KEY, '1');
-  applyHeroVisibility();
-}
-function applyHeroVisibility() {
-  const strip = document.getElementById('hero-strip');
-  const showBar = document.getElementById('hero-show');
-  if (!strip || !showBar) return;
-  if (isOnboarded()) {
-    strip.style.display = 'none';
-    showBar.style.display = '';
-  } else {
-    strip.style.display = '';
-    showBar.style.display = 'none';
-  }
-  // Tear down the preboot flash-guard style block once authoritative
-  // inline styles are applied. Leaving it in place would fight a later
-  // "↺ show getting started" reveal (it carries !important).
-  const preStyle = document.getElementById('_tacit-hero-prehide-style');
-  if (preStyle && preStyle.parentNode) preStyle.parentNode.removeChild(preStyle);
-}
-function setupHero() {
-  applyHeroVisibility();
-  const closeBtn = document.getElementById('hero-close');
-  if (closeBtn) closeBtn.onclick = () => {
-    // Set the flag idempotently AND force-hide. Don't go through
-    // markOnboarded() because it early-returns when already onboarded —
-    // which broke the close button after the user revealed the hero via
-    // "↺ show getting started" (that reveal preserves the flag, so a
-    // subsequent × click would otherwise be a no-op).
-    if (!isOnboarded()) localStorage.setItem(ONBOARDED_KEY, '1');
-    const strip = document.getElementById('hero-strip');
-    const showBar = document.getElementById('hero-show');
-    if (strip) strip.style.display = 'none';
-    if (showBar) showBar.style.display = '';
-  };
-  const showLink = document.getElementById('hero-show-link');
-  if (showLink) showLink.onclick = (e) => {
-    e.preventDefault();
-    // Reveal without clearing the flag — we want a one-click reveal that
-    // doesn't reset onboarded state. Re-clicking the × hides it again.
-    const strip = document.getElementById('hero-strip');
-    const showBar = document.getElementById('hero-show');
-    if (strip) strip.style.display = '';
-    if (showBar) showBar.style.display = 'none';
-  };
 }
 
 

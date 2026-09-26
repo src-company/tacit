@@ -104,7 +104,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=38dcb208">
+<link rel="modulepreload" href="./tacit.js?cb=809fa6b2">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -4597,69 +4597,6 @@ a:hover { color: var(--orange); }
   color: var(--ink-mid); margin-left: 4px; font-style: normal;
 }
 
-.hero {
-  border: 1px solid var(--ink);
-  background: var(--bg);
-  padding: 12px 16px 14px;
-  margin-bottom: 16px;
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 14px;
-  position: relative;
-}
-.hero::before {
-  content: '';
-  position: absolute;
-  top: 24px;
-  left: 50px;
-  right: 50px;
-  border-top: 1px dashed var(--ink-mid);
-  z-index: 0;
-}
-.hero-step { position: relative; z-index: 1; }
-.hero-close {
-  position: absolute; top: 6px; right: 6px;
-  width: 20px; height: 20px;
-  padding: 0;
-  border: 0 !important;
-  outline: 0 !important;
-  background: transparent !important;
-  color: var(--ink-mid);
-  cursor: pointer;
-  transition: color 0.12s;
-  z-index: 2;
-  box-shadow: none !important;
-  display: inline-flex; align-items: center; justify-content: center;
-  /* Strip the inherited button typography so the SVG glyph isn't fighting
-     uppercase / letter-spacing / 11px font-size declared on the base
-     `button` selector — same hygiene the warn-banner __close uses. */
-  font-size: 0;
-  line-height: 0;
-  text-transform: none !important;
-  letter-spacing: 0 !important;
-}
-.hero-close svg { width: 12px; height: 12px; display: block; }
-.hero-close:focus-visible { outline: 1px solid var(--ink-faint) !important; outline-offset: 1px; }
-.hero-close:hover { color: var(--ink); background: transparent !important; }
-.hero-num {
-  background: transparent;
-  color: var(--ink);
-  border: 1px solid var(--ink);
-  width: 22px; height: 22px;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-family: var(--serif);
-  font-style: italic; font-size: 15px; font-weight: 700;
-  margin-bottom: 6px;
-}
-.hero-title {
-  font-size: 11px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.1em;
-  margin-bottom: 3px;
-}
-.hero-text {
-  font-size: 11px; color: var(--ink-mid); line-height: 1.45;
-}
-
 footer {
   /* Bottom padding clears the fixed-position ceremony chip (bottom:16px,
      ~40px tall) that otherwise sits directly on top of this row once the
@@ -4688,8 +4625,6 @@ footer > span { min-width: 0; }
   .kv { grid-template-columns: 1fr; gap: 4px 0; }
   .kv dd { margin-bottom: 8px; }
   .alloc-row { grid-template-columns: 1fr; }
-  .hero { grid-template-columns: 1fr; gap: 14px; padding: 14px 14px 18px; }
-  .hero::before { display: none; }
   /* Compact tabs at narrow widths: shrink horizontal padding and tighten
      letter-spacing so all 6 fit without horizontal scroll. The tab labels
      stay short enough at this size to read cleanly. */
@@ -4705,10 +4640,6 @@ footer > span { min-width: 0; }
   /* Toast: span most of the viewport instead of a tiny bottom-right pill,
      so the user can read it without squinting at a phone corner. */
   .toast { left: 12px; right: 12px; bottom: 12px; max-width: none; }
-  /* Hero close: bigger hit area for thumbs while keeping the SVG visually
-     the same size — pad the box, not the glyph. */
-  .hero-close { width: 32px; height: 32px; }
-  .hero-close svg { width: 12px; height: 12px; }
   /* Etch preset chips: tighten the secondary "hint" line so 4 chips fit
      comfortably on phones. */
   .preset-chip .hint { font-size: 8px; }
@@ -4729,9 +4660,6 @@ footer > span { min-width: 0; }
   .asset-card .actions { flex-direction: column; align-items: stretch; }
   .asset-card .actions > button { width: 100%; }
   .asset-card .actions-group .group-body > button { flex: 1 1 100%; }
-  /* Hero step text needs more breathing room on tiny widths. */
-  .hero-text { font-size: 12px; }
-  .hero-num { width: 32px; height: 32px; font-size: 20px; }
   /* Header logo a bit smaller still. */
   .logo { font-size: 36px; }
   /* Footer text wraps cleaner with tighter spacing. */
@@ -6398,15 +6326,6 @@ body > #amm-contrib-section {
 #tab-wallet details > summary {
   letter-spacing: 0.05em !important;
 }
-/* "Show getting started" icon-only affordance — single ↺ glyph rather
-   than text+glyph so the row doesn't clip at narrow widths. */
-#hero-show-link {
-  color: var(--ink-mid) !important;
-  text-decoration: none !important;
-  border-bottom: 0 !important;
-}
-#hero-show-link:hover { color: var(--ink) !important; }
-
 /* Hide the legacy `▸ STATS` and `▸ PRICE HISTORY` collapsed disclosures
    by default; the market-context block below selectively promotes the
    price chart back into the trading flow. */
@@ -8858,7 +8777,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
      CSP is `script-src 'self' 'wasm-unsafe-eval'` — no 'unsafe-inline',
      so an inline <script> would be CSP-blocked. Same-origin .js file
      satisfies 'self'. See preboot.js for the activation logic. -->
-<script src="./preboot.js?cb=cf895157"></script>
+<script src="./preboot.js?cb=fa0afb28"></script>
 </head>
 <body>
 
@@ -11611,7 +11530,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=38dcb208"></script>
+<script type="module" src="./tacit.js?cb=809fa6b2"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for
