@@ -8,6 +8,7 @@ import {IPermit2, IERC2612, IERC20Allowance} from "./ConfidentialRouter.sol";
 
 interface ITacitEvmPool {
     function ASSET() external view returns (address);
+    function nextIndex() external view returns (uint256);
     function transact(
         uint256[2] calldata pA,
         uint256[2][2] calldata pB,
@@ -20,6 +21,11 @@ interface ITacitEvmPool {
         bytes calldata memo0,
         bytes calldata memo1
     ) external payable;
+}
+
+/// Poseidon over BN254 with four inputs (circomlib parameters): the pool's note-leaf hash.
+interface IPoseidonT5 {
+    function hash(uint256[4] memory inputs) external pure returns (uint256);
 }
 
 /// The two ConfidentialPool calls a wrap box needs.
@@ -48,6 +54,11 @@ interface IConfidentialPoolWrap {
 ///      anyone completes `wrap(assetId, amount, commit)` into the confidential pool, and `tip` goes to the intent's
 ///      `tipTo` (or to the completer when it is zero).
 ///   5. POOL → V1 (withdrawToV1) — withdraw from this pool straight into a wrap box and complete it, one tx.
+///   6. RECEIVE BOXES (receiveBoxOf / sweepReceive) — a standing address for one owner's note key `npk`, paid any
+///      number of times by anyone. Anyone sweeps any part of the box's balance into the pool; the router computes
+///      the note itself, leaf = Poseidon(asset, amount − fee, npk, rho) with rho fixed by the box and a per-box
+///      counter, so a sweeper can only credit `npk` and keeps at most `feeBps` of what it sweeps. The owner
+///      recovers every note from its keys and the Received events alone.
 ///
 /// Leaving this pool for anything else needs nothing here: a withdrawal whose recipient is a ConfidentialRouter
 /// exit-recipe escrow is run by that router's permissionless `activateExit`.
@@ -56,7 +67,8 @@ interface IConfidentialPoolWrap {
 /// back to the caller; any stray balance is swept by the next caller, so never leave value resting here. The
 /// pool, zRouter, Permit2 and V1 pool are immutable. A box holds only the funds paid to it and releases them
 /// only to its intent's destination (the pool deposit / V1 wrap) or, after its deadline, any token to its `refund`. A
-/// tampered intent maps to a different, empty box. nonReentrant on every entrypoint.
+/// tampered intent maps to a different, empty box. A receive box has no refund: it releases only the pool asset,
+/// only into a note for its `npk`, so anything else sent to it stays there. nonReentrant on every entrypoint.
 contract TacitEvmPoolRouter is ReentrancyGuardTransient {
     ITacitEvmPool public immutable POOL;
     address public immutable ASSET; // the pool's asset, address(0) = native ETH
@@ -64,9 +76,16 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
     IPermit2 public immutable PERMIT2; // optional (address(0) disables Permit2 flows)
     IConfidentialPoolWrap public immutable V1; // optional (address(0) disables wrap boxes)
     address public immutable boxImpl;
+    IPoseidonT5 public immutable POSEIDON4; // optional (address(0) disables receive boxes)
+    uint256 internal immutable ASSET_FIELD; // the pool's `asset` public input
 
     bytes32 internal constant DEPOSIT_TAG = keccak256("tacit-evm-pool-deposit-box-v1");
     bytes32 internal constant WRAP_TAG = keccak256("tacit-evm-pool-wrap-box-v1");
+    bytes32 internal constant RECEIVE_TAG = keccak256("tacit-evm-pool-receive-box-v1");
+    uint256 internal constant P = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
+
+    /// Sweeps so far per receive box; the next sweep's rho is derived from it.
+    mapping(address box => uint256) public receiveCount;
 
     /// A proof-carrying pool transaction, passed through verbatim.
     struct Tx {
@@ -120,14 +139,19 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
     event DepositBoxCompleted(address indexed box, address indexed completer);
     event WrapBoxCompleted(address indexed box, address indexed completer);
     event BoxReclaimed(address indexed box, address indexed refund, uint256 amount);
+    /// One sweep of a receive box: the note (value, rho) at leaf `index`, and the sweeper's fee.
+    event Received(address indexed box, uint256 indexed n, uint256 index, uint256 value, uint256 rho, uint256 fee);
 
-    constructor(address pool_, address zRouter_, address permit2_, address v1_) {
+    constructor(address pool_, address zRouter_, address permit2_, address v1_, address poseidon4_) {
         if (pool_ == address(0) || pool_.code.length == 0) revert BadTarget();
         if (zRouter_ != address(0) && zRouter_.code.length == 0) revert BadTarget();
         if (permit2_ != address(0) && permit2_.code.length == 0) revert BadTarget();
         if (v1_ != address(0) && v1_.code.length == 0) revert BadTarget();
+        if (poseidon4_ != address(0) && poseidon4_.code.length == 0) revert BadTarget();
         POOL = ITacitEvmPool(pool_);
         ASSET = ITacitEvmPool(pool_).ASSET();
+        POSEIDON4 = IPoseidonT5(poseidon4_);
+        ASSET_FIELD = uint256(keccak256(abi.encode(block.chainid, pool_, ASSET))) % P;
         ZROUTER = zRouter_;
         PERMIT2 = IPermit2(permit2_);
         V1 = IConfidentialPoolWrap(v1_);
@@ -240,6 +264,32 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         _completeWrap(intent);
     }
 
+    // ──────────────────── 6. Receive boxes ────────────────────
+
+    function receiveBoxOf(uint256 npk, uint16 feeBps) public view returns (address) {
+        return LibClone.predictDeterministicAddress_PUSH0(boxImpl, _receiveSalt(npk, feeBps), address(this));
+    }
+
+    /// Permissionless. `t` deposits `t.extAmount` (any part of the box's balance) into one note for `npk`, with
+    /// no memos, paying `t.relayer` a fee of at most `feeBps` of the amount.
+    function sweepReceive(uint256 npk, uint16 feeBps, Tx calldata t) external nonReentrant {
+        if (address(POSEIDON4) == address(0)) revert BadTarget();
+        uint256 amount = _depositAmount(t);
+        if (feeBps > 10_000 || t.fee * 10_000 > amount * feeBps) revert BadIntent();
+        if (t.recipient != address(0) || t.memo0.length != 0 || t.memo1.length != 0 || t.publicInputs[10] != 0) {
+            revert BadIntent();
+        }
+        address box = _deployBox(_receiveSalt(npk, feeBps));
+        uint256 n = receiveCount[box]++;
+        uint256 rho = uint256(keccak256(abi.encode(RECEIVE_TAG, box, n))) % P;
+        uint256 value = amount - t.fee;
+        if (t.publicInputs[9] != POSEIDON4.hash([ASSET_FIELD, value, npk, rho])) revert BadIntent();
+        uint256 index = POOL.nextIndex();
+        TacitBox(payable(box)).release(ASSET, address(this), amount);
+        _deposit(t, amount);
+        emit Received(box, n, index, value, rho, t.fee);
+    }
+
     // ──────────────────── internals ────────────────────
 
     function _depositAmount(Tx calldata t) internal pure returns (uint256) {
@@ -296,6 +346,10 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
 
     function _wrapSalt(WrapIntent calldata intent) internal pure returns (bytes32) {
         return keccak256(abi.encode(WRAP_TAG, intent));
+    }
+
+    function _receiveSalt(uint256 npk, uint16 feeBps) internal pure returns (bytes32) {
+        return keccak256(abi.encode(RECEIVE_TAG, npk, feeBps));
     }
 
     function _deployBox(bytes32 salt) internal returns (address box) {

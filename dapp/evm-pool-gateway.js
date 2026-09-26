@@ -1,14 +1,16 @@
 // Client side of contracts/src/TacitEvmPoolRouter.sol: deposit-box intents, the proof a keeper builds to complete
-// one, and withdrawals whose recipient is a box or an exit-recipe escrow. Box and escrow addresses come from the
-// contracts' own views (depositBoxOf / wrapBoxOf / escrowAddressFor), never computed here.
+// one, receive boxes, and withdrawals whose recipient is a box or an exit-recipe escrow. Box and escrow addresses
+// come from the contracts' own views (depositBoxOf / wrapBoxOf / receiveBoxOf / escrowAddressFor), never computed
+// here.
 //
 // A deposit intent fixes the amount, both output leaves and both memo hashes. Its hint (each output's v, npk,
 // rho) is what a keeper needs to prove the deposit. It tells the keeper how the deposit splits across the two
 // outputs, which the leaves hide; it cannot link later spends, which need the owner's nk. The keeper's fee is
 // amount − Σ v.
 
-import { keccak_256 } from './vendor/tacit-deps.min.js';
+import { keccak_256, concatBytes } from './vendor/tacit-deps.min.js';
 import { extDataHash, EVM_N_OUT, EVM_VALUE_BITS } from './evm-pool-zk.js';
+import { P_FR, be32 } from './btc-pool-zk.js';
 
 const VALUE_MAX = 1n << EVM_VALUE_BITS;
 
@@ -62,4 +64,57 @@ export function withdrawalWitness(zk, { asset, leaves, inputs, change = null, am
   const eh = extDataHash({ chainId, pool, recipient, extAmount, relayer, fee, memo0: m0, memo1: m1 });
   const w = zk.buildWitness({ asset, leaves, inputs, outputs: [change, null], extAmount, fee, extDataHash: eh });
   return { ...w, tx: { recipient, extAmount, relayer, fee: BigInt(fee), memo0: m0, memo1: m1 } };
+}
+
+// ──────────────────── receive boxes ────────────────────
+//
+// Receive box i is a standing address for one note key of the wallet: anyone pays it, any number of times, and
+// anyone sweeps it into the pool, where the router computes each note itself (router §6). The key comes from the
+// wallet's nullifier secret, so a box cannot be tied to the wallet's shielded address, and the seed alone
+// recovers every box and every note swept into one: receiveKeys(i) → receiveBoxOf(npk, feeBps) → its Received
+// events → receivedNote.
+
+const te = new TextEncoder();
+const RECEIVE_KEY_TAG = te.encode('tacit-evm-pool-receive-key-v1');
+const RECEIVE_TAG = keccak_256(te.encode('tacit-evm-pool-receive-box-v1'));
+const addrWord = (a) => {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(String(a))) throw new Error('evm-pool-gateway: bad address');
+  return be32(BigInt(a));
+};
+
+// The note key of receive box i: { npk, sk, nk }. The 33-byte tweak seed starts with 0x00, which no shared
+// secret (a compressed point) does.
+export function receiveKeys(zk, wallet, i = 0) {
+  if (!Number.isInteger(i) || i < 0) throw new Error('evm-pool-gateway: receive box index');
+  const s = concatBytes(Uint8Array.of(0), keccak_256(concatBytes(RECEIVE_KEY_TAG, be32(wallet.n), be32(i))));
+  const { npk, sk, nk } = zk.ownedKeys(wallet, s);
+  return { npk, sk, nk };
+}
+
+// rho of the n-th sweep of `box`: keccak256(abi.encode(RECEIVE_TAG, box, n)) mod p, as the router computes it.
+export function receiveRho(box, n) {
+  const h = keccak_256(concatBytes(RECEIVE_TAG, addrWord(box), be32(BigInt(n))));
+  let x = 0n;
+  for (const c of h) x = (x << 8n) | BigInt(c);
+  return x % P_FR;
+}
+
+// The sweeper's proof input: deposit `amount` from `box` (sweep number n = receiveCount(box)) into one note for
+// `npk`, paying `relayer` a fee within the box's feeBps. Rebuild with fresh leaves and n if another sweep lands first.
+export function sweepWitness(zk, { asset, leaves, npk, feeBps, box, n, amount, fee = 0n, relayer = ZERO, chainId, pool }) {
+  const a = BigInt(amount), f = BigInt(fee);
+  if (a <= 0n || a >= VALUE_MAX) throw new Error('evm-pool-gateway: amount must be in (0, 2^120)');
+  if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 10_000) throw new Error('evm-pool-gateway: feeBps must be in [0, 10000]');
+  if (f < 0n || f * 10_000n > a * BigInt(feeBps)) throw new Error('evm-pool-gateway: fee above the box\'s cap');
+  if (f > 0n && BigInt(relayer) === 0n) throw new Error('evm-pool-gateway: a fee needs a relayer address');
+  const note = { v: a - f, npk: BigInt(npk), rho: receiveRho(box, n) };
+  const eh = extDataHash({ chainId, pool, recipient: ZERO, extAmount: a, relayer, fee: f });
+  const w = zk.buildWitness({ asset, leaves, inputs: [null, null], outputs: [note, null], extAmount: a, fee: f, extDataHash: eh });
+  return { ...w, tx: { recipient: ZERO, extAmount: a, relayer, fee: f, memo0: new Uint8Array(), memo1: new Uint8Array() } };
+}
+
+// A spendable input note (evm-pool-zk.js buildWitness) from one Received event of receive box i.
+export function receivedNote(zk, wallet, i, { value, rho, index }) {
+  const { sk, nk } = receiveKeys(zk, wallet, i);
+  return { v: BigInt(value), rho: BigInt(rho), nk, sk, index: Number(index) };
 }

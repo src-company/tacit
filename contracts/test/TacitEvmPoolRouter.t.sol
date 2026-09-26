@@ -11,6 +11,8 @@ import {IPermit2} from "../src/ConfidentialRouter.sol";
 import {StubVerifier, MockUSDC, MockPermit2, MockZRouter} from "./ConfidentialRouter.t.sol";
 import {AcceptTransact, PoolToken} from "./TacitEvmPool.t.sol";
 import {TransactVerifierDev} from "./TransactVerifierDev.sol";
+import {PoseidonT5Deploy} from "../script/PoseidonT5Deploy.sol";
+import {IPoseidonT5} from "../src/TacitEvmPoolRouter.sol";
 
 /// Token → ETH leg for the zap tests: pulls the input and pays `outAmount` ETH from its own balance.
 contract MockZRouterToEth {
@@ -89,6 +91,7 @@ contract TacitEvmPoolRouterTest is TxBuilder {
     address user;
     address keeper = address(0x4EE9E5);
     address refund = address(0x5AFE);
+    address poseidon4;
 
     function setUp() public {
         vm.chainId(1);
@@ -110,8 +113,9 @@ contract TacitEvmPoolRouterTest is TxBuilder {
         amm.initialize(address(v1));
         usdcId = v1.registerWrapped(address(usdc), 1, bytes32(0), "USD Coin", "USDC", 6);
 
-        router = new TacitEvmPoolRouter(address(pool), address(zr), address(permit2), address(v1));
-        ethRouter = new TacitEvmPoolRouter(address(ethPool), address(zrEth), address(permit2), address(v1));
+        poseidon4 = PoseidonT5Deploy.ensure();
+        router = new TacitEvmPoolRouter(address(pool), address(zr), address(permit2), address(v1), poseidon4);
+        ethRouter = new TacitEvmPoolRouter(address(ethPool), address(zrEth), address(permit2), address(v1), poseidon4);
         usdc.mint(user, 1_000_000);
         vm.deal(user, 10 ether);
     }
@@ -439,16 +443,158 @@ contract TacitEvmPoolRouterTest is TxBuilder {
 
     function test_constructor_and_optional_pieces() public {
         vm.expectRevert(TacitEvmPoolRouter.BadTarget.selector);
-        new TacitEvmPoolRouter(address(0), address(0), address(0), address(0));
+        new TacitEvmPoolRouter(address(0), address(0), address(0), address(0), address(0));
         vm.expectRevert(TacitEvmPoolRouter.BadTarget.selector);
-        new TacitEvmPoolRouter(address(pool), address(0xBEEF), address(0), address(0));
-        TacitEvmPoolRouter bare = new TacitEvmPoolRouter(address(pool), address(0), address(0), address(0));
+        new TacitEvmPoolRouter(address(pool), address(0xBEEF), address(0), address(0), address(0));
+        vm.expectRevert(TacitEvmPoolRouter.BadTarget.selector);
+        new TacitEvmPoolRouter(address(pool), address(0), address(0), address(0), address(0xBEEF));
+        TacitEvmPoolRouter bare = new TacitEvmPoolRouter(address(pool), address(0), address(0), address(0), address(0));
         assertEq(bare.ASSET(), address(usdc));
         TacitEvmPoolRouter.Tx memory t = _tx(pool, 11, 0, _leaves(1, 0), address(0), 1, address(0), 0, "", "");
         vm.expectRevert(TacitEvmPoolRouter.BadTarget.selector);
         bare.zapETHToDeposit{value: 1}(t, "");
         vm.expectRevert(TacitEvmPoolRouter.BadTarget.selector);
         bare.completeWrap(_wrapIntent(usdcId, 1, 0));
+        vm.expectRevert(TacitEvmPoolRouter.BadTarget.selector);
+        bare.sweepReceive(1, 0, t);
+    }
+
+    // ──────────────────── 6. receive boxes ────────────────────
+
+    uint256 constant NPK = 0x1234567890abcdef;
+    bytes32 constant RECEIVE_TAG = keccak256("tacit-evm-pool-receive-box-v1");
+
+    function _receiveTx(TacitEvmPool p, TacitEvmPoolRouter r, uint256 npk, uint16 feeBps, uint256 amount, uint256 fee)
+        internal
+        view
+        returns (TacitEvmPoolRouter.Tx memory)
+    {
+        address box = r.receiveBoxOf(npk, feeBps);
+        uint256 rho = uint256(keccak256(abi.encode(RECEIVE_TAG, box, r.receiveCount(box)))) % P;
+        uint256 assetField = uint256(keccak256(abi.encode(block.chainid, address(p), p.ASSET()))) % P;
+        uint256 leaf = IPoseidonT5(poseidon4).hash([assetField, amount - fee, npk, rho]);
+        return _tx(p, 11, 0, _leaves(leaf, 0), address(0), int256(amount), keeper, fee, "", "");
+    }
+
+    function test_poseidon4_matches_the_circuit_hash() public view {
+        assertEq(
+            IPoseidonT5(poseidon4).hash([uint256(1), 2, 3, 4]),
+            18821383157269793795438455681495246036402687001665670618754263018637548127333
+        );
+        assertEq(
+            IPoseidonT5(poseidon4).hash([P - 1, 5, 6, 7]),
+            19432432173477477759555406354993059277614152911567744467506260398968853468762
+        );
+    }
+
+    function test_receive_box_takes_repeat_payments_and_partial_sweeps() public {
+        address box = ethRouter.receiveBoxOf(NPK, 50);
+        (bool ok,) = box.call{value: 1 ether}("");
+        assertTrue(ok);
+        (ok,) = box.call{value: 0.5 ether}("");
+        assertTrue(ok);
+
+        TacitEvmPoolRouter.Tx memory t = _receiveTx(ethPool, ethRouter, NPK, 50, 1 ether, 0.005 ether);
+        uint256 leaf = t.publicInputs[9];
+        vm.expectEmit(address(ethRouter));
+        emit TacitEvmPoolRouter.Received(box, 0, 0, 0.995 ether, uint256(keccak256(abi.encode(RECEIVE_TAG, box, 0))) % P, 0.005 ether);
+        vm.prank(address(0xBAD));
+        ethRouter.sweepReceive(NPK, 50, t);
+        assertEq(address(ethPool).balance, 0.995 ether);
+        assertEq(keeper.balance, 0.005 ether);
+        assertEq(box.balance, 0.5 ether);
+        assertEq(ethRouter.receiveCount(box), 1);
+        assertEq(ethPool.nextIndex(), 2);
+        assertTrue(leaf != 0);
+
+        (ok,) = box.call{value: 0.25 ether}("");
+        assertTrue(ok);
+        t = _receiveTx(ethPool, ethRouter, NPK, 50, 0.75 ether, 0);
+        ethRouter.sweepReceive(NPK, 50, t);
+        assertEq(box.balance, 0);
+        assertEq(address(ethPool).balance, 1.745 ether);
+        assertEq(ethRouter.receiveCount(box), 2);
+        assertEq(address(ethRouter).balance, 0);
+    }
+
+    function test_receive_sweep_can_only_credit_the_box_owner() public {
+        address box = ethRouter.receiveBoxOf(NPK, 50);
+        vm.deal(box, 1 ether);
+
+        // Another key, a different value, a reused rho, or a second note: none match the leaf the router computes.
+        TacitEvmPoolRouter.Tx memory t = _receiveTx(ethPool, ethRouter, NPK + 1, 50, 1 ether, 0);
+        vm.expectRevert(TacitEvmPoolRouter.BadIntent.selector);
+        ethRouter.sweepReceive(NPK, 50, t);
+
+        t = _receiveTx(ethPool, ethRouter, NPK, 50, 1 ether, 0);
+        t.publicInputs[9] = IPoseidonT5(poseidon4).hash([t.publicInputs[6], 1 ether + 1, NPK, uint256(keccak256(abi.encode(RECEIVE_TAG, box, 0))) % P]);
+        vm.expectRevert(TacitEvmPoolRouter.BadIntent.selector);
+        ethRouter.sweepReceive(NPK, 50, t);
+
+        t = _receiveTx(ethPool, ethRouter, NPK, 50, 0.5 ether, 0);
+        TacitEvmPoolRouter.Tx memory stale = t;
+        ethRouter.sweepReceive(NPK, 50, t);
+        stale = _tx(ethPool, 11, 0, _leaves(stale.publicInputs[9], 0), address(0), 0.5 ether, keeper, 0, "", "");
+        vm.expectRevert(TacitEvmPoolRouter.BadIntent.selector);
+        ethRouter.sweepReceive(NPK, 50, stale);
+
+        t = _receiveTx(ethPool, ethRouter, NPK, 50, 0.5 ether, 0);
+        t.publicInputs[10] = 7;
+        vm.expectRevert(TacitEvmPoolRouter.BadIntent.selector);
+        ethRouter.sweepReceive(NPK, 50, t);
+    }
+
+    function test_receive_sweep_rules() public {
+        address box = ethRouter.receiveBoxOf(NPK, 50);
+        vm.deal(box, 1 ether);
+
+        TacitEvmPoolRouter.Tx memory t = _receiveTx(ethPool, ethRouter, NPK, 50, 1 ether, 0.005 ether + 1);
+        vm.expectRevert(TacitEvmPoolRouter.BadIntent.selector);
+        ethRouter.sweepReceive(NPK, 50, t); // fee above the box's cap
+
+        t = _receiveTx(ethPool, ethRouter, NPK, 50, 1 ether, 0);
+        t.memo0 = hex"01";
+        vm.expectRevert(TacitEvmPoolRouter.BadIntent.selector);
+        ethRouter.sweepReceive(NPK, 50, t);
+
+        t = _receiveTx(ethPool, ethRouter, NPK, 50, 1 ether, 0);
+        t.recipient = user;
+        vm.expectRevert(TacitEvmPoolRouter.BadIntent.selector);
+        ethRouter.sweepReceive(NPK, 50, t);
+
+        t = _receiveTx(ethPool, ethRouter, NPK, 50, 1 ether, 0);
+        vm.expectRevert(TacitEvmPoolRouter.BadIntent.selector);
+        ethRouter.sweepReceive(NPK, 10_001, t);
+
+        t = _tx(ethPool, 11, 5, _leaves(0, 0), user, -1, address(0), 0, "", "");
+        vm.expectRevert(TacitEvmPoolRouter.BadIntent.selector);
+        ethRouter.sweepReceive(NPK, 50, t); // not a deposit
+
+        t = _receiveTx(ethPool, ethRouter, NPK, 50, 2 ether, 0);
+        vm.expectRevert();
+        ethRouter.sweepReceive(NPK, 50, t); // more than the box holds
+
+        // A zero-fee box: the owner (or anyone) sweeps for free.
+        address freeBox = ethRouter.receiveBoxOf(NPK, 0);
+        assertTrue(freeBox != box);
+        vm.deal(freeBox, 1 ether);
+        t = _receiveTx(ethPool, ethRouter, NPK, 0, 1 ether, 1);
+        vm.expectRevert(TacitEvmPoolRouter.BadIntent.selector);
+        ethRouter.sweepReceive(NPK, 0, t);
+        t = _receiveTx(ethPool, ethRouter, NPK, 0, 1 ether, 0);
+        ethRouter.sweepReceive(NPK, 0, t);
+        assertEq(freeBox.balance, 0);
+    }
+
+    function test_receive_box_for_a_token_pool() public {
+        address box = router.receiveBoxOf(NPK, 30);
+        usdc.mint(box, 10_000);
+        TacitEvmPoolRouter.Tx memory t = _receiveTx(pool, router, NPK, 30, 10_000, 30);
+        router.sweepReceive(NPK, 30, t);
+        assertEq(usdc.balanceOf(address(pool)), 9_970);
+        assertEq(usdc.balanceOf(keeper), 30);
+        assertEq(usdc.balanceOf(box), 0);
+        assertEq(usdc.balanceOf(address(router)), 0);
     }
 }
 
@@ -467,7 +613,7 @@ contract TacitEvmPoolRouterRealProofTest is Test {
         TransactVerifierDev verifier = new TransactVerifierDev();
         pool = new TacitEvmPool(address(verifier), address(token));
         assertEq(address(pool), vm.parseJsonAddress(json, ".pool"), "fixture pool address");
-        router = new TacitEvmPoolRouter(address(pool), address(0), address(0), address(0));
+        router = new TacitEvmPoolRouter(address(pool), address(0), address(0), address(0), address(0));
     }
 
     function test_real_proof_completes_a_deposit_box() public {

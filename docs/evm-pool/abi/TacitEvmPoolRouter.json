@@ -21,6 +21,11 @@
         "name": "v1_",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "poseidon4_",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "nonpayable"
@@ -64,6 +69,19 @@
         "name": "",
         "type": "address",
         "internalType": "contract ITacitEvmPool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "POSEIDON4",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IPoseidonT5"
       }
     ],
     "stateMutability": "view"
@@ -536,6 +554,49 @@
   },
   {
     "type": "function",
+    "name": "receiveBoxOf",
+    "inputs": [
+      {
+        "name": "npk",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "feeBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "receiveCount",
+    "inputs": [
+      {
+        "name": "box",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "reclaimDeposit",
     "inputs": [
       {
@@ -649,6 +710,81 @@
         "name": "token",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "sweepReceive",
+    "inputs": [
+      {
+        "name": "npk",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "feeBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "t",
+        "type": "tuple",
+        "internalType": "struct TacitEvmPoolRouter.Tx",
+        "components": [
+          {
+            "name": "pA",
+            "type": "uint256[2]",
+            "internalType": "uint256[2]"
+          },
+          {
+            "name": "pB",
+            "type": "uint256[2][2]",
+            "internalType": "uint256[2][2]"
+          },
+          {
+            "name": "pC",
+            "type": "uint256[2]",
+            "internalType": "uint256[2]"
+          },
+          {
+            "name": "publicInputs",
+            "type": "uint256[11]",
+            "internalType": "uint256[11]"
+          },
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "extAmount",
+            "type": "int256",
+            "internalType": "int256"
+          },
+          {
+            "name": "relayer",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "fee",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "memo0",
+            "type": "bytes",
+            "internalType": "bytes"
+          },
+          {
+            "name": "memo1",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -1061,6 +1197,49 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Received",
+    "inputs": [
+      {
+        "name": "box",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "n",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "index",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "rho",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "fee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

@@ -18,6 +18,10 @@ no other sender can deploy at these addresses).
 | Pool (`TacitEvmPool`, native ETH) | `0x000000c2A20657CE25f2Ba99737933D031AFBEE9` |
 | Router (`TacitEvmPoolRouter`) | `0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5` |
 | Groth16 verifier | `0x000000b1c0e84CEc8AdF8278B90c4d6400DfB153` |
+| PoseidonT5 (four-input Poseidon, used by receive boxes) | `0x555333f3f677Ca3930Bf7c56ffc75144c51D9767` |
+
+PoseidonT5 is the standard deterministic deployment (poseidon-solidity, CREATE2 proxy
+`0x4e59b44847b379578588920cA78FbF26c0B4956C`); the deploy script lands it first on chains that lack it.
 
 Related Ethereum mainnet contracts:
 
@@ -47,8 +51,8 @@ The reference client is plain ES modules with no build step:
 - [`dapp/evm-pool-zk.js`](../dapp/evm-pool-zk.js): keys, notes, tree, nullifiers, witness.
 - [`dapp/evm-pool-zk-prover.js`](../dapp/evm-pool-zk-prover.js): `makeGroth16System({ vk, wasm, zkey, pinnedVkHash })`
   → `prove(input)` / `verify(publics, wire)`. snarkjs, in the browser or Node.
-- [`dapp/evm-pool-gateway.js`](../dapp/evm-pool-gateway.js): deposit-box intents, keeper completions, withdrawals to a
-  box or escrow.
+- [`dapp/evm-pool-gateway.js`](../dapp/evm-pool-gateway.js): deposit-box intents, keeper completions, receive boxes,
+  withdrawals to a box or escrow.
 
 Proving time on a laptop is 5–14 s in Node. Phone and browser measurements are published with the final artifacts.
 A signature, not the spending key, authorizes a spend (EdDSA-Poseidon over the transaction message), so a device
@@ -97,7 +101,8 @@ withdrawal) inserts nothing and never goes stale. Membership may be proven again
 (`everKnownRoot`).
 
 **Indexing.** Rebuild the tree from `Transact` events in `firstIndex` order, appending `(outLeaf0, outLeaf1)`; skip
-events where both are zero (nothing was inserted). Notes are found by trial-decrypting the memos. Key notes by
+events where both are zero (nothing was inserted). Notes are found by trial-decrypting the memos, and receive-box
+notes from the router's `Received` events. Key notes by
 `(leaf, index)`: the same leaf can appear twice if a deposit box is paid twice, and each copy is separately spendable.
 
 ## Router
@@ -130,6 +135,24 @@ A keeper service completes boxes for its fee: `POST /evm-pool/keeper/deposit` wi
 completes), V1 note commitment, refund and deadline. `completeWrap(intent)` wraps the box's funds into that V1 note.
 `withdrawToV1(tx, intent)` withdraws from the pool into the wrap box and wraps in one transaction; the proof binds
 the box as recipient.
+
+**Receive boxes: one standing address, paid any number of times.** `receiveBoxOf(npk, feeBps)` is an address
+tied to one note key of the owner and a fee cap in basis points. Anyone pays it ETH, as often as they like, from any
+wallet or exchange. Anyone then calls `sweepReceive(npk, feeBps, tx)` to move any part of its balance into the
+pool: the router computes the note itself, `leaf = Poseidon(asset, amount − fee, npk, rho)` with
+`rho = keccak256(abi.encode(keccak256("tacit-evm-pool-receive-box-v1"), box, n)) mod p` for the box's `n`-th sweep
+(`receiveCount(box)`), so a sweeper can only credit the owner and keeps at most `feeBps` of what it sweeps. The
+sweep takes no memos and a single output. Each sweep emits `Received(box, n, index, value, rho, fee)`.
+
+- Keys: `receiveKeys(zk, wallet, i)` gives box `i`'s note key. It derives from the wallet's nullifier secret, so a
+  box cannot be tied to the wallet's shielded address, and a wallet can hand out a separate box per counterparty.
+- Recovery needs only the seed: for each `i`, `receiveKeys` → `receiveBoxOf(npk, feeBps)` → its `Received` events →
+  `receivedNote(zk, wallet, i, event)` is a spendable input.
+- Sweeping: `sweepWitness(zk, { npk, feeBps, box, n, amount, fee, relayer, … })`. The owner can sweep with no fee
+  from any account; a zero-fee box (`feeBps = 0`) is swept only that way.
+- Payments into one box are public and linked to each other, like any reused address. Spends of the swept notes
+  are not: they reveal nullifiers, never the note key.
+- Only the pool's asset leaves a receive box. Anything else sent to it stays there.
 
 **Zaps.** `zapTokenToDepositWithPermit2(tx, amountIn, permit, sig, swapData)` swaps any ERC-20 to ETH through the
 pinned aggregator and deposits exactly the proven amount, refunding the rest.

@@ -5,9 +5,11 @@ import {Script, console2} from "forge-std/Script.sol";
 import {ICreateX} from "../src/ICreateX.sol";
 import {TacitEvmPool} from "../src/TacitEvmPool.sol";
 import {TacitEvmPoolRouter} from "../src/TacitEvmPoolRouter.sol";
+import {PoseidonT5Deploy} from "./PoseidonT5Deploy.sol";
 
 /// @notice Deploy the EVM client-proved pool suite (verifier, native-ETH pool, router) via CreateX CREATE3 at
-///         addresses fixed in advance. The salts are permissioned (bytes 0..19 = DEPLOYER, byte 20 = 0x00), so
+///         addresses fixed in advance. PoseidonT5, which the router's receive boxes call, is landed first at its
+///         standard deterministic address if the chain lacks it. The salts are permissioned (bytes 0..19 = DEPLOYER, byte 20 = 0x00), so
 ///         CreateX guards them as keccak256(abi.encode(DEPLOYER, salt)): only DEPLOYER can land these
 ///         addresses, and it lands the same ones on every chain regardless of bytecode or constructor args.
 ///
@@ -59,11 +61,12 @@ contract DeployEvmPoolCreateX is Script {
         address permit2 = PERMIT2.code.length != 0 ? PERMIT2 : address(0);
 
         vm.startBroadcast(DEPLOYER);
+        address poseidon4 = PoseidonT5Deploy.ensure();
         _deploy(SALT_VERIFIER, verifierInit, VERIFIER);
         _deploy(SALT_POOL, abi.encodePacked(type(TacitEvmPool).creationCode, abi.encode(VERIFIER, address(0))), POOL);
         _deploy(
             SALT_ROUTER,
-            abi.encodePacked(type(TacitEvmPoolRouter).creationCode, abi.encode(POOL, zRouter, permit2, v1)),
+            abi.encodePacked(type(TacitEvmPoolRouter).creationCode, abi.encode(POOL, zRouter, permit2, v1, poseidon4)),
             ROUTER
         );
         vm.stopBroadcast();
@@ -72,6 +75,7 @@ contract DeployEvmPoolCreateX is Script {
         console2.log("pool    ", POOL);
         console2.log("router  ", ROUTER);
         console2.log("v1      ", v1);
+        console2.log("poseidon", poseidon4);
     }
 
     function _deploy(bytes32 salt, bytes memory initCode, address expected) internal {

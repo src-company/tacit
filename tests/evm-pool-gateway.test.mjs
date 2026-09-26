@@ -7,7 +7,7 @@ import * as snarkjs from 'snarkjs';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7 } from 'poseidon-lite';
 import { makeEvmPoolZk, poolAsset } from '../dapp/evm-pool-zk.js';
 import { proveTransact, verifyTransact } from '../dapp/evm-pool-zk-prover.js';
-import { depositIntent, completionWitness, withdrawalWitness } from '../dapp/evm-pool-gateway.js';
+import { depositIntent, completionWitness, withdrawalWitness, receiveKeys, receiveRho, sweepWitness, receivedNote } from '../dapp/evm-pool-gateway.js';
 
 const DIR = new URL('../dapp/circuits/evm-pool/build/', import.meta.url).pathname;
 const wasm = readFileSync(DIR + 'transact_js/transact.wasm');
@@ -68,6 +68,40 @@ console.log('withdraw to a box (real proof)');
   assert.ok(await verifyTransact(vk, publicSignals, proof, { snarkjs }));
   assert.strictEqual(w.tx.extAmount, -680n);
   ok('withdraw 680 to a box with 300 change and a 10 fee');
+}
+
+console.log('receive boxes (real proof)');
+{
+  assert.strictEqual(receiveRho(BOX, 3), 219055354919591748091452618626282574578616910022296641843963426678570215164n);
+  ok('receiveRho matches keccak256(abi.encode(tag, box, n)) mod p');
+
+  const r0 = receiveKeys(zk, alice, 0);
+  const r1 = receiveKeys(zk, alice, 1);
+  assert.notStrictEqual(r0.npk, r1.npk);
+  const restored = zk.walletKeys(new Uint8Array(32).fill(7), 'mainnet');
+  assert.strictEqual(receiveKeys(zk, restored, 0).npk, r0.npk);
+  const bob = zk.walletKeys(new Uint8Array(32).fill(9), 'mainnet');
+  assert.notStrictEqual(receiveKeys(zk, bob, 0).npk, r0.npk);
+  ok('receive keys are per box, per wallet, and come back from the seed alone');
+
+  assert.throws(() => sweepWitness(zk, { asset, leaves, npk: r0.npk, feeBps: 50, box: BOX, n: 0, amount: 1000n, fee: 6n, relayer: KEEPER, chainId: CHAIN_ID, pool: POOL }), /cap/);
+  assert.throws(() => sweepWitness(zk, { asset, leaves, npk: r0.npk, feeBps: 50, box: BOX, n: 0, amount: 1000n, fee: 5n, chainId: CHAIN_ID, pool: POOL }), /relayer/);
+  ok('a fee above the cap, or without a relayer, is refused');
+
+  const w = sweepWitness(zk, { asset, leaves, npk: r0.npk, feeBps: 50, box: BOX, n: 0, amount: 1000n, fee: 5n, relayer: KEEPER, chainId: CHAIN_ID, pool: POOL });
+  const { proof, publicSignals } = await proveTransact(w.input, { wasm, zkey, snarkjs });
+  assert.ok(await verifyTransact(vk, publicSignals, proof, { snarkjs }));
+  assert.strictEqual(BigInt(publicSignals[9]), zk.leafOf(asset, 995n, r0.npk, receiveRho(BOX, 0)));
+  const index = leaves.length;
+  leaves = [...leaves, ...w.outLeaf];
+  ok('a sweeper proves the note the router computes: Poseidon(asset, 995, npk, rho(box, 0))');
+
+  // Recovery from the seed and the Received event alone, then a spend of the note.
+  const note = receivedNote(zk, restored, 0, { value: 995n, rho: receiveRho(BOX, 0), index });
+  const spend = withdrawalWitness(zk, { asset, leaves, inputs: [note, null], change: out(495n, 7), amount: 500n, recipient: REFUND, chainId: CHAIN_ID, pool: POOL });
+  const p2 = await proveTransact(spend.input, { wasm, zkey, snarkjs });
+  assert.ok(await verifyTransact(vk, p2.publicSignals, p2.proof, { snarkjs }));
+  ok('the swept note, recovered from the seed and its event, spends (500 out, 495 change)');
 }
 
 console.log(`${n} checks passed`);
