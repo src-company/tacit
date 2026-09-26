@@ -250,6 +250,10 @@ async function runClaim({ air, state, eth }, { say, toast = notify } = {}) {
   } catch (e) {
     const m = formatErr(e, 'Claim');
     say(m); toast(m, 'error');
+    // A refusal (someone else claimed for this address first, the window closed mid-flight, …) means the
+    // cached status is now stale — without this, the claim card stays visible and enabled, and a front-run
+    // reads as "try again" forever instead of surfacing the doc's actual "already claimed" state.
+    await state.refresh(air, { force: true }).catch(() => {});
   } finally {
     state.setInflight(false);
   }
@@ -271,6 +275,7 @@ async function runClaimTo({ air, state, eth }, to, { say, toast = notify } = {})
   } catch (e) {
     const m = formatErr(e, 'Claim');
     say(m); toast(m, 'error');
+    await state.refresh(air, { force: true }).catch(() => {});
   } finally {
     state.setInflight(false);
   }
@@ -529,7 +534,7 @@ function tabParts(el) {
 function paintTab(body, ctx, el) {
   const p = tabParts(el);
   const { state, air } = ctx;
-  const { address, status, checking } = state;
+  const { address, status, checking, inflight } = state;
   const setMsg = (html) => { if (p.message) p.message.innerHTML = html; };
 
   // The claim-window fact holds regardless of whether a wallet is connected yet — shown eagerly so
@@ -561,8 +566,13 @@ function paintTab(body, ctx, el) {
   }
   if (!status.eligible) { setMsg('This address is not on the airdrop list.'); return; }
   if (status.reason === 'claimed') {
+    // Where the TAC actually landed depends on which path claimed it: plain claim() always pays this
+    // address, but claimTo() (by this address or, per the contract, by anyone calling it) can pay a
+    // DIFFERENT one — this state has no record of which ran (that only lives in this browser's in-memory
+    // lastResult, gone after a reload or on another device), so the copy can't assert where it went.
     setMsg(`This allocation (${esc(status.amountTac)} TAC) has already been claimed. If that wasn't a transaction `
-      + `you sent, someone claimed on this address's behalf — the TAC always goes to the address itself, so check its balance.`);
+      + `you sent, check this address's balance — it may have gone here, or, if a claimTo() sent it elsewhere, `
+      + `to that other address instead. The on-chain Claimed event for this allocation says which.`);
     return;
   }
   if (status.reason === 'closed') {
@@ -582,8 +592,18 @@ function paintTab(body, ctx, el) {
   setMsg('');
   show(p.claimCard, true);
   if (p.amount) p.amount.textContent = status.amountTac;
-  if (p.meta) p.meta.textContent = `Claim by ${fmtDate(status.claimByISO)} (${fmtLeft(status.secondsLeft)}) · allocation #${status.index}`;
+  // docs/BUILD-A-TACIT-DAPP.md §5a: "1,097 of the 8,652 are under 0.01 TAC... for the smallest ones the
+  // gas can exceed the value. Tell the user" — this is a fixed reference amount, not derived from a live
+  // gas price, so it's a plain threshold rather than an exact TAC-vs-gas-cost comparison (no price feed
+  // wired up here for that).
+  const tinyNote = Number(status.amountTac) < 0.01 ? ' · this is a small allocation — gas may cost more than the TAC you\'d receive' : '';
+  if (p.meta) p.meta.textContent = `Claim by ${fmtDate(status.claimByISO)} (${fmtLeft(status.secondsLeft)}) · allocation #${status.index}${tinyNote}`;
   if (p.claimtoFrom) p.claimtoFrom.textContent = `Sends from ${checksummedOrShort(address)} (this must be the connected wallet); the TAC lands at the address below instead.`;
+  // Mirrors the banner's own inflight guard (paintBanner) — without this the tab's Claim/Claim-to buttons
+  // stayed clickable while a claim was already in flight, letting a double-click send two real
+  // transactions (only one can land; the other burns gas reverting AlreadyClaimed).
+  if (p.claimBtn) p.claimBtn.disabled = inflight;
+  if (p.claimtoGoBtn) p.claimtoGoBtn.disabled = inflight;
   paintGasEstimates(p, ctx);
 }
 
