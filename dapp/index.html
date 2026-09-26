@@ -4661,7 +4661,11 @@ a:hover { color: var(--orange); }
 }
 
 footer {
-  margin-top: 0; padding: 10px 18px; border-top: 1px dashed rgba(26,26,26,0.25);
+  /* Bottom padding clears the fixed-position ceremony chip (bottom:16px,
+     ~40px tall) that otherwise sits directly on top of this row once the
+     page is scrolled all the way down — the two are fighting for the same
+     bottom-right corner. */
+  margin-top: 0; padding: 10px 18px 56px; border-top: 1px dashed rgba(26,26,26,0.25);
   font-size: 10px; color: var(--ink-mid);
   display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
   text-transform: none; letter-spacing: 0.04em;
@@ -8716,6 +8720,81 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 .note-concept .eth-word { color: var(--eth); font-weight: 600; }
 .note-concept .btc-word { color: var(--orange); font-weight: 600; }
 
+/* Send lane switch (Bitcoin / Ethereum). Was two lowercase text links with
+   an underline on the active one — easy to miss as the first choice on the
+   tab. Rendered as a real two-state segmented control instead, scoped to
+   the send group only so every other tab's subtabs (Wallet, Trade, ...)
+   keep their existing flat-link treatment. */
+.tabs.subtabs[data-group="send"] {
+  border-bottom: 0; margin-top: 10px; gap: 6px;
+}
+.tabs.subtabs[data-group="send"] .tab {
+  border: 1px solid var(--ink); background: var(--bg);
+  color: var(--ink-mid); text-transform: uppercase;
+}
+.tabs.subtabs[data-group="send"] .tab:hover:not(.active) {
+  background: var(--bg-alt); color: var(--ink);
+}
+.tabs.subtabs[data-group="send"] .tab.active {
+  background: var(--ink); color: var(--bg); border-bottom-color: var(--ink);
+}
+
+/* ── Shielded Send composer (confidential-send-tab.js) ───────────────────
+   The tab is one long flow — identity, balance, composer, then a handful
+   of secondary flows (hold / invoice / claim / refund). Without visual
+   grouping every one of those reads at the same weight, so the one thing
+   most visitors are here to do (send) doesn't stand out from "publish my
+   name" or "pay an invoice". These rules give each stage its own frame. */
+.csend-account {
+  background: var(--bg-alt); border: 1px solid var(--hairline);
+  padding: 12px 14px;
+}
+.csend-account-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--ink-mid); margin-bottom: 6px;
+}
+.csend-account-label .muted { text-transform: none; letter-spacing: 0; }
+.csend-address-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.csend-address-row code.addr { flex: 1 1 auto; min-width: 0; background: var(--bg); }
+#csend-balance { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--hairline); }
+
+.csend-hero {
+  background: var(--bg-warm); border: 1px solid var(--ink);
+  padding: 16px; margin: 16px 0;
+}
+
+.csend-asset-badge {
+  display: none; align-items: center; gap: 6px; margin-top: 8px; font-weight: 600;
+}
+.csend-coin {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; flex: 0 0 auto; border-radius: 50%; overflow: hidden;
+}
+.csend-coin svg { width: 100%; height: 100%; display: block; }
+.csend-coin.csend-coin-text {
+  background: var(--ink); color: var(--bg);
+  font-size: 8px; font-weight: 700; letter-spacing: 0.02em;
+}
+
+.csend-tools { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--hairline); }
+.csend-tools > * + * { margin-top: 10px; }
+.csend-tools-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--ink-faint); margin-bottom: 4px;
+}
+
+.csend-empty {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: 6px; padding: 40px 20px; color: var(--ink-mid);
+}
+.csend-empty .csend-empty-icon {
+  width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--ink-faint);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; color: var(--ink-faint); margin-bottom: 4px;
+}
+.csend-empty .csend-empty-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.csend-empty .csend-empty-sub { font-size: 11px; max-width: 320px; }
+
 /* ── Shared cross-chain "lane" component ────────────────────────────────
    One abstraction for the "one note, two chains" surfaces — mounted by
    cross-chain-lane.js in BOTH the shielded-pool tab and the (legacy)
@@ -10462,7 +10541,11 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   <div class="section" style="max-width:560px;margin:0 auto;">
     <div class="section-header">Shielded Send <span class="chain-badge eth" style="vertical-align:middle;"><span class="dot"></span>Ethereum</span></div>
     <div class="section-body" style="font-size:13px;" id="csend-body">
-      <div class="muted">Unlock a wallet to send a shielded note.</div>
+      <div class="csend-empty">
+        <div class="csend-empty-icon">🔒</div>
+        <div class="csend-empty-title">Unlock a wallet to send</div>
+        <div class="csend-empty-sub">Your keys stay in this browser. Unlock to view your shielded balance and send a private note.</div>
+      </div>
     </div>
   </div>
 </div>
