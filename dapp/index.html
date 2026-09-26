@@ -104,7 +104,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=5992228e">
+<link rel="modulepreload" href="./tacit.js?cb=c875232e">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -548,6 +548,7 @@ header {
   word-break: break-all; user-select: all; cursor: text;
 }
 .mono-box.inline { padding: 2px 6px; display: inline-block; font-size: 10px; }
+.wallet-address-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 
 button, .btn {
   font-family: inherit; font-size: 11px;
@@ -4279,6 +4280,9 @@ details.protocol-section > summary.protocol-h3:hover { color: var(--orange); }
   flex-shrink: 0;
   border: 1px solid var(--ink-faint);
 }
+.market-tile-skeleton .tile-skeleton-lines {
+  flex: 1; display: flex; flex-direction: column; gap: 6px;
+}
 .market-tile-skeleton .skeleton-row { margin: 0; }
 
 /* Stagger-fade applied to data-row children of the major list containers
@@ -4708,7 +4712,17 @@ footer > span { min-width: 0; }
    manual "▸" we render in the summary text doesn't double up. */
 details > summary { list-style: none; }
 details > summary::-webkit-details-marker { display: none; }
-details[open] > summary > .det-arrow { transform: rotate(90deg); display: inline-block; }
+.det-arrow { display: inline-block; transition: transform 0.1s; }
+details[open] > summary > .det-arrow { transform: rotate(90deg); }
+.disclosure-summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ink-mid);
+  padding: 6px 0;
+}
 
 /* Chart + depth-chart smooth re-paint. populateMarketAssetStats and
    _populateDepthChart replace the SVG's innerHTML on every reactivity
@@ -6090,6 +6104,44 @@ body > #amm-contrib-section {
   border-top: 0.5px dashed rgba(26,26,26,0.16);
   padding-top: 10px;
 }
+#tab-wallet .wallet-header-tag {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+/* Derived-wallet info cards (ext / eth / btc / passkey) inside Manage
+   wallet. One shared shape; the accent modifier is the only thing that
+   varies between them. */
+#tab-wallet .wallet-derived-card {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  background: var(--bg-alt);
+  border: 1px dashed var(--ink-faint);
+}
+#tab-wallet .wallet-derived-card--accent {
+  border-color: var(--orange);
+}
+#tab-wallet .wallet-derived-card__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-mid);
+  margin-bottom: 6px;
+}
+#tab-wallet .wallet-derived-card--accent .wallet-derived-card__label {
+  color: var(--orange);
+}
+#tab-wallet .wallet-derived-card dl.kv {
+  grid-template-columns: 90px 1fr;
+}
+#tab-wallet .wallet-derived-card .muted {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+#tab-wallet .wallet-derived-card > button {
+  margin-top: 10px;
+}
 @media (max-width: 860px) {
   #tab-wallet .wallet-overview {
     grid-template-columns: 1fr;
@@ -6136,31 +6188,31 @@ body > #amm-contrib-section {
   grid-template-columns: 104px minmax(0, 1fr) !important;
   gap: 10px 14px !important;
 }
-#tab-wallet dl.wallet-address-list dd > div[style*="display:flex"] {
+#tab-wallet dl.wallet-address-list dd > .wallet-address-row {
   display: grid !important;
   grid-template-columns: 18px minmax(0, 1fr) auto !important;
   align-items: center !important;
   column-gap: 7px !important;
   row-gap: 6px !important;
 }
-#tab-wallet dl.wallet-address-list dd > div[style*="display:flex"] > .sp-toggle-img {
+#tab-wallet dl.wallet-address-list dd > .wallet-address-row > .sp-toggle-img {
   grid-column: 1;
 }
-#tab-wallet dl.wallet-address-list dd > div[style*="display:flex"] > .mono-box {
+#tab-wallet dl.wallet-address-list dd > .wallet-address-row > .mono-box {
   grid-column: 2;
   min-width: 0 !important;
   width: auto !important;
   overflow-wrap: anywhere !important;
   word-break: normal !important;
 }
-#tab-wallet dl.wallet-address-list dd > div[style*="display:flex"] > .btn-copy {
+#tab-wallet dl.wallet-address-list dd > .wallet-address-row > .btn-copy {
   grid-column: 3;
   width: auto !important;
   height: auto !important;
   align-self: center !important;
 }
-#tab-wallet dl.wallet-address-list dd > div[style*="display:flex"] > a,
-#tab-wallet dl.wallet-address-list dd > div[style*="display:flex"] > span.muted {
+#tab-wallet dl.wallet-address-list dd > .wallet-address-row > a,
+#tab-wallet dl.wallet-address-list dd > .wallet-address-row > span.muted {
   grid-column: 2 / 4;
   align-self: center !important;
 }
@@ -6223,11 +6275,11 @@ body > #amm-contrib-section {
   #tab-wallet dl.kv dd.balance-row {
     margin-top: 2px !important;
   }
-  #tab-wallet dl.wallet-address-list dd > div[style*="display:flex"] {
+  #tab-wallet dl.wallet-address-list dd > .wallet-address-row {
     grid-template-columns: 18px minmax(0, 1fr) auto !important;
   }
-  #tab-wallet dl.wallet-address-list dd > div[style*="display:flex"] > a,
-  #tab-wallet dl.wallet-address-list dd > div[style*="display:flex"] > span.muted {
+  #tab-wallet dl.wallet-address-list dd > .wallet-address-row > a,
+  #tab-wallet dl.wallet-address-list dd > .wallet-address-row > span.muted {
     grid-column: 2 / 4;
   }
   #tab-wallet dl.wallet-address-list #w-tacit-address {
@@ -6239,7 +6291,7 @@ body > #amm-contrib-section {
      copy button off. Allow the inner flex to wrap so the mono-box +
      copy button sit on row 1 (mono-box takes the full available
      width) and the explorer links flow onto row 2. */
-  #tab-wallet dl.kv dd > div[style*="display:flex"] {
+  #tab-wallet dl.wallet-address-list dd > .wallet-address-row {
     flex-wrap: wrap !important;
     row-gap: 6px !important;
   }
@@ -6272,7 +6324,7 @@ body > #amm-contrib-section {
    row break, compact. The 0.5px dashed border + subtle bg tint
    set higher above keeps the data readable as a chip without
    competing with the balance hero. */
-#tab-wallet dl.kv dd > div[style*="display:flex"] {
+#tab-wallet dl.wallet-address-list dd > .wallet-address-row {
   gap: 6px !important;
 }
 #tab-wallet .btn-copy {
@@ -9104,12 +9156,12 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   <div class="section">
     <div class="section-header">
       <span style="display:flex;align-items:center;gap:10px;">
-        <span id="wallet-lock-badge" class="muted" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:default;" title=""></span>
-        <span id="wallet-mode-badge" class="muted" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;"></span>
-        <span id="wallet-backup-badge" class="muted" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;"></span>
-        <span class="muted" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;" title="Current Bitcoin block height">tip <span id="w-height">—</span></span>
+        <span id="wallet-lock-badge" class="muted wallet-header-tag" style="cursor:default;" title=""></span>
+        <span id="wallet-mode-badge" class="muted wallet-header-tag"></span>
+        <span id="wallet-backup-badge" class="muted wallet-header-tag"></span>
+        <span class="muted wallet-header-tag" title="Current Bitcoin block height">tip <span id="w-height">—</span></span>
         <span id="wallet-status" class="muted">loading…</span>
-        <span id="stealth-scan-status" class="muted live-dots" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;display:none;" title="Scanning recent transfers for shielded receipts paid to your tcs1 address. Runs once per session for assets you already hold."></span>
+        <span id="stealth-scan-status" class="muted wallet-header-tag live-dots" style="display:none;" title="Scanning recent transfers for shielded receipts paid to your tcs1 address. Runs once per session for assets you already hold."></span>
       </span>
     </div>
     <div class="section-body wallet-surface">
@@ -9138,17 +9190,17 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
           <dl class="kv wallet-address-list">
             <dt>Public key</dt>
             <dd>
-              <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+              <div class="wallet-address-row">
                 <img id="btn-stealth-toggle-pubkey" class="sp-toggle-img off" src="privacy-48.png" alt="" title="Toggle shielded address">
-                <div class="mono-box" id="w-pubkey-text" style="flex:1;min-width:0;word-break:break-all;">—</div>
+                <div class="mono-box" id="w-pubkey-text">—</div>
                 <button class="btn-copy" data-copy-target="w-pubkey-text" title="Copy public key" type="button">copy</button>
               </div>
             </dd>
             <dt>Bitcoin</dt>
             <dd>
-              <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+              <div class="wallet-address-row">
                 <img id="btn-sp-toggle-address" class="sp-toggle-img off" src="privacy-48.png" alt="" title="Toggle silent-payment address">
-                <div class="mono-box" id="w-address-text" style="flex:1;min-width:0;word-break:break-all;">—</div>
+                <div class="mono-box" id="w-address-text">—</div>
                 <button class="btn-copy" data-copy-target="w-address-text" title="Copy address" type="button">copy</button>
                 <a class="muted" id="explorer-link" target="_blank" rel="noopener noreferrer" style="font-size:10px;white-space:nowrap;">explorer ↗</a>
                 <a class="muted" id="tacitscan-link" target="_blank" rel="noopener noreferrer" style="font-size:10px;white-space:nowrap;display:none;" title="View this address on tacitscan (independent block explorer)">tacitscan ↗</a>
@@ -9156,9 +9208,9 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
             </dd>
             <dt title="Universal tacit1 identity for Bitcoin-native Tacit assets and the shielded pool lane. Plain BTC still uses the Bitcoin row.">Tacit</dt>
             <dd>
-              <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+              <div class="wallet-address-row">
                 <img id="btn-tacit-address-unlock" class="sp-toggle-img off" src="privacy-48.png" alt="" title="Unlock to show your universal Tacit address">
-                <div class="mono-box" id="w-tacit-address" style="flex:1;min-width:0;word-break:break-all;">—</div>
+                <div class="mono-box" id="w-tacit-address">—</div>
                 <button class="btn-copy" data-copy-target="w-tacit-address" title="Copy your universal Tacit address" type="button">copy</button>
                 <span class="muted" id="w-tacit-address-note" style="font-size:10px;white-space:nowrap;" title="Share this tacit1... identity for Tacit asset sends and shielded pool receives; use the Bitcoin row for plain BTC.">universal address</span>
               </div>
@@ -9228,44 +9280,44 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
       <!-- Collapsible wallet management. Default closed so the home view stays
            focused on address + balance; connect/import/export live behind it. -->
       <details class="wallet-manage" style="margin-top:14px;">
-        <summary style="cursor:pointer;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);padding:6px 0;"><span class="det-arrow" style="display:inline-block;transition:transform 0.1s;">▸</span> Manage wallet</summary>
+        <summary class="disclosure-summary"><span class="det-arrow">▸</span> Manage wallet</summary>
         <div style="padding-top:10px;border-top:1px dashed var(--ink-faint);margin-top:6px;">
 
-          <div id="ext-wallet-connected-info" style="display:none;margin-bottom:14px;padding:10px 12px;background:var(--bg-alt);border:1px dashed var(--ink-faint);">
-            <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-mid);margin-bottom:6px;">External wallet</div>
-            <dl class="kv" style="grid-template-columns:90px 1fr;">
+          <div id="ext-wallet-connected-info" class="wallet-derived-card" style="display:none;">
+            <div class="wallet-derived-card__label">External wallet</div>
+            <dl class="kv">
               <dt>Provider</dt><dd><span id="ext-wallet-provider" class="mono-box inline">—</span> · <span id="ext-wallet-network">—</span></dd>
               <dt>Wallet addr</dt><dd><div class="mono-box" id="ext-wallet-address">—</div></dd>
             </dl>
-            <button id="btn-ext-disconnect" style="margin-top:10px;">Disconnect</button>
+            <button id="btn-ext-disconnect">Disconnect</button>
           </div>
 
-          <div id="eth-wallet-info" style="display:none;margin-bottom:14px;padding:10px 12px;background:var(--bg-alt);border:1px dashed var(--orange);">
-            <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--orange);margin-bottom:6px;">Ethereum-derived wallet</div>
-            <dl class="kv" style="grid-template-columns:90px 1fr;">
+          <div id="eth-wallet-info" class="wallet-derived-card wallet-derived-card--accent" style="display:none;">
+            <div class="wallet-derived-card__label">Ethereum-derived wallet</div>
+            <dl class="kv">
               <dt>ETH address</dt><dd><div class="mono-box" id="eth-wallet-address">—</div></dd>
               <dt title="Earned by wrapping ETH into the confidential pool from this address">Points</dt><dd><span class="mono-box inline" id="eth-wallet-points">—</span></dd>
             </dl>
-            <div class="muted" style="margin-top:8px;font-size:11px;line-height:1.5;">
+            <div class="muted">
               Your tacit signing key is derived from your Ethereum wallet signature. Reconnecting the same ETH account and signing the derivation message recovers this identity on any device — no passphrase or backup needed.
             </div>
-            <button id="btn-eth-disconnect" style="margin-top:10px;">Disconnect</button>
+            <button id="btn-eth-disconnect">Disconnect</button>
           </div>
 
-          <div id="btc-wallet-info" style="display:none;margin-bottom:14px;padding:10px 12px;background:var(--bg-alt);border:1px dashed var(--orange);">
-            <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--orange);margin-bottom:6px;">Bitcoin-derived wallet</div>
-            <dl class="kv" style="grid-template-columns:90px 1fr;">
+          <div id="btc-wallet-info" class="wallet-derived-card wallet-derived-card--accent" style="display:none;">
+            <div class="wallet-derived-card__label">Bitcoin-derived wallet</div>
+            <dl class="kv">
               <dt>Provider</dt><dd><span id="btc-wallet-provider" class="mono-box inline">—</span></dd>
               <dt>BTC address</dt><dd><div class="mono-box" id="btc-wallet-address">—</div></dd>
             </dl>
-            <div class="muted" style="margin-top:8px;font-size:11px;line-height:1.5;">
+            <div class="muted">
               Your tacit signing key is derived from your Bitcoin wallet signature. Reconnecting the same wallet and signing the derivation message recovers this identity on any device — no passphrase or backup needed.
             </div>
-            <button id="btn-btc-id-disconnect" style="margin-top:10px;">Disconnect</button>
+            <button id="btn-btc-id-disconnect">Disconnect</button>
           </div>
 
-          <div id="passkey-wallet-info" style="display:none;margin-bottom:14px;padding:10px 12px;background:var(--bg-alt);border:1px dashed var(--orange);">
-            <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--orange);margin-bottom:6px;">Passkey wallet</div>
+          <div id="passkey-wallet-info" class="wallet-derived-card wallet-derived-card--accent" style="display:none;">
+            <div class="wallet-derived-card__label">Passkey wallet</div>
             <div id="passkey-wallet-list" style="margin-top:8px;"></div>
           </div>
 
@@ -9284,7 +9336,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
                rotating fallback; advanced users can point at their own Esplora
                (Start9, Umbrel, Citadel, VPS) to bypass public rate limits. -->
           <details style="margin-top:14px;">
-            <summary style="cursor:pointer;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);padding:6px 0;"><span class="det-arrow" style="display:inline-block;transition:transform 0.1s;">▸</span> Advanced: chain indexer</summary>
+            <summary class="disclosure-summary"><span class="det-arrow">▸</span> Advanced: chain indexer</summary>
             <div style="padding-top:10px;border-top:1px dashed var(--ink-faint);margin-top:6px;">
               <div class="muted" style="font-size:11px;line-height:1.6;margin-bottom:8px;">
                 The dapp rotates across <strong>mempool.space</strong> + <strong>blockstream.info</strong> by default; both are public Esplora endpoints with per-IP rate limits. To avoid 429s on heavy use, point at your own Esplora (Start9, Umbrel, Citadel, or a self-hosted node) — your URL takes priority and the public endpoints become fallback only.
@@ -9328,7 +9380,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 
   <div class="section" id="recent-etches-section">
     <div class="section-header">
-      <span style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink-mid);">market preview</span>
+      <span class="muted wallet-header-tag">market preview</span>
       <a href="#" id="recent-etches-all" class="muted" style="text-transform:none;letter-spacing:0;font-size:10px;color:var(--ink-mid);margin-left:auto;">browse all ↗</a>
     </div>
     <div class="section-body">
@@ -9393,7 +9445,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
       </div>
       <details class="etch-why" style="margin-top:14px;">
         <summary style="cursor:pointer;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);padding:6px 0;list-style:none;">
-          <span class="det-arrow" style="display:inline-block;transition:transform 0.1s;">▸</span> Why is the supply hidden? · what gets pinned
+          <span class="det-arrow">▸</span> Why is the supply hidden? · what gets pinned
         </summary>
         <div class="muted" style="padding-top:8px;border-top:1px dashed var(--ink-faint);margin-top:4px;line-height:1.6;">
           The supply is committed to the chain via a 33-byte cryptographic commitment plus a ~700-byte zero-knowledge proof that the value is a valid 64-bit integer — only you know the actual number; observers see only the proof. The blinding factor that hides the supply is derived from your wallet's privkey, so a fresh device with just your key recovers the etched supply from chain data alone — no localStorage backup needed. Max supply per asset is ~1.84 × 10¹⁹ base units, which covers any realistic decimals setting. Etch is a 2-tx flow (commit + reveal) and broadcasts in seconds. Optional image / metadata is bundled into the envelope and propagates to recipients alongside the supply commitment.
@@ -9458,7 +9510,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
       <input id="p-image" type="text" placeholder="ipfs://bafybeih... or bare CID" spellcheck="false">
       <details style="margin-top:10px;">
         <summary class="muted" style="cursor:pointer;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);padding:6px 0;list-style:none;">
-          <span class="det-arrow" style="display:inline-block;transition:transform 0.1s;">▸</span> Advanced: mint window (optional)
+          <span class="det-arrow">▸</span> Advanced: mint window (optional)
         </summary>
         <div style="padding-top:10px;border-top:1px dashed var(--ink-faint);margin-top:4px;">
           <div class="muted" style="font-size:11px;margin-bottom:8px;line-height:1.5;">
@@ -9484,7 +9536,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
       </div>
       <details class="etch-why" style="margin-top:14px;">
         <summary style="cursor:pointer;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);padding:6px 0;list-style:none;">
-          <span class="det-arrow" style="display:inline-block;transition:transform 0.1s;">▸</span> How is this different from a confidential etch?
+          <span class="det-arrow">▸</span> How is this different from a confidential etch?
         </summary>
         <div class="muted" style="padding-top:8px;border-top:1px dashed var(--ink-faint);margin-top:4px;line-height:1.6;">
           Mints publicly reveal <code>(amount, blinding)</code>, so the cap is auditable from chain alone — supply is fully observable, unlike CETCH where supply is committed but hidden. The deploy is a 2-tx flow (commit + reveal). Once the cap fills, no more T_PMINTs are accepted. SPEC §3.4.
@@ -9893,7 +9945,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
           <div class="muted" style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);margin-bottom:10px;">Other ways to claim</div>
           <div class="muted" style="font-size:11px;margin-bottom:10px;line-height:1.5;">Have a private drop or a direct share link from the issuer? Use the options below.</div>
 
-          <details><summary class="muted" style="cursor:pointer;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);padding:6px 0;list-style:none;"><span class="det-arrow" style="display:inline-block;transition:transform 0.1s;">▸</span> Self-claim on-chain (you pay your own Bitcoin tx fee)</summary>
+          <details><summary class="muted" style="cursor:pointer;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);padding:6px 0;list-style:none;"><span class="det-arrow">▸</span> Self-claim on-chain (you pay your own Bitcoin tx fee)</summary>
             <div style="padding-top:10px;border-top:1px dashed var(--ink-faint);margin-top:6px;">
               <div class="muted" style="font-size:11px;margin-bottom:8px;line-height:1.5;">
                 For drops where the issuer locked tokens into a public claim pool on Bitcoin. Anyone in the snapshot can self-claim first-come-first-served until the cap runs out. For drops with an eligibility list, you'll also need to sign with your Ethereum wallet (use the discovery list above to do that first). Cost: roughly $5-10 in Bitcoin tx fees per claim, paid by you instead of the issuer.
@@ -9908,7 +9960,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 
           <details id="claim-manual-entry" style="margin-top:10px;">
             <summary style="cursor:pointer;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);padding:6px 0;list-style:none;">
-              <span class="det-arrow" style="display:inline-block;transition:transform 0.1s;">▸</span> Have a merkle root + CID? Manual entry
+              <span class="det-arrow">▸</span> Have a merkle root + CID? Manual entry
             </summary>
             <div style="padding-top:10px;border-top:1px dashed var(--ink-faint);margin-top:6px;">
               <label>Merkle root</label>
@@ -10034,7 +10086,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
            discovered from chain. Surfaced only when a counterparty hands
            you a share-link URL or an atomic-offer JSON. -->
       <details style="margin-bottom:14px;">
-        <summary style="cursor:pointer;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);padding:6px 0;"><span class="det-arrow" style="display:inline-block;transition:transform 0.1s;">▸</span> Got a share-link or atomic offer from someone?</summary>
+        <summary class="disclosure-summary"><span class="det-arrow">▸</span> Got a share-link or atomic offer from someone?</summary>
         <div style="padding-top:10px;border-top:1px dashed var(--ink-faint);margin-top:6px;">
           <div class="muted" style="font-size:11px;line-height:1.6;margin-bottom:10px;">
             Most incoming transfers are auto-discovered — you don't need either button. Use these only when a counterparty hands you a paste-in payload (share-link URL or an atomic-offer JSON).
@@ -10124,7 +10176,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
       <div data-pending-settlements-strip style="display:none;"></div>
       <details style="margin-bottom:14px;">
         <summary style="cursor:pointer;font-size:11px;color:var(--ink-mid);padding:4px 0;">
-          <span class="det-arrow" style="display:inline-block;transition:transform 0.1s;margin-right:4px;">▸</span><span style="text-transform:uppercase;letter-spacing:0.08em;">how it works</span>
+          <span class="det-arrow" style="margin-right:4px;">▸</span><span style="text-transform:uppercase;letter-spacing:0.08em;">how it works</span>
           <span style="margin-left:8px;font-style:italic;">non-custodial · Bitcoin-native · zero protocol fee</span>
         </summary>
         <div class="muted" style="margin-top:8px;font-size:12px;line-height:1.55;">
@@ -10179,12 +10231,12 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
         <div class="progress-step" data-step="2"><span class="progress-num">3</span><span class="progress-label">Settle</span></div>
       </div>
       <div id="market-list" data-market-list><div class="market-asset-grid" aria-busy="true">
-        <div class="market-tile-skeleton"><div class="tile-skeleton-head"><div class="tile-skeleton-avatar"></div><div style="flex:1;display:flex;flex-direction:column;gap:6px;"><div class="skeleton-row medium"></div><div class="skeleton-row short"></div></div></div><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
-        <div class="market-tile-skeleton"><div class="tile-skeleton-head"><div class="tile-skeleton-avatar"></div><div style="flex:1;display:flex;flex-direction:column;gap:6px;"><div class="skeleton-row medium"></div><div class="skeleton-row short"></div></div></div><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
-        <div class="market-tile-skeleton"><div class="tile-skeleton-head"><div class="tile-skeleton-avatar"></div><div style="flex:1;display:flex;flex-direction:column;gap:6px;"><div class="skeleton-row medium"></div><div class="skeleton-row short"></div></div></div><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
-        <div class="market-tile-skeleton"><div class="tile-skeleton-head"><div class="tile-skeleton-avatar"></div><div style="flex:1;display:flex;flex-direction:column;gap:6px;"><div class="skeleton-row medium"></div><div class="skeleton-row short"></div></div></div><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
-        <div class="market-tile-skeleton"><div class="tile-skeleton-head"><div class="tile-skeleton-avatar"></div><div style="flex:1;display:flex;flex-direction:column;gap:6px;"><div class="skeleton-row medium"></div><div class="skeleton-row short"></div></div></div><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
-        <div class="market-tile-skeleton"><div class="tile-skeleton-head"><div class="tile-skeleton-avatar"></div><div style="flex:1;display:flex;flex-direction:column;gap:6px;"><div class="skeleton-row medium"></div><div class="skeleton-row short"></div></div></div><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
+        <div class="market-tile-skeleton"><div class="tile-skeleton-head"><div class="tile-skeleton-avatar"></div><div class="tile-skeleton-lines"><div class="skeleton-row medium"></div><div class="skeleton-row short"></div></div></div><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
+        <div class="market-tile-skeleton"><div class="tile-skeleton-head"><div class="tile-skeleton-avatar"></div><div class="tile-skeleton-lines"><div class="skeleton-row medium"></div><div class="skeleton-row short"></div></div></div><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
+        <div class="market-tile-skeleton"><div class="tile-skeleton-head"><div class="tile-skeleton-avatar"></div><div class="tile-skeleton-lines"><div class="skeleton-row medium"></div><div class="skeleton-row short"></div></div></div><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
+        <div class="market-tile-skeleton"><div class="tile-skeleton-head"><div class="tile-skeleton-avatar"></div><div class="tile-skeleton-lines"><div class="skeleton-row medium"></div><div class="skeleton-row short"></div></div></div><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
+        <div class="market-tile-skeleton"><div class="tile-skeleton-head"><div class="tile-skeleton-avatar"></div><div class="tile-skeleton-lines"><div class="skeleton-row medium"></div><div class="skeleton-row short"></div></div></div><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
+        <div class="market-tile-skeleton"><div class="tile-skeleton-head"><div class="tile-skeleton-avatar"></div><div class="tile-skeleton-lines"><div class="skeleton-row medium"></div><div class="skeleton-row short"></div></div></div><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
       </div></div>
     </div>
   </div>
@@ -10515,7 +10567,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
         </label>
       </div>
       <details style="margin-top:6px;">
-        <summary class="muted" style="font-size:11px;cursor:pointer;"><span class="det-arrow" style="display:inline-block;transition:transform 0.1s;">&#9656;</span> Canonical trusted setup &amp; CIDs</summary>
+        <summary class="muted" style="font-size:11px;cursor:pointer;"><span class="det-arrow">&#9656;</span> Canonical trusted setup &amp; CIDs</summary>
         <div class="muted" style="font-size:11px;margin-top:6px;line-height:1.5;">
           Both CIDs are locked to the canonical Phase 2 trusted setup — 2,227 community contributions, Bitcoin-block beacon, finalized chain. Every pool for this circuit shares the same verifying key.
           <a id="mixer-canonical-ceremony-link" href="https://ipfs.io/ipfs/bafybeidq2ahzte4sfiqjsmhqta62ufenpppzpch5ppry55tzxzlvltxy2u/" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline;">Audit bundle on IPFS ↗</a>
@@ -11612,7 +11664,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=5992228e"></script>
+<script type="module" src="./tacit.js?cb=c875232e"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for

@@ -58596,7 +58596,7 @@ function _renderClaimSubmissions() {
   out.innerHTML = `
     <details class="card" style="margin-bottom:10px;padding:10px 12px;border:1px solid var(--ink);background:var(--bg);" open>
       <summary style="cursor:pointer;font-size:12px;font-weight:500;list-style:none;">
-        <span class="det-arrow" style="display:inline-block;transition:transform 0.1s;margin-right:4px;">▾</span>
+        <span class="det-arrow" style="margin-right:4px;">▾</span>
         Your submitted claims · ${headLine}
       </summary>
       <div style="margin-top:4px;">
