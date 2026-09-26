@@ -119,6 +119,20 @@ await run('withdraw-with-relayer-fee', {
   extAmount: -690n, fee: 10n, extDataHash: eh(-690n, 10n),
 });
 
+const ownNote = (w, v, i, index) => ({ v, npk: zk.outputKeys(w.A, w.N, sOut(i)).npk, rho: zk.outputKeys(w.A, w.N, sOut(i)).rho, nk: zk.ownedKeys(w, sOut(i)).nk, sk: zk.ownedKeys(w, sOut(i)).sk, index });
+
+await run('partial-withdraw-with-change', {
+  inputs: [ownNote(alice, 300n, 2, 3), null],
+  outputs: [outTo(alice, 175n, 3), null],
+  extAmount: -120n, fee: 5n, extDataHash: eh(-120n, 5n),
+});
+
+await run('spend-the-change', {
+  inputs: [ownNote(alice, 175n, 3, 4), null],
+  outputs: [null, null],
+  extAmount: -175n, fee: 0n, extDataHash: eh(-175n, 0n),
+});
+
 console.log('soundness negatives');
 const base = clone(proofs.transfer.input);
 const neg = async (label, input) => { assert.strictEqual(await satisfies(input), false, label); ok(label); };
