@@ -101,13 +101,14 @@ const isRevert = (e) => e instanceof CallRevert || (e && (e.code === 3 || (typeo
 const revertData = (e) => String((e && e.data) || '').replace(/^0x/, '').toLowerCase();
 const isOffchainRevert = (e) => revertData(e).startsWith(SEL.offchainLookup);
 
-// eth_call over a list of mainnet RPCs. A revert is definitive and thrown as CallRevert; a transport or node
-// error moves on to the next endpoint. `from` is set only for simulating a write.
+// eth_call over a list of mainnet RPCs, raced concurrently. A revert is definitive and thrown as CallRevert;
+// a transport or node error just drops that endpoint from contention. `from` is set only for simulating a write.
 //
 // An answer must be given IDENTICALLY by `agree` endpoints before it is returned. What these calls decide is the
 // key a private send pays, so a single endpoint that lies about one text record sends the money to whoever wrote
 // the lie, with nothing on screen to show for it — and a public endpoint is exactly the party in a position to do
-// that. Endpoints are read in order until two match, so the usual cost is two requests. No majority, a set that
+// that. All endpoints are queried at once and the first `agree` (default 2) to return the same answer decide it,
+// so one slow or dead endpoint never stalls a lookup two others already agree on. No majority, a set that
 // disagrees, or too few endpoints answering is a refusal, never a resolution: a name that cannot be looked up is
 // recoverable (retry, or paste the address), a payment to the wrong key is not. A revert stays definitive on the
 // first endpoint that reports one — it yields no address, so the worst a faked revert can do is refuse the name.
@@ -115,41 +116,56 @@ export function makeMainnetCall({ fetchImpl, rpcs = MAINNET_RPCS, timeoutMs = 10
   const f = fetchImpl || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
   // A caller that configures a single endpoint has nothing to compare against and gets that endpoint's word.
   const need = Math.max(1, Math.min(agree, rpcs.length));
-  return async function call({ to, data, from }) {
-    if (!f) throw new NameError('rpc', 'no fetch implementation');
+  return function call({ to, data, from }) {
+    if (!f) return Promise.reject(new NameError('rpc', 'no fetch implementation'));
     const tx = { to: String(to).toLowerCase(), data };
     if (from) tx.from = String(from).toLowerCase();
     const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [tx, 'latest'] });
-    const answers = new Map(); // normalized reply -> how many endpoints returned it
-    let lastErr = null, replies = 0;
-    for (const url of rpcs) {
-      let out;
-      try {
-        const r = await f(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(timeoutMs) });
-        if (!r.ok) { lastErr = new Error(`rpc ${r.status}`); continue; }
-        const j = await r.json();
-        if (j && j.error) {
-          const d = j.error.data;
-          if (j.error.code === 3 || (typeof d === 'string' && /^0x/i.test(d))) throw new CallRevert(j.error.message, typeof d === 'string' ? d : null);
-          lastErr = new Error(j.error.message || 'rpc error');
-          continue;
+
+    return new Promise((resolve, reject) => {
+      const answers = new Map(); // normalized reply -> how many endpoints returned it
+      let lastErr = null, replies = 0, settled = 0, done = false;
+
+      const finishIfExhausted = () => {
+        if (done || settled < rpcs.length) return;
+        done = true;
+        if (answers.size > 1) {
+          reject(new NameError('rpc-disagreement', `Ethereum endpoints returned ${answers.size} different answers for this lookup, so it cannot be trusted. Try again, or paste the recipient's tacit1… address.`));
+        } else {
+          reject(new NameError('rpc', `could not reach ${need} Ethereum endpoints that agree (${replies} answered; ${(lastErr && lastErr.message) || 'all endpoints failed'})`));
         }
-        out = j ? j.result : '0x';
-      } catch (e) {
-        if (e instanceof CallRevert) throw e;
-        lastErr = e;
-        continue;
-      }
-      replies++;
-      const key = String(out == null ? '' : out).toLowerCase();
-      const seen = (answers.get(key) || 0) + 1;
-      answers.set(key, seen);
-      if (seen >= need) return out;
-    }
-    if (answers.size > 1) {
-      throw new NameError('rpc-disagreement', `Ethereum endpoints returned ${answers.size} different answers for this lookup, so it cannot be trusted. Try again, or paste the recipient's tacit1… address.`);
-    }
-    throw new NameError('rpc', `could not reach ${need} Ethereum endpoints that agree (${replies} answered; ${(lastErr && lastErr.message) || 'all endpoints failed'})`);
+      };
+
+      rpcs.forEach((url) => {
+        (async () => {
+          try {
+            const r = await f(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(timeoutMs) });
+            if (!r.ok) { lastErr = new Error(`rpc ${r.status}`); return; }
+            const j = await r.json();
+            if (j && j.error) {
+              const d = j.error.data;
+              if (j.error.code === 3 || (typeof d === 'string' && /^0x/i.test(d))) {
+                if (!done) { done = true; reject(new CallRevert(j.error.message, typeof d === 'string' ? d : null)); }
+                return;
+              }
+              lastErr = new Error(j.error.message || 'rpc error');
+              return;
+            }
+            const out = j ? j.result : '0x';
+            replies++;
+            const key = String(out == null ? '' : out).toLowerCase();
+            const seen = (answers.get(key) || 0) + 1;
+            answers.set(key, seen);
+            if (seen >= need && !done) { done = true; resolve(out); }
+          } catch (e) {
+            lastErr = e;
+          } finally {
+            settled++;
+            finishIfExhausted();
+          }
+        })();
+      });
+    });
   };
 }
 

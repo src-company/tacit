@@ -15,10 +15,42 @@
 // governanceApi() in tacit.js so the worker can verify it. Styling uses the
 // scoped #tab-govern classes (index.html) so it matches tacit's ink-on-paper
 // design tokens and theme.
+//
+// One exception to "everything goes through governanceApi()": the proposer-name lookup below. It reads
+// mainnet directly (secp + confidential-names.js) rather than adding to tacit.js, because it is read-only,
+// cosmetic (a label, never a vote or a fund movement) and self-contained — keeping it here means this one
+// file deploys standalone (a plain fetched ES module, no bundle/cache-bust step), same as every other fix
+// this module has shipped on its own.
+
+import { secp, keccak_256, bytesToHex } from './vendor/tacit-deps.min.js';
+import { makeConfidentialNames, makeMainnetCall } from './confidential-names.js';
 
 const el = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// A proposal's Ethereum address, derived from its (compressed, secp256k1) proposer_pubkey — the same key as
+// the Bitcoin/Tacit wallet, address-derived the standard Ethereum way. Pure and offline.
+function ethAddressFromCompressedPubHex(pubHex) {
+  try {
+    const pt = secp.ProjectivePoint.fromHex(String(pubHex || '').replace(/^0x/, ''));
+    return '0x' + bytesToHex(keccak_256(pt.toRawBytes(false).slice(1)).slice(12));
+  } catch { return null; }
+}
+// Cached per address for the page's lifetime: a wallet's WNS/GNS/ENS primary name doesn't change mid-session,
+// and the alternative — re-querying mainnet on every list re-render, e.g. this tab's 30s countdown tick —
+// is wasted traffic.
+let _namesApi = null;
+const _primaryNameCache = new Map(); // address -> Promise<{name, source} | null>
+function primaryNameFor(address) {
+  const a = String(address || '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(a)) return Promise.resolve(null);
+  if (_primaryNameCache.has(a)) return _primaryNameCache.get(a);
+  _namesApi = _namesApi || makeConfidentialNames({ call: makeMainnetCall(), secp, keccak256: keccak_256 });
+  const p = _namesApi.primaryName(a).catch(() => null);
+  _primaryNameCache.set(a, p);
+  return p;
+}
 
 const CAT_LABEL = {
   'collateral-engine': 'Collateral Engine',
@@ -176,6 +208,7 @@ async function renderDetail(body) {
     </div>` : ''}
 
     <div class="gov-meta" style="margin-bottom:16px;">
+      ${p.proposer_pubkey ? `<span id="gov-proposer"></span>` : ''}
       <span>${p.tally?.voters || 0} voters</span>
       <span>${p.tally?.private_voters || 0} private 🔒</span>
       <span>${p.tally?.public_voters || 0} public</span>
@@ -186,7 +219,23 @@ async function renderDetail(body) {
 
     <div id="gov-vote-zone"></div>`;
 
+  renderProposer(p);
   renderVoteZone(p);
+}
+
+// Shows the proposer's Ethereum address immediately (pure, offline), then upgrades in place to their
+// WNS/GNS/ENS primary name if mainnet says they've set one pointing back at that address. Best-effort: a
+// mainnet RPC hiccup or an unset name just leaves the address showing, never blocks or errors the page.
+function renderProposer(p) {
+  const slot = el('gov-proposer');
+  if (!slot) return;
+  const addr = ethAddressFromCompressedPubHex(p.proposer_pubkey);
+  if (!addr) { slot.remove(); return; }
+  slot.innerHTML = `proposed by ${addrLink(addr)}`;
+  primaryNameFor(addr).then((r) => {
+    const s = el('gov-proposer'); // re-query: the detail view may have navigated away by the time this resolves
+    if (s && r && r.name) s.innerHTML = `proposed by <b>${esc(r.name)}</b> (${addrLink(addr)})`;
+  }).catch(() => {});
 }
 
 function resultsHtml(p, totals, total) {

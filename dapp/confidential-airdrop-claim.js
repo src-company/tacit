@@ -350,7 +350,7 @@ function paintBanner(container, ctx, el) {
     container.dataset.tone = 'invite';
     container.style.display = '';
     show(p.close, true);
-    if (p.headline) p.headline.innerHTML = `<strong>The TAC airdrop is live.</strong> Connect your wallet to check if you're eligible.`;
+    if (p.headline) p.headline.innerHTML = `<strong>The TAC (EVM) airdrop is live.</strong> Connect your wallet to check if you're eligible.`;
     show(p.connect, true); show(p.claim, false); show(p.claimtoToggle, false); show(p.view, false); show(p.claimtoRow, false);
     return;
   }
@@ -452,9 +452,10 @@ export function mountAirdropAnnouncement(helpers = {}) {
 
 // ═══════════════════════════ dedicated tab ═══════════════════════════
 
-const INTRO_HTML = `<div class="note-concept"><b>One-time TAC distribution.</b> A merkle airdrop pays 999,999 TAC`
-  + ` to 8,652 addresses that held one of seven tokens at snapshot — one claim per address. A claim pays plain`
-  + ` public TAC to an address; send it on, hold it, or wrap it into the shielded pool yourself afterward.</div>`;
+const INTRO_HTML = `<div class="note-concept"><b>One-time TAC (EVM) distribution.</b> A merkle airdrop pays 999,999`
+  + ` public TAC — the Ethereum ERC-20, separate from TAC's Bitcoin-native issuance — to 8,652 addresses that held`
+  + ` one of seven tokens at snapshot, one claim per address. Claim it to your address, send it on, or wrap it`
+  + ` into the shielded pool yourself afterward.</div>`;
 
 export function tabTemplateHtml() {
   return INTRO_HTML
