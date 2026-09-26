@@ -31854,7 +31854,7 @@ async function cancelAxferIntent({ assetIdHex, intentIdHex }) {
 async function publishPreauthSale({ utxoTxid, utxoVout, minPriceSats, expiry, sellerPayoutScript = null, onProgress = null, nonceBytesOverride = null, preResolvedTarget = null, preResolvedAssetIdHex = null }) {
   await ensurePrivkey();
   if (!WORKER_BASE) throw new Error('worker disabled');
-  if (!Number.isInteger(minPriceSats) || minPriceSats < DUST) throw new Error(`min_price_sats must be integer ≥ ${DUST}`);
+  if (!Number.isInteger(minPriceSats) || minPriceSats < DUST) throw new Error(`price must be at least ${DUST} sats — Bitcoin's dust limit, below which an output can't be spent`);
   const now = Math.floor(Date.now() / 1000);
   if (!Number.isInteger(expiry) || expiry <= now) throw new Error('expiry must be future unix-seconds');
 
@@ -32008,7 +32008,7 @@ async function publishPreauthBid({
   if (!/^[0-9a-f]{64}$/.test(String(assetIdHex || ''))) throw new Error('asset_id must be 64-hex');
   const amountBig = BigInt(amount);
   if (amountBig <= 0n) throw new Error('amount must be positive');
-  if (!Number.isInteger(priceSats) || priceSats < DUST) throw new Error(`price_sats must be integer ≥ ${DUST}`);
+  if (!Number.isInteger(priceSats) || priceSats < DUST) throw new Error(`price must be at least ${DUST} sats — Bitcoin's dust limit, below which an output can't be spent`);
   if (!Number.isInteger(maxFeeBudget) || maxFeeBudget < 0 || maxFeeBudget > PREAUTH_BID_MAX_FEE_BUDGET) {
     throw new Error(`max_fee_budget must be in [0, ${PREAUTH_BID_MAX_FEE_BUDGET}]`);
   }
@@ -34549,7 +34549,7 @@ async function publishBidIntent({ assetIdHex, amount, priceSats, expiry, minFill
   if (!/^[0-9a-f]{64}$/.test(String(assetIdHex || ''))) throw new Error('invalid asset_id');
   const amt = BigInt(amount);
   if (amt <= 0n || amt >= (1n << 64n)) throw new Error('amount must be > 0 and < 2^64');
-  if (!Number.isInteger(priceSats) || priceSats < DUST) throw new Error(`price_sats must be integer ≥ ${DUST}`);
+  if (!Number.isInteger(priceSats) || priceSats < DUST) throw new Error(`price must be at least ${DUST} sats — Bitcoin's dust limit, below which an output can't be spent`);
   const now = Math.floor(Date.now() / 1000);
   if (!Number.isInteger(expiry) || expiry <= now) throw new Error('expiry must be in the future');
   if (expiry > now + 30 * 86400) throw new Error('expiry must be within 30 days');
@@ -61231,7 +61231,7 @@ async function renderHoldings() {
             if (amount <= 0n) { errEl.textContent = 'amount must be > 0'; return; }
             if (amount > totalBal) { errEl.textContent = `amount exceeds holdings (${fmtAssetAmount(totalBal, target.decimals)} ${target.ticker})`; return; }
             const priceSats = parseInt(formHost.querySelector('[data-field="price"]').value.trim(), 10);
-            if (!Number.isInteger(priceSats) || priceSats < DUST) { errEl.textContent = `price must be integer ≥ ${DUST}`; return; }
+            if (!Number.isInteger(priceSats) || priceSats < DUST) { errEl.textContent = `price must be at least ${DUST} sats (Bitcoin's dust limit)`; return; }
             const days = parseInt(formHost.querySelector('[data-field="days"]').value.trim(), 10);
             if (!Number.isInteger(days) || days < 1 || days > 365) { errEl.textContent = 'days must be 1–365'; return; }
             const expiry = Math.floor(Date.now() / 1000) + days * 86400;
@@ -61469,7 +61469,7 @@ async function renderHoldings() {
               return;
             }
             const priceSats = parseInt(formHost.querySelector('[data-field="price"]').value.trim(), 10);
-            if (!Number.isInteger(priceSats) || priceSats < DUST) { errEl.textContent = `price must be integer ≥ ${DUST}`; return; }
+            if (!Number.isInteger(priceSats) || priceSats < DUST) { errEl.textContent = `price must be at least ${DUST} sats (Bitcoin's dust limit)`; return; }
             const days = parseInt(formHost.querySelector('[data-field="days"]').value.trim(), 10);
             if (!Number.isInteger(days) || days < 1 || days > 365) { errEl.textContent = 'days must be 1–365'; return; }
             const expiry = Math.floor(Date.now() / 1000) + days * 86400;
@@ -61685,7 +61685,7 @@ async function renderHoldings() {
             try { secp.ProjectivePoint.fromHex(recipientPub); }
             catch { errEl.textContent = 'recipient is not a valid secp256k1 point'; return; }
             const priceSats = parseInt(formHost.querySelector('[data-field="price"]').value.trim(), 10);
-            if (!Number.isInteger(priceSats) || priceSats < DUST) { errEl.textContent = `price must be integer ≥ ${DUST}`; return; }
+            if (!Number.isInteger(priceSats) || priceSats < DUST) { errEl.textContent = `price must be at least ${DUST} sats (Bitcoin's dust limit)`; return; }
             const days = parseInt(formHost.querySelector('[data-field="days"]').value.trim(), 10);
             if (!Number.isInteger(days) || days < 1 || days > 7) { errEl.textContent = 'days must be 1–7 (atomic offers should be short-lived)'; return; }
             const expiry = Math.floor(Date.now() / 1000) + days * 86400;
@@ -61958,7 +61958,7 @@ async function renderHoldings() {
           formHost.querySelector('[data-form-act="publish"]').onclick = async (ev) => {
             errEl.textContent = '';
             const priceSats = parseInt(formHost.querySelector('[data-field="price"]').value.trim(), 10);
-            if (!Number.isInteger(priceSats) || priceSats < DUST) { errEl.textContent = `price must be integer ≥ ${DUST}`; return; }
+            if (!Number.isInteger(priceSats) || priceSats < DUST) { errEl.textContent = `price must be at least ${DUST} sats (Bitcoin's dust limit)`; return; }
             const days = parseInt(formHost.querySelector('[data-field="days"]').value.trim(), 10);
             if (!Number.isInteger(days) || days < 1 || days > 7) { errEl.textContent = 'days must be 1–7'; return; }
             const expiry = Math.floor(Date.now() / 1000) + days * 86400;
@@ -80413,7 +80413,7 @@ function primeSwapTileSellLimit(aid) {
     try { widget.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch {}
     const ticker = widget.dataset.ticker || 'tokens';
     toast(
-      `Type how much ${ticker} to sell and the total sats you want. Fills at your price (or better) settle instantly; the rest stays listed at your price for 24h.`,
+      `Type how much ${ticker} to sell and the total sats you want. Fills at your price (or better) settle instantly; the rest may stay listed at your price for up to 24h — exact terms shown before you confirm.`,
       '', 8000,
     );
   };
@@ -87598,6 +87598,7 @@ function _wireMarketBidPlace(section, asset) {
         if (!/^\d+$/.test(priceSatsRaw)) throw new Error('price must be a whole number of sats');
         const priceSatsInt = Number(priceSatsRaw);
         if (priceSatsInt <= 0) throw new Error('price must be > 0');
+        if (priceSatsInt < DUST) throw new Error(`total price must be at least ${DUST} sats — Bitcoin's dust limit, below which an output can't be spent`);
         if (!/^\d+$/.test(hoursRaw)) throw new Error('expiry hours must be a whole number');
         const hours = Math.max(1, Math.min(720, Number(hoursRaw) || 24));
         const expiry = Math.floor(Date.now() / 1000) + hours * 3600;
@@ -87744,15 +87745,30 @@ function _wireMarketBidPlace(section, asset) {
           populateMarketBidsLadder(section.parentElement, asset);
           return;
         }
-        await publishBidIntent({
+        // Fallthrough bid-intent path — reached whenever the preauth-bid
+        // opcodes above didn't fire (both are disabled server-side right
+        // now, so this is every submit). Route _walkAwayToggle into the
+        // same watchtower opt-in the swap-tile bid path already uses
+        // (_postBidPreferVar), so checking the box actually funds a
+        // dedicated watchtower-managed bid wallet instead of silently
+        // posting the same unattended bid-intent as leaving it unchecked.
+        const _bidRes = await _postBidPreferVar({
           assetIdHex: aid,
           amount,
           priceSats: priceSatsInt,
           expiry,
-          ...(_minFill > 0n ? { minFillAmount: _minFill.toString() } : {}),
+          minFillAmount: _minFill,
+          decimals,
+          watchtower: _walkAwayToggle,
         });
         status.textContent = 'bid posted OK';
-        toast(`Bid posted on ${ticker}`, 'success');
+        if (_bidRes.watchtower) {
+          toast(`Bid posted on ${ticker} · a managed watchtower will complete it while you're away`, 'success');
+        } else if (_bidRes.watchtower_error) {
+          toast(`Bid posted on ${ticker} — walk-away registration failed (${_bidRes.watchtower_error}); you'll need to be online to Take a fill`, '', 8000);
+        } else {
+          toast(`Bid posted on ${ticker}`, 'success');
+        }
         formHost.style.display = 'none'; formHost.dataset.open = ''; formHost.innerHTML = '';
         _invalidateBidsCache(aid);
         populateMarketBidsLadder(section.parentElement, asset);
