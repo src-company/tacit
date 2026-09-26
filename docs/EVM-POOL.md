@@ -111,6 +111,9 @@ then calls `completeDeposit(intent, tx)` with a proof against the pool's root at
 which is `amount − Σ output values`. The intent pins the notes, so a completer can only deliver exactly what the
 owner chose. After the deadline, `reclaimDeposit(intent, token)` returns any token or ETH in the box to the refund
 address. The completer learns each output's value (the leaves hide it) but cannot link later spends.
+`depositBoxOf(intent)` is the same address on every chain, but the leaves bind the chain's asset, so a box funded
+on the wrong chain can never be completed there, only reclaimed. Fund a box with a plain call carrying normal gas:
+once completed it has code, and a 2300-gas stipend transfer to it can fail.
 
 A keeper service completes boxes for its fee: `POST /evm-pool/keeper/deposit` with `{ intent, hint }` from
 `depositIntent()` (endpoint published at launch). Anyone can run one (`worker-relay/src/evm-pool-keeper.js`).
