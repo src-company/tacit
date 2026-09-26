@@ -44937,14 +44937,14 @@ function _evmCerPaint() {
     const summary = document.getElementById('evm-cer-banner-summary');
     if (summary) summary.textContent = state ? _evmCerSummaryText(state) : '';
     const cta = document.getElementById('evm-cer-banner-contribute');
-    if (cta) cta.textContent = contributed ? 'Your contribution' : 'Contribute';
+    if (cta) cta.textContent = contributed ? 'Contribute again' : 'Contribute';
     banner.style.display = (hidden || !state || finalized) ? 'none' : '';
   }
 
   const chip = document.getElementById('evm-cer-chip');
   if (chip) {
     const tab = _ammCerActiveTab();
-    const show = !finalized && !contributed && !_evmCer.inFlight && tab !== 'market';
+    const show = !finalized && !_evmCer.inFlight && tab !== 'market';
     chip.style.display = show ? 'inline-flex' : 'none';
     const countEl = document.getElementById('evm-cer-chip-count');
     const n = Number(state?.contribution_count) || 0;
@@ -45109,9 +45109,9 @@ async function _evmCerPaintMine() {
   if (st?.contributed) {
     _evmCerMarkContributed(pub);
     el.style.display = 'block';
-    el.innerHTML = `This wallet contributed as <strong>#${escapeHtml(String(st.slot ?? '?'))}</strong> · <code title="${escapeHtml(pub)}">${escapeHtml(_evmCerShort(pub, 10, 6))}</code>. One slot per address.`;
+    el.innerHTML = `This key last contributed as <strong>#${escapeHtml(String(st.slot ?? '?'))}</strong> · <code title="${escapeHtml(pub)}">${escapeHtml(_evmCerShort(pub, 10, 6))}</code>. Contribute again any time; each run adds fresh randomness.`;
     const goBtn = document.getElementById('evm-cer-go');
-    if (goBtn && !_evmCer.inFlight) { goBtn.disabled = true; goBtn.title = 'This wallet already contributed.'; }
+    if (goBtn && !_evmCer.inFlight) { goBtn.disabled = false; goBtn.title = ''; goBtn.textContent = 'Contribute again'; }
     _evmCerPaint();
   } else {
     el.style.display = 'none';
@@ -45215,13 +45215,6 @@ async function _submitEvmPoolCeremonyContributionInner() {
   }
   const eligibilityProofBytes = null;
   const pub = contributorPubkeyHex.toLowerCase();
-  const prior = await _evmCerPubkeyStatus(pub);
-  if (prior?.contributed) {
-    _evmCerMarkContributed(pub);
-    _evmCerShowResult('info', `This wallet already contributed (slot #${prior.slot ?? '?'}). One slot per address.`);
-    _evmCerPaint();
-    return;
-  }
   const contributorName = (nameEl?.value || '').trim().slice(0, 64) || 'anonymous';
 
   const log = (line) => { progEl.style.display = 'block'; progEl.textContent += line + '\n'; progEl.scrollTop = progEl.scrollHeight; };
@@ -45363,7 +45356,8 @@ async function _submitEvmPoolCeremonyContributionInner() {
     _evmCer.tick = null;
     _evmCer.inFlight = false;
     window.removeEventListener('beforeunload', onBeforeUnload);
-    goBtn.disabled = landed || _evmCerContributed(pub);
+    goBtn.disabled = false;
+    if (landed) goBtn.textContent = 'Contribute again';
     _evmCerMiniChip(false);
     _evmCerRefreshState(true).then(_evmCerPaint).catch(() => {});
     const drawer = document.getElementById('evm-cer-drawer');
