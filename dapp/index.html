@@ -54,7 +54,7 @@
   not read that file, so these headers must be mirrored into the Render
   Dashboard's static-site header config for them to actually take effect.
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ipfs.filebase.io https://10mz1z2351rzze-8080.proxy.runpod.net https://mempool.space https://*.mempool.space https://mempool.bisq.services https://mempool.emzy.de https://mempool.bitaroo.net https://blockstream.info https://api.coinbase.com https://api.kraken.com https://api.coingecko.com https://cloudflare-eth.com https://api.tacit.finance https://tacit-api.onrender.com https://tacit-points.onrender.com https://tacit-pin.rosscampbell9.workers.dev https://www.tacitscan.io https://content.wrappr.wtf https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link https://uploads.pinata.cloud https://gateway.pinata.cloud https://gateway.liquify.com https://ethereum-sepolia-rpc.publicnode.com https://ethereum-rpc.publicnode.com https://1rpc.io https://eth.llamarpc.com https://eth.drpc.org https://sepolia.drpc.org https://mainnet.gateway.tenderly.co https://sepolia.gateway.tenderly.co; img-src 'self' data: https://ipfs.filebase.io https://content.wrappr.wtf https://api.tacit.finance https://tacit-api.onrender.com https://tacit-pin.rosscampbell9.workers.dev https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ipfs.filebase.io https://10mz1z2351rzze-8080.proxy.runpod.net https://mempool.space https://*.mempool.space https://mempool.emzy.de https://mempool.bitaroo.net https://blockstream.info https://api.coinbase.com https://api.kraken.com https://api.coingecko.com https://cloudflare-eth.com https://api.tacit.finance https://tacit-api.onrender.com https://tacit-points.onrender.com https://tacit-pin.rosscampbell9.workers.dev https://www.tacitscan.io https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link https://uploads.pinata.cloud https://gateway.pinata.cloud https://gateway.liquify.com https://ethereum-sepolia-rpc.publicnode.com https://ethereum-rpc.publicnode.com https://1rpc.io https://eth.llamarpc.com https://eth.drpc.org https://sepolia.drpc.org https://mainnet.gateway.tenderly.co https://sepolia.gateway.tenderly.co; img-src 'self' data: https://ipfs.filebase.io https://api.tacit.finance https://tacit-api.onrender.com https://tacit-pin.rosscampbell9.workers.dev https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'">
 <title>tacit</title>
 <meta name="description" content="Confidential money across Bitcoin and Ethereum — one shielded note you can send privately, swap, borrow against, and bridge. Mint cBTC/tacBTC from SP1-reflected Bitcoin locks and borrow cUSD against it.">
 <meta name="theme-color" content="#f7931a">
@@ -78,14 +78,14 @@
      networks where TLS isn't already warmed.
      - tacit worker: every market / asset / listings / claims call
      - mempool.space + blockstream.info: outspend / tx / fee-rate fetches
-     - content.wrappr.wtf: IPFS gateway for asset metadata
+     - ipfs.filebase.io: IPFS gateway for asset metadata
      dns-prefetch for the BTC/USD oracles since they're best-effort and
      don't gate paint — DNS resolution alone is enough warming for them. -->
 <link rel="preconnect" href="https://api.tacit.finance" crossorigin>
 <link rel="preconnect" href="https://tacit-pin.rosscampbell9.workers.dev" crossorigin>
 <link rel="preconnect" href="https://mempool.space" crossorigin>
 <link rel="preconnect" href="https://blockstream.info" crossorigin>
-<link rel="preconnect" href="https://content.wrappr.wtf" crossorigin>
+<link rel="preconnect" href="https://ipfs.filebase.io" crossorigin>
 <link rel="dns-prefetch" href="https://api.coinbase.com">
 <link rel="dns-prefetch" href="https://api.kraken.com">
 <link rel="dns-prefetch" href="https://api.coingecko.com">
@@ -104,7 +104,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=3ba62682">
+<link rel="modulepreload" href="./tacit.js?cb=df284ddd">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -8658,6 +8658,77 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   background: var(--ink); color: var(--bg); border-bottom-color: var(--ink);
 }
 
+/* ── TAC's Ethereum trading lane (evm-trade-tile.js) ─────────────────────
+   TAC's asset page carries a second lane alongside its Bitcoin order book —
+   the public ETH/TAC market on Ethereum mainnet. `.tac-lane-switch` gives the
+   Bitcoin/Ethereum toggle the same boxed segmented-control look as the Send
+   tab's lane switch above, but deliberately isn't a `.tabs.subtabs` member:
+   that class is globally shown/hidden by _syncTabChromeFor (tacit.js) and
+   preboot's DOMContentLoaded handler, keyed on the active PRIMARY tab group —
+   a differently-keyed row in that family would be permanently hidden. This
+   switch lives inside a single asset's page instead, so it gets its own,
+   non-conflicting selector. */
+.tac-lane-switch {
+  display: flex; gap: 6px; margin: 14px 0;
+}
+.tac-lane-switch .tab {
+  border: 1px solid var(--ink); background: var(--bg);
+  color: var(--ink-mid); text-transform: uppercase;
+  padding: 6px 12px; font-size: 10px; letter-spacing: 0.1em; font-weight: 500;
+  border-bottom: 1px solid var(--ink); margin-bottom: 0;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.tac-lane-switch .tab:hover:not(.active) { background: var(--bg-alt); color: var(--ink); }
+.tac-lane-switch .tab.active { background: var(--ink); color: var(--bg); border-bottom-color: var(--ink); }
+
+/* Ethereum tile box — same dashed-hairline card treatment as the Bitcoin
+   swap tile ([data-swap-tile]'s inline style) so the two lanes read as the
+   same surface with a different chain underneath. */
+.evm-lane-tile {
+  margin-bottom: 14px; background: rgba(255,255,255,0.35);
+  border-top: 1px dashed rgba(26,26,26,0.25); border-bottom: 1px dashed rgba(26,26,26,0.25);
+  padding: 14px 18px 12px;
+}
+.evm-lane-side {
+  background: var(--bg); border: 0.5px solid rgba(26,26,26,0.2);
+  padding: 10px 12px; margin-bottom: 6px;
+}
+.evm-lane-input {
+  flex: 1 1 auto; font-family: var(--mono); font-size: 22px; font-weight: bold;
+  border: none; background: transparent; outline: none; padding: 0; min-width: 0; width: 100%;
+  color: var(--ink);
+}
+.evm-lane-input[readonly] { color: var(--ink-mid); }
+.evm-lane-pill {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 16px; font-weight: 600; font-size: 13px;
+  border: 1px solid var(--ink); background: var(--bg); color: var(--ink);
+}
+.evm-lane-pill.eth { background: var(--eth); border-color: var(--eth); color: #fff; }
+.evm-lane-route { font-size: 11px; margin: 8px 0; line-height: 1.5; }
+.evm-lane-route a, .evm-lane-status a { color: var(--eth); text-decoration: underline; }
+.evm-lane-compare { margin: 4px 0 10px; }
+.evm-lane-compare summary {
+  font-size: 10px; color: var(--ink-mid); cursor: pointer; user-select: none;
+  list-style: none; display: inline-flex; align-items: center; gap: 4px; letter-spacing: 0.04em;
+}
+.evm-lane-compare summary::before { content: '▶'; font-size: 8px; }
+.evm-lane-compare[open] summary::before { content: '▼'; }
+.evm-lane-compare [data-lane-compare-body] { margin-top: 6px; font-size: 11px; }
+.evm-lane-compare-row {
+  display: flex; justify-content: space-between; gap: 8px; padding: 4px 0;
+  border-bottom: 1px dashed var(--hairline);
+}
+.evm-lane-compare-row:last-child { border-bottom: 0; }
+.evm-lane-action { margin-top: 4px; }
+.evm-lane-status { min-height: 14px; margin-top: 8px; font-size: 11px; }
+.evm-lane-fine { font-size: 10px; margin-top: 8px; text-align: center; }
+@media (max-width: 480px) {
+  .tac-lane-switch .tab { font-size: 9px; padding: 5px 10px; }
+  .evm-lane-input { font-size: 18px; }
+  .evm-lane-pill { padding: 4px 10px; font-size: 12px; }
+}
+
 /* ── Shielded Send composer (confidential-send-tab.js) ───────────────────
    The tab is one long flow — identity, balance, composer, then a handful
    of secondary flows (hold / invoice / claim / refund). Without visual
@@ -8777,7 +8848,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
      CSP is `script-src 'self' 'wasm-unsafe-eval'` — no 'unsafe-inline',
      so an inline <script> would be CSP-blocked. Same-origin .js file
      satisfies 'self'. See preboot.js for the activation logic. -->
-<script src="./preboot.js?cb=fa0afb28"></script>
+<script src="./preboot.js?cb=c19faaae"></script>
 </head>
 <body>
 
@@ -11530,7 +11601,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=3ba62682"></script>
+<script type="module" src="./tacit.js?cb=df284ddd"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for

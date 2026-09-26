@@ -95,8 +95,13 @@
     if (TABS.indexOf(tab) === -1) return;
     var qs = new URLSearchParams(window.location.search);
     var aid = qs.get('aid') || '';
+    var lane = qs.get('lane') || '';
     var hash = '#tab=' + tab;
     if (/^[0-9a-f]{64}$/i.test(aid)) hash += '&aid=' + aid.toLowerCase();
+    // TAC's Ethereum trading lane (evm-trade-tile.js). Only carried through
+    // alongside a valid aid — tacit.js's _parseTabHash re-validates both anyway,
+    // but there's no point emitting &lane= for a hash with no aid to attach it to.
+    if (/^[0-9a-f]{64}$/i.test(aid) && (lane === 'btc' || lane === 'eth')) hash += '&lane=' + lane;
     window.history.replaceState(null, '', window.location.pathname + window.location.search + hash);
   } catch (e) { /* never break boot on a path parse */ }
 })();
@@ -107,9 +112,9 @@
     var target = m && m[1] && m[1].toLowerCase();
     if (target === 'csend') target = 'transfer';
     else if (target === 'cswap' || target === 'otc' || target === 'cdp') target = 'market';
-    else if (target === 'earn') target = 'wallet';
+    else if (target === 'earn' || target === 'farms') target = 'wallet';
     else if (target === 'claim') target = 'wallet';
-    else if (target === 'confidential-pool' || target === 'mixer') target = 'about';
+    else if (target === 'confidential-pool' || target === 'mixer' || target === 'pool') target = 'about';
     if (!target || target === 'wallet') return;
     window._tacitDeeplinkTab = target;
     var styleEl = document.createElement('style');

@@ -82,6 +82,7 @@ import { renderSendTab } from './confidential-send-tab.js';
 import { renderSwapTab } from './confidential-swap-tab.js';
 import { renderEarnTab } from './confidential-earn-tab.js';
 import { renderAirdropTab, mountAirdropAnnouncement } from './confidential-airdrop-claim.js';
+import { mountEvmTradeLane } from './evm-trade-tile.js';
 import { renderGovernTab } from './confidential-govern-tab.js';
 import { renderFactoryTab } from './confidential-factory-tab.js';
 import { CONFIDENTIAL_DEPLOYMENTS as CROSSLANE_DEPLOYMENTS, setActiveNetwork as _setConfidentialNet, isProtectedOutpoint as _isProtectedOutpoint } from './confidential-deployments.js';
@@ -5126,6 +5127,31 @@ const ethNamesBridge = {
       catch { throw new Error('Switch your wallet to Ethereum mainnet to publish the record.'); }
     }
     return provider.request({ method: 'eth_sendTransaction', params: [{ from, to, data }] });
+  },
+};
+
+// Wallet seam for TAC's Ethereum trading lane (evm-trade-tile.js's mountEvmTradeLane
+// `opts`). This is a plain public-ERC20/native-ETH trade against zRouter/Precision/the
+// Tacit AMM's public pool — not a Tacit identity derivation, so it just needs a connected
+// EOA and a mainnet send, same shape as ethNamesBridge above (chain-switch included).
+const evmTradeLaneWallet = {
+  address() {
+    return ethWallet.state?.address ? '0x' + String(ethWallet.state.address).replace(/^0x/, '') : null;
+  },
+  async connect() {
+    const { address } = await ethWallet.connect();
+    return '0x' + String(address).replace(/^0x/, '');
+  },
+  async sendTx({ from, to, data, value }) {
+    const provider = _ethProvider();
+    if (!provider) throw new Error('no Ethereum wallet connected');
+    if (String(await provider.request({ method: 'eth_chainId' })).toLowerCase() !== '0x1') {
+      try { await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x1' }] }); }
+      catch { throw new Error('Switch your wallet to Ethereum mainnet to trade TAC.'); }
+    }
+    const params = { from, to, data };
+    if (value) params.value = value;
+    return provider.request({ method: 'eth_sendTransaction', params: [params] });
   },
 };
 
@@ -38941,6 +38967,11 @@ let pendingDiscoverFocus = null;
 // to filter the listings down to one asset. Cleared after first consumption.
 let pendingMarketFilter = null;
 
+// Deep-linked lane for TAC's asset page (`&lane=btc|eth` — see _parseTabHash).
+// Consumed the same way as pendingMarketFilter: applied once on the next
+// render, then cleared so it doesn't stick to whatever asset is viewed next.
+let pendingMarketLane = null;
+
 // Lander recent-etches sort. 'recent' = worker order (newest first);
 // 'active' = composite cumulative activity (transfers + offers + mints +
 // burns). Persisted in localStorage so a user who picks "active" doesn't
@@ -46229,6 +46260,15 @@ function _setTabSoon(tab, soon) {
 }
 
 function _canonicalTabName(name) {
+  // 'pool' and 'farms' are short aliases for 'confidential-pool' and 'earn' —
+  // not in the nav themselves, so a bookmark / deep-link to them has no
+  // matching nav button. Resolve the alias first, then fall through the same
+  // liveness checks below as the real tab name would, so a #tab=pool link
+  // behaves exactly like the #tab=confidential-pool links already in the app
+  // (both land on 'about' while confidential-pool is gated out of nav) instead
+  // of a distinct, inconsistent redirect.
+  if (name === 'pool') name = 'confidential-pool';
+  else if (name === 'farms') name = 'earn';
   if (name === 'csend' && !_tabLiveOnNet(name)) return 'transfer';
   if (name === 'claim') return 'wallet';
   if ((name === 'cswap' || name === 'otc' || name === 'cdp') && !_tabLiveOnNet(name)) return 'market';
@@ -46271,11 +46311,6 @@ function _syncTabChromeFor(name) {
 
 function _activateTab(name) {
   name = _canonicalTabName(name);
-  // Tab-name redirect: 'pool' and 'farms' are not in the nav; a bookmark / deep-link to them lands on
-  // the confidential pool and the Earn surface instead of silently failing. Keep this the single chokepoint so hash, click,
-  // and programmatic navigation all redirect.
-  if (name === 'pool') name = 'confidential-pool';
-  else if (name === 'farms') name = 'earn';
   try { _setConfidentialNet(currentNetworkName()); } catch {}
   $$('.tab-panel').forEach(p => p.classList.remove('active'));
   const panel = document.getElementById('tab-' + name);
@@ -46301,7 +46336,7 @@ function _activateTab(name) {
   } else { _stopMarketAutoRefresh(); _resetMarketLiveSnapshot(); }
   if (name === 'mixer') { renderMixer(); startMixerAutoRefresh(); }
   else stopMixerAutoRefresh();
-  stopPoolAutoRefresh(); // 'pool'/'farms' redirect above; nothing to render
+  stopPoolAutoRefresh(); // 'pool'/'farms' redirect in _canonicalTabName; nothing to render
   if (name === 'confidential-pool') { try { renderConfidentialPoolTab(wallet); } catch (e) { console.error('confidential-pool tab', e); } }
   if (name === 'cdp') { try { renderCdpTab(wallet); } catch (e) { console.error('cdp tab', e); } }
   if (name === 'otc') { try { renderOtcTab(wallet); } catch (e) { console.error('otc tab', e); } }
@@ -57987,7 +58022,12 @@ function _parseTabHash() {
   const section = (_DEEPLINK_SECTIONS[tab] && _DEEPLINK_SECTIONS[tab].has(rawSection))
     ? rawSection
     : null;
-  return { tab, aid, section, requestedTab };
+  // Market-only: TAC's Ethereum trading lane (&lane=btc|eth — see evm-trade-tile.js
+  // and _marketTacLane). Any other value is ignored rather than rejecting the whole
+  // deep-link, matching how an unrecognized `section` is dropped above.
+  const rawLane = params.get('lane') || '';
+  const lane = (rawLane === 'btc' || rawLane === 'eth') ? rawLane : null;
+  return { tab, aid, section, lane, requestedTab };
 }
 // Idempotency guard for deep-link consumption. The market/discover hash is
 // fired BEFORE awaiting refreshWallet so the market view doesn't sit blank
@@ -58017,6 +58057,7 @@ function _consumeTabUrlHash() {
     if (parsed.tab === 'discover') pendingDiscoverFocus = parsed.aid;
     else if (parsed.tab === 'market') pendingMarketFilter = parsed.aid;
   }
+  if (parsed.lane && parsed.tab === 'market') pendingMarketLane = parsed.lane;
   // Per-tab section scroll. Defer until after the tab paints so the target
   // element exists and has a layout. Mixer→ceremony is the only one wired
   // today; see _DEEPLINK_SECTIONS for the whitelist.
@@ -58195,16 +58236,20 @@ function _writeTabHash(tabName) {
   const cur = location.hash || '';
   if (cur.startsWith('#recv=') || cur.startsWith('#claim=')) return;
   let aid = null;
+  let lane = null;
   if (tabName === 'market' && cur.startsWith('#tab=market')) {
     try {
       const params = new URLSearchParams(cur.slice(1));
       const rawAid = params.get('aid') || '';
       if (/^[0-9a-f]{64}$/i.test(rawAid)) aid = rawAid.toLowerCase();
+      const rawLane = params.get('lane') || '';
+      if (rawLane === 'btc' || rawLane === 'eth') lane = rawLane;
     } catch {}
   }
   const path = tabName === 'wallet' ? '/' : `/${tabName}`;
   const qs = new URLSearchParams(location.search);
   if (aid) qs.set('aid', aid); else qs.delete('aid');
+  if (aid === CANONICAL_TAC_ASSET_ID_HEX && lane === 'eth') qs.set('lane', 'eth'); else qs.delete('lane');
   const qsStr = qs.toString();
   const target = path + (qsStr ? `?${qsStr}` : '');
   if (location.pathname + location.search === target && !location.hash) return;
@@ -68552,6 +68597,92 @@ function _saveMarketLadderView(v) {
   try { localStorage.setItem(_MARKET_LADDER_VIEW_KEY, v); } catch {}
 }
 let _marketLadderView = _loadMarketLadderView();
+// TAC-only Ethereum trading lane switch (Bitcoin order book vs. the public ETH/TAC
+// tile — see evm-trade-tile.js). Persists via the market hash's &lane= param first
+// (see _parseTabHash / _writeMarketHash), falling back to this localStorage default
+// for the next visit when no lane arrives on the URL.
+const _MARKET_TAC_LANE_KEY = 'tacit-market-tac-lane-v1';
+function _loadMarketTacLane() {
+  try {
+    const v = localStorage.getItem(_MARKET_TAC_LANE_KEY);
+    if (v === 'btc' || v === 'eth') return v;
+  } catch {}
+  return 'btc';
+}
+function _saveMarketTacLane(v) {
+  try { if (v === 'btc' || v === 'eth') localStorage.setItem(_MARKET_TAC_LANE_KEY, v); } catch {}
+}
+let _marketTacLane = _loadMarketTacLane();
+// Segmented Bitcoin/Ethereum switch for TAC's asset page. Visually copies the Send
+// tab's lane switch (.tabs.subtabs[data-group="send"]) but is NOT a member of that
+// class family: _syncTabChromeFor / preboot's DOMContentLoaded handler hide every
+// `.tabs.subtabs` row whose data-group isn't the active PRIMARY tab group, which
+// would permanently hide a differently-keyed row like this one. `.tac-lane-switch`
+// (index.html) gives it the same look with its own, non-conflicting selector.
+// TAC-only by construction (never a generic per-asset config — see the module docstring
+// in evm-trade-tile.js and the task's own instruction to key this off the exact
+// CANONICAL_TAC_ASSET_ID_HEX constant rather than anything structurally TAC-specific).
+function _tacLaneSwitchHtml(assetIdHex) {
+  if (assetIdHex !== CANONICAL_TAC_ASSET_ID_HEX) return '';
+  const lane = _marketTacLane;
+  return `
+    <div class="tac-lane-switch" data-tac-lane-switch role="tablist" aria-label="Trade TAC on Bitcoin or Ethereum">
+      <button type="button" class="tab${lane === 'btc' ? ' active' : ''}" data-tac-lane-btn="btc" role="tab" aria-selected="${lane === 'btc'}"><span class="chain-badge btc"><span class="dot"></span></span>Bitcoin</button>
+      <button type="button" class="tab${lane === 'eth' ? ' active' : ''}" data-tac-lane-btn="eth" role="tab" aria-selected="${lane === 'eth'}"><span class="chain-badge eth"><span class="dot"></span></span>Ethereum</button>
+    </div>`;
+}
+// Wraps the existing Bitcoin content (swap tile + ladder/empty-pane) and the Ethereum
+// tile's mount host in sibling panels, toggled by the switch above. On every asset
+// OTHER than TAC this is a no-op passthrough (no switch, no wrapper, no host div) so
+// nothing changes for the rest of the market. `data-evm-trade-lane` on the host is
+// the node the auto-refresh preservation guards below keep across re-renders — see
+// _preservedNodes' selector list (has-asks branch) and the matching manual
+// detach/reattach in the no-asks branch.
+function _tacLanePanelsHtml(assetIdHex, bitcoinPanelHtml) {
+  if (assetIdHex !== CANONICAL_TAC_ASSET_ID_HEX) return bitcoinPanelHtml;
+  const lane = _marketTacLane;
+  return `
+    <div data-lane-panel="btc" style="${lane === 'btc' ? '' : 'display:none;'}">${bitcoinPanelHtml}</div>
+    <div data-lane-panel="eth" style="${lane === 'eth' ? '' : 'display:none;'}">
+      <div id="evm-trade-lane-host" data-evm-trade-lane></div>
+    </div>`;
+}
+// Wires the switch's click handlers and mounts the Ethereum tile — either because the
+// user just clicked "Ethereum", or because this render already landed on lane 'eth'
+// (a direct &lane=eth deep-link, or a preserved node from a prior render). Idempotent:
+// mountEvmTradeLane no-ops on a host it already mounted, so calling this on every
+// render (like bindMarketAssetHeader/bindMarketAssetTabs beside it) never resets an
+// in-progress typed amount.
+function _bindTacLaneSwitch(scope, assetIdHex) {
+  if (assetIdHex !== CANONICAL_TAC_ASSET_ID_HEX) return;
+  const switchEl = scope.querySelector('[data-tac-lane-switch]');
+  const hostEl = scope.querySelector('#evm-trade-lane-host');
+  function activate(lane) {
+    _marketTacLane = lane;
+    _saveMarketTacLane(lane);
+    const btcPanel = scope.querySelector('[data-lane-panel="btc"]');
+    const ethPanel = scope.querySelector('[data-lane-panel="eth"]');
+    if (btcPanel) btcPanel.style.display = lane === 'btc' ? '' : 'none';
+    if (ethPanel) ethPanel.style.display = lane === 'eth' ? '' : 'none';
+    if (switchEl) {
+      switchEl.querySelectorAll('[data-tac-lane-btn]').forEach((b) => {
+        const isActive = b.dataset.tacLaneBtn === lane;
+        b.classList.toggle('active', isActive);
+        b.setAttribute('aria-selected', String(isActive));
+      });
+    }
+    if (lane === 'eth' && hostEl) mountEvmTradeLane(hostEl, evmTradeLaneWallet);
+    if (_marketView && typeof _marketView === 'object' && _marketView.mode === 'asset' && _marketView.assetId === CANONICAL_TAC_ASSET_ID_HEX) {
+      _writeMarketHash(_marketView.assetId);
+    }
+  }
+  if (switchEl) {
+    switchEl.querySelectorAll('[data-tac-lane-btn]').forEach((btn) => {
+      btn.onclick = () => activate(btn.dataset.tacLaneBtn);
+    });
+  }
+  if (_marketTacLane === 'eth' && hostEl) mountEvmTradeLane(hostEl, evmTradeLaneWallet);
+}
 const _MARKET_MINE_ASKS_KEY = 'tacit-market-mine-asks-v1';
 const _MARKET_MINE_BIDS_KEY = 'tacit-market-mine-bids-v1';
 function _loadMarketMine(key) {
@@ -68592,6 +68723,10 @@ function _writeMarketHash(aidOrNull) {
   if (cur.startsWith('#recv=') || cur.startsWith('#claim=')) return;
   const qs = new URLSearchParams(location.search);
   if (aidOrNull) qs.set('aid', aidOrNull); else qs.delete('aid');
+  // Carry the Ethereum lane through only for the asset it actually applies to (TAC) and
+  // only when it's the non-default choice — keeps every other asset's URL unchanged.
+  if (aidOrNull === CANONICAL_TAC_ASSET_ID_HEX && _marketTacLane === 'eth') qs.set('lane', 'eth');
+  else qs.delete('lane');
   const qsStr = qs.toString();
   const target = '/market' + (qsStr ? `?${qsStr}` : '');
   if (location.pathname + location.search === target && !location.hash) return;
@@ -69361,6 +69496,17 @@ async function renderMarket() {
       _applyMarketPrefsToControls('asset');
     }
     pendingMarketFilter = null;
+  }
+  // TAC-only Ethereum lane deep-link (&lane=eth). Only takes effect on TAC's own
+  // asset page — a stray lane= on any other asset's URL is silently ignored,
+  // same as goToMarketAsset already does for a malformed aid.
+  if (pendingMarketLane) {
+    if (_marketView && typeof _marketView === 'object' && _marketView.mode === 'asset'
+      && _marketView.assetId === CANONICAL_TAC_ASSET_ID_HEX) {
+      _marketTacLane = pendingMarketLane;
+      _saveMarketTacLane(_marketTacLane);
+    }
+    pendingMarketLane = null;
   }
   // Sync the URL hash to whatever asset-mode state we're about to render.
   // Two reasons:
@@ -70222,10 +70368,21 @@ function applyMarketFilters() {
     // history/context is part of the trading flow while the populator
     // still finds `[data-market-asset-stats]` to drive depth + tape.
     const richStatsHtml = renderMarketAssetStatsHTML(_assetForBids);
-    list.innerHTML = `<div class="market-token-page"><div class="market-token-main">${assetHeaderHtml}${richStatsHtml}${_swapTileHtml}${listedPaneHtml}</div></div>`;
+    // This branch has no general re-render preservation apparatus (unlike the has-asks
+    // branch below) — detach the Ethereum lane's mount host by hand so an in-progress
+    // typed amount there survives a transient empty-asks tick same as the has-asks
+    // branch's [data-swap-tile] does.
+    const _preservedEvmLane = list.querySelector('[data-evm-trade-lane]');
+    if (_preservedEvmLane && _preservedEvmLane.parentNode) _preservedEvmLane.parentNode.removeChild(_preservedEvmLane);
+    list.innerHTML = `<div class="market-token-page"><div class="market-token-main">${assetHeaderHtml}${richStatsHtml}${_tacLaneSwitchHtml(_marketView.assetId)}${_tacLanePanelsHtml(_marketView.assetId, _swapTileHtml + listedPaneHtml)}</div></div>`;
+    if (_preservedEvmLane) {
+      const _laneholder = list.querySelector('[data-evm-trade-lane]');
+      if (_laneholder && _laneholder.parentNode) _laneholder.parentNode.replaceChild(_preservedEvmLane, _laneholder);
+    }
     hydrateMarketImages(list);
     bindMarketAssetHeader(list);
     bindMarketAssetTabs(list);
+    _bindTacLaneSwitch(list, _marketView.assetId);
     // Wire cursor on any pre-painted chart from the cached stats so the
     // hover-tooltip path works immediately, before the live fetch lands.
     _wireMarketPriceChartCursor(list.querySelector('[data-market-price-chart]'));
@@ -71026,6 +71183,10 @@ function applyMarketFilters() {
       'data-market-depth-chart',
       'data-swap-tile',
       'data-market-bids-section',
+      // TAC's Ethereum lane mount host (evm-trade-tile.js) — preserved so an
+      // in-progress typed amount / pending quote survives an auto-refresh tick,
+      // same reasoning as data-swap-tile above.
+      'data-evm-trade-lane',
       // Sweep-buy / Advanced-buy form: if the user opened the form
       // and typed an amount + cap, an auto-refresh tick at 5s used
       // to wipe it. Preserving the section keeps the form open AND
@@ -71078,7 +71239,7 @@ function applyMarketFilters() {
   // richStatsHtml provides the visible price-history context and also
   // gives populateMarketAssetStats its `[data-market-asset-stats]` gate
   // for depth + tape writes. CSS keeps the dense stats/CTA rows quiet.
-  list.innerHTML = `<div class="market-token-page"><div class="market-token-main">${assetHeaderHtml}${richStatsHtml}${_swapTileHtml}${listedPaneHtml}</div></div>`;
+  list.innerHTML = `<div class="market-token-page"><div class="market-token-main">${assetHeaderHtml}${richStatsHtml}${_tacLaneSwitchHtml(_marketView.assetId)}${_tacLanePanelsHtml(_marketView.assetId, _swapTileHtml + listedPaneHtml)}</div></div>`;
   if (_onAssetDetailReRender) {
     for (const [sel, node] of Object.entries(_preservedNodes)) {
       const placeholder = list.querySelector(`[${sel}]`);
@@ -71138,6 +71299,7 @@ function applyMarketFilters() {
   bindMarketAssetHeader(list);
   bindMarketAssetTabs(list);
   _wireSwapTile(list);
+  _bindTacLaneSwitch(list, _marketView.assetId);
   _wireMarketPriceChartCursor(list.querySelector('[data-market-price-chart]'));
   populateMarketAssetStats(list, _assetForBids).catch(e => console.warn('stats load failed', e));
   // Simple-mode toggle in the asks header. Click flips the flag,
