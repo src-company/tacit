@@ -13,7 +13,7 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, proveUpdater } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater } from './confidential-deployments.js';
 import { makeConfidentialInvoice } from './confidential-invoice.js';
 import { makeConfidentialNames, makeMainnetCall, NameError } from './confidential-names.js';
 import { payoutPanelHtml, wirePayout } from './confidential-payout-panel.js';
@@ -399,7 +399,7 @@ function wireSend(wallet, ux, notes, helpers) {
       notify(`Wrapped + sent ${fmtUnits(amount, dec)} ${ticker}`, 'ok');
       setTimeout(() => renderSendTab(wallet, helpers), 1500);
     } catch (e) {
-      const m = formatErr(e, 'Send');
+      const m = formatSpecErr(e, 'Send');
       if (statusEl) statusEl.textContent = m; notify(m, 'error');
       btn.disabled = false;
       reviewBtn.disabled = false;
@@ -434,7 +434,7 @@ function wireHold(wallet, ux, helpers) {
       notify('Wrap broadcast — awaiting settle', 'ok');
       setTimeout(() => renderSendTab(wallet, helpers), 2000);
     } catch (e) {
-      const m = formatErr(e, 'Wrap');
+      const m = formatSpecErr(e, 'Wrap');
       if (statusEl) statusEl.textContent = m; notify(m, 'error');
       btn.disabled = false;
     }
@@ -626,7 +626,7 @@ function wireClaimAndRefund(wallet, ux, helpers) {
           notify(`Refunded ${fmtUnits(rec.amount, rec.dec ?? 8)} ${rec.ticker} to your shielded balance`, 'ok');
           renderPending();
         } catch (e) {
-          notify(formatErr(e, 'Refund'), 'error');
+          notify(formatSpecErr(e, 'Refund'), 'error');
           btn.disabled = false;
           btn.textContent = prevText;
         }
@@ -645,7 +645,9 @@ function wireClaimAndRefund(wallet, ux, helpers) {
     try {
       const scanned = await ux.scanStealthLocks({ walletPriv: wallet.priv });
       const lockSetRoot = scanned.lockSetRoot;
-      const mine = scanned.mine.filter((l) => l.spent !== true);   // a claimed lock stays in the append-only set
+      // Soonest-expiring first: per BUILD-A-TACIT-DAPP.md, "prompt the receiver to claim well before" the
+      // sender's refund deadline — the one closest to lapsing belongs at the top, not buried in list order.
+      const mine = scanned.mine.filter((l) => l.spent !== true).sort((a, b) => Number(a.deadline || 0) - Number(b.deadline || 0));
       // Whether the pool confirmed the set this scan was built from, and whether any lock's memo went
       // unread, decide how much "no payments found" is worth saying. Shown either way, above the list.
       const lockHealth = lockScanHealthHtml(scanned, { style: 'margin:6px 0;' });
@@ -658,8 +660,16 @@ function wireClaimAndRefund(wallet, ux, helpers) {
           const ticker = ux.tickerOf(rec.asset) || rec.asset.slice(0, 10) + '…';
           const meta = ux.assetByTicker[ticker] || {};
           const dec = meta.tacitDecimals ?? meta.decimals ?? 8;
-          return `<div class="row" style="align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--ink-faint);">
+          // The sender can refund an unclaimed lock once its deadline passes (~90 days by default) — show
+          // it here too, mirroring "Your pending sends" below, so a receiver knows there's a window to act in.
+          const deadlineMs = Number(rec.deadline) * 1000;
+          const daysLeft = Number.isFinite(deadlineMs) && deadlineMs > 0 ? (deadlineMs - Date.now()) / 86400000 : null;
+          const deadlineLabel = daysLeft == null ? ''
+            : daysLeft <= 0 ? 'claim window may have lapsed — claim now'
+            : `claim by ${esc(new Date(deadlineMs).toLocaleDateString())}${daysLeft < 7 ? ' · expiring soon' : ''}`;
+          return `<div class="row" style="align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--ink-faint);flex-wrap:wrap;">
             <span>${fmtUnits(rec.amount, dec)} ${esc(ticker)}</span>
+            ${deadlineLabel ? `<span class="muted" style="font-size:10px;${daysLeft < 7 ? 'color:var(--red-warn, var(--red));' : ''}">${deadlineLabel}</span>` : ''}
             <button data-i="${i}" class="csend-claim-btn primary" style="font-size:10px;padding:2px 8px;">Claim</button>
           </div>`;
         }).join('');
@@ -674,7 +684,7 @@ function wireClaimAndRefund(wallet, ux, helpers) {
               notify('Claimed into your shielded balance', 'ok');
               setTimeout(() => renderSendTab(wallet, helpers), 1500);
             } catch (e) {
-              notify(formatErr(e, 'Claim'), 'error');
+              notify(formatSpecErr(e, 'Claim'), 'error');
               claimBtn.disabled = false;
               claimBtn.textContent = 'Claim';
             }

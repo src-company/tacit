@@ -5,7 +5,7 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, proveUpdater, evmAccountHint } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater, evmAccountHint } from './confidential-deployments.js';
 import { classifyFinality, finalityBadgeHtml, listProvisional } from './confidential-finality.js';
 import { scanHealthHtml, inboundBadgeHtml, inboundSummaryHtml, pendingWrapsText, recoveryCoverageHtml, recoveryCoverage } from './confidential-scan-health.js';
 import { renderLanePanel } from './cross-chain-lane.js';
@@ -61,7 +61,7 @@ function wireWrap(wallet, ux) {
       if (st) st.innerHTML = `Settled: <code class="addr">${esc(r.txHash)}</code> — your cETH note is ready.`;
       notify('Wrap settled — cETH note ready', 'ok');
     } catch (e) {
-      const m = formatErr(e, 'Wrap');
+      const m = formatSpecErr(e, 'Wrap');
       // The deposit itself may already be irreversibly on-chain even though this failed (a dropped
       // connection after broadcast, a settle timeout) — never imply otherwise, since the fix here is to
       // resubmit the SAME index's settle, not to re-wrap and double-deposit.

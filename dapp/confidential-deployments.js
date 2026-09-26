@@ -372,6 +372,28 @@ export function formatErr(e, verb) {
   return (verb ? verb + ' failed: ' : '') + msg;
 }
 
+// formatErr, plus a plain-language hint for the pool's own well-known assert/revert reasons — the same
+// table BUILD-A-TACIT-DAPP.md §8 "When something breaks" gives, so a user (or anyone reading a bug report)
+// isn't left with a bare Solidity/guest identifier. Shared across every confidential/EVM tab rather than a
+// per-file regex table (mirrors the CDP-specific decode already in confidential-defi-tab.js's Open handler,
+// which stays local since those reasons — Undercollateralized, BadSnapshot — are CDP-only).
+const _SPEC_ERROR_HINTS = [
+  // Two forms: the on-chain custom error name (AmountNotAligned) and the client-side pre-validation throw
+  // ("amount not aligned to unitScale" — confidential-pool-ux.js), which catches the same case before ever
+  // reaching the chain and phrases it differently.
+  [/AmountNotAligned|not aligned to unitScale/i, "amount isn't divisible by this asset's unit scale — check the decimal places"],
+  [/DepositNotPending/i, "the wrap transaction isn't mined yet, or this deposit was already consumed"],
+  [/UnknownRoot/i, "this note's membership proof is against a root the pool has since moved past — rescan and retry"],
+  [/NullifierAlreadySpent/i, 'this note was already spent — rescan to refresh your balance and retry'],
+  [/DepositExists/i, 'this exact asset, amount and wrap index is already a pending deposit — retry to pick the next index'],
+  [/MemoLeafMismatch/i, "the sealed memos don't match what settled — rescan and retry"],
+];
+export function formatSpecErr(e, verb) {
+  const base = formatErr(e, verb);
+  const hit = _SPEC_ERROR_HINTS.find(([re]) => re.test(base));
+  return hit ? `${base} — ${hit[1]}` : base;
+}
+
 // The account every confidential/EVM tab shows (pool, DeFi/CDP, OTC, send) is `ux.account(walletPriv)` — an
 // address DERIVED from the Tacit wallet's own key (see evm-account.js / BUILD-A-TACIT-DAPP.md §5), not an
 // injected/connected wallet. There is no "Connect wallet" step to look for on these tabs, by design — but
