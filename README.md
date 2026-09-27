@@ -79,7 +79,9 @@ or attestor set signs a bridge message.
 - **Fast lane.** A reflected Bitcoin note bound to the pool (`T_CXFER_BOUND`) is spent directly on
   Ethereum, with no bridge burn. The proof shows the note is not already spent on Bitcoin, and reflection
   later retires it there, so it can never be spent twice. Proven live:
-  [`0x548d52cb…4940fd0c84`](https://etherscan.io/tx/0x548d52cbae38d8e60c278ec919e6cbe8bdb5a370d36a04fe5ca0e64940fd0c84).
+  [`0x548d52cb…4940fd0c84`](https://etherscan.io/tx/0x548d52cbae38d8e60c278ec919e6cbe8bdb5a370d36a04fe5ca0e64940fd0c84)
+  and again at
+  [`0x9811b18e…56b3865f`](https://etherscan.io/tx/0x9811b18ea2f2cbb75a4b79fea6736dc3c83c05741ffbfbf818c2604856b3865f).
 - **Ethereum → Bitcoin.** An SP1 light-client guest proves pool storage. The Bitcoin guest verifies that
   proof recursively, so crossed-out notes are re-minted on Bitcoin.
 - **One note, two chains.** The note commitment is the same secp256k1 Pedersen commitment on both sides.
