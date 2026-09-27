@@ -216,9 +216,12 @@ export function mountEvmTradeLane(host, opts) {
     if (!btn || state.busy) return;
     const amt = parseUnitsStr(state.amountStr, 18);
     if (!amt || amt <= 0n) { btn.disabled = true; btn.textContent = 'Enter an amount'; return; }
+    // Connecting doesn't depend on the quote at all, so it must stay clickable even while a
+    // quote is in flight (or found no route) — a slow/rate-limited RPC used to block the button
+    // entirely, which looked exactly like a hung wallet connection.
+    if (!getAddress()) { btn.disabled = false; btn.textContent = 'Connect wallet'; return; }
     if (state.quoting) { btn.disabled = true; btn.textContent = 'Quoting…'; return; }
     if (!state.quote || !state.quote.best) { btn.disabled = true; btn.textContent = 'No route available'; return; }
-    if (!getAddress()) { btn.disabled = false; btn.textContent = 'Connect wallet'; return; }
     btn.disabled = false; btn.textContent = 'Swap';
   }
 

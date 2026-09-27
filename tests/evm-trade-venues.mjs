@@ -283,6 +283,24 @@ const B32 = '0x' + 'ab'.repeat(32);
   assert.equal(result.best.venue, VENUES.PRECISION, 'the band beats the shallow Tacit tier at this size, exactly like the live comparison zfi ran');
   ok('quoteAll batches the cheap views through Multicall3, keeps zQuoter raw, and ranks the band above the Tacit AMM');
 
+  // A slow/misbehaving RPC answering zQuoter's heavy-gas raw call (observed: 15s+ against
+  // 1rpc.io) must never hold back the whole quote — Precision/Tacit AMM are always ready
+  // within ~1-2s and shouldn't wait on a venue that's usually going to say "no route" anyway.
+  {
+    const slowEthCall = (to, data, block, opts) => {
+      if (to.toLowerCase() === ZQUOTER_V2.toLowerCase()) return new Promise((r) => setTimeout(() => r(null), 60000));
+      return ethCall(to, data, block, opts);
+    };
+    const slowVenues = makeEvmTradeVenues({ ethCall: slowEthCall });
+    const t0 = Date.now();
+    const slowResult = await slowVenues.quoteAll({ dir: 'ETH_TO_TAC', amountIn: 10n ** 16n, account: A1, includeZQuoter: true });
+    const elapsedMs = Date.now() - t0;
+    assert.ok(elapsedMs < 5000, `expected quoteAll to return within the ~4s zQuoter budget, took ${elapsedMs}ms`);
+    assert.equal(slowResult.zquoter.status, 'timeout');
+    assert.equal(slowResult.best.venue, VENUES.PRECISION, 'the other venues still resolve normally despite zQuoter timing out');
+  }
+  ok('quoteAll caps a stuck zQuoter probe to its own budget instead of blocking the whole quote');
+
   const built = venues.build({ quote: result.best, dir: 'ETH_TO_TAC', account: A1, slippageBps: 50 });
   assert.equal(built.to.toLowerCase(), ZROUTER.toLowerCase());
   assert.equal(built.value, 10n ** 16n);

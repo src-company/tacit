@@ -340,6 +340,21 @@ function rankQuotes(quotes) {
   return quotes.filter((q) => q && q.amountOut > 0n).sort((a, b) => (a.amountOut === b.amountOut ? 0 : a.amountOut > b.amountOut ? -1 : 1));
 }
 
+// zQuoter is a lazy, best-effort probe (see its own comment above) — it has no route for TAC
+// today and only matters if a Uniswap/etc. pool is ever seeded. A slow or misbehaving public RPC
+// answering its heavy-gas raw call can take 15s+ (observed against 1rpc.io), which would otherwise
+// hold back the ENTIRE quote — including the Precision/Tacit AMM venues that are always ready
+// within ~1-2s — for a venue that's usually going to say "no route" anyway. Capped independently
+// so it can never be the slow part of quoteAll; a timeout is just another "didn't answer in time",
+// same as any other zQuoter failure.
+const ZQUOTER_BUDGET_MS = 4000;
+function withTimeout(promise, ms, onTimeout) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(onTimeout()), ms);
+    promise.then((v) => { clearTimeout(timer); resolve(v); }, () => { clearTimeout(timer); resolve(onTimeout()); });
+  });
+}
+
 export function makeEvmTradeVenues({ ethCall, keccak256 } = {}) {
   if (typeof ethCall !== 'function') throw new Error('makeEvmTradeVenues: ethCall(to, data, block?) required');
 
@@ -347,11 +362,18 @@ export function makeEvmTradeVenues({ ethCall, keccak256 } = {}) {
     if (dir !== 'ETH_TO_TAC' && dir !== 'TAC_TO_ETH') throw new Error('dir must be ETH_TO_TAC or TAC_TO_ETH');
     if (typeof amountIn !== 'bigint' || amountIn <= 0n) throw new Error('amountIn must be a positive bigint');
     const dl = deadline ?? BigInt(Math.floor(Date.now() / 1000) + 1800);
+    const zquoterPromise = includeZQuoter
+      ? withTimeout(
+          quoteZQuoter({ ethCall, dir, amountIn, account, deadline: dl }).catch(() => ({ venue: VENUES.ZQUOTER, status: 'error' })),
+          ZQUOTER_BUDGET_MS,
+          () => ({ venue: VENUES.ZQUOTER, status: 'timeout' }),
+        )
+      : Promise.resolve(null);
     const [precision, tacitAmm, boards, zquoter] = await Promise.all([
       quotePrecision({ ethCall, dir, amountIn, account, block }).catch(() => null),
       quoteTacitAmm({ ethCall, dir, amountIn, block }).catch(() => null),
       quoteBoards({ ethCall, dir, block }).catch(() => ({ venue: 'boards', restingOrders: 0 })),
-      includeZQuoter ? quoteZQuoter({ ethCall, dir, amountIn, account, deadline: dl }).catch(() => ({ venue: VENUES.ZQUOTER, status: 'error' })) : Promise.resolve(null),
+      zquoterPromise,
     ]);
     const ranked = rankQuotes([precision, tacitAmm, zquoter && zquoter.status === 'ok' ? zquoter : null]);
     return { dir, amountIn, ranked, best: ranked[0] || null, precision, tacitAmm, boards, zquoter };
