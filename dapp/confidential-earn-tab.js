@@ -10,7 +10,7 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatSpecErr } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatSpecErr, lockedWalletHTML, wireUnlockButton } from './confidential-deployments.js';
 import { formatUnits as fmtUnits } from './confidential-payout.js';
 import { scanHealth, scanHealthHtml } from './confidential-scan-health.js';
 
@@ -152,22 +152,27 @@ function wirePositions(wallet, ux, positions) {
   });
 }
 
-export async function renderEarnTab(wallet) {
+export async function renderEarnTab(wallet, helpers = {}) {
   const body = el('earn-body');
   if (!body) return;
   if (!confidentialPoolReady()) { body.innerHTML = confidentialUnavailableHTML('Earn (LP + farms)'); return; }
   const ux = getUx();
-  if (!wallet || !wallet.priv) {
-    body.innerHTML = '<div class="muted">Unlock a wallet to provide liquidity and farm TAC rewards.</div>';
-    return;
-  }
-  body.innerHTML = `
-    <div class="note-concept" style="margin-bottom:12px;"><b>Earn TAC, shielded.</b> Provide liquidity to a
+  const conceptHtml = `<div class="note-concept" style="margin-bottom:12px;"><b>Earn TAC, shielded.</b> Provide liquidity to a
       confidential pool and farm <span class="eth-word">TAC</span> rewards. Your LP shares sit in a shielded note; the
       liquidity you add shows in the pool's public reserves. Bond and harvest amounts are also public in the
       farm's own events — what stays private is that your notes aren't linked to your identity, not the amounts.
       Start from TAC you claimed, a note bridged from Bitcoin, or raw ETH; one click adds liquidity and bonds
-      the shares into the farm in a single settle.</div>
+      the shares into the farm in a single settle.</div>`;
+  if (!wallet || !wallet.priv) {
+    // Same wallet as the Bitcoin lane — no separate "connect an Ethereum
+    // wallet" step. Keeps the concept blurb visible even locked, so the tab
+    // explains itself instead of reading as a single dead-end sentence.
+    body.innerHTML = conceptHtml + lockedWalletHTML('provide liquidity and farm', 'earn-unlock-btn');
+    wireUnlockButton('earn-unlock-btn', helpers);
+    return;
+  }
+  body.innerHTML = `
+    ${conceptHtml}
     <div id="earn-health"></div>
     <div id="earn-positions"></div>
     <div id="earn-pools" class="muted" style="font-size:12px;">Reading pools…</div>

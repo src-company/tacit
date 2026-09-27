@@ -104,7 +104,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=11a5c5ef">
+<link rel="modulepreload" href="./tacit.js?cb=3cceb089">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -10576,7 +10576,17 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   <div class="section" style="max-width:720px;margin:0 auto;">
     <div class="section-header">Earn <span class="chain-badge eth" style="vertical-align:middle;"><span class="dot"></span>Ethereum</span> <span class="muted" style="font-size:11px;font-weight:400;">provide liquidity · farm TAC</span></div>
     <div class="section-body" style="font-size:13px;" id="earn-body">
-      <div class="muted">Unlock a wallet to provide liquidity and farm TAC rewards.</div>
+      <div class="note-concept" style="margin-bottom:12px;"><b>Earn TAC, shielded.</b> Provide liquidity to a
+        confidential pool and farm <span class="eth-word">TAC</span> rewards. Your LP shares sit in a shielded note; the
+        liquidity you add shows in the pool's public reserves. Bond and harvest amounts are also public in the
+        farm's own events — what stays private is that your notes aren't linked to your identity, not the amounts.
+        Start from TAC you claimed, a note bridged from Bitcoin, or raw ETH; one click adds liquidity and bonds
+        the shares into the farm in a single settle.</div>
+      <div class="tab-locked-empty">
+        <div class="tab-locked-empty-icon">🔒</div>
+        <div class="tab-locked-empty-title">Unlock your wallet to provide liquidity and farm</div>
+        <div class="tab-locked-empty-sub">Same wallet as the Bitcoin lane — one identity, both chains. Your keys stay in this browser.</div>
+      </div>
     </div>
   </div>
 </div>
@@ -11601,7 +11611,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=11a5c5ef"></script>
+<script type="module" src="./tacit.js?cb=3cceb089"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for

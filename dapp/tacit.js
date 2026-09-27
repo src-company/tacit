@@ -46348,6 +46348,14 @@ function _renderCdpTab() {
   });
 }
 
+// Earn (LP + farms) tab — same locked-state "Unlock wallet" shape as _renderCsendTab above.
+function _renderEarnTab() {
+  renderEarnTab(wallet, {
+    unlock: async () => { await ensurePrivkey(); _renderEarnTab(); },
+    isUnlockCancelled,
+  });
+}
+
 function _activateTab(name) {
   name = _canonicalTabName(name);
   try { _setConfidentialNet(currentNetworkName()); } catch {}
@@ -46383,7 +46391,7 @@ function _activateTab(name) {
     try { _renderCsendTab(); } catch (e) { console.error('csend tab', e); }
   }
   if (name === 'cswap') { try { renderSwapTab(wallet); } catch (e) { console.error('cswap tab', e); } }
-  if (name === 'earn') { try { renderEarnTab(wallet); } catch (e) { console.error('earn tab', e); } }
+  if (name === 'earn') { try { _renderEarnTab(); } catch (e) { console.error('earn tab', e); } }
   if (name === 'airdrop') { try { renderAirdropTab(wallet, { eth: ethNamesBridge }); } catch (e) { console.error('airdrop tab', e); } }
   if (name === 'points') { try { renderPointsTab(wallet, { eth: evmTradeLaneWallet }); } catch (e) { console.error('points tab', e); } }
   if (name === 'factory') { try { renderFactoryTab(wallet); } catch (e) { console.error('factory tab', e); } }
