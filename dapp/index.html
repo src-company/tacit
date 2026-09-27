@@ -104,7 +104,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=edf96f79">
+<link rel="modulepreload" href="./tacit.js?cb=3137816b">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -512,17 +512,14 @@ header {
 .net-select:focus { outline: 2px solid var(--orange); outline-offset: 2px; }
 .net-select option { background: var(--ink); color: var(--bg); }
 .net-select:disabled { opacity: 0.65; cursor: not-allowed; }
-/* At-a-glance stakes indicator beside the mainnet/signet select — red for
-   real funds, green for the free test network — set by setupNetworkSelect()
-   (tacit.js). Same "read the state before you read the label" idea as the
-   Send tab's chain logos above; a bare select gives no visual weight to the
-   one bit of state (real money vs. play money) that matters most here. */
-.net-dot {
-  width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
-  background: var(--ink-faint, #999);
-}
-.net-dot.net-dot-mainnet { background: var(--red); box-shadow: 0 0 0 2px rgba(184,52,29,0.18); }
-.net-dot.net-dot-signet { background: var(--green-positive); }
+/* Real Bitcoin mark beside the mainnet/signet select — same glyph as the
+   Send tab's chain logos and the TAC market lane switch, not a new bit of
+   iconography. Full color on mainnet (real funds); faded + desaturated on
+   signet, so "test network" reads from the mark itself rather than a
+   separate status dot competing with the worker-health dot next to it.
+   Class toggled by setupNetworkSelect() (tacit.js). */
+.net-btc-logo { flex-shrink: 0; display: block; transition: opacity 0.15s, filter 0.15s; }
+.net-btc-logo.net-btc-logo-signet { opacity: 0.35; filter: grayscale(1); }
 .net-control { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .net-lock-hint {
   font-size: 9px; letter-spacing: 0.05em; text-transform: none;
@@ -4698,27 +4695,27 @@ body > header .net-select {
   border: 0.5px solid rgba(26,26,26,0.3) !important;
 }
 body > header .net-select {
-  min-width: 92px !important;
-  width: 92px !important;
+  min-width: 84px !important;
+  width: 84px !important;
   height: 28px !important;
   min-height: 28px !important;
-  background-color: var(--ink-strong) !important;
-  color: var(--bg-card) !important;
+  background-color: transparent !important;
+  color: var(--ink) !important;
   font-weight: 500 !important;
   letter-spacing: 0.05em !important;
   line-height: 1 !important;
-  padding: 0 23px 0 11px !important;
-  border: 1px solid var(--ink-strong) !important;
+  padding: 0 20px 0 9px !important;
+  border: 0.5px solid rgba(26,26,26,0.3) !important;
   text-transform: uppercase !important;
-  background-image: linear-gradient(45deg, transparent 50%, var(--bg-card) 50%),
-                    linear-gradient(135deg, var(--bg-card) 50%, transparent 50%) !important;
-  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50% !important;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink) 50%),
+                    linear-gradient(135deg, var(--ink) 50%, transparent 50%) !important;
+  background-position: calc(100% - 12px) 50%, calc(100% - 7px) 50% !important;
   background-size: 5px 5px, 5px 5px !important;
   background-repeat: no-repeat !important;
 }
 body > header .net-select:hover {
-  background-color: #2a2822 !important;
-  border-color: #2a2822 !important;
+  background-color: var(--bg-alt) !important;
+  border-color: rgba(26,26,26,0.5) !important;
 }
 /* Hide the "▸ HOW IT WORKS" + "← All markets" + heavy "MARKET 634
    LISTINGS · ..." status bar — the asset detail page doesn't need
@@ -7595,12 +7592,6 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 }
 .btn-help:hover { background: var(--ink); color: var(--bg); }
 .btn-help:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
-/* The ⌘K opener is two glyphs wide instead of one, so it needs a little
-   more horizontal room than the single-char .btn-help. Same height. */
-.btn-cmd { width: auto; min-width: 38px; padding: 0 6px; font-size: 11px; }
-@media (max-width: 700px) {
-  .btn-cmd { min-width: 46px; font-size: 12px; }
-}
 /* Worker health pill: small colored dot that reflects the worker's
    reachability. Pings every ~20s. Anchored on the FAR LEFT of the
    .net-row — the action buttons (⌘K, bell, ?) cluster to its right
@@ -8311,93 +8302,6 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   .progress-step + .progress-step::before { flex-basis: 8px; margin: 0 2px; }
 }
 
-/* Command palette — same backdrop pattern as welcome/pass/faq, but with
-   a tighter card and a list of selectable items. Only opens on keyboard
-   trigger (⌘K / Ctrl+K / "/"), so there's no on-page button — it's an
-   undiscoverable power-user surface, the help text in #cmd-foot is the
-   only first-time hint. */
-.cmd-palette {
-  position: fixed; inset: 0; z-index: 1030;
-  display: grid; place-items: start center;
-  background: rgba(10, 10, 10, 0.55);
-  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
-  padding: 80px 24px 24px;
-  animation: fadein 0.12s ease-out;
-}
-.cmd-card {
-  width: 100%; max-width: 560px;
-  background: var(--bg); border: 1px solid var(--ink);
-  display: flex; flex-direction: column;
-  max-height: calc(100vh - 120px);
-  box-shadow: 6px 6px 0 var(--ink);
-}
-#cmd-input {
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 14px; padding: 14px 16px;
-  border: 0; border-bottom: 1px solid var(--ink);
-  background: var(--bg); color: var(--ink);
-  width: 100%; outline: none;
-}
-#cmd-input::placeholder {
-  color: var(--ink-faint); font-style: italic;
-  letter-spacing: 0;
-}
-.cmd-list {
-  list-style: none; padding: 6px 0; margin: 0;
-  overflow-y: auto; flex: 1;
-}
-.cmd-item {
-  display: flex; align-items: center;
-  gap: 12px; padding: 9px 16px;
-  cursor: pointer;
-  border-left: 3px solid transparent;
-}
-.cmd-item:hover, .cmd-item.active {
-  background: var(--bg-alt);
-  border-left-color: var(--ink);
-}
-.cmd-item-title { font-size: 13px; flex: 1; min-width: 0; }
-.cmd-item-title strong { font-weight: 600; }
-.cmd-item-hint {
-  font-size: 10px; color: var(--ink-mid);
-  text-transform: uppercase; letter-spacing: 0.06em;
-  white-space: nowrap;
-}
-.cmd-item-kbd {
-  font-size: 9px; color: var(--ink-mid);
-  border: 1px solid var(--ink-faint);
-  padding: 1px 5px; min-width: 18px;
-  text-align: center; letter-spacing: 0;
-  text-transform: none;
-  font-family: 'IBM Plex Mono', monospace;
-}
-.cmd-empty {
-  padding: 20px; text-align: center;
-  color: var(--ink-mid); font-style: italic;
-  font-family: var(--serif);
-  font-size: 16px;
-  border: 1px dashed var(--ink-faint);
-}
-.cmd-foot {
-  border-top: 1px dashed var(--ink-faint);
-  padding: 8px 16px;
-  font-size: 9px; letter-spacing: 0.08em;
-  text-transform: uppercase; color: var(--ink-mid);
-}
-.cmd-foot-key {
-  border: 1px solid var(--ink-faint);
-  padding: 0 4px; margin: 0 1px;
-  font-family: 'IBM Plex Mono', monospace;
-  letter-spacing: 0; text-transform: none;
-  color: var(--ink);
-}
-@media (max-width: 700px) {
-  .cmd-palette { padding: 40px 12px 12px; }
-  .cmd-card { box-shadow: 3px 3px 0 var(--ink); }
-  #cmd-input { font-size: 16px; padding: 12px 14px; }
-  .cmd-item { padding: 10px 14px; }
-}
-
 /* Mobile tuning for the FAQ modal + help button. Bumps the "?" target
    closer to the 44px touch-target floor without overpowering the header,
    reduces backdrop padding so the card gets more horizontal breathing
@@ -8867,15 +8771,10 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
   <div class="net-control">
     <div class="net-row">
-      <!-- Command-palette opener. Same shape as the FAQ button so the pair
-           reads as a coherent header utility row. Desktop users know the
-           keyboard shortcut (⌘K / Ctrl+K / `/`); the button is the only
-           reachable entry on mobile, where there's no keyboard for those.
-           setupCommandPalette() wires the click. -->
       <!-- Worker health pill: pings WORKER_BASE every ~20s and colors a dot
            green / amber / red so users can tell at a glance whether the
            orderbook relay is live. Tooltip explains the state. Anchored
-           on the far left so the action-button cluster (⌘K, bell, ?) reads
+           on the far left so the action-button cluster (bell, ?) reads
            as one tight group on the right, with the network select. -->
       <span id="worker-health" class="worker-health" data-state="loading" title="Worker status — checking…" role="status" aria-live="polite">●</span>
       <!-- In-flight trades pill. Live count of Bitcoin txs broadcast by
@@ -8885,9 +8784,8 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
            commits flip the color to amber so the user knows they need
            to act, not just wait. Updated by _renderInflightPill(). -->
       <span id="inflight-pill" class="inflight-pill" role="button" tabindex="0" aria-label="Trades in flight"></span>
-      <!-- Action cluster: keyboard-equivalent + click-equivalent user actions.
-           Grouped tight with the normal .net-row gap so they read as a unit. -->
-      <button id="btn-cmd" class="btn-help btn-cmd" type="button" aria-label="Open command palette" title="Open command palette (⌘K)">⌘K</button>
+      <!-- Action cluster: click-equivalent user actions. Grouped tight with
+           the normal .net-row gap so they read as a unit. -->
       <!-- Bell: opens the notification log (notif-log-modal). Inline SVG so
            the glyph stays monochrome and matches the boxed ⌘K / ? buttons
            instead of rendering as a colorful system emoji. The unread-count
@@ -8901,7 +8799,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
         </svg>
       </button>
       <button id="btn-faq" class="btn-help" type="button" aria-label="Help / FAQ" title="Frequently asked questions">?</button>
-      <span id="net-dot" class="net-dot" aria-hidden="true"></span>
+      <span id="net-btc-logo" class="net-btc-logo" aria-hidden="true"><svg viewBox="0 0 32 32" width="16" height="16" style="border-radius:50%;display:block;"><circle cx="16" cy="16" r="16" fill="#f7931a"/><path fill="#fff" d="M21.8 14.6c.3-2-1.2-3-3.3-3.7l.7-2.8-1.7-.4-.7 2.7c-.5-.1-.9-.2-1.4-.3l.7-2.7-1.7-.4-.7 2.8c-.4-.1-.7-.2-1.1-.3l-2.3-.6-.4 1.8s1.2.3 1.2.3c.7.2.8.6.8.9l-.8 3.2c0 .1.1.1.2.2l-.2-.1-1.1 4.5c-.1.2-.3.5-.7.4 0 .1-1.2-.3-1.2-.3l-.8 1.9 2.2.5c.4.1.8.2 1.2.3l-.7 2.8 1.7.4.7-2.8c.5.1.9.2 1.3.3l-.7 2.8 1.7.4.7-2.8c2.9.5 5.1.3 6-2.3.7-2.1-.1-3.2-1.5-4 1.1-.2 1.9-1 2.1-2.4Zm-3.7 5.3c-.5 2-3.9 1-5 .6l.9-3.7c1.1.3 4.6.8 4.1 3Zm.5-5.4c-.5 1.8-3.4.9-4.3.6l.8-3.4c.9.2 3.9.7 3.5 2.8Z"/></svg></span>
       <select class="net-select" id="net-select" aria-label="Network">
         <option value="mainnet">mainnet</option>
         <option value="signet">signet</option>
@@ -11583,15 +11481,6 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<!--
-  Command palette. Opens on ⌘K / Ctrl+K (or "/" outside an input). Filters
-  the available actions by typed substring; ↑↓ moves selection, Enter runs,
-  Esc closes. Items are wired in tacit.js → buildCommandPaletteItems(),
-  which delegates each action back to the existing button click handlers
-  (btn-refresh, btn-rescan, etc.) so the palette never duplicates business
-  logic — it's just a fast keyboard surface over the same actions you'd
-  reach by clicking around.
--->
 <div id="discord-gate-modal" class="pass-modal" role="dialog" aria-modal="true" aria-labelledby="dgate-title" style="display:none;">
   <div class="pass-card" style="max-width:420px;">
     <div class="pass-title" id="dgate-title">discord verification</div>
@@ -11602,16 +11491,6 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
     <div class="pass-actions">
       <button type="button" id="dgate-close-btn">close</button>
       <button type="button" id="dgate-verify-btn" class="primary" style="display:none;">verify</button>
-    </div>
-  </div>
-</div>
-
-<div id="cmd-palette" class="cmd-palette" role="dialog" aria-modal="true" aria-labelledby="cmd-input" style="display:none;">
-  <div class="cmd-card">
-    <input id="cmd-input" type="text" autocomplete="off" spellcheck="false" placeholder="type to search · ↑↓ navigate · ↵ run · esc close">
-    <ul id="cmd-list" class="cmd-list" role="listbox"></ul>
-    <div class="cmd-foot">
-      <span class="cmd-foot-key">⌘K</span> open · <span class="cmd-foot-key">/</span> focus search · <span class="cmd-foot-key">esc</span> close
     </div>
   </div>
 </div>
@@ -11697,7 +11576,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=edf96f79"></script>
+<script type="module" src="./tacit.js?cb=3137816b"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for

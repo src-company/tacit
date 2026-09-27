@@ -92020,15 +92020,15 @@ function setupNetworkSelect() {
   const sel = $('#net-select');
   if (!sel) return;
   sel.value = NET.name;
-  const dot = $('#net-dot');
-  if (dot) dot.className = 'net-dot net-dot-' + NET.name;
+  const btcLogo = $('#net-btc-logo');
+  if (btcLogo) btcLogo.classList.toggle('net-btc-logo-signet', NET.name === 'signet');
   const dh = $('#discover-header-title');
   if (dh) dh.textContent = `assets · ${NET.name}`;
   // Mainnet banner: real BTC at stake, but show only until the user has
   // acknowledged ("× Acknowledge and hide" button). Once dismissed,
   // MAINNET_OK_KEY persists the ack and the banner stays hidden for that
-  // browser. The red/green dot beside the network selector is the
-  // lighter-touch indicator that remains.
+  // browser. The faded Bitcoin mark beside the network selector on signet is
+  // the lighter-touch indicator that remains.
   const banner = $('#mainnet-banner');
   const mainnetAcked = localStorage.getItem(MAINNET_OK_KEY) === '1';
   if (banner) {
@@ -92242,233 +92242,6 @@ function setupProtocolToc() {
     const target = document.getElementById(a.getAttribute('href').slice(1));
     if (target && target.tagName === 'DETAILS') target.open = true;
   });
-}
-
-// ============== COMMAND PALETTE ==============
-// ⌘K / Ctrl+K (or `/` outside an input) opens a keyboard-first action
-// surface. Items are built dynamically per-open so visibility reflects
-// current state — "Disconnect external wallet" only appears when one is
-// connected, "Manual faucet" only on signet, etc. Each command's run()
-// delegates to the same handler the on-screen button would invoke (a
-// programmatic .click() in most cases) so the palette never duplicates
-// business logic. Pure additive — closing the palette restores focus to
-// whatever was focused before; tabbing inside the palette stays inside.
-function buildCommandPaletteItems() {
-  const items = [];
-  const tabs = [
-    { id: 'wallet', title: 'Wallet', hint: 'address · balance · backup' },
-    { id: 'holdings', title: 'Holdings', hint: 'your confidential assets' },
-    { id: 'transfer', title: 'Bitcoin send', hint: 'assets or sats' },
-    ...(_tabLiveOnNet('csend') ? [{ id: 'csend', title: 'EVM pool send', hint: 'ETH · USDC · tacBTC · tacUSD' }] : []),
-    { id: 'discover', title: 'Discover', hint: 'browse all assets' },
-    { id: 'market', title: 'Market', hint: 'open listings' },
-    { id: 'etch', title: 'Etch', hint: 'mint a new asset' },
-    { id: 'drops', title: 'Drops', hint: 'airdrop tooling' },
-    { id: 'about', title: 'Protocol', hint: 'spec primer' },
-  ];
-  for (const t of tabs) {
-    items.push({
-      title: `Go to <strong>${t.title}</strong>`,
-      hint: t.hint,
-      run: () => document.querySelector(`.tab[data-tab="${t.id}"]`)?.click(),
-    });
-  }
-  // Wallet actions — call .click() on the existing buttons so handler logic
-  // stays single-sourced. Skip when the button is missing or hidden so the
-  // palette doesn't surface unreachable actions.
-  const clickable = (id) => {
-    const el = document.getElementById(id);
-    if (!el) return null;
-    if (el.disabled) return null;
-    if (el.offsetParent === null) return null; // hidden
-    return el;
-  };
-  const cmd = (id, title, hint) => {
-    const el = clickable(id);
-    if (!el) return;
-    items.push({ title, hint, run: () => el.click() });
-  };
-  cmd('btn-refresh', 'Refresh <strong>wallet</strong>', 'pull balance + tip + fee');
-  cmd('btn-rescan', 'Rescan <strong>holdings</strong>', 'walk UTXOs again');
-  cmd('btn-lock', 'Lock', 'forget privkey from memory');
-  cmd('btn-faucet', 'Manual <strong>faucet</strong>', 'open signet faucet');
-  cmd('btn-drip', 'Demo <strong>drip</strong>', 'one-tap signet sats');
-  cmd('btn-export', 'Export <strong>key</strong>', 'back up the privkey');
-  cmd('btn-import', 'Import <strong>key</strong>', 'restore from backup');
-  cmd('btn-regen', 'New <strong>wallet</strong>', 'wipe and regenerate');
-  cmd('btn-forget', 'Forget <strong>wallet</strong>', 'erase from this browser · welcome flow');
-  cmd('btn-import-share', 'Import <strong>share-link</strong>', 'received from a sender');
-  cmd('btn-petch-broadcast', 'Deploy <strong>public-mint asset</strong>', 'fair launch · T_PETCH');
-  cmd('btn-take-atomic', 'Take <strong>atomic offer</strong>', 'paste an offer link');
-  cmd('btn-faq', 'Open <strong>FAQ</strong>', 'short help');
-  // Copy address + pubkey directly — small but heavily-used.
-  const addrText = (document.getElementById('w-address-text')?.textContent || '').trim();
-  const pubText = (document.getElementById('w-pubkey-text')?.textContent || '').trim();
-  if (addrText && addrText !== '—') {
-    items.push({
-      title: `Copy <strong>address</strong>`,
-      hint: shorten(addrText, 6),
-      run: () => navigator.clipboard?.writeText(addrText).then(() => toast('Address copied', 'success', 1500)),
-    });
-  }
-  if (pubText && pubText !== '—') {
-    items.push({
-      title: `Copy <strong>public key</strong>`,
-      hint: shorten(pubText, 6),
-      run: () => navigator.clipboard?.writeText(pubText).then(() => toast('Pubkey copied', 'success', 1500)),
-    });
-  }
-  // Network switch — only the option you're not currently on. The select's
-  // change handler runs through the same checks as user interaction.
-  const netSel = document.getElementById('net-select');
-  if (netSel && !netSel.disabled) {
-    const cur = netSel.value;
-    for (const n of ['mainnet', 'signet']) {
-      if (n === cur) continue;
-      items.push({
-        title: `Switch to <strong>${n}</strong>`,
-        hint: 'reload required',
-        run: () => { netSel.value = n; netSel.dispatchEvent(new Event('change', { bubbles: true })); },
-      });
-    }
-  }
-  // Discover-tab focus shortcut — handy when the palette opens via "/".
-  const discoverTab = document.querySelector('.tab[data-tab="discover"]');
-  if (discoverTab) {
-    items.push({
-      title: 'Focus <strong>discover filter</strong>',
-      hint: 'jump to search',
-      run: () => {
-        discoverTab.click();
-        setTimeout(() => document.getElementById('discover-filter')?.focus(), 80);
-      },
-    });
-  }
-  return items;
-}
-
-function setupCommandPalette() {
-  // A farm/BTC-call action can bare-import './tacit.js' (see the comment on
-  // _wireEvmCerOnce above), evaluating a second copy of this module — and
-  // that copy's own init() calls setupCommandPalette() again. Without this
-  // guard, #btn-cmd ends up with two toggle listeners: the first click's
-  // event runs both, opening the palette and then immediately closing it
-  // again in the same tick. globalThis is shared across module copies
-  // (unlike this function's own state), so it's the one place a flag
-  // actually survives across them — same idiom as _wireEvmCerOnce.
-  if (globalThis.__tacitCmdPaletteWired) return;
-  globalThis.__tacitCmdPaletteWired = true;
-  const palette = document.getElementById('cmd-palette');
-  const input = document.getElementById('cmd-input');
-  const list = document.getElementById('cmd-list');
-  if (!palette || !input || !list) return;
-  let items = [];
-  let filtered = [];
-  let activeIdx = 0;
-  let restoreFocusTo = null;
-
-  const renderList = () => {
-    if (!filtered.length) {
-      list.innerHTML = `<li class="cmd-empty">no commands match</li>`;
-      return;
-    }
-    activeIdx = Math.max(0, Math.min(activeIdx, filtered.length - 1));
-    list.innerHTML = filtered.map((c, i) => `
-      <li class="cmd-item${i === activeIdx ? ' active' : ''}" data-i="${i}" role="option" aria-selected="${i === activeIdx}">
-        <span class="cmd-item-title">${c.title}</span>
-        ${c.hint ? `<span class="cmd-item-hint">${escapeHtml(c.hint)}</span>` : ''}
-      </li>
-    `).join('');
-  };
-
-  const filter = (q) => {
-    const ql = q.trim().toLowerCase();
-    if (!ql) { filtered = items.slice(); return; }
-    // Match on stripped title (drop <strong> tags) + hint. Cheap substring;
-    // command sets are tiny so fuzzy ranking doesn't pay off here.
-    filtered = items.filter(c => {
-      const plain = (c.title + ' ' + (c.hint || '')).replace(/<[^>]+>/g, '').toLowerCase();
-      return plain.includes(ql);
-    });
-  };
-
-  const open = () => {
-    if (palette.style.display !== 'none') return;
-    restoreFocusTo = document.activeElement;
-    items = buildCommandPaletteItems();
-    filtered = items.slice();
-    activeIdx = 0;
-    input.value = '';
-    palette.style.display = 'grid';
-    renderList();
-    requestAnimationFrame(() => input.focus());
-  };
-
-  const close = () => {
-    if (palette.style.display === 'none') return;
-    palette.style.display = 'none';
-    if (restoreFocusTo && typeof restoreFocusTo.focus === 'function') {
-      restoreFocusTo.focus();
-    }
-    restoreFocusTo = null;
-  };
-
-  const exec = (i) => {
-    if (!filtered[i]) return;
-    const fn = filtered[i].run;
-    close();
-    // Defer so the palette's hide doesn't fight the action's own focus
-    // moves (e.g. opening another modal). One frame is plenty.
-    requestAnimationFrame(() => { try { fn(); } catch (e) { console.error('cmd-palette:', e); } });
-  };
-
-  input.addEventListener('input', () => { filter(input.value); activeIdx = 0; renderList(); });
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); activeIdx++; renderList(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); activeIdx--; renderList(); }
-    else if (e.key === 'Enter') { e.preventDefault(); exec(activeIdx); }
-    else if (e.key === 'Escape') { e.preventDefault(); close(); }
-  });
-  list.addEventListener('mousemove', (e) => {
-    const li = e.target.closest('.cmd-item');
-    if (!li) return;
-    const i = Number(li.dataset.i);
-    if (i !== activeIdx) { activeIdx = i; renderList(); }
-  });
-  list.addEventListener('click', (e) => {
-    const li = e.target.closest('.cmd-item');
-    if (!li) return;
-    exec(Number(li.dataset.i));
-  });
-  palette.addEventListener('click', (e) => { if (e.target === palette) close(); });
-
-  // Header opener button — the only entry point on touch devices where the
-  // keyboard shortcut isn't reachable. Toggles like the keyboard does.
-  const headerBtn = document.getElementById('btn-cmd');
-  if (headerBtn) {
-    headerBtn.addEventListener('click', () => {
-      palette.style.display === 'none' ? open() : close();
-    });
-  }
-
-  // Global shortcut — listen on document with capture so an editable
-  // textarea doesn't swallow ⌘K. `/` only triggers when the active element
-  // isn't text-entering, so it doesn't fight typing. The palette can also
-  // be invoked while another modal is open (welcome / pass / faq); they
-  // stack via z-index and Esc closes the topmost.
-  document.addEventListener('keydown', (e) => {
-    const isInput = e.target instanceof HTMLElement
-      && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
-    if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      palette.style.display === 'none' ? open() : close();
-      return;
-    }
-    if (e.key === '/' && !isInput && palette.style.display === 'none') {
-      e.preventDefault();
-      open();
-    }
-  }, true);
 }
 
 // Welcome modal: shown on genuine first load to give the user a real choice
@@ -93070,7 +92843,6 @@ async function init() {
   try { renderEvmPoolCeremony(); } catch {}
   setupFaqModal();
   setupProtocolToc();
-  setupCommandPalette();
   setupWalletButtons();
   // Fire the candidate-mirror CORS probe in the background. Doesn't block
   // init — the rotation works fine with just the two known-good bases while
