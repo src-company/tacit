@@ -100,3 +100,6 @@ scratchpad/
 # local deploy tooling (not published)
 tools/reflection-genesis-seed.mjs
 tools/.regen/
+
+# live-check wallets (private keys)
+tools/.live-check-*.json

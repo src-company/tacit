@@ -628,6 +628,15 @@ await test('a sweep charges its cost, and the cap only when the cost is higher',
   assert.equal(s2.chain.sent.length, 0, 'cost 600 is above the 500 cap: not swept');
 });
 
+await test('a priced token\'s sweep charges its gas cost, not the relay minimum', async () => {
+  const s = setup({ cfg: { minFees: new Map([[TOKEN.toLowerCase(), 10n ** 9n]]), rates: new Map([[TOKEN.toLowerCase(), 10n ** 18n]]), marginBps: 0n } });
+  const box = await addReceive(s, 50);
+  s.chain.fund(TOKEN, box, 200_000_000n);
+  await s.keeper.tick();
+  assert.equal(s.chain.sent.length, 1, 'swept although the 1,000,000 cap is below the relay minimum');
+  assert.equal(await s.chain.balanceOf(TOKEN, KEEPER), s.cfg.sweepGas, 'charged its cost (gas at price 1), not the cap');
+});
+
 await test('a receive box whose capped fee does not cover gas waits for more funds; no proof is made', async () => {
   const s = setup();
   const box = await addReceive(s, 50);

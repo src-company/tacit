@@ -15,15 +15,15 @@ import { safeErr } from './safe-err.js';
 const STALE = new Set(['StaleRoot', 'WrongInsertionIndex', 'UnknownMembershipRoot']);
 const E18 = 10n ** 18n;
 
-// Whether `reward` (in `token` base units) pays for `gas` at `gasPrice`, with the margin on top. A token with
-// neither a minimum nor a price configured is never completed.
-export function coverCheck({ reward, token, gas, gasPrice, cfg }) {
+// Whether `reward` (in `token` base units) pays for `gas` at `gasPrice`, with the margin on top, and meets the
+// token's minimum unless `floor` is false. A token with neither a minimum nor a price configured is never completed.
+export function coverCheck({ reward, token, gas, gasPrice, cfg, floor = true }) {
   const t = token.toLowerCase();
   const min = cfg.minFees.get(t);
   const rate = cfg.rates.get(t);
   if (min === undefined && rate === undefined) return { ok: false, reason: `no minimum fee or price configured for ${t}` };
   if (BigInt(gas) > cfg.gasCap) return { ok: false, reason: `needs ${gas} gas, over the ${cfg.gasCap} cap` };
-  if (min !== undefined && BigInt(reward) < min) return { ok: false, reason: `reward ${reward} is below the ${min} minimum` };
+  if (floor && min !== undefined && BigInt(reward) < min) return { ok: false, reason: `reward ${reward} is below the ${min} minimum` };
   if (rate !== undefined) {
     const cost = BigInt(gas) * BigInt(gasPrice);
     const need = cost + (cost * cfg.marginBps) / 10000n;
@@ -34,10 +34,10 @@ export function coverCheck({ reward, token, gas, gasPrice, cfg }) {
   return { ok: true, gas: limit > cfg.gasCap ? cfg.gasCap : limit };
 }
 
-// The smallest fee, in `token` base units, that coverCheck accepts for `gas` at `gasPrice` (at least the floor).
-export function quoteFee({ token, gas, gasPrice, cfg }) {
+// The smallest fee, in `token` base units, that coverCheck accepts for `gas` at `gasPrice` (with the same `floor`).
+export function quoteFee({ token, gas, gasPrice, cfg, floor = true }) {
   const t = token.toLowerCase();
-  const min = cfg.minFees.get(t) ?? 0n;
+  const min = (floor && cfg.minFees.get(t)) || 0n;
   const rate = cfg.rates.get(t);
   if (rate === undefined) return min;
   const cost = BigInt(gas) * BigInt(gasPrice);
@@ -146,16 +146,17 @@ export function createKeeper({
     return soon(r, t);
   }
 
-  // Sweep the whole balance for what the sweep costs (gas with the margin, at least the floor), never more than the
-  // box's cap. Another sweep landing first changes the box's counter (BadIntent) or balance: re-read and re-prove.
+  // Sweep the whole balance for what the sweep costs (gas with the margin), never more than the box's cap. The
+  // relay minimum does not apply: the box's owner set its cap, and a priced token's cost check still holds. Another sweep landing first changes the box's counter (BadIntent) or balance: re-read and re-prove.
   async function sweep(r, t) {
     const { npk, feeBps } = r.intent;
     const bal = BigInt(await chain.balanceOf(r.token, r.box));
     if (bal === 0n) return { idle: true };
     const gasPrice = await chain.gasPrice();
-    const cost = quoteFee({ token: r.token, gas: cfg.sweepGas, gasPrice, cfg });
+    const floor = !cfg.rates.has(r.token.toLowerCase());
+    const cost = quoteFee({ token: r.token, gas: cfg.sweepGas, gasPrice, cfg, floor });
     const feeFor = (amount) => { const cap = (amount * BigInt(feeBps)) / 10_000n; return cost < cap ? cost : cap; };
-    const pre = coverCheck({ reward: feeFor(bal), token: r.token, gas: cfg.sweepGas, gasPrice, cfg });
+    const pre = coverCheck({ reward: feeFor(bal), token: r.token, gas: cfg.sweepGas, gasPrice, cfg, floor });
     if (!pre.ok) return { skipped: pre.reason };
     for (let round = 0; round <= cfg.staleRetries; round++) {
       const [{ leaves, root }, n] = await Promise.all([leafSync.sync(), chain.receiveCount(r.box)]);
@@ -178,7 +179,7 @@ export function createKeeper({
         if (STALE.has(name) || name === 'BadIntent') { log(`receive ${r.box}: raced (${name}), re-proving`); continue; }
         return { failed: name || safeErr(e) };
       }
-      const cov = coverCheck({ reward: f, token: r.token, gas: est, gasPrice: await chain.gasPrice(), cfg });
+      const cov = coverCheck({ reward: f, token: r.token, gas: est, gasPrice: await chain.gasPrice(), cfg, floor });
       if (!cov.ok) return { skipped: cov.reason };
       let out;
       try { out = await submit(r, 'sweepReceive', args, cov.gas, t); }
