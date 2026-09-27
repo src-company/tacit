@@ -570,7 +570,7 @@ const V4_SWAP_EVENT = {
 // WETH), a V4 native-ETH swap on Base/Robinhood still isn't discovered at all yet, verification aside. Closing
 // that needs its own getLogs-based discovery signal (a PoolManager Swap with sender == zRouter, cheap on any
 // chain since it needs no block bodies) — a real follow-up, not something this change closes for L2s.
-async function zRouterVerifiedSwapAmount(client, chainId, wethAddr, txHash, zRouter) {
+async function zRouterVerifiedSwapAmount(client, chainId, wethAddr, txHash, zRouter, blockTime) {
   const [receipt, tx] = await Promise.all([
     client.getTransactionReceipt({ hash: txHash }),
     client.getTransaction({ hash: txHash }),
@@ -624,15 +624,26 @@ async function zRouterVerifiedSwapAmount(client, chainId, wethAddr, txHash, zRou
       // own junk/junk pool, swap an amount that happens to equal tx.value, and separately sweep the real ETH
       // straight back out untouched (a second zfi finding on this same check). Confirm real native ETH
       // actually reached PoolManager: it can only receive native ETH as call value on zRouter's own settle()
-      // call, never for a token leg, so this must show an internal transfer of exactly that amount. An
-      // unindexed result throws (see internalEthTransferSum) rather than reading as "no transfer" — a real
-      // swap losing its credit to indexing lag is an acceptable retry-next-cycle cost; crediting a junk-pool
-      // swap because the check couldn't run yet is not.
+      // call, never for a token leg, so this must show an internal transfer of exactly that amount.
+      //
+      // Bounded the same way as the refund check, but failing the OPPOSITE direction: a lookup failure here
+      // (unindexed, or Blockscout itself erroring — a zfi review finding: Robinhood's Blockscout served an
+      // HTML page instead of JSON on one real request) retries the whole cycle while the candidate is fresh,
+      // same as before. Past a 30-minute grace window from the candidate's own block, this leg is instead
+      // treated as UNVERIFIED — contributes nothing, logged — rather than credited on a guess. The refund
+      // check's fallback (no refund, credit gross) is safe because the swap itself is already confirmed real
+      // by then; here the lookup failure means the swap was never confirmed real in the first place, so
+      // "don't credit" is the only safe default once retrying stops being worth it.
       const apiBase = CFG.evmPoolExplorerApis[chainId];
       if (!apiBase) continue;
-      const { sum: settled, indexed } = await internalEthTransferSum(apiBase, txHash, zRouter, V4_POOL_MANAGER[chainId]);
-      if (!indexed) throw new Error(`internal-transactions not yet indexed for ${txHash}`);
-      if (settled >= paidIn) total += paidIn;
+      try {
+        const { sum: settled, indexed } = await internalEthTransferSum(apiBase, txHash, zRouter, V4_POOL_MANAGER[chainId]);
+        if (!indexed) throw new Error(`internal-transactions not yet indexed for ${txHash}`);
+        if (settled >= paidIn) total += paidIn;
+      } catch (err) {
+        if (Date.now() / 1000 - blockTime < 1800) throw err;
+        log(`zRouter V4 settlement check still unresolved 30+ min after block time for ${txHash}, crediting nothing for that leg:`, err?.message || err);
+      }
     }
   }
   return total;
@@ -829,7 +840,7 @@ async function scanZRouterCycle(store, { chainId, client, wethAddr, signal1 = tr
   // below, not just an optimization.
   const verifiedCandidates = [];
   for (const [txHash, candidate] of byTxHash.entries()) {
-    const verified = await zRouterVerifiedSwapAmount(client, chainId, wethAddr, txHash, ADDR.zRouter);
+    const verified = await zRouterVerifiedSwapAmount(client, chainId, wethAddr, txHash, ADDR.zRouter, candidate.blockTime);
     if (verified <= 0n) continue;
     let amountWei = verified < candidate.amountWei ? verified : candidate.amountWei;
     // Net a swapV2/swapV3 refund only now that a real swap is confirmed — mainnet Signal 1 only, the one
