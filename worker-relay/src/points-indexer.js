@@ -624,11 +624,15 @@ async function zRouterVerifiedSwapAmount(client, chainId, wethAddr, txHash, zRou
       // own junk/junk pool, swap an amount that happens to equal tx.value, and separately sweep the real ETH
       // straight back out untouched (a second zfi finding on this same check). Confirm real native ETH
       // actually reached PoolManager: it can only receive native ETH as call value on zRouter's own settle()
-      // call, never for a token leg, so this must show an internal transfer of exactly that amount.
+      // call, never for a token leg, so this must show an internal transfer of exactly that amount. An
+      // unindexed result throws (see internalEthTransferSum) rather than reading as "no transfer" — a real
+      // swap losing its credit to indexing lag is an acceptable retry-next-cycle cost; crediting a junk-pool
+      // swap because the check couldn't run yet is not.
       const apiBase = CFG.evmPoolExplorerApis[chainId];
-      if (apiBase && await internalEthTransferSum(apiBase, txHash, zRouter, V4_POOL_MANAGER[chainId]) >= paidIn) {
-        total += paidIn;
-      }
+      if (!apiBase) continue;
+      const { sum: settled, indexed } = await internalEthTransferSum(apiBase, txHash, zRouter, V4_POOL_MANAGER[chainId]);
+      if (!indexed) throw new Error(`internal-transactions not yet indexed for ${txHash}`);
+      if (settled >= paidIn) total += paidIn;
     }
   }
   return total;
@@ -676,26 +680,41 @@ const ZROUTER_CHAINS = [
 // both replays cover, so it can never throw) rather than the swap's own chain-local block: with a multi-hour
 // trailing window, the skew between "at the swap" and "now" is immaterial.
 
-// Sums any internal ETH transfer from zRouter straight back to `sender` within `txHash` — swapV2/swapV3's
-// refund of unused msg.value above the actual amountIn. Only ever called for mainnet Signal-1 matches (the
-// only chain/signal that credits raw tx.value at all), via Blockscout's per-tx internal-transactions endpoint
-// (item-paginated, not block-range, so it's cheap regardless of how large the refund search window is).
-// Throws rather than fails open on a lookup error: crediting the unnetted gross value is exactly the
-// overcounting this exists to prevent, so a transient failure here should retry next cycle, not silently
-// trust the larger number.
+// Sums any internal ETH transfer from `from` to `to` within `txHash`, walking every page (Blockscout pages
+// internal transactions at 50 — a busy multicall can exceed that). Also reports whether the result can be
+// trusted at all: Blockscout answers an empty list both for "genuinely no internal transfers" and for "this
+// tx isn't indexed yet", and its indexing can lag behind this scan's own confirmation window (a zfi review
+// finding). Any zRouter call that actually moved value produces at least one internal transaction, so an
+// empty list is never a confirmed zero — callers must treat `indexed: false` as "retry later, not now",
+// never as zero. Trusting an unindexed empty list as zero would have reopened the refund-overcounting fix
+// this same helper backs: an in-flight refund reading as "no refund" credits the unnetted gross value again.
 async function internalEthTransferSum(apiBase, txHash, from, to) {
-  const data = await explorerGet(`${apiBase}/transactions/${txHash}/internal-transactions`);
+  const items = [];
+  let params = '';
+  for (let page = 0; page < 20; page++) {
+    const data = await explorerGet(`${apiBase}/transactions/${txHash}/internal-transactions${params}`);
+    items.push(...(data.items || []));
+    if (!data.next_page_params) break;
+    params = '?' + new URLSearchParams(
+      Object.fromEntries(Object.entries(data.next_page_params).map(([k, v]) => [k, String(v)])),
+    ).toString();
+  }
   let sum = 0n;
-  for (const item of data.items || []) {
+  for (const item of items) {
     if (item.success === false) continue;
     const itemFrom = item.from && String(item.from.hash).toLowerCase();
     const itemTo = item.to && String(item.to.hash).toLowerCase();
     if (itemFrom === from.toLowerCase() && itemTo === to.toLowerCase()) sum += BigInt(item.value || 0);
   }
-  return sum;
+  return { sum, indexed: items.length > 0 };
 }
+// Throws rather than fails open on an unindexed or lookup-failed result: crediting the unnetted gross value
+// is exactly the overcounting this exists to prevent, so an ambiguous read should retry next cycle, not
+// silently trust the larger number.
 async function zRouterRefundTo(txHash, sender) {
-  return internalEthTransferSum(PP_BLOCKSCOUT_BASE, txHash, ADDR.zRouter, sender);
+  const { sum, indexed } = await internalEthTransferSum(PP_BLOCKSCOUT_BASE, txHash, ADDR.zRouter, sender);
+  if (!indexed) throw new Error(`internal-transactions not yet indexed for ${txHash}`);
+  return sum;
 }
 async function scanZRouterCycle(store, { chainId, client, wethAddr, signal1 = true }) {
   const cursorBlock = store.loadZrouterCursor(chainId);
