@@ -1,0 +1,101 @@
+{
+  "name": "Secret Sats EVM pool",
+  "commit": "4da68246",
+  "asset": "0x0000000000000000000000000000000000000000",
+  "verifierInitCodeHash": "0xb29f687aa85abb2c28ed7702b0364bc610bb76eb4ddd9583c5d7b453f2c4128d",
+  "verifierSourceSha256": "78d6a432bf95502b0c3f1ffba041970014d054b998b48ebdeb02dc757cf0c0cb",
+  "ceremony": {
+    "circuit": "dapp/circuits/evm-pool/transact.circom",
+    "circuitHash": "b0a246d1790151c722e42ccfa89450cb96c7f5a9f4b70a2162b7d9fc79b6ddb3",
+    "ptau": "powersOfTau28_hez_final_16.ptau",
+    "contributions": 176,
+    "beaconBlockHeight": 968840,
+    "beaconBlockHash": "000000000000000000019b1eec61f35a8da876de173e61f8a32109986182c033",
+    "beaconIterationsExp": 10,
+    "vkHash": "43d11e6e1607e1ea7f3980c9bca91beed95e2e80d173d0873189e99d402e5757",
+    "zkeyCid": "bafybeia6c36bgww2svm6jfg6nl2pk337prc7t6gcfsvhuo5sufqjpi7z4a",
+    "zkeySha256": "40758061a0786fb0bdc5e5dec4c354bbf85fc106f7412716e25e781af4e79c4b",
+    "wasmCid": "bafybeia7b7euebs6dr7muhhvwf4yh472ftxodikyecxubipam4d7o7sxta",
+    "vkCid": "bafkreiht4nvma2wvsquaao4qvpmaxadrqc5n5mdmhfqmkcygb26ftnrgwm",
+    "bundleCid": "bafybeia4yvn2zoggvgpjwg5vpwpt6aivjbcm6tgzxoxsukao2nm5yyypfy",
+    "artifacts": "https://tacit.finance/evm-pool/"
+  },
+  "receiveFeeBps": 25,
+  "chains": {
+    "1": {
+      "pool": "0x000000c2A20657CE25f2Ba99737933D031AFBEE9",
+      "router": "0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5",
+      "verifier": "0x000000b1c0e84CEc8AdF8278B90c4d6400DfB153",
+      "poseidonT5": "0x555333f3f677Ca3930Bf7c56ffc75144c51D9767",
+      "createX": "0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed",
+      "deployer": "0x68575B073DE49a94e3E3ACf6F3A0d6E3b66267C7",
+      "zRouter": "0x000000000000FB114709235f1ccBFfb925F600e4",
+      "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+      "network": "ethereum",
+      "v1": "0x000000000Ed1eabD231Be41d93b719056F7febFC",
+      "poseidonT5Tx": null,
+      "verifierTx": "0x463d297f114f907ccd45ff8d8d4772b48527fee8051973069d57ec6a8e02056e",
+      "verifierBlock": 26069244,
+      "poolTx": "0xa6dd72b4701dc945f7abddfb970f64a24f063b81fe63b458fa7bb0e2e74e1c4f",
+      "deployBlock": 26069245,
+      "routerTx": "0xbe8a25820c064eb65387562fe03e3872d3d21b59235abc4d356b0465e2e83c93",
+      "routerBlock": 26069246,
+      "keeper": "https://tacit-evm-pool-keeper.onrender.com/evm-pool/keeper",
+      "keeperAddress": "0x7c9f8aE4e48Cbb2727F95b6477a1cf92bCFc43D0",
+      "verified": [
+        "etherscan",
+        "sourcify"
+      ]
+    },
+    "8453": {
+      "pool": "0x000000c2A20657CE25f2Ba99737933D031AFBEE9",
+      "router": "0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5",
+      "verifier": "0x000000b1c0e84CEc8AdF8278B90c4d6400DfB153",
+      "poseidonT5": "0x555333f3f677Ca3930Bf7c56ffc75144c51D9767",
+      "createX": "0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed",
+      "deployer": "0x68575B073DE49a94e3E3ACf6F3A0d6E3b66267C7",
+      "zRouter": "0x000000000000FB114709235f1ccBFfb925F600e4",
+      "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+      "network": "base",
+      "v1": "0x0000000000000000000000000000000000000000",
+      "poseidonT5Tx": "0x0a97cfa169df74b4d1dcb2dd703346398b01aab6a73a1ab2a4ff5d3b0958c827",
+      "verifierTx": "0xdf81c6d76b7706a66771e8d69bb245a869256d32eba8289f8e238f58ce43525d",
+      "verifierBlock": 51864013,
+      "poolTx": "0xb1c1db3b86733eb29aa6e4f27cb2ca31d93d541512e0164fffbd11dfc4fb9ba1",
+      "deployBlock": 51864014,
+      "routerTx": "0x97e742e8d1dc2b56b3523a2594b2470b19c34a460a4be55cf2e372092561cc3c",
+      "routerBlock": 51864015,
+      "keeper": "https://tacit-evm-pool-keeper-base.onrender.com/evm-pool/keeper",
+      "keeperAddress": "0xfA2afbaB631C7Eda7CeA6AE1440605C504E322Ec",
+      "verified": [
+        "sourcify",
+        "blockscout"
+      ]
+    },
+    "4663": {
+      "pool": "0x000000c2A20657CE25f2Ba99737933D031AFBEE9",
+      "router": "0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5",
+      "verifier": "0x000000b1c0e84CEc8AdF8278B90c4d6400DfB153",
+      "poseidonT5": "0x555333f3f677Ca3930Bf7c56ffc75144c51D9767",
+      "createX": "0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed",
+      "deployer": "0x68575B073DE49a94e3E3ACf6F3A0d6E3b66267C7",
+      "zRouter": "0x000000000000FB114709235f1ccBFfb925F600e4",
+      "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+      "network": "robinhood",
+      "v1": "0x0000000000000000000000000000000000000000",
+      "poseidonT5Tx": "0x090b31a4baf0078cb9507de7187b0d05c11f6dbb334e33f132bc07367f156680",
+      "verifierTx": "0xcf507eec7f1203d982ab5f7d0c184f118cdb6e95eb45ab5e25b759716a90ffd7",
+      "verifierBlock": 73991630,
+      "poolTx": "0xce52dfea41d05950988ca72e136c23806d9d15b4113d5a6b56c31e57a4f3fd54",
+      "deployBlock": 73991661,
+      "routerTx": "0xa6ba1282bc3fba450e64f44fc7cfd4d9cd876c77f559b5eb087cb312be45f465",
+      "routerBlock": 73991692,
+      "keeper": "https://tacit-evm-pool-keeper-robinhood.onrender.com/evm-pool/keeper",
+      "keeperAddress": "0xc1F8DAc6BC910A5A794b4795b5F9997e0E8A5Fad",
+      "verified": [
+        "sourcify",
+        "etherscan"
+      ]
+    }
+  }
+}

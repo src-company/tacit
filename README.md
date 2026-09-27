@@ -143,6 +143,10 @@ replace it.
   and so is leaving (exit-to-sats, with the maker's payout bound into the signed spend). It runs on
   signet. Its proof system is Halo2 with KZG over the Hermez setup already pinned, so it needs no new
   ceremony.
+- **The EVM pool.** The same keys, notes and address, for ETH on Ethereum, Base and Robinhood Chain. One
+  Groth16 circuit (two notes in, two out) from a public ceremony, proved in the browser; the contract never
+  hashes, so a private transfer costs about 340k gas. A standing private address takes ETH from any wallet or
+  exchange, and a withdrawal can run a swap, a bridge or a move into a V1 note in the same transaction.
 - **Sats in and out.** Atomic swaps move sats in and out with no custodian. A BitVM peg and, once Bitcoin
   allows them, covenants can back the same pool unchanged. Secret Sats Join mixes real sats in an
   equal-amount join to silent-payment outputs, with no coordinator and no custody.
@@ -161,6 +165,13 @@ each proved on the payer's device, and a
 found through the tweak index with no txid shared, and an
 [eight-wallet join](https://mempool.space/signet/tx/c792b4522a6da9a2877ff2568837c5e5434ae4503c186023922210d69961ab0f)
 that mixes plain sats into equal outputs.
+
+**Private ETH is live** on Ethereum, Base and Robinhood Chain at the same addresses: pool
+`0x000000c2A20657CE25f2Ba99737933D031AFBEE9`, router `0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5`, verifier
+`0x000000b1c0e84CEc8AdF8278B90c4d6400DfB153`. Its proving key comes from a
+[public ceremony](https://tacit.finance/ceremony): 176 contributions, sealed with Bitcoin block 968840 (key hash
+`43d11e6e…5757`). Use it from the ETH tab at [tacit.finance/sats](https://tacit.finance/sats). Integration:
+[docs/EVM-POOL.md](./docs/EVM-POOL.md); deployments: [contracts/deployments/evm-pool.json](./contracts/deployments/evm-pool.json).
 
 Specification: [SPEC §3.10](./SPEC.md#310-bitcoin-native-shielded-pool-reserved-not-enabled). Design:
 [pool](./contracts/sp1/confidential/DESIGN-btc-shielded-pool.md),
@@ -218,7 +229,7 @@ dapp/            the app: protocol core (tacit.js), pool client (confidential-*.
 contracts/       Solidity (src/, script/, test/) and SP1 guests (sp1/confidential, sp1/eth-reflection)
 worker/          indexer + API (served by server/ on Node); reads Bitcoin from public Esplora endpoints
                  with fallbacks; never proves, never holds funds
-worker-relay/    hosted relay: settle, reflection, header relay, monitoring
+worker-relay/    hosted relay: settle, reflection, header relay, monitoring, EVM pool keepers
 tests/           cross-implementation vectors and test suites
 tools/ scripts/  operational and verification tools
 docs/            integrator guides: build a dapp, deployments, ceremony artifacts, farms, airdrop, recovery,

@@ -5,8 +5,9 @@ single transaction can deposit, pay someone privately with change, withdraw, and
 immutable: no owner, no pause, no upgrade. Design and measurements: [`DESIGN-evm-client-pool.md`](../contracts/sp1/confidential/DESIGN-evm-client-pool.md).
 
 **Status.** The circuit's public trusted-setup ceremony is closed: 176 contributions, sealed with Bitcoin block
-968840 as the beacon. The contracts deploy at the addresses below, which are fixed. Integrate against them today and treat the
-pool as live once it has code on chain (`eth_getCode(pool) != "0x"`).
+968840 as the beacon. The contracts are live at the addresses below on Ethereum, Base and Robinhood Chain; deploy blocks and
+transactions are in [`contracts/deployments/evm-pool.json`](../contracts/deployments/evm-pool.json). Scan events from
+each chain's deploy block.
 
 ## Addresses
 
