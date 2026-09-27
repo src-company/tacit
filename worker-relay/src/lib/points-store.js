@@ -183,6 +183,12 @@ export function openStore(dbPath) {
       created_tx_hash TEXT NOT NULL,
       creator_awarded INTEGER NOT NULL DEFAULT 0
     );
+
+    -- .wei name registrations through zRouter (NameNFT) — see scanWeinameCycle. Mainnet only.
+    CREATE TABLE IF NOT EXISTS weiname_cursor (
+      id                 INTEGER PRIMARY KEY CHECK (id = 1),
+      last_scanned_block INTEGER NOT NULL
+    );
   `);
 
   // Migration for a store created before tip tracking / the Privacy Pools boost / cBTC+cUSD mint activity
@@ -291,6 +297,11 @@ export function openStore(dbPath) {
   const loadPmCursorStmt = db.prepare(`SELECT last_scanned_block FROM pm_cursor WHERE id = 1`);
   const savePmCursorStmt = db.prepare(`
     INSERT INTO pm_cursor (id, last_scanned_block) VALUES (1, @lastScannedBlock)
+    ON CONFLICT(id) DO UPDATE SET last_scanned_block = excluded.last_scanned_block
+  `);
+  const loadWeinameCursorStmt = db.prepare(`SELECT last_scanned_block FROM weiname_cursor WHERE id = 1`);
+  const saveWeinameCursorStmt = db.prepare(`
+    INSERT INTO weiname_cursor (id, last_scanned_block) VALUES (1, @lastScannedBlock)
     ON CONFLICT(id) DO UPDATE SET last_scanned_block = excluded.last_scanned_block
   `);
   const recordPmMarketStmt = db.prepare(`
@@ -457,6 +468,15 @@ export function openStore(dbPath) {
     savePmCursorStmt.run({ lastScannedBlock: lastScannedBlock.toString() });
   }
 
+  function loadWeinameCursor() {
+    const row = loadWeinameCursorStmt.get();
+    return row ? BigInt(row.last_scanned_block) : null;
+  }
+
+  function saveWeinameCursor(lastScannedBlock) {
+    saveWeinameCursorStmt.run({ lastScannedBlock: lastScannedBlock.toString() });
+  }
+
   function recordPmMarket(marketId, isEth, creator, createdTxHash) {
     recordPmMarketStmt.run({ marketId, isEth: isEth ? 1 : 0, creator: creator.toLowerCase(), createdTxHash });
   }
@@ -481,5 +501,6 @@ export function openStore(dbPath) {
     recordPpWithdrawal, hasEarlierPpWithdrawal, loadPpCursor, savePpCursor,
     loadCeCursor, saveCeCursor, loadZrouterCursor, saveZrouterCursor,
     loadPmCursor, savePmCursor, recordPmMarket, getPmMarket, markPmCreatorAwarded,
+    loadWeinameCursor, saveWeinameCursor,
   };
 }

@@ -492,6 +492,108 @@ async function scanPmCycle(store) {
   if (newestSeen != null && (priorCursor == null || newestSeen > priorCursor)) store.savePmCursor(newestSeen);
 }
 
+function pointsForWeiname(amountWei, priorCount) {
+  return (Number(amountWei) / 1e18) * CFG.pointsBasePerWeiname * earlyAdopterBonus(priorCount);
+}
+
+// A sixth way to earn points: registering a .wei name through zRouter (NameNFT's revealName flow). Mainnet
+// only. zRouter pays its whole ETH balance into NameNFT.reveal{value}, then transfers the new tokenId to the
+// real registrant — so the signal is NameNFT's own NameRegistered(tokenId, label, owner, expiresAt) with
+// owner == zRouter (the router registers, then hands it off), paired by tokenId with a same-tx ERC-721
+// Transfer(from=zRouter, to=recipient, id=tokenId) for who actually receives it (falls back to the
+// transaction's own signer if no such Transfer is found). Same Blockscout-pagination approach as PM/
+// CollateralEngine/Privacy Pools, for the same reason: this address's own eth_getLogs range could hit the
+// same RPC cap on a cold-start backfill.
+//
+// Unlike wrap/sweep, this ETH is spent for good — NameNFT keeps it outright, there's no round trip a farmer
+// could loop — so this scores immediately with no gaming mitigation needed, and a free .id.wei name (0 ETH
+// kept) simply earns 0 automatically rather than needing a special case.
+async function scanWeinameCycle(store) {
+  const priorCursor = store.loadWeinameCursor();
+  const deployBlock = BigInt(CFG.weinameDeployBlock);
+  let newestSeen = null;
+  let params = '';
+  const registeredCandidates = [];
+  const transfersByTx = new Map(); // tx_hash -> Map(tokenId -> recipient)
+
+  for (;;) {
+    const res = await fetch(`${PP_BLOCKSCOUT_BASE}/addresses/${ADDR.nameNft}/logs${params}`);
+    if (!res.ok) throw new Error(`blockscout address-logs ${res.status}`);
+    const data = await res.json();
+    const items = data.items || [];
+    if (items.length === 0) break;
+    if (newestSeen === null) newestSeen = BigInt(items[0].block_number);
+
+    let reachedCoverage = false;
+    for (const item of items) {
+      const blockNumber = BigInt(item.block_number);
+      if (blockNumber < deployBlock || (priorCursor != null && blockNumber <= priorCursor)) {
+        reachedCoverage = true;
+        break;
+      }
+      if (!item.decoded) continue;
+      const method = item.decoded.method_call;
+      const p = Object.fromEntries(item.decoded.parameters.map((x) => [x.name, x.value]));
+      const blockTime = Math.floor(new Date(item.block_timestamp).getTime() / 1000);
+      if (method.startsWith('NameRegistered(') && String(p.owner).toLowerCase() === ADDR.zRouter.toLowerCase()) {
+        registeredCandidates.push({ item, tokenId: String(p.tokenId), blockNumber, blockTime });
+      } else if (method.startsWith('Transfer(') && String(p.from).toLowerCase() === ADDR.zRouter.toLowerCase()) {
+        const byToken = transfersByTx.get(item.transaction_hash) ?? new Map();
+        byToken.set(String(p.id), String(p.to).toLowerCase());
+        transfersByTx.set(item.transaction_hash, byToken);
+      }
+    }
+
+    if (reachedCoverage || !data.next_page_params) break;
+    params = '?' + new URLSearchParams(
+      Object.fromEntries(Object.entries(data.next_page_params).map(([k, v]) => [k, String(v)])),
+    ).toString();
+  }
+
+  registeredCandidates.sort((a, b) => (a.blockNumber < b.blockNumber ? -1 : a.blockNumber > b.blockNumber ? 1 : 0));
+
+  let priorCount = store.countByActivity('weiname');
+  for (const { item, tokenId, blockNumber, blockTime } of registeredCandidates) {
+    const txHash = item.transaction_hash;
+    const recipient = transfersByTx.get(txHash)?.get(tokenId);
+    let depositor;
+    if (recipient) {
+      depositor = recipient;
+    } else {
+      const tx = await publicClient.getTransaction({ hash: txHash });
+      depositor = tx.from.toLowerCase();
+    }
+
+    // The ETH NameNFT actually kept — a free .id.wei name has none, and simply scores 0 below. Same grace
+    // window and fail-closed direction as the V4 settlement check: a fresh lookup that's genuinely still
+    // unindexed retries the whole cycle, but past 30 minutes from this registration's own block, treat it as
+    // unresolved and skip crediting for it rather than guessing (a registration itself is never in doubt —
+    // NameRegistered came from NameNFT's own canonical address — only how much ETH it cost is uncertain here).
+    let amountWei;
+    try {
+      const { sum, indexed } = await internalEthTransferSum(PP_BLOCKSCOUT_BASE, txHash, ADDR.zRouter, ADDR.nameNft);
+      if (!indexed) throw new Error(`internal-transactions not yet indexed for ${txHash}`);
+      amountWei = sum;
+    } catch (err) {
+      if (Date.now() / 1000 - blockTime < 1800) throw err;
+      log(`weiname ETH-kept lookup still unresolved 30+ min after block time for ${txHash}, skipping:`, err?.message || err);
+      continue;
+    }
+    if (amountWei <= 0n) continue;
+
+    const tacB = tacMultiplier(depositor, blockNumber);
+    const zShareB = zShareMultiplier(depositor, blockNumber);
+    const wrote = store.recordDeposit({
+      txHash, blockNumber: Number(blockNumber), blockTime,
+      depositor, amountWei: amountWei.toString(), priorDepositCount: priorCount,
+      points: pointsForWeiname(amountWei, priorCount) * tacB * zShareB, activity: 'weiname', tacBoost: tacB, zShareBoost: zShareB,
+    });
+    if (wrote) priorCount += 1;
+  }
+
+  if (newestSeen != null && (priorCursor == null || newestSeen > priorCursor)) store.saveWeinameCursor(newestSeen);
+}
+
 function pointsForZswapEth(valueWei, priorCount) {
   return (Number(valueWei) / 1e18) * CFG.pointsBasePerZswapEth * earlyAdopterBonus(priorCount);
 }
@@ -1169,6 +1271,7 @@ function startHttp(store, evmState) {
         const ppCursor = store.loadPpCursor();
         const ceCursor = store.loadCeCursor();
         const pmCursor = store.loadPmCursor();
+        const weinameCursor = store.loadWeinameCursor();
         // zRouter ETH-swap scan (see scanZRouterCycle), one cursor per chain — forward-only, null until each
         // chain's first cycle runs.
         const zrouterCursors = Object.fromEntries(ZROUTER_CHAINS.map(({ chainId }) => {
@@ -1190,6 +1293,8 @@ function startHttp(store, evmState) {
           ceLastScannedBlock: ceCursor != null ? ceCursor.toString() : null,
           // PM prediction-market activity (see scanPmCycle).
           pmLastScannedBlock: pmCursor != null ? pmCursor.toString() : null,
+          // .wei name registration activity (see scanWeinameCycle).
+          weinameLastScannedBlock: weinameCursor != null ? weinameCursor.toString() : null,
           zrouterLastScannedBlock: zrouterCursors[1],
           zrouterLastScannedBlockByChain: zrouterCursors,
           evmPoolByChain: evmPoolCursors,
@@ -1361,6 +1466,11 @@ async function main() {
       await scanPmCycle(store);
     } catch (err) {
       log('PM scan cycle failed:', err?.message || err);
+    }
+    try {
+      await scanWeinameCycle(store);
+    } catch (err) {
+      log('weiname scan cycle failed:', err?.message || err);
     }
     for (const chain of ZROUTER_CHAINS) {
       try {

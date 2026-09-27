@@ -86,6 +86,9 @@ export const ADDR = {
   // PM — zfi's parimutuel prediction-market singleton (Created/Bet/Transfer — see points-indexer.js's
   // scanPmCycle). Mainnet only.
   pm: opt('PM_ADDR', '0x0000003b32cDD39bc950e56093df98aF220aB5C5'),
+  // NameNFT — .wei name registrations via zRouter's revealName (NameRegistered/Transfer — see
+  // points-indexer.js's scanWeinameCycle). Mainnet only.
+  nameNft: opt('NAME_NFT_ADDR', '0x0000000000696760E15f265e828DB644A0c242EB'),
   // Routes an EscrowPosted whose `from` is any of these helpers back to the real depositor via the
   // helper's own HelperEscrowPosted event — see points-indexer.js. Comma-separated: every CbtcEscrowHelper
   // ever deployed stays here, since old ones keep taking reclaimEscrow calls (and, in principle, further
@@ -497,6 +500,13 @@ export const CFG = {
   // two wallets' gas alone.
   pmMinQualifyingBetWei: BigInt(opt('PM_MIN_QUALIFYING_BET_WEI', '1000000000000000')), // 0.001 ETH
   pmDeployBlock: num('PM_DEPLOY_BLOCK', 26033835),
+
+  // ── .wei name registration activity (src/points-indexer.js's scanWeinameCycle) ──
+  // A sixth way to earn points: registering a .wei name through zRouter (NameNFT). Mainnet only. Unlike
+  // wrap/sweep, this ETH is spent for good — NameNFT keeps it, there's no round trip — so it's scored
+  // immediately with no gaming mitigation needed. A free .id.wei name costs 0 and so earns 0 automatically.
+  pointsBasePerWeiname: num('POINTS_BASE_PER_WEINAME', 1000),
+  weinameDeployBlock: num('WEINAME_DEPLOY_BLOCK', 24360416),
 
   // ── TAC-holder boost (src/lib/tac-holder-boost.js) ──
   // Every activity's points are multiplied by the depositor's TAC tier: "whole TAC:multiplier" pairs, judged
