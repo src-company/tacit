@@ -50639,15 +50639,20 @@ function setupEtchForm() {
           'on mainnet means compromise-of-burner = uncapped inflation. Use fixed-supply for now.',
         );
       }
-      pendingCEtch = { ticker, supplyBase, decimals, imageUri, name, description, externalUrl, mintable };
+      // attestRequested is frozen into the job here, same as every other field —
+      // broadcast previously re-read the checkbox live after the burner-backup /
+      // funding awaits below, so toggling it during that wait (which can run tens
+      // of seconds) would silently broadcast a different attestation choice than
+      // the one the preview card showed.
+      const attestRequested = !!$('#e-attest-on-etch')?.checked;
+      pendingCEtch = { ticker, supplyBase, decimals, imageUri, name, description, externalUrl, mintable, attestRequested };
       const rate = await getFeeRate();
       const commitFeeEst = feeFor(estCommitVb(1), rate);
       // Exact reveal vb based on actual ticker + image_uri (or expected ipfs CID
       // length when metadata is being pinned). Matches what the build pays.
       // attestRequested also triggers metadata pinning even with no name/desc/url —
       // include it here so the preview fee matches the build's wantMetadata path.
-      const _attestRequestedPreview = !!$('#e-attest-on-etch')?.checked;
-      const _willPinMeta = !!(name || description || externalUrl || _attestRequestedPreview);
+      const _willPinMeta = !!(name || description || externalUrl || attestRequested);
       const _rawImgLen = imageUri ? new TextEncoder().encode(imageUri).length : 0;
       const _expectedImgLen = _willPinMeta ? Math.max(_rawImgLen, 70) : _rawImgLen;
       const _tkLen = new TextEncoder().encode(ticker).length;
@@ -50717,7 +50722,9 @@ function setupEtchForm() {
       $('#btn-etch-broadcast').disabled = false;
       return;
     }
-    const attestRequested = !!$('#e-attest-on-etch')?.checked;
+    // Read from the frozen job, not the live checkbox — see the comment where
+    // job.attestRequested is captured in the Preview handler above.
+    const attestRequested = job.attestRequested;
     try {
       // Build a metadataBuilder closure that pins a metadata JSON containing
       // the (supply, blinding) opening to IPFS, returns its ipfs:// CID for
@@ -90455,20 +90462,20 @@ async function renderPetchDiscover() {
       const isSoftDisable = !capFull && !beforeWindow && !afterWindow && myWalletReady && myMintCount > 0;
       // Decimal-safe limit display used by the optimistic update.
       const limitDispEsc = escapeHtml(fmtAssetAmount(limit, dec));
+      const petchTicker = a.ticker || '?';
       const tickerEsc = escapeHtml(a.ticker || '');
-      // Platform-curated verified badge (top-right corner). Same semantics as
-      // the CETCH /assets badge — editorial endorsement, not trustless. The
-      // .asset-card root sets `position: relative` so the absolute-positioned
-      // span lands in the corner without escaping the card.
+      const displayName = (a.name && String(a.name).trim()) ? String(a.name).trim() : petchTicker;
+      // Same "curated" chip as the CETCH /assets cards — editorial
+      // endorsement, not trustless. Shared markup keeps the two card types
+      // reading as one design language rather than two.
       const officialBadgePetch = a.verified
-        ? `<span style="position:absolute;top:8px;right:8px;font-size:10px;background:var(--green-positive);color:#fff;padding:3px 7px;border:1px solid var(--green-positive);text-transform:uppercase;letter-spacing:0.08em;cursor:help;font-weight:600;" title="Platform-verified: tacit's curators have endorsed this asset_id as the canonical holder of its ticker.">✓ verified</span>`
+        ? `<span style="font-size:10px;color:var(--ink-mid);border:1px solid var(--ink-faint);padding:2px 6px;text-transform:uppercase;letter-spacing:0.08em;cursor:help;" title="Platform-verified: tacit's curators have endorsed this asset_id as the canonical holder of its ticker.">curated</span>`
         : '';
-      // Subtle "✓ you minted N" corner indicator (no box, just text). Replaces
-      // the big disabled "Mint · ✓ you minted N" button when this device has
+      // "✓ you minted N" chip. Replaces the Mint button when this device has
       // already minted — keeps the card visually quiet. The "Mint another?"
       // link below restores the full button for users who want a second mint.
       const youMintedBadge = isSoftDisable
-        ? `<span data-petch-you-minted style="position:absolute;top:${a.verified ? '34px' : '10px'};right:10px;font-size:10px;color:var(--green-positive);letter-spacing:0.04em;font-weight:600;" title="You have minted ${myMintCount} on this device.">✓ you minted ${myMintCount}</span>`
+        ? `<span data-petch-you-minted style="font-size:10px;color:var(--green-positive);border:1px solid var(--green-positive);padding:2px 6px;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;" title="You have minted ${myMintCount} on this device.">✓ you minted ${myMintCount}</span>`
         : '';
       // data-filter-key mirrors the CETCH cards' format so the Discover-tab
       // search input can match petch tiles too — name + ticker + asset_id,
@@ -90489,35 +90496,50 @@ async function renderPetchDiscover() {
       else if (_petchStatus === 'sold-out') _ctSold++;
       else _ctSoon++;
       return `
-        <div class="asset-card" data-petch-aid="${escapeHtml(safeAid)}" data-petch-cap="${escapeHtml(cap.toString())}" data-petch-limit="${escapeHtml(limit.toString())}" data-petch-decimals="${dec}" data-petch-ticker="${tickerEsc}" data-petch-activity="${escapeHtml(String((Number(a.credited_pmint_count) || 0) + (Number(a.pending_pmint_count) || 0)))}" data-filter-key="${escapeHtml(_petchFilterKey)}" data-petch-status="${_petchStatus}" style="border:1px solid var(--ink);padding:14px;background:var(--bg);">
-          ${officialBadgePetch}
-          ${youMintedBadge}
-          <div style="display:flex;align-items:center;gap:12px;">
+        <div class="asset-card discover-card" data-petch-aid="${escapeHtml(safeAid)}" data-petch-cap="${escapeHtml(cap.toString())}" data-petch-limit="${escapeHtml(limit.toString())}" data-petch-decimals="${dec}" data-petch-ticker="${tickerEsc}" data-petch-activity="${escapeHtml(String((Number(a.credited_pmint_count) || 0) + (Number(a.pending_pmint_count) || 0)))}" data-filter-key="${escapeHtml(_petchFilterKey)}" data-petch-status="${_petchStatus}">
+          <div class="discover-card__head">
             ${imgUrl
-              ? `<img loading="lazy" decoding="async" src="${escapeHtml(imgUrl)}" alt="" style="width:40px;height:40px;border-radius:50%;border:1px solid var(--ink);object-fit:cover;background:#fff;flex-shrink:0;">`
-              : assetImageFallback(safeAid, a.ticker, 40)}
-            <div style="min-width:0;flex:1;">
-              <div class="ticker" style="font-size:24px;">${escapeHtml(a.ticker || '?')}<span class="id-tag">${escapeHtml(shorten(safeAid, 12))}</span></div>
+              ? `<img loading="lazy" decoding="async" src="${escapeHtml(imgUrl)}" alt="" style="width:36px;height:36px;border-radius:50%;border:1px solid var(--ink);object-fit:cover;background:#fff;flex-shrink:0;">`
+              : assetImageFallback(safeAid, a.ticker, 36)}
+            <div class="discover-card__title">
+              <div class="discover-card__name">
+                <span>${escapeHtml(displayName)}</span>
+                ${displayName !== petchTicker ? `<span class="discover-card__ticker">${tickerEsc}</span>` : ''}
+                <span class="id-tag">${escapeHtml(shorten(safeAid, 4))}</span>
+              </div>
+              <div class="discover-card__sub">
+                <span>${limitDispEsc} per mint</span>
+                <span>${dec} decimals</span>
+                ${NET.name === 'mainnet' ? `<a href="https://www.tacitscan.io/assets/${escapeHtml(safeAid)}" target="_blank" rel="noopener noreferrer" title="View this asset on tacitscan (independent block explorer)">tacitscan ↗</a>` : ''}
+              </div>
+              <div class="discover-card__chips">
+                ${officialBadgePetch}${youMintedBadge}
+              </div>
             </div>
-            <button data-act="petch-mint" data-etch-txid="${escapeHtml(a.etch_txid || '')}" data-aid="${escapeHtml(safeAid)}" data-ticker="${escapeHtml(a.ticker || '?')}" data-limit="${escapeHtml(a.mint_limit || '0')}" data-decimals="${dec}" data-rem-mints="${escapeHtml(remMints.toString())}" data-default-label="Mint ${limitDispEsc}" ${mintDisabled ? 'disabled' : ''} style="flex-shrink:0;${(isSoftDisable || capFull) ? 'display:none;' : ''}">
+          </div>
+          <div class="discover-card__progress" title="Cap progress: ${escapeHtml(pct.toFixed(pct >= 10 ? 0 : 1))}% minted">
+            <div class="discover-card__progress-fill" data-petch-progress-bar style="width:${pct}%;${capFull ? 'background:var(--ink-mid);' : ''}"></div>
+          </div>
+          <div data-petch-pending class="discover-card__facts muted" style="${effectivePending > 0 ? '' : 'display:none;'}">
+            ${effectivePending > 0 ? `${effectivePending} mint${effectivePending === 1 ? '' : 's'} pending (≥3 confs to credit)${myRecent > 0 ? ` · includes your ${myRecent} recent` : ''}` : ''}
+          </div>
+          <div class="discover-card__facts muted">
+            <strong data-petch-minted-display>${escapeHtml(fmtAssetAmount(mintedNow, dec))}</strong>${!a.bootstrapped ? `<span title="${a.truncated ? 'Worker is still bootstrapping this asset\'s cap counter — the displayed total is a lower bound. Refreshes on the next cron tick.' : 'Cap counter is live — new mints can land any block. Displayed total is the snapshot value at the worker\'s last refresh.'}">+</span>` : ''} / ${escapeHtml(fmtAssetAmount(cap, dec))} ${tickerEsc}
+          </div>
+          <div class="discover-card__market">
+            <span class="discover-card__market-price" data-petch-rem-mints${capFull ? ' style="font-weight:600;"' : ''}>${capFull ? 'minted out' : `${escapeHtml(remMints.toString())} mints remaining`}${!a.bootstrapped && !capFull ? ' (estimate)' : ''}</span>
+            <button data-act="petch-mint" data-etch-txid="${escapeHtml(a.etch_txid || '')}" data-aid="${escapeHtml(safeAid)}" data-ticker="${escapeHtml(a.ticker || '?')}" data-limit="${escapeHtml(a.mint_limit || '0')}" data-decimals="${dec}" data-rem-mints="${escapeHtml(remMints.toString())}" data-default-label="Mint ${limitDispEsc}" ${mintDisabled ? 'disabled' : ''} style="${(isSoftDisable || capFull) ? 'display:none;' : ''}">
               ${mintDisabled && !isSoftDisable && !capFull ? `Mint · ${escapeHtml(mintReason)}` : `Mint ${limitDispEsc}`}
             </button>
           </div>
-          <div style="margin-top:10px;font-size:11px;display:flex;gap:14px;flex-wrap:wrap;color:var(--ink-mid);">
-            <span><strong style="color:var(--ink);" data-petch-minted-display>${escapeHtml(fmtAssetAmount(mintedNow, dec))}</strong>${!a.bootstrapped ? `<span title="${a.truncated ? 'Worker is still bootstrapping this asset\'s cap counter — the displayed total is a lower bound. Refreshes on the next cron tick.' : 'Cap counter is live — new mints can land any block. Displayed total is the snapshot value at the worker\'s last refresh.'}" style="color:var(--ink-mid);">+</span>` : ''} / ${escapeHtml(fmtAssetAmount(cap, dec))} ${tickerEsc}</span>
-            <span>·</span>
-            <span data-petch-rem-mints${capFull ? ' style="color:var(--ink-mid);font-weight:600;"' : ''}>${capFull ? 'minted out' : `${escapeHtml(remMints.toString())} mints remaining`}${!a.bootstrapped && !capFull ? ' (estimate)' : ''}</span>
-            <span>·</span>
-            <span>${limitDispEsc} per mint</span>
-            ${NET.name === 'mainnet' ? `<span>·</span><a href="https://www.tacitscan.io/assets/${escapeHtml(safeAid)}" target="_blank" rel="noopener noreferrer" style="color:var(--ink-mid);text-decoration:underline;" title="View this asset on tacitscan (independent block explorer)">tacitscan ↗</a>` : ''}
-          </div>
-          <div style="margin-top:8px;height:6px;background:var(--ink-faint);overflow:hidden;" title="Cap progress: ${escapeHtml(pct.toFixed(pct >= 10 ? 0 : 1))}% minted">
-            <div data-petch-progress-bar style="height:100%;background:${capFull ? 'var(--ink-mid)' : 'var(--ink)'};width:${pct}%;transition:width 0.2s;"></div>
-          </div>
-          <div data-petch-pending style="margin-top:6px;font-size:10px;color:var(--ink-mid);${effectivePending > 0 ? '' : 'display:none;'}">
-            ${effectivePending > 0 ? `${effectivePending} mint${effectivePending === 1 ? '' : 's'} pending (≥3 confs to credit)${myRecent > 0 ? ` · includes your ${myRecent} recent` : ''}` : ''}
-          </div>
-          ${isSoftDisable ? `<div style="margin-top:6px;font-size:10px;"><a href="#" data-act="petch-mint-again" data-aid="${escapeHtml(safeAid)}" style="color:var(--ink-mid);text-decoration:underline;" title="Anyone (incl. you) can mint until the global cap fills — this just re-enables the button on this device.">Mint another?</a></div>` : ''}
+          ${isSoftDisable ? `<div style="font-size:11px;"><a href="#" data-act="petch-mint-again" data-aid="${escapeHtml(safeAid)}" style="color:var(--ink-mid);text-decoration:underline;" title="Anyone (incl. you) can mint until the global cap fills — this just re-enables the button on this device.">Mint another?</a></div>` : ''}
+          <details class="discover-card__details">
+            <summary>chain details</summary>
+            <div class="meta">
+              <div><span class="lbl">Asset ID</span> ${safeAid ? assetIdRowHTML(safeAid) : '—'}</div>
+              <div><span class="lbl">Etch tx</span> ${a.etch_txid ? `<a href="${NET.explorer}/tx/${escapeHtml(a.etch_txid)}" target="_blank" rel="noopener noreferrer">${escapeHtml(shorten(a.etch_txid, 8))} ↗</a>${tacitscanTxLinkHTML(a.etch_txid)}` : '—'}</div>
+            </div>
+          </details>
         </div>`;
     }).join('');
     // Skip the innerHTML rewrite when the computed tiles match the prior
@@ -90535,6 +90557,10 @@ async function renderPetchDiscover() {
       _lastPetchTilesHtml = tiles;
       list.innerHTML = tiles;
     }
+    // Wires the "chain details" asset_id expand/collapse toggle — same
+    // helper the CETCH cards use. Idempotent, cheap enough to re-run on
+    // every poll even when the innerHTML write above was skipped.
+    wireAssetIdToggles(list);
     // Apply purple mint-flash to tiles whose activity total (credited +
     // pending) exceeds the last-flashed baseline for that aid. Sum is what
     // makes the flash feel responsive on Bitcoin's slow block cadence —

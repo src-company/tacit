@@ -104,7 +104,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=3cceb089">
+<link rel="modulepreload" href="./tacit.js?cb=6eead5eb">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -3345,13 +3345,14 @@ details.protocol-section > summary.protocol-h3:hover { color: var(--orange); }
   }
 }
 /* Petch tiles auto-fit into a responsive grid so wide screens see 2–3
-   mints side-by-side instead of one full-width tile per row. minmax(300px,
-   1fr) collapses to a single column under ~620px (factoring in the section
-   padding). Tile margins are zeroed via the JS template; grid `gap` owns
+   mints side-by-side instead of one full-width tile per row. minmax(340px,
+   1fr) matches the CETCH grid below and collapses to a single column under
+   ~720px (factoring in the section padding). Tile margins are zeroed by the
+   `#petch-discover-list > .asset-card` rule further down; grid `gap` owns
    inter-tile spacing. */
 #petch-discover-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: 10px;
 }
 /* Empty / error / muted-loading states are single divs and would otherwise
@@ -3367,7 +3368,10 @@ details.protocol-section > summary.protocol-h3:hover { color: var(--orange); }
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: 10px;
 }
-#discover-list > .asset-card { margin-bottom: 0; }
+#discover-list > .asset-card,
+#petch-discover-list > .asset-card {
+  margin-bottom: 0;
+}
 #discover-list > .empty,
 #discover-list > .error,
 #discover-list > .muted,
@@ -3375,7 +3379,11 @@ details.protocol-section > summary.protocol-h3:hover { color: var(--orange); }
 #discover-list > [style*="scanned through block"] {
   grid-column: 1 / -1;
 }
-#discover-list > .discover-card {
+/* Public-mint tiles reuse the CETCH asset cards' .discover-card frame
+   (padding, translucent fill, flex column + gap) so the two Discover modes
+   read as one card system instead of two. */
+#discover-list > .discover-card,
+#petch-discover-list > .discover-card {
   padding: 14px 16px;
   border-color: rgba(26,26,26,0.58);
   background: rgba(255,255,255,0.18);
@@ -3441,6 +3449,19 @@ details.protocol-section > summary.protocol-h3:hover { color: var(--orange); }
 .discover-card__facts a {
   color: var(--green-positive);
 }
+/* Public-mint cap gauge. Same thin-bar language as the progress-strip steps
+   elsewhere in the app, sized to sit flush between the card head and the
+   facts row without its own margin (the card's flex `gap` already spaces it). */
+.discover-card__progress {
+  height: 6px;
+  background: var(--ink-faint);
+  overflow: hidden;
+}
+.discover-card__progress-fill {
+  height: 100%;
+  background: var(--ink);
+  transition: width 0.2s;
+}
 .discover-card__market {
   padding-top: 10px;
   border-top: 0.5px dashed rgba(26,26,26,0.2);
@@ -3496,35 +3517,26 @@ details.protocol-section > summary.protocol-h3:hover { color: var(--orange); }
   margin-top: 8px;
   grid-template-columns: 1fr;
 }
-.discover-hero {
-  margin: 0 0 12px;
-  padding: 18px;
-  border: 1px solid var(--ink-faint);
-  background: var(--bg-warm);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+.discover-intro {
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--ink-faint);
+  display: flex;
   gap: 14px;
-  align-items: end;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
 }
-.discover-hero h2 {
+.discover-intro p {
   margin: 0;
-  font-size: 20px;
-  line-height: 1.1;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.discover-hero p {
-  margin: 6px 0 0;
   max-width: 560px;
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--ink-mid);
+  font-size: 11px;
+  line-height: 1.5;
 }
-.discover-hero__actions {
+.discover-intro__actions {
   display: flex;
   gap: 8px;
   align-items: center;
-  justify-content: flex-end;
   flex-wrap: wrap;
 }
 .button-like {
@@ -3594,11 +3606,7 @@ details.protocol-section > summary.protocol-h3:hover { color: var(--orange); }
   #petch-discover-list {
     grid-template-columns: 1fr;
   }
-  .discover-hero {
-    grid-template-columns: 1fr;
-    padding: 14px;
-  }
-  .discover-hero__actions {
+  .discover-intro {
     justify-content: flex-start;
   }
   .discover-toolbar {
@@ -3613,6 +3621,15 @@ details.protocol-section > summary.protocol-h3:hover { color: var(--orange); }
    shadow is barely visible at rest (no content above to "cast" against)
    and natural when content scrolls underneath. CSS-only — no observer. */
 #discover-nav {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 8px 0;
+  background: var(--bg);
   box-shadow: 0 8px 8px -8px rgba(0, 0, 0, 0.18);
 }
 .asset-card .head {
@@ -9383,7 +9400,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 
       <div class="flex" style="margin-top:18px;">
         <button id="btn-etch-preview">Preview etch</button>
-        <button id="btn-etch-broadcast" class="primary" disabled>Etch &amp; broadcast</button>
+        <button id="btn-etch-broadcast" class="primary" disabled title="Click 'Preview etch' first to see what you're about to broadcast.">Etch &amp; broadcast</button>
       </div>
       <!-- Inline progress strip — hidden until broadcast starts. JS toggles
            per-step .done / .active classes via setProgressStrip() so the
@@ -10172,12 +10189,13 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 
 <!-- DISCOVER TAB -->
 <div class="tab-panel" id="tab-discover" data-discover-mode="assets">
-  <div class="discover-hero">
-    <div>
-      <h2>Discover</h2>
-      <p>Browse live Bitcoin-native assets, public mints, supply attestations, and market entry points on the active network.</p>
-    </div>
-    <div class="discover-hero__actions">
+  <!-- Slim intro row — the nav tab already reads "Discover", so this skips
+       the redundant repeated title the old bordered hero card had and just
+       states what's here, matching the plain muted intro line every other
+       tab (e.g. .market-intro-note) uses instead of a distinct chrome layer. -->
+  <div class="discover-intro">
+    <p class="muted">Browse live Bitcoin-native assets, public mints, supply attestations, and market entry points on the active network.</p>
+    <div class="discover-intro__actions">
       <button id="btn-discover-refresh-all" type="button" title="Refresh public mints and assets">↻ Refresh</button>
       <a href="#tab=market" class="button-like" style="text-decoration:none;">Markets →</a>
     </div>
@@ -10185,7 +10203,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   <!-- In-tab mode switch. Assets are the default explorer view; public
        mints are one click away without crowding the token directory. Counts
        are populated by renderDiscover / renderPetchDiscover. -->
-  <div id="discover-nav" role="tablist" aria-label="Discover views" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;position:sticky;top:0;z-index:10;padding:8px 0;background:var(--bg);">
+  <div id="discover-nav" role="tablist" aria-label="Discover views">
     <a href="#cetch-discover-section" data-discover-nav="cetch" class="discover-nav-card active" role="tab" aria-selected="true">
       <span>assets <span class="muted" style="font-size:11px;">· confidential supply</span></span>
       <span class="muted" style="font-size:11px;" id="discover-nav-cetch-count">—</span>
@@ -11611,7 +11629,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=3cceb089"></script>
+<script type="module" src="./tacit.js?cb=6eead5eb"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for
