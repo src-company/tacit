@@ -7,7 +7,7 @@
 // Link: /sats#eth=<chain id>[&do=send|withdraw] opens this panel on that chain, at that form.
 
 import { makeEvmPoolZk } from '/evm-pool-zk.js?cb=e6515ded';
-import { evmPoolKeys, makeEvmPoolWallet, jsonRpc } from '/evm-pool-wallet.js?cb=2f896f62';
+import { evmPoolKeys, makeEvmPoolWallet, jsonRpc } from '/evm-pool-wallet.js?cb=18bffe02';
 import { vkHash } from '/evm-pool-zk-prover.js?cb=00ff69c2';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7 } from '../vendor/tacit-poseidon.min.js';
 
