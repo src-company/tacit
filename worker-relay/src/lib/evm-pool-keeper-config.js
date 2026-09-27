@@ -81,6 +81,8 @@ export function loadKeeperConfig(env = process.env) {
     logChunk: big(env, 'EVM_POOL_LOG_CHUNK', 2000n),
 
     pollSecs: int(env, 'EVM_POOL_KEEPER_POLL_SECS', 15),
+    // How often the stored history behind /events is brought up to date when no proof needs it.
+    historySecs: int(env, 'EVM_POOL_KEEPER_HISTORY_SECS', 60),
     maxBackoffSecs: int(env, 'EVM_POOL_KEEPER_MAX_BACKOFF_SECS', 900),
     maxChecksPerTick: int(env, 'EVM_POOL_KEEPER_MAX_CHECKS_PER_TICK', 200),
     minFees,

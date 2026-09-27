@@ -48,9 +48,15 @@ async function main() {
   const handler = createIntakeHandler({ store, chain, zk, assetField, cfg, log, leafSync, isReady: () => lastTickOk });
   createServer(handler).listen(cfg.port, () => log(`listening on ${cfg.port}`));
 
+  let lastHistory = 0;
   for (;;) {
     try { await keeper.tick(); lastTickOk = true; }
     catch (e) { lastTickOk = false; log(`tick failed: ${safeErr(e)}`); }
+    // Keeps the stored history (the /events feed) current when there is nothing to prove.
+    if (Date.now() - lastHistory >= cfg.historySecs * 1000) {
+      lastHistory = Date.now();
+      try { await leafSync.sync(); } catch (e) { log(`history sync: ${safeErr(e)}`); }
+    }
     await sleep(cfg.pollSecs * 1000);
   }
 }
