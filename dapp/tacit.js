@@ -43837,7 +43837,8 @@ async function ceremonyContributeAmm({
       err.code = /already contributed to this circuit/i.test(msg) ? 'DUPEPUB' : 'CASRACE';
     } else if (upResp && upResp.status === 403 && /eligibility_proof/i.test(msg)) {
       err.code = 'INELIGIBLE';
-    } else if (upResp && upResp.status === 429) err.code = 'RATELIMIT';
+    } else if (upResp && upResp.status === 423) err.code = 'CLOSED';
+    else if (upResp && upResp.status === 429) err.code = 'RATELIMIT';
     else if (upResp && upResp.status === 413) err.code = 'TOOLARGE';
     throw err;
   }
@@ -45548,12 +45549,19 @@ async function _submitEvmPoolCeremonyContributionInner() {
       msg = 'Another contribution landed just before yours. Click Contribute to mix against the new key.';
     } else if (e?.code === 'RATELIMIT') {
       msg = 'This network address hit the daily contribution limit. Try again after 00:00 UTC.';
+    } else if (e?.code === 'CLOSED' || _evmCerClosing()) {
+      msg = null;
     } else if (/network|aborted|fetch|timeout/i.test(String(e?.message || ''))) {
       msg = `Network error (${e?.message || e}). Click Contribute to retry.`;
     } else {
       msg = `Could not finish: ${e?.message || e}. Click Contribute to retry.`;
     }
-    _evmCerShowResult('err', `✗ ${msg}`);
+    if (msg === null) {
+      const b = EVM_POOL_CEREMONY.closing?.beaconHeight;
+      _evmCerShowResult('ok', `Contributions closed while yours was running, so it was not added. The ceremony is now being sealed${b ? ` with Bitcoin block ${b}` : ''}. Thank you for taking part.`);
+    } else {
+      _evmCerShowResult('err', `✗ ${msg}`);
+    }
     goBtn.textContent = origLabel;
     if (headSub) headSub.textContent = 'stopped';
   } finally {
