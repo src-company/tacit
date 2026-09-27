@@ -547,6 +547,27 @@ const ZROUTER_CHAINS = [
 // mainnet chain this evaluates the boost as of the current confirmed MAINNET tip (already clamped to what
 // both replays cover, so it can never throw) rather than the swap's own chain-local block: with a multi-hour
 // trailing window, the skew between "at the swap" and "now" is immaterial.
+
+// Sums any internal ETH transfer from zRouter straight back to `sender` within `txHash` — swapV2/swapV3's
+// refund of unused msg.value above the actual amountIn. Only ever called for mainnet Signal-1 matches (the
+// only chain/signal that credits raw tx.value at all), via Blockscout's per-tx internal-transactions endpoint
+// (item-paginated, not block-range, so it's cheap regardless of how large the refund search window is).
+// Throws rather than fails open on a lookup error: crediting the unnetted gross value is exactly the
+// overcounting this exists to prevent, so a transient failure here should retry next cycle, not silently
+// trust the larger number.
+async function zRouterRefundTo(txHash, sender) {
+  const res = await fetch(`${PP_BLOCKSCOUT_BASE}/transactions/${txHash}/internal-transactions`);
+  if (!res.ok) throw new Error(`blockscout internal-transactions ${res.status}`);
+  const data = await res.json();
+  let refunded = 0n;
+  for (const item of data.items || []) {
+    if (item.success === false) continue;
+    const from = item.from && String(item.from.hash).toLowerCase();
+    const to = item.to && String(item.to.hash).toLowerCase();
+    if (from === ADDR.zRouter.toLowerCase() && to === sender) refunded += BigInt(item.value || 0);
+  }
+  return refunded;
+}
 async function scanZRouterCycle(store, { chainId, client, wethAddr, signal1 = true }) {
   const cursorBlock = store.loadZrouterCursor(chainId);
   const latest = await client.getBlockNumber();
@@ -594,9 +615,16 @@ async function scanZRouterCycle(store, { chainId, client, wethAddr, signal1 = tr
       const block = await getBlock(b);
       for (const tx of block.transactions) {
         if (tx.to && tx.to.toLowerCase() === ADDR.zRouter.toLowerCase() && tx.value > 0n) {
+          // swapV2/swapV3 refund any msg.value above the actual amountIn in the same tx — crediting raw
+          // tx.value here would let anyone with idle ETH send a wildly oversized value on a trivial intended
+          // swap, get almost all of it refunded, and be credited for the gross amount at near-zero real cost
+          // (a zfi review finding). Net out any internal ETH transfer from zRouter straight back to the
+          // sender within this same tx before crediting.
+          const netAmount = tx.value - await zRouterRefundTo(tx.hash, tx.from.toLowerCase());
+          if (netAmount <= 0n) continue;
           byTxHash.set(tx.hash, {
             blockNumber: tx.blockNumber, blockTime: Number(block.timestamp),
-            amountWei: tx.value, depositor: tx.from.toLowerCase(),
+            amountWei: netAmount, depositor: tx.from.toLowerCase(),
           });
         }
       }
