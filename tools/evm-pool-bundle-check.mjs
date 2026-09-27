@@ -14,11 +14,12 @@ const ROOT = new URL('../', import.meta.url).pathname;
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const FORK = process.argv[2] || 'https://base.drpc.org';
+const CHAIN = Number(process.env.CHAIN || 8453);
 const PORT = 19545 + Math.floor(Math.random() * 500);
 const ANVIL = `http://127.0.0.1:${PORT}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const anvil = spawn('anvil', ['--port', String(PORT), '--fork-url', FORK, '--silent', '--chain-id', '8453'], { stdio: 'ignore' });
+const anvil = spawn('anvil', ['--port', String(PORT), '--fork-url', FORK, '--silent', '--chain-id', String(CHAIN)], { stdio: 'ignore' });
 process.on('exit', () => anvil.kill('SIGKILL'));
 for (let i = 0; ; i++) {
   try { const r = await fetch(ANVIL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"jsonrpc":"2.0","id":1,"method":"eth_chainId"}' }); if (r.ok) break; } catch {}
@@ -29,7 +30,8 @@ const TYPES = { '.js': 'text/javascript', '.html': 'text/html', '.json': 'applic
 const PAGE = `<!doctype html><script type="module">
 import { makeEvmPoolWallet } from '/evm-pool/tacit-evm-pool-wallet.js';
 const rpc = async (method, params = []) => { const r = await (await fetch('${ANVIL}', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })).json(); if (r.error) throw Object.assign(new Error(r.error.message), { data: r.error.data }); return r.result; };
-const provider = (account) => ({ request: ({ method, params }) => method === 'eth_requestAccounts' || method === 'eth_accounts' ? [account] : rpc(method, params) });
+let connects = 0;
+const provider = (account) => ({ request: ({ method, params }) => { if (method === 'eth_requestAccounts') connects++; return method === 'eth_requestAccounts' || method === 'eth_accounts' ? [account] : rpc(method, params); } });
 const until = async (f) => { for (let i = 0; i < 120; i++) { const v = await f(); if (v) return v; await new Promise((r) => setTimeout(r, 500)); } throw new Error('timed out'); };
 const receipt = (h) => until(async () => { const r = await rpc('eth_getTransactionReceipt', [h]); if (r && r.status !== '0x1') throw new Error('reverted ' + h); return r; });
 const bytes = async (f) => new Uint8Array(await (await fetch('/evm-pool/' + f)).arrayBuffer());
@@ -39,9 +41,12 @@ window.run = async () => {
   const artifacts = { wasm: await bytes('transact.wasm'), zkey: await bytes('transact_final.zkey'), vk: await bytes('transact_vk.json') };
   const key = (b) => new Uint8Array(32).fill(b);
   const tip = Number(await rpc('eth_blockNumber'));
-  const opts = { chainId: 8453, artifacts, confirmations: 0 };
-  const alice = await makeEvmPoolWallet({ ...opts, provider: provider(accA), identityKey: key(0x61) });
+  const opts = { chainId: ${CHAIN}, confirmations: 0 };
+  let loads = 0;
+  const alice = await makeEvmPoolWallet({ ...opts, artifacts: async () => { loads++; return artifacts; }, provider: provider(accA), identityKey: key(0x61) });
   const bob = await makeEvmPoolWallet({ ...opts, provider: provider(accB), identityKey: key(0x62) });
+  await alice.sync(); await bob.sync();
+  log.push('opened and synced with no proving files and no connect prompt: loads ' + loads + ', connects ' + connects);
   let t = performance.now();
   await receipt(await alice.deposit(10n ** 16n));
   log.push('deposit ' + Math.round(performance.now() - t) + ' ms, balance ' + (await alice.sync()).balance);
@@ -52,12 +57,24 @@ window.run = async () => {
   t = performance.now();
   await receipt(await alice.send(bob.address, 6n * 10n ** 15n));
   log.push('send ' + Math.round(performance.now() - t) + ' ms; bob ' + (await until(async () => { const s = await bob.sync(); return s.balance > 0n && s; })).balance);
+  await bob.setArtifacts(artifacts);
   const fresh = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(20)), (x) => x.toString(16).padStart(2, '0')).join('');
   const h = await bob.withdraw(fresh, 4n * 10n ** 15n);
   await receipt(h);
   log.push('fresh got ' + BigInt(await rpc('eth_getBalance', [fresh, 'latest'])) + ', bob keeps ' + (await bob.sync()).balance + ', sent by ' + (await rpc('eth_getTransactionByHash', [h])).from);
+  const viewer = await makeEvmPoolWallet({ chainId: ${CHAIN}, rpc: '${ANVIL}', identityKey: key(0x62), confirmations: 0 });
+  log.push('view-only wallet (rpc, no provider): address ' + (viewer.address === bob.address) + ', balance ' + (await viewer.sync()).balance + '; prover loads ' + loads);
+  if (${CHAIN} === 1) {
+    const commit = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(32)), (x) => x.toString(16).padStart(2, '0')).join('');
+    const h1 = await alice.toV1(10n ** 15n, commit, { via: 'self' });
+    const r1 = await receipt(h1);
+    const v1 = '0x000000000ed1eabd231be41d93b719056f7febfc';
+    const wrapLogs = r1.logs.filter((l) => l.address.toLowerCase() === v1);
+    log.push('toV1: V1 logs ' + wrapLogs.length + ', assetId topic ' + (wrapLogs[0]?.topics?.[2] || '').slice(0, 10) + ', amount ' + BigInt(wrapLogs[0]?.data || '0x0') + '; alice keeps ' + (await alice.sync()).balance);
+  }
   let refused = '';
   try { await makeEvmPoolWallet({ ...opts, provider: provider(accA), identityKey: key(1), artifacts: { ...artifacts, wasm: artifacts.wasm.slice(1) } }); } catch (e) { refused = e.message; }
+  try { await viewer.send(alice.address, 1n); } catch (e) { log.push('view-only send: ' + e.message); }
   log.push('tampered wasm: ' + refused);
   alice.terminate(); bob.terminate();
   return log;

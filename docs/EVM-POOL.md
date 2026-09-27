@@ -285,6 +285,13 @@ await w.send('bp1…', wei);              // private payment
 await w.withdraw('0x…', wei);           // to any address
 ```
 
+`artifacts` may also be an async loader, called the first time an action proves, or left out and set later with
+`w.setArtifacts(...)`: opening, `sync`, `balance`, the addresses and a view-only wallet (`rpc` without `provider`) never
+download the proving files, and opening never asks the wallet to connect. On Ethereum, `w.toV1(wei, commit)` moves ETH
+into a V1 tETH note in one `withdrawToV1` (commit = V1's wrap commitment for the wallet's own next note; the V1 wallet
+finds and settles it as any wrap), and `w.bridgeOut(l2, wei, { l2Rpc })` moves it to the wallet's private ETH address
+on Base or Robinhood Chain.
+
 With no `relay`, every action is proved on the device and sent from `provider`: no keeper, no relayer, no fee
 beyond gas. With `relay`, `send` and `withdraw` go through the keeper (its fee, no gas) unless called with
 `{ via: 'self' }`. Each action takes `{ via, onStep(msg) }` as its last argument. `w.receive.address` is the

@@ -8,6 +8,7 @@
 //
 //   FUNDER_KEY=<0x…> node tools/evm-pool-live-check.mjs <chainId> <rpc> <keeper base> <deploy block> <unit wei>
 //
+// KEEP=1: leave the notes in the pool at the end.
 // LEAN=1 (for Ethereum, where gas is dear): alice alone deposits 3u, pays bob 2u; no private-address deposit.
 //
 // Keys are written to tools/.live-check-<chain>.json (git-ignored) so notes stay recoverable if a step fails.
@@ -73,7 +74,7 @@ async function readLeaves() {
   const out = [];
   const head = await pub.getBlockNumber();
   const logs = [];
-  for (let a = DEPLOY; a <= head; a += 5000n) logs.push(...await pub.getLogs({ address: POOL, event: EVENT, fromBlock: a, toBlock: a + 4999n > head ? head : a + 4999n }));
+  for (let a = DEPLOY; a <= head; a += 2000n) logs.push(...await pub.getLogs({ address: POOL, event: EVENT, fromBlock: a, toBlock: a + 1999n > head ? head : a + 1999n }));
   for (const l of logs.sort((x, y) => Number(x.args.firstIndex - y.args.firstIndex))) {
     if (BigInt(l.args.outLeaf0) || BigInt(l.args.outLeaf1)) out.push(BigInt(l.args.outLeaf0), BigInt(l.args.outLeaf1));
   }
@@ -107,7 +108,7 @@ const idFile = new URL(`./.live-check-${CHAIN}-${Date.now()}.json`, import.meta.
 const K = () => '0x' + randomBytes(32).toString('hex');
 const ids = { alice: K(), carol: K(), dave: K(), erin: K(), bob: K(), aliceEoa: K(), carolEoa: K(), daveEoa: K(), fresh: K() };
 writeFileSync(idFile, JSON.stringify(ids, null, 1));
-const cfg = { chainId: CHAIN, pool: POOL, router: ROUTER, rpc: jsonRpc(RPC), deployBlock: Number(DEPLOY), confirmations: 0, logChunk: 5000 };
+const cfg = { chainId: CHAIN, pool: POOL, router: ROUTER, rpc: jsonRpc(RPC), deployBlock: Number(DEPLOY), confirmations: 0, logChunk: 2000 };
 const person = (k) => { const keys = evmPoolKeys(zk, hexb(k)); return { keys, w: makeEvmPoolWallet({ zk, keys, chain: cfg, keeper: KEEPER, prove }) }; };
 const P = { alice: person(ids.alice), carol: person(ids.carol), dave: person(ids.dave), erin: person(ids.erin), bob: person(ids.bob) };
 const eoa = { alice: walletOf(ids.aliceEoa), carol: walletOf(ids.carolEoa), dave: walletOf(ids.daveEoa) };
@@ -119,7 +120,8 @@ const shown = [];
 // 1. deposits: alice 5u, carol 3u, dave 4u self-serve; erin 6u through her private ETH address.
 const LEAN = process.env.LEAN === '1';
 const gasPrice = await pub.getGasPrice();
-const gasBudget = (gasPrice * 13n / 10n) * (LEAN ? 1_000_000n : 1_800_000n);
+const gasBudget0 = (gasPrice * 13n / 10n) * (LEAN ? 1_000_000n : 1_800_000n);
+const gasBudget = gasBudget0 > 2n * 10n ** 14n ? gasBudget0 : 2n * 10n ** 14n; // wallets cap fees above the current price
 const amounts = LEAN ? { alice: 3n * UNIT } : { alice: 5n * UNIT, carol: 3n * UNIT, dave: 4n * UNIT };
 for (const n of Object.keys(amounts)) {
   const h = await funder.sendTransaction({ to: eoa[n].account.address, value: amounts[n] + gasBudget });
@@ -176,7 +178,8 @@ for (const [what, h] of shown) {
 const depositLeaves = new Set(); const allLeaves = await leavesNow();
 log(`  the withdrawal names no leaf and no depositor; its nullifier matches none of the ${allLeaves.filter((x) => x !== 0n).length} leaves in the pool, and every leaf is a hash that reveals no owner or amount`);
 
-// 5. return everything to the funder.
+// 5. return everything to the funder (KEEP=1 leaves the notes in the pool).
+if (process.env.KEEP === '1') { log('notes kept in the pool'); process.exit(0); }
 for (const n of [...Object.keys(amounts), ...(LEAN ? [] : ['erin']), 'bob']) {
   const b = (await P[n].w.sync()).balance;
   const fee = BigInt((await P[n].w.quote()).fee);

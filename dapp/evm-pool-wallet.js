@@ -150,6 +150,13 @@ const TX_TYPES = [PAIR, { tuple: [PAIR, PAIR] }, PAIR, { tuple: Array(11).fill('
 const TX_SIG = '(uint256[2],uint256[2][2],uint256[2],uint256[11],address,int256,address,uint256,bytes,bytes)';
 const txValues = (t) => [t.pA, t.pB, t.pC, t.publicInputs, t.recipient, BigInt.asUintN(256, BigInt(t.extAmount)), t.relayer, t.fee, t.memo0, t.memo1];
 const transactData = (t) => calldata(`transact${TX_SIG}`, TX_TYPES, txValues(t));
+const WRAP_SIG = '(bytes32,uint256,uint256,address,bytes32,address,uint64,uint256)';
+const WRAP_TYPES = ['bytes32', 'uint256', 'uint256', 'address', 'bytes32', 'address', 'uint64', 'uint256'];
+const wrapValues = (i) => [i.assetId, i.amount, i.tip, i.tipTo, i.commit, i.refund, i.deadline, i.nonce];
+const withdrawToV1Data = (t, i) => calldata(`withdrawToV1(${TX_SIG},${WRAP_SIG})`, [{ tuple: TX_TYPES }, { tuple: WRAP_TYPES }], [txValues(t), wrapValues(i)]);
+// V1's tETH (native ETH) asset id and its unit: a wrap amount is a whole number of 1e10 wei.
+export const V1_TETH_ASSET_ID = '0x3cba71e1114af183cdeacc6b8457a474d17529fd28704480ca799d0d03126f34';
+const V1_UNIT = 10n ** 10n;
 const sweepData = (npk, feeBps, t) => calldata(`sweepReceive(uint256,uint16,${TX_SIG})`, ['uint256', 'uint16', { tuple: TX_TYPES }], [npk, feeBps, txValues(t)]);
 // Reverts meaning another transaction landed first: prove again against the new state.
 const RACED = new Set(['StaleRoot()', 'WrongInsertionIndex()', 'UnknownMembershipRoot()', 'BadIntent()'].map((e) => hex(selector(e))));
@@ -162,7 +169,8 @@ const revertData = (e) => { for (let x = e; x; x = x.cause) { const d = x.rpc?.d
 // store: { get(k), set(k, v) } for the synced state, or null to keep it in memory. What is stored is view-level only
 // (the tree's right edge and the paths of owned notes, and each owned note's position, value, rho and shared
 // secret); spend keys are derived in memory.
-// signer: { address, send({ to, data, value }) → tx hash } for the user's own wallet, or null. A spend goes through
+// signer: { address, send({ to, data, value }) → tx hash, ready?() } for the user's own wallet, or null (ready, when
+// given, runs before a self-submitted action, e.g. to connect). A spend goes through
 // the keeper when there is one, unless called with { via: 'self' }; deposits and sweeps of the private ETH address
 // by the signer are always its own.
 // feed: read confirmed history from the keeper's /events first (checked against the pool; see sync), then the rest
@@ -401,6 +409,7 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   // first (prove again).
   async function sendSelf(to, data, value, onStep) {
     if (!signer) throw new Error('no wallet to send from: connect one, or use a relayer');
+    if (signer.ready) await signer.ready();
     const v = '0x' + BigInt(value).toString(16);
     try { await chain.rpc('eth_call', [{ from: signer.address, to, data, value: v }, 'latest']); }
     catch (e) {
@@ -415,7 +424,8 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   // One transaction: spends `ins`, creates `outs` ([{ to, value } | null] × 2) and moves `extAmount` across the pool
   // boundary (> 0 in from the signer, < 0 out to `recipient`). With a relayer's quote `q` the relayer submits it
   // for q.fee; without, the signer does and pays the gas. Re-proves when another transaction lands first. → tx hash.
-  async function transact({ ins, outs, extAmount = 0n, recipient = ZERO, q = null, extra = {}, onStep = () => {} }) {
+  // selfCall(tx) → { to, data }: what the signer submits, when not pool.transact (withdrawToV1).
+  async function transact({ ins, outs, extAmount = 0n, recipient = ZERO, q = null, extra = {}, selfCall = null, onStep = () => {} }) {
     const sealed = outs.map((o) => (o ? sealNote(zk, { to: o.to, value: o.value, asset }) : null));
     const memo0 = sealed[0]?.memo ?? new Uint8Array(), memo1 = sealed[1]?.memo ?? new Uint8Array();
     const fee = q ? BigInt(q.fee) : 0n, relayer = q ? q.relayer : ZERO;
@@ -435,7 +445,8 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
         if (r.status !== 200 || !r.body.txHash) throw new Error(r.body.error || `relayer returned ${r.status}`);
         h = r.body.txHash;
       } else {
-        h = await sendSelf(chain.pool, transactData(tx), extAmount > 0n ? extAmount : 0n, onStep);
+        const c = selfCall ? selfCall(tx) : { to: chain.pool, data: transactData(tx) };
+        h = await sendSelf(c.to, c.data, extAmount > 0n ? extAmount : 0n, onStep);
         if (!h) continue;
       }
       for (const n of ins) pending.add(n.nf);
@@ -624,6 +635,34 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       const intent = callIntent({ calls: [c], refund, deadline: BigInt(Math.floor(Date.now() / 1000) + 3600), nonce });
       // The OP portal burns L1 gas to buy the deposit's L2 gas (~620k in all); a retryable costs ~100k.
       return api.withdrawAndCall({ intent, amount: value, gas: b.kind === 'op' ? 1_300_000 : 700_000, onStep });
+    },
+
+    // Moves `amount` wei (a multiple of 1e10) from this Ethereum pool into a V1 tETH note with commitment `commit`,
+    // in one transaction (router.withdrawToV1): relayed by default, or from the signer with via: 'self'. `commit` is
+    // V1's wrap commitment for the wallet's own next V1 note (confidential-pool-ux buildWrap(...).commit); the V1
+    // wallet finds the deposit from its key and makes it a note with its usual wrap settle. → tx hash.
+    async toV1({ amount, commit, via = null, onStep = () => {} }) {
+      if (Number(chain.chainId) !== 1) throw new Error('V1 is on Ethereum; move to V1 from the Ethereum pool');
+      const a = BigInt(amount);
+      if (a <= 0n || a % V1_UNIT !== 0n) throw new Error('the amount must be a positive multiple of 1e10 wei');
+      if (!/^0x[0-9a-fA-F]{64}$/.test(String(commit)) || BigInt(commit) === 0n) throw new Error('commit must be a 32-byte V1 wrap commitment');
+      await sync();
+      const q = await quoteFor(via, 700_000);
+      const fee = q ? BigInt(q.fee) : 0n;
+      const intent = {
+        assetId: V1_TETH_ASSET_ID, amount: a, tip: 0n, tipTo: ZERO, commit,
+        // Only a box funded and never completed is reclaimable; withdrawToV1 funds and completes in one call.
+        refund: await api.refundBox(),
+        deadline: BigInt(Math.floor(Date.now() / 1000) + 3600), nonce: BigInt(hex(globalThis.crypto.getRandomValues(new Uint8Array(16)))),
+      };
+      const box = '0x' + String(await chain.rpc('eth_call', [{ to: chain.router, data: calldata(`wrapBoxOf(${WRAP_SIG})`, [{ tuple: WRAP_TYPES }], [wrapValues(intent)]) }, 'latest'])).slice(-40);
+      const ins = await prepare(a + fee, q, onStep);
+      const change = ins.reduce((s, n) => s + BigInt(n.v), 0n) - a - fee;
+      return transact({
+        ins, outs: [change > 0n ? { to: self, value: change } : null, null], extAmount: -a, recipient: box, q, onStep,
+        extra: { wrap: { ...intent, amount: a.toString(), tip: '0', deadline: intent.deadline.toString(), nonce: intent.nonce.toString() } },
+        selfCall: (tx) => ({ to: chain.router, data: withdrawToV1Data(tx, intent) }),
+      });
     },
   };
   return api;

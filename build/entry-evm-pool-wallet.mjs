@@ -16,17 +16,25 @@
 //   await w.bridgeOut(l2, wei, { l2Rpc }) → from the Ethereum pool to this wallet's private ETH address on Base
 //                                     (8453) or Robinhood Chain (4663, needs l2Rpc) via the canonical bridge
 //                                     (needs relay)                              → tx hash
+//   await w.toV1(wei, commit, { via }) → from the Ethereum pool into a V1 tETH note (wei a multiple of 1e10;
+//                                     commit = V1's own wrap commitment, confidential-pool-ux buildWrap(...).commit;
+//                                     the V1 wallet then settles it as any wrap)   → tx hash
 //   await w.rescan()                → rebuilds the synced state from chain logs alone (no keeper feed)
+//   await w.setArtifacts({ wasm, zkey, vk }) → the proving files, if not given at open
 //   w.terminate()                   → stops the prove worker
 // Each action takes an optional last argument { via: 'self' | 'relay', onStep(msg) }. Without `relay` everything
 // is proved here and submitted by `provider`; with it, send and withdraw go through that keeper unless via: 'self',
 // and confirmed history is read from the keeper's /events feed, checked against the pool before it is kept.
 //
 // provider:    an EIP-1193 provider on `chainId` (the user's wallet); it signs and, unless `rpc` is given, reads.
+//              Opening does not ask it to connect; the first action that sends does. Optional with `rpc` for a
+//              view-only wallet.
 // identityKey: the 32-byte Tacit identity key (Uint8Array or 0x hex). Keys, notes and the private ETH address all
 //              derive from it; nothing that can spend leaves this module.
 // artifacts:   the ceremony's transact.wasm and transact_final.zkey (bytes) and transact_vk.json (bytes, string or
-//              object). Each is checked against PIN before use.
+//              object), or an async function returning them, called the first time an action proves; or nothing,
+//              then w.setArtifacts(...) before proving. Address, balance and sync never need them. Each file is
+//              checked against PIN before use.
 // relay:       a keeper base, …/evm-pool/keeper.   rpc: URL or URLs to read from instead of the provider.
 // store:       { get(k), set(k, v) } to keep the synced (view-level) state across loads.
 
@@ -82,30 +90,45 @@ function startProver(art) {
   };
 }
 
-export async function makeEvmPoolWallet({ provider, chainId, identityKey, artifacts, relay = null, rpc = null, store = null, confirmations = 3, deployBlock = null }) {
-  if (!provider?.request) throw new Error('provider must be an EIP-1193 provider');
+export async function makeEvmPoolWallet({ provider = null, chainId, identityKey, artifacts = null, relay = null, rpc = null, store = null, confirmations = 3, deployBlock = null }) {
+  if (provider && !provider.request) throw new Error('provider must be an EIP-1193 provider');
+  if (!provider && !rpc) throw new Error('give a provider, or rpc for a view-only wallet');
   const id = Number(chainId);
-  if (Number(BigInt(await provider.request({ method: 'eth_chainId' }))) !== id) throw new Error(`the wallet is not on chain ${id}`);
+  const read = rpc ? jsonRpc(rpc) : (method, params = []) => provider.request({ method, params });
+  if (Number(BigInt(await read('eth_chainId'))) !== id) throw new Error(`the RPC is not on chain ${id}`);
   const key = typeof identityKey === 'string' ? Uint8Array.from(identityKey.replace(/^0x/, '').match(/../g).map((h) => parseInt(h, 16))) : identityKey;
   if (!(key instanceof Uint8Array) || key.length !== 32) throw new Error('identityKey must be 32 bytes');
-  const art = await checkedArtifacts(artifacts);
-  const prover = startProver(art);
 
-  const read = rpc ? jsonRpc(rpc) : (method, params = []) => provider.request({ method, params });
+  // The prover starts the first time an action proves, from the files given now, later, or by the loader.
+  let art = artifacts && typeof artifacts !== 'function' ? await checkedArtifacts(artifacts) : null;
+  const loader = typeof artifacts === 'function' ? artifacts : null;
+  let prover = null;
+  const getProver = async () => {
+    if (prover) return prover;
+    if (!art) {
+      if (!loader) throw new Error('the proving files are not set: pass artifacts or call setArtifacts');
+      art = await checkedArtifacts(await loader());
+    }
+    return (prover = startProver(art));
+  };
+
   let from = null;
-  const account = async () => (from ||= (await provider.request({ method: 'eth_requestAccounts' }))[0]);
-  const signer = {
+  const signer = provider && {
     get address() { return from; },
+    async ready() {
+      if (from) return;
+      if (Number(BigInt(await provider.request({ method: 'eth_chainId' }))) !== id) throw new Error(`the wallet is not on chain ${id}`);
+      from = (await provider.request({ method: 'eth_requestAccounts' }))[0];
+    },
     async send({ to, data, value }) {
-      const a = await account();
-      return provider.request({ method: 'eth_sendTransaction', params: [{ from: a, to, data, value: '0x' + BigInt(value).toString(16) }] });
+      await this.ready();
+      return provider.request({ method: 'eth_sendTransaction', params: [{ from, to, data, value: '0x' + BigInt(value).toString(16) }] });
     },
   };
-  await account();
 
   const keys = evmPoolKeys(zk, key);
   const w = makeCore({
-    zk, keys, keeper: relay, store, signer, prove: prover.prove,
+    zk, keys, keeper: relay, store, signer, prove: async (input) => (await getProver()).prove(input),
     chain: { chainId: id, pool: POOL, router: ROUTER, rpc: read, deployBlock: deployBlock ?? CHAINS[id]?.deployBlock ?? 0, confirmations },
   });
   let last = null;
@@ -125,7 +148,9 @@ export async function makeEvmPoolWallet({ provider, chainId, identityKey, artifa
     withdraw: (to, wei, o) => w.withdraw({ to, amount: wei, ...opts(o) }),
     quote: () => w.quote(),
     bridgeOut: (toChainId, wei, o = {}) => w.bridgeOut({ toChainId, amount: wei, l2Rpc: o.l2Rpc ? jsonRpc(o.l2Rpc) : null, onStep: o.onStep ?? (() => {}) }),
+    toV1: (wei, commit, o = {}) => w.toV1({ amount: wei, commit, ...opts(o) }),
     rescan: async () => (last = await w.rescan()),
-    terminate: () => prover.terminate(),
+    setArtifacts: async (a) => { art = await checkedArtifacts(a); prover?.terminate(); prover = null; },
+    terminate: () => { prover?.terminate(); prover = null; },
   };
 }
