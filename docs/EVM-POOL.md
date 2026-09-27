@@ -250,6 +250,13 @@ With the keeper service:
 3. `POST /evm-pool/keeper/relay` with `{ tx: { pA, pB, pC, publicInputs, recipient, extAmount, relayer, fee, memo0,
    memo1 } }` (integers as decimal strings) → `{ txHash }`.
 
+**History feed.** `GET /evm-pool/keeper/events?from=<block>` → `{ through, events }`: the pool's `Transact` and the
+router's `Received` events in blocks `from..through`, confirmed, in chain order, whole blocks per page. A wallet syncs
+most of its history from it in a few requests instead of thousands of log queries. It trusts nothing in it: each page
+is kept only if the tree it builds is one the pool has held at that size (`rootSize(root) == size`), and one
+`isSpent` call over the wallet's own notes catches a spend the feed left out. A feed can at most hide a note (by
+withholding its memo or `Received` event); `rescan()` rebuilds from chain logs alone.
+
 A `409` with `stale: true` means another transaction landed first: rebuild against the new root and prove again
 (the owner's signature does not change). A `400` carrying `needFee` means gas moved; re-quote. Deposits are not
 relayed, since a deposit is paid by whoever sends it.
@@ -281,7 +288,9 @@ await w.withdraw('0x…', wei);           // to any address
 With no `relay`, every action is proved on the device and sent from `provider`: no keeper, no relayer, no fee
 beyond gas. With `relay`, `send` and `withdraw` go through the keeper (its fee, no gas) unless called with
 `{ via: 'self' }`. Each action takes `{ via, onStep(msg) }` as its last argument. `w.receive.address` is the
-private ETH address and `w.receive.waiting()` what sits there unswept. `w.terminate()` stops the worker.
+private ETH address and `w.receive.waiting()` what sits there unswept. With `relay`, confirmed history is read from the
+keeper's feed first (checked as below); `w.rescan()` rebuilds from chain logs alone. `w.terminate()` stops the
+worker. Synced state stays small as the pool grows: the tree's right edge and the paths of the wallet's own notes.
 
 ## Moving between V1 and this pool
 

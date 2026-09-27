@@ -70,6 +70,7 @@ export const ROUTER_ABI = [
   fn('refundCall', [CALL_INTENT, { type: 'address' }]),
   ...ERRORS,
 ];
+const RECEIVED_EVENT = parseAbi(['event Received(address indexed box, uint256 indexed n, uint256 index, uint256 value, uint256 rho, uint256 fee)'])[0];
 const POOL_ABI = [
   fn('transact', [
     { type: 'uint256[2]' }, { type: 'uint256[2][2]' }, { type: 'uint256[2]' }, { type: 'uint256[11]' }, { type: 'address' },
@@ -127,7 +128,17 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
     },
     async transactLogs(fromBlock, toBlock) {
       const logs = await pub.getLogs({ address: cfg.pool, event: POOL_ABI.find((x) => x.type === 'event'), fromBlock, toBlock, strict: true });
-      return logs.map((l) => ({ firstIndex: l.args.firstIndex, outLeaf0: BigInt(l.args.outLeaf0), outLeaf1: BigInt(l.args.outLeaf1), blockNumber: l.blockNumber }));
+      return logs.map((l) => ({
+        firstIndex: l.args.firstIndex, outLeaf0: BigInt(l.args.outLeaf0), outLeaf1: BigInt(l.args.outLeaf1), blockNumber: l.blockNumber,
+        logIndex: l.logIndex, tx: l.transactionHash, nf0: l.args.nf0, nf1: l.args.nf1, memo0: l.args.memo0, memo1: l.args.memo1,
+      }));
+    },
+    async receivedLogs(fromBlock, toBlock) {
+      const logs = await pub.getLogs({ address: cfg.router, event: RECEIVED_EVENT, fromBlock, toBlock, strict: true });
+      return logs.map((l) => ({
+        box: l.args.box, n: l.args.n, index: l.args.index, value: l.args.value, rho: l.args.rho, fee: l.args.fee,
+        blockNumber: l.blockNumber, logIndex: l.logIndex, tx: l.transactionHash,
+      }));
     },
     depositBoxOf: async (intent) => getAddress(await read(cfg.router, ROUTER_ABI, 'depositBoxOf', [intent])),
     wrapBoxOf: async (intent) => getAddress(await read(cfg.router, ROUTER_ABI, 'wrapBoxOf', [intent])),

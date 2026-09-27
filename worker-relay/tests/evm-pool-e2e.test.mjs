@@ -173,6 +173,36 @@ try {
     assert.equal((await again.sync()).balance, (await alice.sync()).balance);
   });
 
+  await test('a wallet restored through the keeper feed matches a chain-log rescan; a forged feed is refused', async () => {
+    const want = (await alice.sync()).balance;
+    const counted = () => { const c = { logs: 0 }; const rpc = jsonRpc(RPC); c.rpc = (m, p) => { if (m === 'eth_getLogs') c.logs++; return rpc(m, p); }; return c; };
+    const keys = evmPoolKeys(zk, new Uint8Array(32).fill(0x11));
+    await until(async () => (await (await fetch(`${KEEPER}/events?from=0`)).json()).events.length > 0, 'keeper feed');
+
+    const a = counted();
+    const viaFeed = makeEvmPoolWallet({ zk, keys, chain: { ...chainCfg, rpc: a.rpc, logChunk: 1 }, keeper: KEEPER, prove });
+    assert.equal((await viaFeed.sync()).balance, want);
+    const b = counted();
+    const viaLogs = makeEvmPoolWallet({ zk, keys, chain: { ...chainCfg, rpc: b.rpc, logChunk: 1 }, keeper: KEEPER, prove, feed: false });
+    assert.equal((await viaLogs.sync()).balance, want);
+    assert.ok(a.logs < b.logs / 2, `feed sync read ${a.logs} log pages, chain-log sync ${b.logs}`);
+    assert.equal((await viaFeed.rescan()).balance, want, 'rescan from chain logs alone agrees');
+
+    // A feed that swaps one leaf builds a tree the pool never held: it is refused and the chain logs are used.
+    const forge = async (url, init) => {
+      const r = await fetch(url, init);
+      if (!String(url).includes('/events')) return r;
+      const j = await r.json();
+      const t = j.events.find((e) => e.kind === 'transact');
+      if (t) t.outLeaf0 = (BigInt(t.outLeaf0) ^ 1n).toString();
+      return new Response(JSON.stringify(j), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const c = counted();
+    const forged = makeEvmPoolWallet({ zk, keys, chain: { ...chainCfg, rpc: c.rpc, logChunk: 1 }, keeper: KEEPER, prove, fetchImpl: forge });
+    assert.equal((await forged.sync()).balance, want);
+    assert.ok(c.logs >= b.logs - 2, `the forged page was dropped and chain logs read instead (${c.logs} vs ${b.logs})`);
+  });
+
   await test('no keeper: deposit, own-address sweep, private send and withdrawal, each submitted by the user\'s wallet', async () => {
     const signerOf = (w) => ({ address: w.account.address, send: ({ to, data, value }) => w.sendTransaction({ to, data, value }) });
     const cw = wallet(KEYS[2]);

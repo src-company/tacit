@@ -210,7 +210,7 @@ function setup({ cfg: over = {}, onProve } = {}) {
   const clock = { t: T0 };
   chain.elapsed = 0;
   const now = () => clock.t;
-  const leafSync = makeLeafSync({ store, chain, startBlock: 0n, confirmations: cfg.confirmations, logChunk: 5n });
+  const leafSync = makeLeafSync({ store, chain, zk, startBlock: 0n, confirmations: cfg.confirmations, logChunk: 5n });
   const logs = [];
   const keeper = createKeeper({ store, chain, prover, zk, assetField, leafSync, cfg, now, log: (m) => logs.push(m) });
   const advance = (s) => { clock.t += s; chain.elapsed += s; };
@@ -371,25 +371,36 @@ await test('HTTP intake refuses new intents at capacity', async () => {
 
 // ── leaf sync ──
 
-await test('leaf sync persists confirmed leaves, re-reads the tail, and resets on a dropped block', async () => {
+await test('leaf sync persists confirmed leaves and events, re-reads the tail, and resets on a dropped block', async () => {
   const store = openKeeperStore(':memory:');
   const chain = mockChain();
-  const sync = makeLeafSync({ store, chain, startBlock: 0n, confirmations: 2n, logChunk: 3n });
+  const sync = makeLeafSync({ store, chain, zk, startBlock: 0n, confirmations: 2n, logChunk: 3n });
   for (let i = 0; i < 5; i++) chain.foreignTx();
   let s = await sync.sync();
-  assert.equal(s.leaves.length, 10);
+  assert.equal(s.tree.size, 10);
+  assert.equal(s.tree.root, zk.tree(chain.leaves).root);
   assert.equal(s.root, zk.tree(chain.leaves).root);
   assert.equal(store.leafCount(), 6); // blocks ≤ head − 2
+  const feed = sync.eventsFrom(0, 100);
+  assert.equal(feed.events.length, 3, 'the confirmed Transact events, for /events');
+  assert.deepEqual(feed.events.map((e) => e.firstIndex), [0, 2, 4]);
+  assert.equal(feed.through, Number(chain.block) - 2);
+  const page = sync.eventsFrom(0, 2);
+  assert.equal(page.events.length, 2);
+  assert.equal(page.through, page.events[1].block, 'a page ends on a whole block');
   // A reorg drops the last (unpersisted) event: the tail is simply re-read.
   chain.leaves.splice(8); chain.events.pop(); chain.block -= 1n;
   s = await sync.sync();
-  assert.equal(s.leaves.length, 8);
+  assert.equal(s.tree.size, 8);
+  assert.equal(s.tree.root, zk.tree(chain.leaves).root);
   // A deeper reorg the store already holds: count exceeds the pool's, the store resets and the next sync rebuilds.
   chain.leaves.splice(4); chain.events.splice(2); chain.block = 102n;
   await assert.rejects(sync.sync(), LeafSyncError);
   assert.equal(store.leafCount(), 0);
+  assert.equal(sync.eventsFrom(0, 100).events.length, 0, 'events reset with the leaves');
   s = await sync.sync();
-  assert.equal(s.leaves.length, 4);
+  assert.equal(s.tree.size, 4);
+  assert.equal(s.tree.root, zk.tree(chain.leaves).root);
 });
 
 // ── loop ──

@@ -1,6 +1,7 @@
 // jsonRpc over several nodes, and the wallet's log scan against nodes with different eth_getLogs range limits.
 import assert from 'node:assert/strict';
-import { jsonRpc, makeEvmPoolWallet, evmPoolKeys } from '../dapp/evm-pool-wallet.js';
+import { jsonRpc, makeEvmPoolWallet, evmPoolKeys, sealNote, openNote } from '../dapp/evm-pool-wallet.js';
+import { poolAsset } from '../dapp/evm-pool-zk.js';
 import { makeEvmPoolZk } from '../dapp/evm-pool-zk.js';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7 } from 'poseidon-lite';
 
@@ -65,6 +66,35 @@ await check('the scan takes the widest limit a node names (in message or data) a
     // Two log streams (pool and router), each ceil(10001 / want) chunks served by that node, plus its refusals.
     assert.ok(served >= 2 * Math.ceil((TIP + 1) / want) && served < 2 * Math.ceil((TIP + 1) / want) + 12, `${urls}: ${served} calls for a ${want}-block step`);
   }
+});
+
+await check('state saved with every leaf and nullifier loads as a tree of unspent notes only', async () => {
+  const POOL = '0x000000c2A20657CE25f2Ba99737933D031AFBEE9';
+  const keys = evmPoolKeys(zk, new Uint8Array(32).fill(9));
+  const asset = poolAsset({ chainId: 8453n, pool: POOL, token: '0x0000000000000000000000000000000000000000' });
+  const self = { V: keys.V, A: keys.A, N: keys.N };
+  const hex = (b) => '0x' + Buffer.from(b).toString('hex');
+  const mine = [5n, 7n].map((v) => { const o = sealNote(zk, { to: self, value: v, asset }); return { ...o, leaf: zk.leafOf(asset, o.v, o.npk, o.rho) }; });
+  const leaves = [11n, mine[0].leaf, 13n, 17n, mine[1].leaf, 19n];
+  const idx = [1, 4];
+  const notes = mine.map((m, k) => { const o = openNote(zk, keys, { memo: m.memo, leaf: m.leaf, asset }); return { index: idx[k], leaf: m.leaf.toString(), v: o.v.toString(), rho: o.rho.toString(), s: hex(o.s), kind: 'memo' }; });
+  const k1 = zk.ownedKeys(keys.zkWallet, Buffer.from(notes[1].s.slice(2), 'hex'));
+  const spentNf = zk.nullifier(k1.nk, mine[1].leaf, 4).toString();
+  const saved = new Map();
+  const skey = `tacit-evm-pool-v1:8453:${POOL.toLowerCase()}:${keys.address}`;
+  saved.set(skey, JSON.stringify({ block: 100, leaves: leaves.map(String), notes, spent: ['123', spentNf], nextRefund: 1 }));
+  const store = { get: (k) => saved.get(k), set: (k, v) => saved.set(k, v) };
+  const rpc = async (m) => (m === 'eth_blockNumber' ? '0x64' : []);
+  const w = makeEvmPoolWallet({ zk, keys, prove: null, store, chain: { chainId: 8453, pool: POOL, router: '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5', rpc, deployBlock: 0, confirmations: 0 } });
+  const sum = await w.sync();
+  assert.equal(sum.balance, 5n, 'the spent note is dropped');
+  assert.equal(sum.leaves, 6);
+  const w2 = makeEvmPoolWallet({ zk, keys, prove: null, store: { get: () => JSON.stringify({ block: 100, leaves: leaves.map(String), notes, spent: [spentNf] }), set: (k, v) => saved.set('new', v) }, chain: { chainId: 8453, pool: POOL, router: '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5', rpc: async (m) => (m === 'eth_blockNumber' ? '0x6e' : []), deployBlock: 0, confirmations: 0 } });
+  await w2.sync();
+  const now = JSON.parse(saved.get('new'));
+  assert.ok(now.tree && !now.leaves && !now.spent, 'saved again as a tree, with no leaves or nullifier list');
+  assert.deepEqual(Object.keys(now.tree.tracked), ['1'], 'only the unspent note keeps a path');
+  assert.equal(now.tree.root, zk.tree(leaves).root.toString());
 });
 
 console.log(`\n${n} checks passed`);

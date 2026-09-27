@@ -26,7 +26,13 @@ export function openKeeperStore(dbPath) {
     );
     CREATE INDEX IF NOT EXISTS intents_due ON intents(status, next_check);
     CREATE TABLE IF NOT EXISTS leaves (idx INTEGER PRIMARY KEY, leaf TEXT NOT NULL, block INTEGER NOT NULL);
+    -- Confirmed pool Transact and router Received events, as served by /events.
+    CREATE TABLE IF NOT EXISTS events (block INTEGER NOT NULL, log_index INTEGER NOT NULL, ev TEXT NOT NULL, PRIMARY KEY (block, log_index));
   `);
+  // A store synced before events were kept replays its leaves once so the events table covers them too.
+  if (db.prepare("SELECT v FROM meta WHERE k = 'events_kept'").get() === undefined) {
+    db.exec("DELETE FROM leaves; DELETE FROM events; DELETE FROM meta WHERE k = 'synced_block'; INSERT INTO meta (k, v) VALUES ('events_kept', '1')");
+  }
 
   const st = {
     getMeta: db.prepare('SELECT v FROM meta WHERE k = ?'),
@@ -43,6 +49,9 @@ export function openKeeperStore(dbPath) {
     leaves: db.prepare('SELECT leaf FROM leaves ORDER BY idx'),
     insLeaf: db.prepare('INSERT INTO leaves (idx, leaf, block) VALUES (?, ?, ?)'),
     clearLeaves: db.prepare('DELETE FROM leaves'),
+    insEvent: db.prepare('INSERT OR REPLACE INTO events (block, log_index, ev) VALUES (?, ?, ?)'),
+    eventsFrom: db.prepare('SELECT block, ev FROM events WHERE block >= ? ORDER BY block, log_index LIMIT ?'),
+    clearEvents: db.prepare('DELETE FROM events'),
   };
 
   const row = (r) => r && {
@@ -88,14 +97,20 @@ export function openKeeperStore(dbPath) {
 
     leafCount: () => st.leafCount.get().n,
     leaves: () => st.leaves.all().map((r) => BigInt(r.leaf)),
-    // Appends leaves (in index order, starting at the current count) and advances the synced block, atomically.
-    appendLeaves: db.transaction((items, syncedBlock) => {
+    // Appends leaves (in index order, starting at the current count) and their blocks' events, and advances the
+    // synced block, atomically. events: [{ block, logIndex, ev (JSON-ready) }].
+    appendLeaves: db.transaction((items, syncedBlock, events = []) => {
       let idx = st.leafCount.get().n;
       for (const { leaf, block } of items) st.insLeaf.run(idx++, leaf.toString(), Number(block));
+      for (const e of events) st.insEvent.run(Number(e.block), Number(e.logIndex), JSON.stringify(e.ev));
       st.setMeta.run('synced_block', String(syncedBlock));
     }),
+    // Up to `limit` stored events from `fromBlock` on, in chain order. → [{ block, ev }]
+    eventsFrom: (fromBlock, limit) => st.eventsFrom.all(Number(fromBlock), limit).map((r) => ({ block: r.block, ev: JSON.parse(r.ev) })),
+    syncedBlock: () => { const v = st.getMeta.get('synced_block')?.v; return v === undefined ? null : Number(v); },
     resetLeaves: db.transaction(() => {
       st.clearLeaves.run();
+      st.clearEvents.run();
       db.prepare("DELETE FROM meta WHERE k = 'synced_block'").run();
     }),
     close: () => db.close(),

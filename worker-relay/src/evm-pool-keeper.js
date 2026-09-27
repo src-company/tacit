@@ -37,7 +37,7 @@ async function main() {
   const zk = await loadZk();
   const prover = await makeKeeperProver(cfg);
   const store = openKeeperStore(cfg.dbPath);
-  const leafSync = makeLeafSync({ store, chain, startBlock: cfg.startBlock, confirmations: cfg.confirmations, logChunk: cfg.logChunk, log });
+  const leafSync = makeLeafSync({ store, chain, zk, startBlock: cfg.startBlock, confirmations: cfg.confirmations, logChunk: cfg.logChunk, log });
   const keeper = createKeeper({ store, chain, prover, zk, assetField, leafSync, cfg, log });
 
   const assetKey = chain.asset.toLowerCase();
@@ -45,7 +45,7 @@ async function main() {
   log(`keeper ${account.address} on chain ${chain.chainId}: pool ${chain.pool} router ${chain.router} asset ${chain.asset} vk ${prover.vkHash.slice(0, 16)}${cfg.dryRun ? ' (dry run)' : ''}`);
 
   let lastTickOk = true;
-  const handler = createIntakeHandler({ store, chain, zk, assetField, cfg, log, isReady: () => lastTickOk });
+  const handler = createIntakeHandler({ store, chain, zk, assetField, cfg, log, leafSync, isReady: () => lastTickOk });
   createServer(handler).listen(cfg.port, () => log(`listening on ${cfg.port}`));
 
   for (;;) {

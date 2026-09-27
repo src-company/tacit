@@ -90,8 +90,8 @@ export function createKeeper({
     if (!pre.ok) return { skipped: pre.reason };
     const hint = hintArgs(r.hint);
     for (let round = 0; round <= cfg.staleRetries; round++) {
-      const { leaves, root } = await leafSync.sync();
-      const w = completionWitness(zk, { intent, hint, asset: assetField, leaves, chainId: chain.chainId, pool: chain.pool, relayer: chain.address });
+      const { tree, root } = await leafSync.sync();
+      const w = completionWitness(zk, { intent, hint, asset: assetField, tree, chainId: chain.chainId, pool: chain.pool, relayer: chain.address });
       if (BigInt(w.publicSignals[1]) !== root) {
         leafSync.invalidate();
         throw new Error('rebuilt leaves do not reach the pool root; resyncing');
@@ -159,11 +159,11 @@ export function createKeeper({
     const pre = coverCheck({ reward: feeFor(bal), token: r.token, gas: cfg.sweepGas, gasPrice, cfg, floor });
     if (!pre.ok) return { skipped: pre.reason };
     for (let round = 0; round <= cfg.staleRetries; round++) {
-      const [{ leaves, root }, n] = await Promise.all([leafSync.sync(), chain.receiveCount(r.box)]);
+      const [{ tree, root }, n] = await Promise.all([leafSync.sync(), chain.receiveCount(r.box)]);
       const amount = round === 0 ? bal : BigInt(await chain.balanceOf(r.token, r.box));
       if (amount === 0n) return { idle: true };
       const f = feeFor(amount);
-      const w = sweepWitness(zk, { asset: assetField, leaves, npk: BigInt(npk), feeBps: Number(feeBps), box: r.box, n, amount, fee: f, relayer: chain.address, chainId: chain.chainId, pool: chain.pool });
+      const w = sweepWitness(zk, { asset: assetField, tree, npk: BigInt(npk), feeBps: Number(feeBps), box: r.box, n, amount, fee: f, relayer: chain.address, chainId: chain.chainId, pool: chain.pool });
       if (BigInt(w.publicSignals[1]) !== root) {
         leafSync.invalidate();
         throw new Error('rebuilt leaves do not reach the pool root; resyncing');

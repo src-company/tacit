@@ -4,6 +4,8 @@
 //   POST /evm-pool/keeper/wrap     a wrap intent
 //   POST /evm-pool/keeper/receive  { chainId, npk, feeBps }: a receive box to watch and sweep
 //   GET  /evm-pool/keeper/quote    the relayer address and fee to prove a relayed transaction with
+//   GET  /evm-pool/keeper/events?from=<block>   confirmed pool Transact and router Received events, whole blocks
+//                                  from..through; a wallet checks what it builds from them against the pool
 //   POST /evm-pool/keeper/relay    { tx, call?, wrap? }: submit a user's own proven withdrawal or transfer that pays
 //                                  this keeper, straight to the pool, or with a call intent (withdrawAndCall) or a
 //                                  wrap intent (withdrawToV1) through the router
@@ -274,9 +276,12 @@ function readJson(req, max) {
 }
 
 // chain: { address, chainId, pool, router, asset, v1, depositBoxOf(intent), wrapBoxOf(intent), wrapToken(assetId) }
+// Events per /events page: whole blocks, so a page can run over when one block holds more.
+const EVENTS_PAGE = 5000;
+
 export function createIntakeHandler({
   store, chain, zk, assetField, cfg, now = () => Math.floor(Date.now() / 1000), log = () => {}, isReady = () => true,
-  revertName = defaultRevertName,
+  revertName = defaultRevertName, leafSync = null,
 }) {
   const limited = makeRateLimiter({ perMin: cfg.ratePerMin, burst: Math.max(1, Math.min(10, cfg.ratePerMin)) });
   const view = (r) => (r.kind === 'receive'
@@ -417,6 +422,14 @@ export function createIntakeHandler({
           chainId: chain.chainId, pool: chain.pool, router: chain.router, asset: chain.asset, keeper: chain.address,
           wraps: !!chain.v1 && chain.v1.toLowerCase() !== ETH, relay: cfg.relay, minReceiveFeeBps: cfg.minReceiveFeeBps,
         });
+      }
+      if (p === `${PREFIX}/events` && req.method === 'GET') {
+        if (!leafSync) return send(404, { error: 'no event feed' });
+        if (!limited(clientKey(req))) throw new IntakeError(429, 'rate limited');
+        const from = url.searchParams.get('from') ?? '0';
+        if (!/^\d{1,12}$/.test(from)) throw bad('from must be a block number');
+        const { events, through } = leafSync.eventsFrom(Number(from), EVENTS_PAGE);
+        return send(200, { chainId: chain.chainId, pool: chain.pool, router: chain.router, from: Number(from), through, events });
       }
       if (p === `${PREFIX}/quote` && req.method === 'GET') {
         if (!cfg.relay) return send(404, { error: 'relaying is off' });

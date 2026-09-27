@@ -13,9 +13,11 @@
 //   await w.send(bp1, wei)          → private payment                            → tx hash
 //   await w.withdraw(0x…, wei)      → out of the pool to any address             → tx hash
 //   await w.quote()                 → the relayer's { fee, receiveMin, … } (needs relay)
+//   await w.rescan()                → rebuilds the synced state from chain logs alone (no keeper feed)
 //   w.terminate()                   → stops the prove worker
 // Each action takes an optional last argument { via: 'self' | 'relay', onStep(msg) }. Without `relay` everything
-// is proved here and submitted by `provider`; with it, send and withdraw go through that keeper unless via: 'self'.
+// is proved here and submitted by `provider`; with it, send and withdraw go through that keeper unless via: 'self',
+// and confirmed history is read from the keeper's /events feed, checked against the pool before it is kept.
 //
 // provider:    an EIP-1193 provider on `chainId` (the user's wallet); it signs and, unless `rpc` is given, reads.
 // identityKey: the 32-byte Tacit identity key (Uint8Array or 0x hex). Keys, notes and the private ETH address all
@@ -119,6 +121,7 @@ export async function makeEvmPoolWallet({ provider, chainId, identityKey, artifa
     send: (to, wei, o) => w.send({ to, amount: wei, ...opts(o) }),
     withdraw: (to, wei, o) => w.withdraw({ to, amount: wei, ...opts(o) }),
     quote: () => w.quote(),
+    rescan: async () => (last = await w.rescan()),
     terminate: () => prover.terminate(),
   };
 }

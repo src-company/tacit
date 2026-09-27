@@ -46,9 +46,9 @@ export function depositIntent(zk, { asset, amount, outputs, memo0 = new Uint8Arr
 
 // The completing keeper's proof input: a deposit of exactly intent.amount into `leaves` (the pool's current
 // leaves) that pays `relayer` the fee. Rebuild against fresh leaves if the pool moves before submission.
-export function completionWitness(zk, { intent, hint, asset, leaves, chainId, pool, relayer }) {
+export function completionWitness(zk, { intent, hint, asset, leaves, tree, chainId, pool, relayer }) {
   const eh = extDataHash({ chainId, pool, recipient: ZERO, extAmount: intent.amount, relayer, fee: hint.fee, memo0: hint.memo0, memo1: hint.memo1 });
-  const w = zk.buildWitness({ asset, leaves, inputs: [null, null], outputs: hint.outputs, extAmount: intent.amount, fee: hint.fee, extDataHash: eh });
+  const w = zk.buildWitness({ asset, leaves, tree, inputs: [null, null], outputs: hint.outputs, extAmount: intent.amount, fee: hint.fee, extDataHash: eh });
   if (w.outLeaf[0] !== BigInt(intent.outLeaf0) || w.outLeaf[1] !== BigInt(intent.outLeaf1)) throw new Error('evm-pool-gateway: hint does not match the intent');
   return { ...w, tx: { recipient: ZERO, extAmount: intent.amount, relayer, fee: hint.fee, memo0: hint.memo0, memo1: hint.memo1 } };
 }
@@ -137,7 +137,7 @@ export function receiveRho(box, n) {
 
 // The sweeper's proof input: deposit `amount` from `box` (sweep number n = receiveCount(box)) into one note for
 // `npk`, paying `relayer` a fee within the box's feeBps. Rebuild with fresh leaves and n if another sweep lands first.
-export function sweepWitness(zk, { asset, leaves, npk, feeBps, box, n, amount, fee = 0n, relayer = ZERO, chainId, pool }) {
+export function sweepWitness(zk, { asset, leaves, tree, npk, feeBps, box, n, amount, fee = 0n, relayer = ZERO, chainId, pool }) {
   const a = BigInt(amount), f = BigInt(fee);
   if (a <= 0n || a >= VALUE_MAX) throw new Error('evm-pool-gateway: amount must be in (0, 2^120)');
   if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 10_000) throw new Error('evm-pool-gateway: feeBps must be in [0, 10000]');
@@ -145,7 +145,7 @@ export function sweepWitness(zk, { asset, leaves, npk, feeBps, box, n, amount, f
   if (f > 0n && BigInt(relayer) === 0n) throw new Error('evm-pool-gateway: a fee needs a relayer address');
   const note = { v: a - f, npk: BigInt(npk), rho: receiveRho(box, n) };
   const eh = extDataHash({ chainId, pool, recipient: ZERO, extAmount: a, relayer, fee: f });
-  const w = zk.buildWitness({ asset, leaves, inputs: [null, null], outputs: [note, null], extAmount: a, fee: f, extDataHash: eh });
+  const w = zk.buildWitness({ asset, leaves, tree, inputs: [null, null], outputs: [note, null], extAmount: a, fee: f, extDataHash: eh });
   return { ...w, tx: { recipient: ZERO, extAmount: a, relayer, fee: f, memo0: new Uint8Array(), memo1: new Uint8Array() } };
 }
 
