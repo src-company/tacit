@@ -64,7 +64,6 @@ contract RouterHandler is TxBuilder {
     uint256 public ghostTip;
     uint256 public ghostV1;
     uint256 public ghostInserts;
-    uint256 public ghostStrayEthToRouter;
 
     uint256 public violations;
     string public lastViolation;
@@ -164,8 +163,8 @@ contract RouterHandler is TxBuilder {
         ghostKeeper += fee;
         ghostSweeps[box]++;
         ghostInserts++;
-        ghostStrayEthToRouter += strayEth;
         if (_bal(box) != 0) _violate("receive box not emptied");
+        if (asset != address(0) && box.balance != strayEth) _violate("stray ETH left a token receive box");
         if (pool.nextIndex() != idx + 2) _violate("sweep did not insert one pair");
     }
 
@@ -364,9 +363,7 @@ abstract contract RouterInvariantBase is Test {
     /// forge-config: default.invariant.fail-on-revert = true
     function invariant_routerHoldsNothing() public view {
         assertEq(_bal(address(router)), 0, "router holds no pool asset");
-        // ETH it holds on a token pool is exactly what receive-box sweeps moved out of boxes (see
-        // test_property_router_retains_no_eth_after_token_receive_sweep).
-        assertEq(address(router).balance, handler.ghostStrayEthToRouter(), "router ETH");
+        assertEq(address(router).balance, 0, "router holds no ETH");
     }
 
     /// forge-config: default.invariant.runs = 256
@@ -588,18 +585,6 @@ contract TacitEvmPoolRouterFuzzTest is TxBuilder {
         assertEq(err, ReentrancyGuardTransient.Reentrancy.selector);
         assertEq(address(actor).balance, 1 ether);
         assertEq(ethRouter.depositBoxOf(d2).balance, 1 ether);
-    }
-
-    /// Property: the router retains nothing across calls. Fails: ETH paid to a token pool's receive box (which the
-    /// NatSpec says stays there) is carried to the router by the box's selfdestruct in `close()` on the next sweep.
-    function test_property_router_retains_no_eth_after_token_receive_sweep() public {
-        uint256 npk = 0xABC;
-        address box = tokenRouter.receiveBoxOf(npk, 0);
-        token.mint(box, 1000);
-        vm.deal(address(this), 1 ether);
-        SafeTransferLib.safeTransferETH(box, 1 ether);
-        tokenRouter.sweepReceive(npk, 0, _receiveTx(tokenPool, tokenRouter, npk, 0, 1000, 0, 11));
-        assertEq(address(tokenRouter).balance, 0, "router holds ETH that was paid to a receive box");
     }
 
     /// ETH sent to a token pool's receive box stays in the box through a sweep: the box is not closed, so the router

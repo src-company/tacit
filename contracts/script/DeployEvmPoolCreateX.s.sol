@@ -9,9 +9,9 @@ import {PoseidonT5Deploy} from "./PoseidonT5Deploy.sol";
 
 /// @notice Deploy the EVM client-proved pool suite (verifier, native-ETH pool, router) via CreateX CREATE3 at
 ///         addresses fixed in advance. PoseidonT5, which the router's receive boxes call, is landed first at its
-///         standard deterministic address if the chain lacks it. The salts are permissioned (bytes 0..19 = DEPLOYER, byte 20 = 0x00), so
-///         CreateX guards them as keccak256(abi.encode(DEPLOYER, salt)): only DEPLOYER can land these
-///         addresses, and it lands the same ones on every chain regardless of bytecode or constructor args.
+///         standard deterministic address if the chain lacks it. The salts are permissioned (bytes 0..19 = DEPLOYER,
+///         byte 20 = 0x00), so CreateX guards them as keccak256(abi.encode(DEPLOYER, salt)): only DEPLOYER can land
+///         these addresses, and it lands the same ones on every chain regardless of bytecode or constructor args.
 ///
 ///         The verifier must be the ceremony's: its init code hash is pinned by EVM_POOL_VERIFIER_INITCODE_HASH
 ///         (printed by dapp/circuits/evm-pool finalize), so a development key cannot be deployed here.

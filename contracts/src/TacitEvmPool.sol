@@ -3,9 +3,8 @@ pragma solidity 0.8.36;
 
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 
-/// Groth16 verifier exported from dapp/circuits/evm-pool/transact.circom (snarkjs
-/// `zkey export solidityverifier`). Public input order: root, oldRoot, newRoot, startIndex,
-/// publicAmount, extDataHash, asset, nf[2], outLeaf[2].
+/// @notice Groth16 verifier for dapp/circuits/evm-pool/transact.circom, exported by snarkjs. Public input order:
+///         root, oldRoot, newRoot, startIndex, publicAmount, extDataHash, asset, nf[2], outLeaf[2].
 interface ITransactVerifier {
     function verifyProof(uint256[2] calldata pA, uint256[2][2] calldata pB, uint256[2] calldata pC, uint256[11] calldata publicInputs)
         external
@@ -13,41 +12,46 @@ interface ITransactVerifier {
         returns (bool);
 }
 
-/// A single-asset, client-proved shielded pool: fungible balances, private transfers with change, and
-/// deposit/withdraw at the boundary, all in one Groth16 relation the user proves on their own device
-/// (dapp/circuits/evm-pool/transact.circom, dapp/evm-pool-zk.js). See
-/// contracts/sp1/confidential/DESIGN-evm-client-pool.md.
+/// @title TacitEvmPool
+/// @notice A single-asset shielded pool proved on the user's device: fungible notes, private transfers with change,
+///         and deposit/withdraw at the boundary, all through one Groth16 relation (dapp/circuits/evm-pool/transact.circom,
+///         dapp/evm-pool-zk.js).
 ///
-/// Immutable, matching V1 (SPEC §8): no owner, no pause, no admin function. If the relation or verifier
-/// ever needs to change, a successor pool is deployed at a new address; this contract never rotates.
+///         Immutable: no owner, no pause, no admin function. A different relation or verifier means a new pool at a
+///         new address.
 ///
-/// Notes live in an append-only Poseidon(2) tree of depth 32. A transact() call with at least one output
-/// inserts one pair of leaves (an empty output slot is still a leaf, value 0) at the pool's current size,
-/// proven in-circuit against `oldRoot`/`newRoot`, so the contract never hashes; it must build on the current
-/// head, so submit through private order flow. A call whose outputs are both empty inserts nothing, leaves
-/// the tree untouched and cannot go stale. Every root the pool has held is retained with the tree size it
-/// had (`everKnownRoot`, `rootSize`), so membership can be proven against a root that is no longer current.
+///         Notes live in an append-only Poseidon(2) tree of depth 32. A transact() with at least one output inserts
+///         one pair of leaves (an empty slot of a non-empty pair is a zero leaf) at the pool's current size. The
+///         insertion is proven in-circuit against `oldRoot`/`newRoot`, so the contract never hashes; the proof must
+///         build on the current head, so submit through private order flow. A transact() whose outputs are both
+///         empty inserts nothing and cannot go stale. Every root the pool has held is kept with the tree size it had
+///         (`everKnownRoot`, `rootSize`), so inputs can be proven against a root that is no longer current.
 contract TacitEvmPool {
     ITransactVerifier public immutable VERIFIER;
-    address public immutable ASSET; // address(0) = native ETH
-    uint256 public immutable ASSET_FIELD; // keccak256(chainid, pool, ASSET) mod P, the circuit's `asset`
+    /// @notice The pooled asset; address(0) is native ETH.
+    address public immutable ASSET;
+    /// @notice The circuit's `asset` public input: keccak256(abi.encode(chainid, pool, ASSET)) mod P.
+    uint256 public immutable ASSET_FIELD;
 
     uint256 internal constant P = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
     int256 internal constant P_INT = int256(P);
-    uint256 internal constant VALUE_MAX = 1 << 120; // circuit's valueBits
+    uint256 internal constant VALUE_MAX = 1 << 120; // the circuit's value range
 
+    /// @notice The current Merkle root.
     bytes32 public root;
-    /// Leaf count + 1 of the tree when each root was the head; 0 for a root the pool never held. The head's
-    /// entry is the pool's size, so no separate counter is stored.
+    /// Tree size + 1 when each root was the head, 0 for a root the pool never held. The head's entry is the pool's size.
     mapping(bytes32 => uint256) internal _sizeOf;
+    /// @notice Whether a nullifier has been spent.
     mapping(bytes32 => bool) public nullified;
 
+    /// @notice One transact(). `firstIndex` is the tree position of `outLeaf0` (`outLeaf1` follows it); when both
+    ///         leaves are zero nothing was inserted and `newRoot` is the unchanged head.
     event Transact(
         bytes32 indexed nf0,
         bytes32 indexed nf1,
         bytes32 outLeaf0,
         bytes32 outLeaf1,
-        uint256 firstIndex, // meaningful only when an outLeaf is non-zero; indexers skip an all-zero pair
+        uint256 firstIndex,
         bytes32 newRoot,
         address recipient,
         int256 extAmount,
@@ -84,27 +88,29 @@ contract TacitEvmPool {
         _sizeOf[empty] = 1;
     }
 
-    /// The pool's leaf count (always even): where the next insertion starts.
+    /// @notice The pool's leaf count (always even): where the next insertion starts.
     function nextIndex() public view returns (uint256) {
         return _sizeOf[root] - 1;
     }
 
-    /// The current root and leaf count together: the two values an inserting proof is built against.
+    /// @notice The current root and leaf count: what an inserting proof is built against (`oldRoot`, `startIndex`).
     function head() external view returns (bytes32, uint256) {
         return (root, nextIndex());
     }
 
+    /// @notice Whether `r` has ever been the pool's root: the roots a `root` public input may name.
     function everKnownRoot(bytes32 r) external view returns (bool) {
         return _sizeOf[r] != 0;
     }
 
-    /// The leaf count of the tree when `r` was the head; reverts for a root the pool never held.
+    /// @notice The leaf count when `r` was the head; reverts for a root the pool never held.
     function rootSize(bytes32 r) external view returns (uint256) {
         uint256 s = _sizeOf[r];
         if (s == 0) revert UnknownMembershipRoot();
         return s - 1;
     }
 
+    /// @notice `nullified` for each of `nfs`.
     function isSpent(bytes32[] calldata nfs) external view returns (bool[] memory spent) {
         spent = new bool[](nfs.length);
         for (uint256 i; i < nfs.length; ++i) {
@@ -112,13 +118,11 @@ contract TacitEvmPool {
         }
     }
 
-    /// One relation for deposit, private transfer and withdraw: `extAmount > 0` pulls that much ASSET
-    /// from msg.sender into the pool; `extAmount < 0` pays `-extAmount` to `recipient`; `extAmount == 0`
-    /// is a pure in-pool transfer. `fee`, if non-zero, is paid to `relayer` out of the pool's custody in
-    /// the same call, independent of `extAmount`'s sign — the same call can deposit/withdraw and pay a
-    /// relayer at once. `recipient`, `extAmount`, `relayer`, `fee` and both memos are bound into the
-    /// proof's `extDataHash` (recomputed here, not trusted from the caller), so they cannot be changed
-    /// after the owner signed the spend.
+    /// @notice Deposit, private transfer and withdraw in one relation. `extAmount > 0` pulls that much ASSET from
+    ///         msg.sender (for ETH, msg.value must equal it); `extAmount < 0` pays `-extAmount` to `recipient`;
+    ///         `extAmount == 0` is an in-pool transfer. A non-zero `fee` is paid to `relayer` from the pool in the same
+    ///         call, whatever the sign of `extAmount`. `recipient`, `extAmount`, `relayer`, `fee` and both memos are
+    ///         bound by `extDataHash`, which the pool recomputes, so none can be changed after the owner signs.
     function transact(
         uint256[2] calldata pA,
         uint256[2][2] calldata pB,

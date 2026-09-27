@@ -37,55 +37,54 @@ interface IConfidentialPoolWrap {
 }
 
 /// @title TacitEvmPoolRouter
-/// @notice Periphery for one TacitEvmPool, and its bridge to and from the confidential pool (V1):
+/// @notice Periphery for one TacitEvmPool, and its bridge to and from the confidential pool (V1).
 ///
-///   1. DEPOSIT (depositWith*) — a signature approval (EIP-2612 / Permit2) instead of a separate approve tx.
-///   2. ZAPS (zap*) — swap ETH or any token into the pool's asset through the pinned aggregator (zRouter) and
-///      deposit it in the same transaction.
-///   3. DEPOSIT BOXES (depositBoxOf / completeDeposit / reclaimDeposit) — a counterfactual address per deposit
-///      intent. Anything can pay it: a V1 withdrawal, a V1 exit recipe's sweep, an exchange, a bridge. Later,
-///      anyone completes the deposit with a proof built against the pool's root at that moment. A pool deposit
-///      proof goes stale as soon as another transaction lands, so a source that settles minutes later (a V1
-///      batch) cannot carry one; the box decouples the two. The intent fixes the amount, both output leaves
-///      and both memos, so the completer can only deliver exactly the notes the owner chose. The completer is
-///      paid the pool's relayer fee, which the leaves fix at amount − Σ output values.
-///   4. WRAP BOXES (wrapBoxOf / completeWrap / reclaimWrap) — the same for a V1 note: any source pays the box,
-///      anyone completes `wrap(assetId, amount, commit)` into the confidential pool, and `tip` goes to the intent's
-///      `tipTo` (or to the completer when it is zero).
-///   5. POOL → V1 (withdrawToV1) — withdraw from this pool straight into a wrap box and complete it, one tx.
-///   6. RECEIVE BOXES (receiveBoxOf / sweepReceive) — a standing address for one owner's note key `npk`, paid any
-///      number of times by anyone. Anyone sweeps the box's balance into the pool; the router computes the note
-///      itself, leaf = Poseidon(asset, amount − fee, npk, rho) with rho fixed by the box and a per-box counter, so
-///      a sweeper can only credit `npk` and keeps at most `feeBps` of what it sweeps. The box's code lives only
-///      within a sweep, so the address takes plain transfers between sweeps. The owner recovers every note from
-///      its keys and the Received events alone.
-///   7. WITHDRAW AND CALL (callEscrowOf / withdrawAndCall / executeCall / refundCall) — a withdrawal whose
-///      recipient is a counterfactual escrow keyed by a `CallIntent`: calls to run with the withdrawn funds, the
-///      outputs to deliver and their floors, a refund address and a deadline. The proof binds the escrow, so a
-///      relayer can change neither the calls nor where their outputs go. `withdrawAndCall` withdraws and runs it in
-///      one transaction; if any call fails or an output falls short, nothing happens and the notes stay unspent.
-///   8. FUNDING WITH A CALL (fundDeposit / fundReceive) — for contracts and bridge messages that deliver funds by
-///      calling a contract: pay a deposit box (publishing the keeper hint in the event, so any keeper can complete
-///      it) or a receive box, from msg.value or an approved token.
+///   1. DEPOSIT (depositWith*): a signature approval (EIP-2612 / Permit2) instead of a separate approve tx.
+///   2. ZAPS (zap*): swap ETH or any token into the pool's asset through zRouter and deposit it, in one tx.
+///   3. DEPOSIT BOXES (depositBoxOf / completeDeposit / reclaimDeposit): a counterfactual address per deposit intent.
+///      Anything can pay it (a V1 withdrawal or exit recipe, an exchange, a bridge); later anyone completes the
+///      deposit with a proof against the pool's root at that moment, so a source that settles minutes later needs
+///      no proof of its own. The intent fixes the amount, both output leaves and both memos, so the completer can
+///      only deliver the notes the owner chose; it is paid the pool's relayer fee, amount − Σ output values.
+///   4. WRAP BOXES (wrapBoxOf / completeWrap / reclaimWrap): the same for a V1 note. Anyone completes
+///      `wrap(assetId, amount, commit)` on V1; `tip` goes to `tipTo`, or to the completer when `tipTo` is zero.
+///   5. POOL → V1 (withdrawToV1): withdraw from this pool into a wrap box and complete it, in one tx.
+///   6. RECEIVE BOXES (receiveBoxOf / sweepReceive): a standing address for one owner's note key `npk`, paid any number
+///      of times by anyone. Anyone sweeps its balance into the pool as one note the router computes itself,
+///      leaf = Poseidon(asset, amount − fee, npk, rho) with rho fixed by the box and a per-box counter, so a sweeper
+///      can only credit `npk` and keeps at most `feeBps`. On an ETH pool the box has code only within a sweep, so the
+///      address takes plain transfers. The owner recovers every note from its keys and the Received events.
+///   7. WITHDRAW AND CALL (callEscrowOf / withdrawAndCall / executeCall / refundCall): a withdrawal to a
+///      counterfactual escrow keyed by a `CallIntent` (calls to run with the funds, outputs and their floors, a
+///      refund address, a deadline). The proof binds the escrow, so a relayer can change neither the calls nor where
+///      their outputs go. `withdrawAndCall` withdraws and runs it atomically.
+///   8. FUNDING WITH A CALL (fundDeposit / fundReceive): for contracts and bridge messages that deliver funds by
+///      calling a contract: pay a deposit box (publishing the keeper hint) or a receive box, from msg.value or an
+///      approved token.
 ///
 /// On Ethereum mainnet a withdrawal can also name a ConfidentialRouter exit-recipe escrow, run by that router's
 /// permissionless `activateExit`.
 ///
-/// Trust model, as ConfidentialRouter: tokens pass through only within a call and each named leg is swept
-/// back to the caller; any stray balance is swept by the next caller, so never leave value resting here. The
-/// pool, zRouter, Permit2 and V1 pool are immutable. A box holds only the funds paid to it and releases them
-/// only to its intent's destination (the pool deposit / V1 wrap / the call intent's calls, outputs and refund) or,
-/// after its deadline, any token to its `refund`. A tampered intent maps to a different, empty box. A receive box has
-/// no refund: it releases only the pool asset, only into a note for its `npk`, so anything else sent to it stays
-/// there. nonReentrant on every entrypoint, so a called target cannot re-enter the router.
+/// Trust model: tokens pass through the router only within a call, and each leg's leftover goes back to the caller;
+/// a stray balance is taken by the next caller, so never leave value here. The pool, zRouter, Permit2 and V1 are
+/// immutable. A box releases only what was paid to it, and only to its intent's destination (the pool deposit, the V1
+/// wrap, the call intent's calls, outputs and refund) or, after its deadline, any token to its `refund`. A tampered
+/// intent maps to a different, empty box. A receive box has no refund: it releases only the pool asset, only into a
+/// note for its `npk`; anything else sent to it stays there. Every entrypoint is nonReentrant.
 contract TacitEvmPoolRouter is ReentrancyGuardTransient {
     ITacitEvmPool public immutable POOL;
-    address public immutable ASSET; // the pool's asset, address(0) = native ETH
-    address public immutable ZROUTER; // optional (address(0) disables zaps)
-    IPermit2 public immutable PERMIT2; // optional (address(0) disables Permit2 flows)
-    IConfidentialPoolWrap public immutable V1; // optional (address(0) disables wrap boxes)
+    /// @notice The pool's asset; address(0) is native ETH.
+    address public immutable ASSET;
+    /// @notice The swap aggregator for zaps; address(0) disables them.
+    address public immutable ZROUTER;
+    /// @notice address(0) disables Permit2 flows.
+    IPermit2 public immutable PERMIT2;
+    /// @notice The confidential pool wrap boxes deposit into; address(0) disables them.
+    IConfidentialPoolWrap public immutable V1;
+    /// @notice The TacitBox implementation every box and escrow clones.
     address public immutable boxImpl;
-    IPoseidonT5 public immutable POSEIDON4; // optional (address(0) disables receive boxes)
+    /// @notice PoseidonT5 for receive-box leaves; address(0) disables receive boxes.
+    IPoseidonT5 public immutable POSEIDON4;
     uint256 internal immutable ASSET_FIELD; // the pool's `asset` public input
 
     bytes32 internal constant DEPOSIT_TAG = keccak256("tacit-evm-pool-deposit-box-v1");
@@ -94,10 +93,10 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
     bytes32 internal constant CALL_TAG = keccak256("tacit-evm-pool-call-escrow-v1");
     uint256 internal constant P = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
-    /// Sweeps so far per receive box; the next sweep's rho is derived from it.
+    /// @notice Sweeps so far per receive box; the next sweep's rho is derived from it.
     mapping(address box => uint256) public receiveCount;
 
-    /// A proof-carrying pool transaction, passed through verbatim.
+    /// @notice The arguments of one TacitEvmPool.transact(), passed through verbatim.
     struct Tx {
         uint256[2] pA;
         uint256[2][2] pB;
@@ -111,8 +110,8 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         bytes memo1;
     }
 
-    /// A pool deposit a box completes. The leaves fix the notes and their values; the fee to the completer is
-    /// whatever `amount` exceeds their sum.
+    /// @notice A pool deposit a box completes. The leaves fix the notes and their values; the completer's fee is
+    ///         whatever `amount` exceeds their sum.
     struct DepositIntent {
         uint256 amount;
         uint256 outLeaf0;
@@ -124,8 +123,8 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         uint256 nonce;
     }
 
-    /// A V1 wrap a box completes: `wrap(assetId, amount, commit)` on V1, `tip` of the same token to `tipTo`, or to
-    /// the completer when `tipTo` is zero (an open tip can be taken by whoever lands the completion first).
+    /// @notice A V1 wrap a box completes: `wrap(assetId, amount, commit)` on V1, and `tip` of the same token to
+    ///         `tipTo`, or to whichever completer lands first when `tipTo` is zero.
     struct WrapIntent {
         bytes32 assetId;
         uint256 amount;
@@ -137,8 +136,9 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         uint256 nonce;
     }
 
-    /// One step of a call escrow: if `token` and `amount` are set, first transfer (`push`) or approve that much of
-    /// `token` to `target`, then call `target` with `value` wei and `data`. An approval left unspent is reset to 0.
+    /// @notice One step of a call escrow: if `token` and `amount` are set, first transfer (`push`) or approve that
+    ///         much of `token` to `target`, then call `target` with `value` wei and `data`. An approval is reset to 0
+    ///         after the call.
     struct Call {
         address target;
         uint256 value;
@@ -148,9 +148,10 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         bytes data;
     }
 
-    /// What a withdrawal to `callEscrowOf(intent)` does. The escrow runs `calls` in order, then sends its whole
-    /// balance of each `outTokens[i]` (address(0) = ETH), at least `minOuts[i]`, to `to`, and whatever is left of
-    /// the pool asset to `refund`. Until `deadline` anyone can run it; after, anyone returns its funds to `refund`.
+    /// @notice What a withdrawal to `callEscrowOf(intent)` does. The escrow runs `calls` in order, then sends its
+    ///         whole balance of each `outTokens[i]` (address(0) = ETH), at least `minOuts[i]`, to `to`, and what is
+    ///         left of the pool asset to `refund`. Until `deadline` anyone can run it; after, anyone can return its
+    ///         funds to `refund`.
     struct CallIntent {
         Call[] calls;
         address[] outTokens;
@@ -174,12 +175,14 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
 
     event DepositBoxCompleted(address indexed box, address indexed completer);
     event CallExecuted(address indexed escrow, address indexed caller);
-    /// A deposit box paid through `fundDeposit`: the intent and the hint a keeper proves it from.
+    /// @notice A deposit box paid through `fundDeposit`: its intent and the hint a keeper proves it from.
     event DepositFunded(address indexed box, DepositIntent intent, bytes hint);
+    /// @notice A receive box paid through `fundReceive`.
     event ReceiveFunded(address indexed box, uint256 npk, uint16 feeBps, uint256 amount);
     event WrapBoxCompleted(address indexed box, address indexed completer);
+    /// @notice A box's or escrow's balance of one token returned to its refund address after the deadline.
     event BoxReclaimed(address indexed box, address indexed refund, uint256 amount);
-    /// One sweep of a receive box: the note (value, rho) at leaf `index`, and the sweeper's fee.
+    /// @notice Sweep `n` of a receive box: the note (value, rho) at leaf `index`, and the sweeper's fee.
     event Received(address indexed box, uint256 indexed n, uint256 index, uint256 value, uint256 rho, uint256 fee);
 
     constructor(address pool_, address zRouter_, address permit2_, address v1_, address poseidon4_) {
@@ -200,11 +203,13 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         if (ASSET != address(0)) SafeTransferLib.safeApproveWithRetry(ASSET, pool_, type(uint256).max);
     }
 
-    /// ETH arrives from boxes being released and from token→ETH zap swaps.
+    /// ETH arrives from box releases and from token→ETH zap swaps.
     receive() external payable {}
 
     // ──────────────────── 1. Deposits with a signature approval ────────────────────
 
+    /// @notice Deposit `t.extAmount` of the pool's ERC-20 with an EIP-2612 permit (a failing permit is skipped, so an
+    ///         existing allowance still works).
     function depositWithPermit(Tx calldata t, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external nonReentrant {
         uint256 amount = _depositAmount(t);
         if (ASSET == address(0)) revert BadTarget();
@@ -213,6 +218,8 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         _deposit(t, amount);
     }
 
+    /// @notice Deposit `t.extAmount` of the pool's ERC-20 through Permit2 (a failing permit is skipped, so an
+    ///         existing Permit2 allowance still works).
     function depositWithPermit2(Tx calldata t, IPermit2.PermitSingle calldata permitSingle, bytes calldata signature)
         external
         nonReentrant
@@ -225,8 +232,8 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
 
     // ──────────────────── 2. Zaps ────────────────────
 
-    /// ETH → the pool's ERC-20 through zRouter (output to this router), then deposit exactly `t.extAmount`.
-    /// Surplus output and unspent ETH go back to the caller.
+    /// @notice ETH → the pool's ERC-20 through zRouter (output to this router), then deposit exactly `t.extAmount`.
+    ///         Surplus output and unspent ETH go back to the caller.
     function zapETHToDeposit(Tx calldata t, bytes calldata zrSwapData) external payable nonReentrant {
         uint256 amount = _depositAmount(t);
         if (ASSET == address(0)) revert BadTarget();
@@ -236,8 +243,8 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         _refundETH(msg.sender);
     }
 
-    /// Any ERC-20 (via Permit2) → the pool's asset (ERC-20 or ETH) through zRouter, then deposit exactly
-    /// `t.extAmount`. Unspent input and surplus output go back to the caller.
+    /// @notice Any ERC-20 (via Permit2) → the pool's asset (ERC-20 or ETH) through zRouter, then deposit exactly
+    ///         `t.extAmount`. Unspent input and surplus output go back to the caller.
     function zapTokenToDepositWithPermit2(
         Tx calldata t,
         uint256 amountIn,
@@ -259,12 +266,13 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
 
     // ──────────────────── 3. Deposit boxes ────────────────────
 
+    /// @notice The deposit box address for `intent`.
     function depositBoxOf(DepositIntent calldata intent) public view returns (address) {
         return _boxAt(_depositSalt(intent));
     }
 
-    /// Permissionless. `t` must be a deposit of exactly `intent.amount` producing the intent's leaves and memos;
-    /// the completer names `t.relayer` (normally itself) to collect the fee.
+    /// @notice Permissionless. `t` must deposit exactly `intent.amount` with the intent's leaves and memos; the
+    ///         completer names `t.relayer` (normally itself) to collect the fee.
     function completeDeposit(DepositIntent calldata intent, Tx calldata t) external nonReentrant {
         if (t.extAmount != _int(intent.amount) || t.recipient != address(0)) revert BadIntent();
         if (t.publicInputs[9] != intent.outLeaf0 || t.publicInputs[10] != intent.outLeaf1) revert BadIntent();
@@ -275,32 +283,34 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         emit DepositBoxCompleted(box, msg.sender);
     }
 
-    /// Permissionless, after the deadline: the box's whole balance of `token` (address(0) = ETH) goes to
-    /// `intent.refund`. Any token can be recovered, not only the pool asset.
+    /// @notice Permissionless, after the deadline: the box's whole balance of `token` (address(0) = ETH) goes to
+    ///         `intent.refund`. Works for any token, not only the pool asset.
     function reclaimDeposit(DepositIntent calldata intent, address token) external nonReentrant {
         _reclaim(_depositSalt(intent), token, intent.refund, intent.deadline);
     }
 
     // ──────────────────── 4. Wrap boxes (into a V1 note) ────────────────────
 
+    /// @notice The wrap box address for `intent`.
     function wrapBoxOf(WrapIntent calldata intent) public view returns (address) {
         return _boxAt(_wrapSalt(intent));
     }
 
-    /// Permissionless: wraps `intent.amount` to `intent.commit` on V1 and pays `intent.tip`.
+    /// @notice Permissionless: wraps `intent.amount` to `intent.commit` on V1 and pays `intent.tip`.
     function completeWrap(WrapIntent calldata intent) external nonReentrant {
         bytes32 salt = _wrapSalt(intent);
         _completeWrap(intent, salt, _boxAt(salt));
     }
 
+    /// @notice Permissionless, after the deadline: as `reclaimDeposit`, for a wrap box.
     function reclaimWrap(WrapIntent calldata intent, address token) external nonReentrant {
         _reclaim(_wrapSalt(intent), token, intent.refund, intent.deadline);
     }
 
     // ──────────────────── 5. Pool → V1 in one transaction ────────────────────
 
-    /// Withdraw from the pool into `intent`'s wrap box (the proof binds the box as recipient, so the
-    /// destination cannot be changed) and complete the wrap. The pool's relayer fee goes to `t.relayer`.
+    /// @notice Withdraw from the pool into `intent`'s wrap box (the proof binds the box as recipient) and complete the
+    ///         wrap. The pool's relayer fee goes to `t.relayer`.
     function withdrawToV1(Tx calldata t, WrapIntent calldata intent) external nonReentrant {
         bytes32 salt = _wrapSalt(intent);
         address box = _boxAt(salt);
@@ -311,23 +321,24 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
 
     // ──────────────────── 6. Receive boxes ────────────────────
 
+    /// @notice The receive box address for note key `npk` with sweep fee cap `feeBps`.
     function receiveBoxOf(uint256 npk, uint16 feeBps) public view returns (address) {
         return _boxAt(_receiveSalt(npk, feeBps));
     }
 
-    /// What the next sweep of `receiveBoxOf(npk, feeBps)` proves against: its sweep number `n`, the note's `rho`,
-    /// and the box's balance of the pool asset (the sweep's `extAmount`).
+    /// @notice What the next sweep of `receiveBoxOf(npk, feeBps)` proves against: its sweep number `n`, the note's
+    ///         `rho`, and the box's balance of the pool asset (the sweep's `extAmount`).
     function receiveState(uint256 npk, uint16 feeBps) external view returns (address box, uint256 n, uint256 rho, uint256 balance) {
         box = receiveBoxOf(npk, feeBps);
         n = receiveCount[box];
         rho = _receiveRho(box, n);
-        balance = ASSET == address(0) ? box.balance : SafeTransferLib.balanceOf(ASSET, box);
+        balance = _balanceOf(ASSET, box);
     }
 
-    /// Permissionless. `t` deposits the box's whole balance of the pool asset (`t.extAmount`) into one note for
-    /// `npk`, with no memos, paying `t.relayer` a fee of at most `feeBps` of it. The box exists only within the
-    /// sweep: it is created, emptied and removed in the same transaction, so between sweeps the address has no
-    /// code and accepts any payment, including a plain 21,000-gas transfer.
+    /// @notice Permissionless. `t` deposits the box's whole balance of the pool asset (`t.extAmount`) into one note
+    ///         for `npk`, with no memos, paying `t.relayer` at most `feeBps` of it. On an ETH pool the box is created,
+    ///         emptied and removed within the sweep, so between sweeps the address has no code and takes a plain
+    ///         21,000-gas transfer.
     function sweepReceive(uint256 npk, uint16 feeBps, Tx calldata t) external nonReentrant {
         if (address(POSEIDON4) == address(0)) revert BadTarget();
         if (npk >= P || feeBps > 10_000) revert BadIntent();
@@ -338,7 +349,7 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         }
         bytes32 salt = _receiveSalt(npk, feeBps);
         address box = _boxAt(salt);
-        if ((ASSET == address(0) ? box.balance : SafeTransferLib.balanceOf(ASSET, box)) != amount) revert BadIntent();
+        if (_balanceOf(ASSET, box) != amount) revert BadIntent();
         uint256 n = receiveCount[box]++;
         uint256 rho = _receiveRho(box, n);
         uint256 value = amount - t.fee;
@@ -360,36 +371,38 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
 
     // ──────────────────── 7. Withdraw and call ────────────────────
 
+    /// @notice The call escrow address for `intent`: the recipient a `withdrawAndCall` proof binds.
     function callEscrowOf(CallIntent calldata intent) public view returns (address) {
-        return LibClone.predictDeterministicAddress_PUSH0(boxImpl, _callSalt(intent), address(this));
+        return _boxAt(_callSalt(intent));
     }
 
-    /// Withdraw from the pool into `intent`'s escrow (the proof binds it as recipient) and run the intent. Any failed
-    /// call or short output reverts the whole transaction, spending nothing. The pool's relayer fee goes to `t.relayer`.
+    /// @notice Withdraw from the pool into `intent`'s escrow (the proof binds it as recipient) and run the intent. A
+    ///         failed call or short output reverts the whole transaction, spending nothing. The pool's relayer fee goes
+    ///         to `t.relayer`.
     function withdrawAndCall(Tx calldata t, CallIntent calldata intent) external nonReentrant {
         if (t.extAmount >= 0 || t.recipient != callEscrowOf(intent)) revert BadIntent();
         POOL.transact(t.pA, t.pB, t.pC, t.publicInputs, t.recipient, t.extAmount, t.relayer, t.fee, t.memo0, t.memo1);
         _runCall(intent);
     }
 
-    /// Permissionless, until the deadline: runs an escrow that holds the pool asset, for a withdrawal that reached
-    /// it without `withdrawAndCall` (sent to the pool directly) or any other payment to it.
+    /// @notice Permissionless, until the deadline: runs an escrow that holds the pool asset, e.g. one reached by a
+    ///         withdrawal sent to the pool directly rather than through `withdrawAndCall`.
     function executeCall(CallIntent calldata intent) external nonReentrant {
         if (_balanceOf(ASSET, callEscrowOf(intent)) == 0) revert EscrowEmpty();
         _runCall(intent);
     }
 
-    /// Permissionless, after the deadline: the escrow's whole balance of `token` (address(0) = ETH) goes to
-    /// `intent.refund`, without running the calls.
+    /// @notice Permissionless, after the deadline: the escrow's whole balance of `token` (address(0) = ETH) goes to
+    ///         `intent.refund`, without running the calls.
     function refundCall(CallIntent calldata intent, address token) external nonReentrant {
         _reclaim(_callSalt(intent), token, intent.refund, intent.deadline);
     }
 
     // ──────────────────── 8. Funding with a call ────────────────────
 
-    /// Pays `intent`'s deposit box exactly `intent.amount` from the caller (msg.value, or a transferFrom of the
-    /// pool's token) and publishes `hint` in DepositFunded, so any keeper can complete it without an off-chain
-    /// handoff. Refuses a box that is already paid or completed, or past its deadline.
+    /// @notice Pays `intent`'s deposit box exactly `intent.amount` from the caller (msg.value, or a transferFrom of
+    ///         the pool's token) and publishes `hint` in DepositFunded, so any keeper can complete it. Refuses a box
+    ///         that is already paid or completed, or past its deadline.
     function fundDeposit(DepositIntent calldata intent, bytes calldata hint) external payable nonReentrant {
         if (block.timestamp > intent.deadline) revert Expired();
         if (intent.refund == address(0)) revert BadIntent();
@@ -399,8 +412,8 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         emit DepositFunded(box, intent, hint);
     }
 
-    /// Pays `amount` into receive box (npk, feeBps) from the caller (msg.value, or a transferFrom of the pool's
-    /// token), announcing the box on chain so a keeper can sweep it without registration.
+    /// @notice Pays `amount` into receive box (npk, feeBps) from the caller (msg.value, or a transferFrom of the
+    ///         pool's token) and announces it in ReceiveFunded, so a keeper can sweep it without registration.
     function fundReceive(uint256 npk, uint16 feeBps, uint256 amount) external payable nonReentrant {
         if (address(POSEIDON4) == address(0)) revert BadTarget();
         if (npk == 0 || npk >= P || feeBps > 10_000) revert BadIntent();
@@ -476,7 +489,7 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         if (block.timestamp <= deadline) revert NotExpired();
         if (refund == address(0)) revert BadIntent();
         address box = _deployBox(salt);
-        uint256 bal = token == address(0) ? box.balance : SafeTransferLib.balanceOf(token, box);
+        uint256 bal = _balanceOf(token, box);
         if (bal == 0) revert NothingToReclaim();
         TacitBox(payable(box)).release(token, refund, bal);
         emit BoxReclaimed(box, refund, bal);
@@ -574,8 +587,9 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
     }
 }
 
-/// A counterfactual box: a PUSH0 minimal-proxy clone at an intent-bound address. It accepts any payment
-/// before or after deployment and releases only on its router's instruction.
+/// @title TacitBox
+/// @notice A counterfactual box: a PUSH0 minimal-proxy clone at an intent-bound address. It accepts any payment
+///         before or after deployment and releases only on its router's instruction.
 contract TacitBox {
     address private immutable ROUTER;
 
