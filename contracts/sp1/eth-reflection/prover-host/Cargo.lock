@@ -6520,6 +6520,7 @@ version = "0.1.0"
 dependencies = [
  "alloy",
  "alloy-primitives 1.6.1",
+ "alloy-rlp",
  "alloy-sol-types 0.8.26",
  "alloy-trie",
  "anyhow",
@@ -6542,7 +6543,9 @@ dependencies = [
  "sp1-recursion-circuit",
  "sp1-recursion-compiler",
  "sp1-recursion-gnark-ffi",
+ "sp1-recursion-machine",
  "sp1-sdk",
+ "sp1-verifier",
  "tokio",
  "tree_hash",
 ]
@@ -8812,7 +8815,6 @@ dependencies = [
  "helios-consensus-core",
  "hex",
  "serde",
- "tree_hash",
 ]
 
 [[package]]
