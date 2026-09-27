@@ -156,6 +156,25 @@ await test('box completion credits the funding EOA, never the completer', async 
   w.cleanup();
 });
 
+await test('a receive-box sweep credits every payer of the box, never the sweeper', async () => {
+  const w = world();
+  topFunding(w.explorer, { hash: h(12), block: 150n, from: ALICE, value: ETH });
+  topFunding(w.explorer, { hash: h(13), block: 160n, from: BOB, value: 2n * ETH });
+  transact(w.chain, { hash: h(14), block: 400n, logIndex: 3, extAmount: 3n * ETH });
+  w.chain.logs.push({ address: ROUTER, event: 'Received', transactionHash: h(14), blockNumber: 400n, logIndex: 4, args: { box: BOX, n: 0n } });
+  internal(w.explorer, { hash: h(14), block: 400n, index: 2, from: BOX, to: ROUTER, value: 3n * ETH });
+  w.chain.txs.set(h(12), { from: ALICE, to: BOX, typeHex: '0x2' });
+  w.chain.txs.set(h(13), { from: BOB, to: BOX, typeHex: '0x2' });
+  w.chain.txs.set(h(14), { from: KEEPER, to: ROUTER, typeHex: '0x2' });
+  await scanEvmPoolChain(w.ctx);
+  assert.equal(w.state.countPending(8453), 1);
+  await resolvePendingBoxes(w.ctx);
+  assert.equal(creditedWei(w.store, ALICE), ETH);
+  assert.equal(creditedWei(w.store, BOB), 2n * ETH);
+  assert.equal(rows(w.store, KEEPER).length, 0);
+  w.cleanup();
+});
+
 await test('box funded by a V1 settle earns nothing', async () => {
   const w = world();
   internal(w.explorer, { hash: h(20), block: 150n, index: 5, from: V1_POOL, to: BOX, value: ETH });

@@ -3,7 +3,8 @@
 //
 // Who earns it:
 //   - a direct pool call or a router zap: the transaction's signer;
-//   - a deposit-box completion (router DepositBoxCompleted in the same tx): never the completer. The box's
+//   - a deposit-box completion or a receive-box sweep (router DepositBoxCompleted / Received in the same tx):
+//     never the completer or sweeper. The box's
 //     funders are found from its explorer history and each is credited for the share of its funding the
 //     completion consumed (FIFO over the box's inflows and outflows). Funding that is itself a hop out of V1 or
 //     this pool, a cross-chain system deposit, or from an excluded sender earns nothing.
@@ -37,6 +38,19 @@ export const DEPOSIT_BOX_COMPLETED_EVENT = {
   inputs: [
     { name: 'box', type: 'address', indexed: true },
     { name: 'completer', type: 'address', indexed: true },
+  ],
+};
+
+export const RECEIVED_EVENT = {
+  type: 'event',
+  name: 'Received',
+  inputs: [
+    { name: 'box', type: 'address', indexed: true },
+    { name: 'n', type: 'uint256', indexed: true },
+    { name: 'index', type: 'uint256', indexed: false },
+    { name: 'value', type: 'uint256', indexed: false },
+    { name: 'rho', type: 'uint256', indexed: false },
+    { name: 'fee', type: 'uint256', indexed: false },
   ],
 };
 
@@ -253,10 +267,12 @@ export async function scanEvmPoolChain(ctx) {
   for (let chunks = 0; cursor < tip && chunks < ctx.maxChunks; chunks++) {
     const from = cursor + 1n;
     const to = from + BigInt(ctx.chunk) - 1n < tip ? from + BigInt(ctx.chunk) - 1n : tip;
-    const [txLogs, boxLogs] = await Promise.all([
+    const [txLogs, completedLogs, receivedLogs] = await Promise.all([
       client.getLogs({ address: ctx.pool, event: TRANSACT_EVENT, fromBlock: from, toBlock: to }),
       client.getLogs({ address: ctx.router, event: DEPOSIT_BOX_COMPLETED_EVENT, fromBlock: from, toBlock: to }),
+      client.getLogs({ address: ctx.router, event: RECEIVED_EVENT, fromBlock: from, toBlock: to }),
     ]);
+    const boxLogs = [...completedLogs, ...receivedLogs];
     const deposits = txLogs
       .filter((l) => l.args.extAmount > 0n)
       .sort((a, b) => cmpBig(a.blockNumber, b.blockNumber) || a.logIndex - b.logIndex);
@@ -267,8 +283,8 @@ export async function scanEvmPoolChain(ctx) {
       if (!ctx.covered(gate)) return; // boost replay behind; retry this chunk next cycle
     }
 
-    // Pair each completion with the nearest earlier unpaired deposit in its tx: the pool's Transact is
-    // emitted inside completeDeposit, before the router's own event.
+    // Pair each completion or sweep with the nearest earlier unpaired deposit in its tx: the pool's Transact is
+    // emitted inside completeDeposit / sweepReceive, before the router's own event.
     const byTx = new Map();
     for (const d of deposits) {
       if (!byTx.has(d.transactionHash)) byTx.set(d.transactionHash, { deposits: [], boxes: [] });
@@ -285,7 +301,7 @@ export async function scanEvmPoolChain(ctx) {
         const box = lc(b.args.box);
         const ordinal = seenPerBox.get(box) ?? 0;
         seenPerBox.set(box, ordinal + 1);
-        completionOf.set(d, { box, completer: lc(b.args.completer), ordinal });
+        completionOf.set(d, { box, completer: lc(b.args.completer ?? ''), ordinal });
       }
     }
 
