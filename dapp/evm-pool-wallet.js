@@ -99,22 +99,30 @@ export function recipientOf(keys, address) {
 const TRANSACT_TOPIC = hex(keccak_256(te.encode('Transact(bytes32,bytes32,bytes32,bytes32,uint256,bytes32,address,int256,address,uint256,bytes,bytes)')));
 const RECEIVED_TOPIC = hex(keccak_256(te.encode('Received(address,uint256,uint256,uint256,uint256,uint256)')));
 
+// A JSON-RPC reader over one or more URLs: each call tries them in turn and fails only when all do (a revert is
+// final at the first). The error thrown carries every node's error as `all`.
 export function jsonRpc(urls, fetchImpl = globalThis.fetch.bind(globalThis)) {
   const list = Array.isArray(urls) ? urls : [urls];
   let id = 0;
   return async (method, params = []) => {
-    let last;
+    const all = [];
     for (const url of list) {
       try {
         const r = await fetchImpl(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }) });
         const j = await r.json();
         if (j.error) throw Object.assign(new Error(j.error.message || 'rpc error'), { rpc: j.error });
         return j.result;
-      } catch (e) { last = e; if (e.rpc && !/range|limit|too many|exceed/i.test(e.message)) throw e; }
+      } catch (e) {
+        if (e.rpc && /revert/i.test(e.message) && (method === 'eth_call' || method === 'eth_estimateGas')) throw e;
+        all.push(e);
+      }
     }
-    throw last;
+    throw Object.assign(all[all.length - 1] || new Error('no rpc url'), { all });
   };
 }
+
+// The text of an RPC error and of every node's error behind it, data included, for reading block limits.
+const errorText = (e) => (e.all || [e]).map((x) => `${x.message} ${JSON.stringify(x.rpc?.data ?? x.data ?? '')}`).join(' ');
 
 function decodeTransact(log) {
   const d = unhex(log.data);
@@ -228,11 +236,12 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
         out.push(...await chain.rpc('eth_getLogs', [{ address, topics, fromBlock: '0x' + a.toString(16), toBlock: '0x' + b.toString(16) }]));
         a = b + 1;
       } catch (e) {
-        const m = String(e.message);
-        if (step > 1 && /range|limit|too many|exceed|10000/i.test(m)) {
-          // Take the limit a provider names ("up to a 10 block range"), else shrink.
-          const n = Number((m.match(/(\d[\d,]*)\s*blocks?\b/i)?.[1] || '').replace(/,/g, ''));
-          step = n > 0 && n < step ? n : Math.max(1, Math.floor(step / 4));
+        const m = errorText(e);
+        if (step > 1 && /range|limit|too many|too large|exceed|10000/i.test(m)) {
+          // Take the largest limit any node names ("maximum 1000 blocks", "limited to a 2,000 range") below the
+          // current step, so the next pass reaches the node that allows it; else shrink.
+          const named = [...m.matchAll(/(\d[\d,]*)\s*(?:blocks?|range)\b/gi)].map((x) => Number(x[1].replace(/,/g, ''))).filter((n) => n > 0 && n < step);
+          step = named.length ? Math.max(...named) : Math.max(1, Math.floor(step / 4));
           continue;
         }
         throw e;
