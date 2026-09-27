@@ -110,7 +110,7 @@ try {
     const w = await alice.watchReceive();
     assert.equal(w.status, 200);
     const s = await until(async () => { const x = await alice.sync(); return x.balance > 0n && x; }, 'sweep');
-    assert.equal(s.balance, parseEther('1') - parseEther('1') * 25n / 10000n, 'one ETH less the 25 bps cap');
+    assert.ok(s.balance < parseEther('1') && s.balance >= parseEther('1') - parseEther('1') * 25n / 10000n, 'one ETH less the sweep\'s cost, at most the 25 bps cap');
     assert.equal(await pub.getCode({ address: alice.receiveBox }), undefined, 'the box keeps no code');
   });
 
@@ -119,7 +119,7 @@ try {
     assert.equal((await pub.waitForTransactionReceipt({ hash })).status, 'success');
     await alice.watchReceive();
     const s = await until(async () => { const x = await alice.sync(); return x.notes === 2 && x; }, 'second sweep');
-    assert.equal(s.balance, parseEther('1.5') - parseEther('1.5') * 25n / 10000n);
+    assert.ok(s.balance < parseEther('1.5') && s.balance >= parseEther('1.5') - parseEther('1.5') * 25n / 10000n);
   });
 
   let sent;

@@ -146,20 +146,22 @@ export function createKeeper({
     return soon(r, t);
   }
 
-  // Sweep the whole balance for the most the box's cap allows. Another sweep landing first changes the box's
-  // counter (BadIntent) or balance: re-read and re-prove.
+  // Sweep the whole balance for what the sweep costs (gas with the margin, at least the floor), never more than the
+  // box's cap. Another sweep landing first changes the box's counter (BadIntent) or balance: re-read and re-prove.
   async function sweep(r, t) {
     const { npk, feeBps } = r.intent;
     const bal = BigInt(await chain.balanceOf(r.token, r.box));
     if (bal === 0n) return { idle: true };
-    const fee = (bal * BigInt(feeBps)) / 10_000n;
-    const pre = coverCheck({ reward: fee, token: r.token, gas: cfg.sweepGas, gasPrice: await chain.gasPrice(), cfg });
+    const gasPrice = await chain.gasPrice();
+    const cost = quoteFee({ token: r.token, gas: cfg.sweepGas, gasPrice, cfg });
+    const feeFor = (amount) => { const cap = (amount * BigInt(feeBps)) / 10_000n; return cost < cap ? cost : cap; };
+    const pre = coverCheck({ reward: feeFor(bal), token: r.token, gas: cfg.sweepGas, gasPrice, cfg });
     if (!pre.ok) return { skipped: pre.reason };
     for (let round = 0; round <= cfg.staleRetries; round++) {
       const [{ leaves, root }, n] = await Promise.all([leafSync.sync(), chain.receiveCount(r.box)]);
       const amount = round === 0 ? bal : BigInt(await chain.balanceOf(r.token, r.box));
       if (amount === 0n) return { idle: true };
-      const f = (amount * BigInt(feeBps)) / 10_000n;
+      const f = feeFor(amount);
       const w = sweepWitness(zk, { asset: assetField, leaves, npk: BigInt(npk), feeBps: Number(feeBps), box: r.box, n, amount, fee: f, relayer: chain.address, chainId: chain.chainId, pool: chain.pool });
       if (BigInt(w.publicSignals[1]) !== root) {
         leafSync.invalidate();

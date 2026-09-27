@@ -603,7 +603,7 @@ await test('a receive box is swept for its capped fee, stays watched, and is swe
   assert.equal(s.chain.sent.length, 1);
   assert.equal(s.chain.sent[0].functionName, 'sweepReceive');
   assert.equal(await s.chain.balanceOf(TOKEN, box), 0n);
-  assert.equal(await s.chain.balanceOf(TOKEN, KEEPER), 500n, '50 bps of 100000');
+  assert.equal(await s.chain.balanceOf(TOKEN, KEEPER), 10n, 'the sweep\'s cost (the floor here), well under the 50 bps cap');
   assert.equal(s.store.get(box).status, 'pending');
   assert.equal(await s.chain.receiveCount(box), 1n);
 
@@ -612,7 +612,20 @@ await test('a receive box is swept for its capped fee, stays watched, and is swe
   await s.keeper.tick();
   assert.equal(s.chain.sent.length, 2);
   assert.equal(await s.chain.receiveCount(box), 2n);
-  assert.equal(await s.chain.balanceOf(TOKEN, KEEPER), 700n);
+  assert.equal(await s.chain.balanceOf(TOKEN, KEEPER), 20n);
+});
+
+await test('a sweep charges its cost, and the cap only when the cost is higher', async () => {
+  const s = setup({ cfg: { minFees: new Map([[TOKEN.toLowerCase(), 40n]]), rates: new Map() } });
+  const box = await addReceive(s, 50);
+  s.chain.fund(TOKEN, box, 100_000n);
+  await s.keeper.tick();
+  assert.equal(await s.chain.balanceOf(TOKEN, KEEPER), 40n, 'cost 40, cap 500');
+  const s2 = setup({ cfg: { minFees: new Map([[TOKEN.toLowerCase(), 600n]]), rates: new Map() } });
+  const box2 = await addReceive(s2, 50);
+  s2.chain.fund(TOKEN, box2, 100_000n);
+  await s2.keeper.tick();
+  assert.equal(s2.chain.sent.length, 0, 'cost 600 is above the 500 cap: not swept');
 });
 
 await test('a receive box whose capped fee does not cover gas waits for more funds; no proof is made', async () => {
@@ -645,7 +658,7 @@ await test('a sweep raced by another transaction or another sweep is re-proven w
   await s2.keeper.tick();
   assert.equal(s2.prover.calls, 2);
   assert.equal(s2.chain.sent.length, 1);
-  assert.equal(await s2.chain.balanceOf(TOKEN, KEEPER), 300n, 'fee on what was left');
+  assert.equal(await s2.chain.balanceOf(TOKEN, KEEPER), 10n, 'one sweep\'s cost, on what was left');
 });
 
 await test('a receive box past its watch is still checked daily and swept when paid; at capacity a lapsed unfunded box makes room', async () => {
