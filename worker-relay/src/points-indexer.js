@@ -75,7 +75,7 @@ async function blockscoutBackfillBoost(boost, token, confirmedTip) {
   const collected = [];
   let params = '';
   for (;;) {
-    const res = await fetch(`${PP_BLOCKSCOUT_BASE}/tokens/${token}/transfers${params}`);
+    const res = await blockscoutFetch(`${PP_BLOCKSCOUT_BASE}/tokens/${token}/transfers${params}`);
     if (!res.ok) throw new Error(`blockscout token-transfers ${res.status}`);
     const data = await res.json();
     const items = data.items || [];
@@ -155,6 +155,14 @@ const WRAPPED_WITH_TIP_EVENT = {
 // ever names the Entrypoint itself as `_processooor` under the default relayed flow, never the person who
 // actually receives the funds.
 const PP_BLOCKSCOUT_BASE = 'https://eth.blockscout.com/api/v2';
+// A bare fetch() has no default timeout — if Blockscout's connection hangs (no response at all, not even an
+// eventual error status), this can block forever. Every raw Blockscout call in this file goes through this
+// specifically because that happened live: a stuck weiname backfill call froze zRouter and ETH-wrap scoring
+// for the rest of the process, since main()'s loop awaits each scan in sequence and nothing after a hung one
+// ever runs again. Turning a hang into a thrown error lets main()'s existing per-scan try/catch do its job.
+async function blockscoutFetch(url) {
+  return fetch(url, { signal: AbortSignal.timeout(15000) });
+}
 const NATIVE_ETH_SENTINEL = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
 // PM.sol's own convention for "this market's collateral is native ETH" — the real zero address, NOT the
 // 0xEeee...EEeE sentinel Privacy Pools uses above (a different third-party protocol's own convention).
@@ -185,7 +193,7 @@ async function scanPrivacyPoolCycle(store) {
   let params = '';
 
   for (;;) {
-    const res = await fetch(`${PP_BLOCKSCOUT_BASE}/addresses/${ADDR.ppEntrypoint}/logs${params}`);
+    const res = await blockscoutFetch(`${PP_BLOCKSCOUT_BASE}/addresses/${ADDR.ppEntrypoint}/logs${params}`);
     if (!res.ok) throw new Error(`blockscout address-logs ${res.status}`);
     const data = await res.json();
     const items = data.items || [];
@@ -259,7 +267,7 @@ async function scanCollateralEngineCycle(store) {
   const cbtcEscrowHelperSet = new Set(ADDR.cbtcEscrowHelpers.map((a) => a.toLowerCase()));
   async function realCbtcDepositor(txHash, rawFrom) {
     if (!cbtcEscrowHelperSet.has(rawFrom.toLowerCase())) return rawFrom;
-    const res = await fetch(`${PP_BLOCKSCOUT_BASE}/transactions/${txHash}/logs`);
+    const res = await blockscoutFetch(`${PP_BLOCKSCOUT_BASE}/transactions/${txHash}/logs`);
     if (!res.ok) return rawFrom; // fail open to the helper's own address rather than lose the row
     const data = await res.json();
     for (const item of data.items || []) {
@@ -272,7 +280,7 @@ async function scanCollateralEngineCycle(store) {
   }
 
   for (;;) {
-    const res = await fetch(`${PP_BLOCKSCOUT_BASE}/addresses/${ADDR.collateralEngine}/logs${params}`);
+    const res = await blockscoutFetch(`${PP_BLOCKSCOUT_BASE}/addresses/${ADDR.collateralEngine}/logs${params}`);
     if (!res.ok) throw new Error(`blockscout address-logs ${res.status}`);
     const data = await res.json();
     const items = data.items || [];
@@ -388,7 +396,7 @@ async function scanPmCycle(store) {
   const createdItems = [];
 
   for (;;) {
-    const res = await fetch(`${PP_BLOCKSCOUT_BASE}/addresses/${ADDR.pm}/logs${params}`);
+    const res = await blockscoutFetch(`${PP_BLOCKSCOUT_BASE}/addresses/${ADDR.pm}/logs${params}`);
     if (!res.ok) throw new Error(`blockscout address-logs ${res.status}`);
     const data = await res.json();
     const items = data.items || [];
@@ -517,7 +525,7 @@ async function scanWeinameCycle(store) {
   const transfersByTx = new Map(); // tx_hash -> Map(tokenId -> recipient)
 
   for (;;) {
-    const res = await fetch(`${PP_BLOCKSCOUT_BASE}/addresses/${ADDR.nameNft}/logs${params}`);
+    const res = await blockscoutFetch(`${PP_BLOCKSCOUT_BASE}/addresses/${ADDR.nameNft}/logs${params}`);
     if (!res.ok) throw new Error(`blockscout address-logs ${res.status}`);
     const data = await res.json();
     const items = data.items || [];
