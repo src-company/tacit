@@ -758,6 +758,7 @@ async function scanCycle(store) {
       const ppBoosted = store.hasEarlierPpWithdrawal(depositor, Number(evt.blockNumber));
       let points = pointsForDeposit(evt.args.amount, priorDepositCount);
       if (ppBoosted) points *= CFG.ppBoostMultiplier;
+      points *= CFG.tethWrapBoostMultiplier;
       const tacB = tacMultiplier(depositor, evt.blockNumber);
       const zShareB = zShareMultiplier(depositor, evt.blockNumber);
       points *= tacB * zShareB;

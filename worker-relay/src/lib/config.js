@@ -420,6 +420,12 @@ export const CFG = {
   // address and claim the multiplier on unrelated ETH wrapped there.
   ppEntrypointDeployBlock: num('PP_ENTRYPOINT_DEPLOY_BLOCK', 22153713),
   ppBoostMultiplier: num('PP_BOOST_MULTIPLIER', 1.2),
+  // A slight, deliberate nudge toward the V1 pool's wrap (ETH -> tETH) over the standalone EVM pool: tETH is
+  // the asset actually usable across the rest of the DeFi stack (AMM, cUSD CDP collateral, farms), so
+  // steering volume there compounds into more of that downstream activity, unlike an EVM pool deposit, which
+  // is deliberately not (yet) composable with anything else. Applies to every wrap, on top of whatever else
+  // it already qualifies for (Privacy Pools, TAC/Z-share) — kept modest so it nudges rather than dominates.
+  tethWrapBoostMultiplier: num('TETH_WRAP_BOOST_MULTIPLIER', 1.25),
 
   // ── cBTC/cUSD mint activity (src/points-indexer.js's scanCollateralEngineCycle) ──
   // Two more ways to earn points, alongside the ETH wrap above: posting wstETH collateral toward a cBTC
