@@ -6,8 +6,8 @@
 // the panel says the pool opens when the ceremony closes.
 // Link: /sats#eth=<chain id>[&do=send|withdraw] opens this panel on that chain, at that form.
 
-import { makeEvmPoolZk } from '/evm-pool-zk.js?cb=e6515ded';
-import { evmPoolKeys, makeEvmPoolWallet, jsonRpc } from '/evm-pool-wallet.js?cb=18bffe02';
+import { makeEvmPoolZk } from '/evm-pool-zk.js?cb=2f062779';
+import { evmPoolKeys, makeEvmPoolWallet, jsonRpc } from '/evm-pool-wallet.js?cb=ec8a106b';
 import { vkHash } from '/evm-pool-zk-prover.js?cb=00ff69c2';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7 } from '../vendor/tacit-poseidon.min.js';
 
@@ -205,7 +205,22 @@ export async function mount(root, ctx) {
       const s = await W.sync();
       const bal = root.querySelector('#eth-bal');
       if (bal) bal.textContent = fmtEth(s.balance);
+      await showWaiting();
     } catch (e) { say(`Could not read the pool: ${ctx.errMsg ? ctx.errMsg(e) : e.message}`, 'error'); }
+  }
+
+  // ETH at the private ETH address, and the smallest amount the relayer collects at today's gas price.
+  async function showWaiting() {
+    const p = root.querySelector('#eth-wait');
+    if (!p || !W) return;
+    const [held, q] = await Promise.all([W.waiting(), chain.keeper ? W.quote().catch(() => null) : null]);
+    const min = q?.receiveMin ? ((BigInt(q.receiveMin) + 10n ** 12n - 1n) / 10n ** 12n) * 10n ** 12n : null; // rounded up to what fmtEth shows
+    p.textContent = '';
+    if (held > 0n) p.textContent = min && held < min
+      ? `${fmtEth(held)} is at your private ETH address. It is collected once it reaches ${fmtEth(min)} at today's gas price; add more or wait for cheaper gas.`
+      : `${fmtEth(held)} is at your private ETH address, on its way into your private balance.`;
+    else if (min) p.textContent = `At today's gas price, send at least ${fmtEth(min)} at a time.`;
+    p.hidden = !p.textContent;
   }
 
   function main() {
@@ -221,6 +236,7 @@ export async function mount(root, ctx) {
       el('p', { class: 'note' }, `Private ETH on ${chain.name}: proved on this device, sent by a relayer, so you need no gas.`),
       el('div', { class: 'kv' }, el('span', {}, 'private balance'), el('b', { id: 'eth-bal' }, '…')),
       ...copyRow('private ETH address', w.receiveBox, `Send ETH here from any wallet or exchange on ${chain.name}. It moves into your private balance within minutes, less at most 0.25%.`),
+      el('p', { class: 'note small', id: 'eth-wait', hidden: true }),
       ...copyRow('private address', w.address, 'For private payments from other Tacit users, in sats or ETH. Nothing on chain links a payment to it.'),
       el('div', { class: 'row' }, checkBtn),
       relayer ? null : el('p', { class: 'note' }, `Sending and withdrawing open on ${chain.name} when its relayer is announced.`),

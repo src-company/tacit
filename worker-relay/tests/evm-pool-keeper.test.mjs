@@ -753,6 +753,8 @@ await test('HTTP relay and receive: quote, submit, stale → 409, low fee → ne
     const q = await (await fetch(`${base}/quote`)).json();
     assert.equal(q.relayer, KEEPER);
     assert.equal(q.fee, '10');
+    assert.equal(q.sweepFee, '10');
+    assert.equal(q.receiveMin, '4000', 'the smallest balance whose 25 bps covers a sweep');
 
     let r = await post('/relay', relayTx());
     assert.equal(r.status, 200);

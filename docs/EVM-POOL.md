@@ -241,7 +241,10 @@ depositor's wallet.
 
 With the keeper service:
 
-1. `GET /evm-pool/keeper/quote` → `{ relayer, fee, … }`: the keeper's address and the fee it accepts now.
+1. `GET /evm-pool/keeper/quote` → `{ relayer, fee, sweepFee, receiveMin, … }`: the keeper's address and the fee it
+   accepts now, plus what collecting a receive box costs now (`sweepFee`) and the smallest box balance whose 0.25%
+   cap pays for it (`receiveMin`). A smaller balance stays in its box, owned by its keys, and is collected once more
+   arrives or gas falls.
 2. Build and prove the transaction with that `relayer` and `fee` (`withdrawalWitness` for a withdrawal, or a
    transfer with `extAmount = 0`).
 3. `POST /evm-pool/keeper/relay` with `{ tx: { pA, pB, pC, publicInputs, recipient, extAmount, relayer, fee, memo0,

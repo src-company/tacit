@@ -341,6 +341,8 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     summary,
     notes: () => unspent(),
     quote: () => keeperGet('/quote'),
+    // ETH at the receive box not yet swept into a note. → wei
+    waiting: async () => BigInt(await chain.rpc('eth_getBalance', [box, 'latest'])),
     // Asks the relayer to watch this wallet's receive box (and look now).
     watchReceive: () => keeperPost('/receive', { chainId: chain.chainId, npk: receiveKeys(zk, keys.zkWallet, RECEIVE_INDEX).npk.toString(), feeBps: RECEIVE_FEE_BPS }),
 

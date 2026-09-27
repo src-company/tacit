@@ -349,8 +349,14 @@ export function createIntakeHandler({
       if (gas < cfg.relayGas) gas = cfg.relayGas;
       if (gas > cfg.gasCap) throw bad(`gas above the ${cfg.gasCap} cap`);
     }
-    const q = quoteFee({ token: chain.asset, gas, gasPrice: await gasPrice(), cfg });
-    return { chainId: chain.chainId, pool: chain.pool, relayer: chain.address, asset: chain.asset, fee: q.toString(), gas: gas.toString() };
+    const price = await gasPrice();
+    const q = quoteFee({ token: chain.asset, gas, gasPrice: price, cfg });
+    // What collecting a receive box costs now, and the smallest balance whose 0.25% cap pays for it.
+    const sweep = quoteFee({ token: chain.asset, gas: cfg.sweepGas, gasPrice: price, cfg, floor: !cfg.rates.has(chain.asset.toLowerCase()) });
+    return {
+      chainId: chain.chainId, pool: chain.pool, relayer: chain.address, asset: chain.asset, fee: q.toString(), gas: gas.toString(),
+      sweepFee: sweep.toString(), receiveMin: ((sweep * 10_000n + 24n) / 25n).toString(),
+    };
   }
 
   async function relay(body) {
