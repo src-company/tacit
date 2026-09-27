@@ -254,6 +254,35 @@ A `409` with `stale: true` means another transaction landed first: rebuild again
 (the owner's signature does not change). A `400` carrying `needFee` means gas moved; re-quote. Deposits are not
 relayed, since a deposit is paid by whoever sends it.
 
+## Standalone wallet
+
+`dapp/evm-pool/tacit-evm-pool-wallet.js` (built by `node build/build-evm-pool-wallet.mjs`) is the whole private-ETH
+wallet as one ES module with no imports: key derivation, note scanning, proving (snarkjs 0.7.6 in a worker started
+from a Blob) and submission. It checks the ceremony files against their pinned hashes before it uses them. It is
+served at `https://tacit.finance/evm-pool/tacit-evm-pool-wallet.js` with `Access-Control-Allow-Origin: *`, as are the
+ceremony files beside it.
+
+```js
+import { makeEvmPoolWallet } from './tacit-evm-pool-wallet.js';
+const w = await makeEvmPoolWallet({
+  provider,                 // EIP-1193, on chainId; signs, and reads unless `rpc` is given
+  chainId: 8453,
+  identityKey,              // the 32-byte Tacit identity key
+  artifacts: { wasm, zkey, vk },   // transact.wasm, transact_final.zkey, transact_vk.json
+  relay,                    // optional keeper base, …/evm-pool/keeper
+});
+await w.sync();                         // { balance, notes, leaves, block }
+await w.deposit(wei);                   // from the user's wallet
+await w.receive.sweep();                // the private ETH address → a note, from the user's wallet, no fee
+await w.send('bp1…', wei);              // private payment
+await w.withdraw('0x…', wei);           // to any address
+```
+
+With no `relay`, every action is proved on the device and sent from `provider`: no keeper, no relayer, no fee
+beyond gas. With `relay`, `send` and `withdraw` go through the keeper (its fee, no gas) unless called with
+`{ via: 'self' }`. Each action takes `{ via, onStep(msg) }` as its last argument. `w.receive.address` is the
+private ETH address and `w.receive.waiting()` what sits there unswept. `w.terminate()` stops the worker.
+
 ## Moving between V1 and this pool
 
 The pools keep separate notes, so value moves by a public exit from one and a public entry into the other. Both

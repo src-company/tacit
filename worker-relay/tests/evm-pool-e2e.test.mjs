@@ -173,6 +173,34 @@ try {
     assert.equal((await again.sync()).balance, (await alice.sync()).balance);
   });
 
+  await test('no keeper: deposit, own-address sweep, private send and withdrawal, each submitted by the user\'s wallet', async () => {
+    const signerOf = (w) => ({ address: w.account.address, send: ({ to, data, value }) => w.sendTransaction({ to, data, value }) });
+    const cw = wallet(KEYS[2]);
+    const dw = wallet('0x' + '44'.repeat(32));
+    await pub.waitForTransactionReceipt({ hash: await deployer.sendTransaction({ to: dw.account.address, value: parseEther('1') }) });
+    const carol = makeEvmPoolWallet({ zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(0x33)), chain: chainCfg, prove, signer: signerOf(cw) });
+    const dave = makeEvmPoolWallet({ zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(0x44)), chain: chainCfg, prove, signer: signerOf(dw) });
+    const ok = async (h) => assert.equal((await pub.waitForTransactionReceipt({ hash: h })).status, 'success');
+
+    await ok(await carol.deposit({ amount: parseEther('0.2') }));
+    assert.equal((await carol.sync()).balance, parseEther('0.2'));
+
+    await pub.waitForTransactionReceipt({ hash: await payer.sendTransaction({ to: carol.receiveBox, value: 12345n }) });
+    await ok(await carol.sweep());
+    assert.equal((await carol.sync()).balance, parseEther('0.2') + 12345n, 'a tiny amount, swept whole with no fee');
+
+    await ok(await carol.send({ to: dave.address, amount: parseEther('0.15') }));
+    assert.equal((await until(async () => { const x = await dave.sync(); return x.balance > 0n && x; }, 'dave sees it')).balance, parseEther('0.15'));
+
+    const fresh = privateKeyToAccount('0x' + '45'.repeat(32)).address;
+    const h = await dave.withdraw({ to: fresh, amount: parseEther('0.1') });
+    await ok(h);
+    assert.equal(await pub.getBalance({ address: fresh }), parseEther('0.1'));
+    assert.equal((await pub.getTransaction({ hash: h })).from.toLowerCase(), dw.account.address.toLowerCase(), 'sent from dave\'s own wallet');
+    assert.equal((await dave.sync()).balance, parseEther('0.05'), 'no fee taken');
+    await assert.rejects(dave.withdraw({ to: fresh, amount: 1n, via: 'relay' }), /no wallet|no relayer|relayer/i);
+  });
+
   await test('a spend cannot be replayed: the same calldata reverts on chain', async () => {
     const tx = await pub.getTransaction({ hash: sent });
     await assert.rejects(pub.call({ account: payer.account, to: pool, data: tx.input }), /AlreadyNullified|StaleRoot|revert/);

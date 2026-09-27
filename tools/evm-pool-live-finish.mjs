@@ -86,8 +86,10 @@ const shown = [];
       break;
     }
   }
-  const e = await until(async () => { const x = await P.erin.w.sync(); return x.balance > 0n && x; }, 'erin finds her note');
-  log(`  erin holds ${eth(e.balance)} ETH, found from her keys and the router's Received event`);
+  if (bal > 0n || (await P.erin.w.sync()).balance > 0n) {
+    const e = await until(async () => { const x = await P.erin.w.sync(); return x.balance > 0n && x; }, 'erin finds her note');
+    log(`  erin holds ${eth(e.balance)} ETH, found from her keys and the router's Received event`);
+  }
 }
 
 // Alice pays bob 2u privately from her 5u note, keeping 3u, proved and submitted by alice.

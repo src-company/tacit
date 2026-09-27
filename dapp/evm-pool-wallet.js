@@ -1,6 +1,7 @@
 // Wallet for the EVM pool (contracts/src/TacitEvmPool.sol) on one chain: keys from the Tacit identity, notes found in
 // the pool's Transact events and the router's Received events, and spends proved on this device and submitted by a
-// relayer (worker-relay/src/evm-pool-keeper.js), so the user needs no gas and no funded address.
+// relayer (worker-relay/src/evm-pool-keeper.js), so the user needs no gas and no funded address, or from the user's
+// own wallet (a signer), with no relayer at all.
 //
 // Keys are the Bitcoin pool's: seed = HMAC-SHA256(identity key, "tacit-btc-pool-seed-v1"), wallet under the
 // "mainnet" tag, so one Secret Sats address (bp1…) receives in both pools.
@@ -16,7 +17,7 @@
 import { secp, keccak_256, sha256, hmac, concatBytes } from './vendor/tacit-deps.min.js';
 import { makeBtcShieldedPool } from './btc-shielded-pool.js';
 import { poolAsset, extDataHash } from './evm-pool-zk.js';
-import { receiveKeys, receivedNote, receiveBoxAddress, callEscrowAddress, callIntentJson, RECEIVE_FEE_BPS, RECEIVE_INDEX } from './evm-pool-gateway.js';
+import { receiveKeys, receivedNote, receiveBoxAddress, sweepWitness, callEscrowAddress, callIntentJson, calldata, selector, RECEIVE_FEE_BPS, RECEIVE_INDEX } from './evm-pool-gateway.js';
 
 export const MEMO_LEN = 65;
 const REFUND_GAP = 20;
@@ -134,13 +135,28 @@ function decodeReceived(log) {
   return { box: String(log.topics[1]).toLowerCase(), n: BigInt(log.topics[2]), index: Number(w(0)), value: w(1), rho: w(2), fee: w(3), block: Number(BigInt(log.blockNumber)), tx: log.transactionHash };
 }
 
+// ── calls a signer submits ──
+
+const PAIR = { tuple: ['uint256', 'uint256'] };
+const TX_TYPES = [PAIR, { tuple: [PAIR, PAIR] }, PAIR, { tuple: Array(11).fill('uint256') }, 'address', 'uint256', 'address', 'uint256', 'bytes', 'bytes'];
+const TX_SIG = '(uint256[2],uint256[2][2],uint256[2],uint256[11],address,int256,address,uint256,bytes,bytes)';
+const txValues = (t) => [t.pA, t.pB, t.pC, t.publicInputs, t.recipient, BigInt.asUintN(256, BigInt(t.extAmount)), t.relayer, t.fee, t.memo0, t.memo1];
+const transactData = (t) => calldata(`transact${TX_SIG}`, TX_TYPES, txValues(t));
+const sweepData = (npk, feeBps, t) => calldata(`sweepReceive(uint256,uint16,${TX_SIG})`, ['uint256', 'uint16', { tuple: TX_TYPES }], [npk, feeBps, txValues(t)]);
+// Reverts meaning another transaction landed first: prove again against the new state.
+const RACED = new Set(['StaleRoot()', 'WrongInsertionIndex()', 'UnknownMembershipRoot()', 'BadIntent()'].map((e) => hex(selector(e))));
+const revertData = (e) => { for (let x = e; x; x = x.cause) { const d = x.rpc?.data?.data ?? x.rpc?.data ?? x.data?.data ?? x.data; if (typeof d === 'string' && d.startsWith('0x')) return d; } return ''; };
+
 // ── wallet ──
 
 // chain: { chainId, pool, router, rpc (a jsonRpc), deployBlock, logChunk?, confirmations? }
 // keeper: base URL of a keeper (…/evm-pool/keeper) or null; prove(input) → { proof, publicSignals } (snarkjs shape);
 // store: { get(k), set(k, v) } for the synced state, or null to keep it in memory. What is stored is view-level only
 // (leaves, and each owned note's position, value, rho and shared secret); spend keys are derived in memory.
-export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store = null, fetchImpl = globalThis.fetch?.bind(globalThis) }) {
+// signer: { address, send({ to, data, value }) → tx hash } for the user's own wallet, or null. A spend goes through
+// the keeper when there is one, unless called with { via: 'self' }; deposits and sweeps of the private ETH address
+// by the signer are always its own.
+export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store = null, signer = null, fetchImpl = globalThis.fetch?.bind(globalThis) }) {
   const asset = poolAsset({ chainId: BigInt(chain.chainId), pool: chain.pool, token: ZERO });
   const boxOf = (i) => receiveBoxAddress(receiveKeys(zk, keys.zkWallet, i).npk, RECEIVE_FEE_BPS, chain.router);
   const box = boxOf(RECEIVE_INDEX);
@@ -212,7 +228,13 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
         out.push(...await chain.rpc('eth_getLogs', [{ address, topics, fromBlock: '0x' + a.toString(16), toBlock: '0x' + b.toString(16) }]));
         a = b + 1;
       } catch (e) {
-        if (step > 100 && /range|limit|too many|exceed|10000/i.test(String(e.message))) { step = Math.floor(step / 4); continue; }
+        const m = String(e.message);
+        if (step > 1 && /range|limit|too many|exceed|10000/i.test(m)) {
+          // Take the limit a provider names ("up to a 10 block range"), else shrink.
+          const n = Number((m.match(/(\d[\d,]*)\s*blocks?\b/i)?.[1] || '').replace(/,/g, ''));
+          step = n > 0 && n < step ? n : Math.max(1, Math.floor(step / 4));
+          continue;
+        }
         throw e;
       }
     }
@@ -280,12 +302,28 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     ...rest,
   });
 
-  // One relayed transaction: spends `ins`, creates `outs` ([{ to, value } | null] × 2), pays out `amount` to
-  // `recipient` (0 for a transfer). Re-proves when another transaction lands first. → tx hash.
-  async function relay({ ins, outs, amount, recipient, fee, relayer, extra = {}, onStep = () => {} }) {
+  // Submits from the signer after checking the call on chain. → tx hash, or null when another transaction landed
+  // first (prove again).
+  async function sendSelf(to, data, value, onStep) {
+    if (!signer) throw new Error('no wallet to send from: connect one, or use a relayer');
+    const v = '0x' + BigInt(value).toString(16);
+    try { await chain.rpc('eth_call', [{ from: signer.address, to, data, value: v }, 'latest']); }
+    catch (e) {
+      const d = revertData(e);
+      if (RACED.has(d.slice(0, 10))) return null;
+      throw new Error(`the transaction would revert: ${e.message || e}${d ? ` (${d.slice(0, 10)})` : ''}`);
+    }
+    onStep('confirm in your wallet');
+    return signer.send({ to, data, value: BigInt(value) });
+  }
+
+  // One transaction: spends `ins`, creates `outs` ([{ to, value } | null] × 2) and moves `extAmount` across the pool
+  // boundary (> 0 in from the signer, < 0 out to `recipient`). With a relayer's quote `q` the relayer submits it
+  // for q.fee; without, the signer does and pays the gas. Re-proves when another transaction lands first. → tx hash.
+  async function transact({ ins, outs, extAmount = 0n, recipient = ZERO, q = null, extra = {}, onStep = () => {} }) {
     const sealed = outs.map((o) => (o ? sealNote(zk, { to: o.to, value: o.value, asset }) : null));
     const memo0 = sealed[0]?.memo ?? new Uint8Array(), memo1 = sealed[1]?.memo ?? new Uint8Array();
-    const extAmount = -BigInt(amount);
+    const fee = q ? BigInt(q.fee) : 0n, relayer = q ? q.relayer : ZERO;
     const inputs = [...ins.map(asInput), ...Array(2 - ins.length).fill({ dummy: true })];
     for (let round = 0; round < 4; round++) {
       if (round) { onStep('someone else got in first, proving again'); await sync(); }
@@ -293,31 +331,47 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       const w = zk.buildWitness({ asset, leaves: state().leaves.map(BigInt), inputs, outputs: sealed.map((o) => (o ? { v: o.v, npk: o.npk, rho: o.rho } : null)), extAmount, fee, extDataHash: eh });
       onStep('proving on this device');
       const { proof, publicSignals } = await prove(w.input);
-      onStep('sending through the relayer');
       const tx = toTx(proof, publicSignals, { recipient, extAmount: extAmount.toString(), relayer, fee: fee.toString(), memo0: hex(memo0), memo1: hex(memo1) });
-      const r = await keeperPost('/relay', { tx, ...extra });
-      if (r.status === 200 && r.body.txHash) {
-        for (const n of ins) pending.add(n.nf);
-        return r.body.txHash;
+      let h;
+      if (q) {
+        onStep('sending through the relayer');
+        const r = await keeperPost('/relay', { tx, ...extra });
+        if (r.status === 409 && r.body.stale) continue;
+        if (r.status !== 200 || !r.body.txHash) throw new Error(r.body.error || `relayer returned ${r.status}`);
+        h = r.body.txHash;
+      } else {
+        h = await sendSelf(chain.pool, transactData(tx), extAmount > 0n ? extAmount : 0n, onStep);
+        if (!h) continue;
       }
-      if (r.status === 409 && r.body.stale) continue;
-      throw new Error(r.body.error || `relayer returned ${r.status}`);
+      for (const n of ins) pending.add(n.nf);
+      return h;
     }
     throw new Error('the pool kept moving; try again');
   }
 
+  // The relayer's quote for a spend, or null when the signer submits it.
+  async function quoteFor(via, gas = null) {
+    if (via === 'relay' && !keeper) throw new Error('no relayer is configured for this chain');
+    if (via === 'self' || !keeper) {
+      if (!signer) throw new Error('no relayer and no wallet to send from');
+      return null;
+    }
+    return keeperGet(gas ? `/quote?gas=${gas}` : '/quote');
+  }
+
   // Merges the two largest notes into one, repeatedly, until two notes cover `need` (each merge pays a fee).
   async function prepare(need, q, onStep) {
+    const fee = q ? BigInt(q.fee) : 0n;
     for (let guard = 0; guard < 8; guard++) {
       const pick = select(need);
       if (pick) return pick;
       const u = unspent().sort((a, b) => (BigInt(b.v) < BigInt(a.v) ? -1 : 1));
       if (u.length < 2) break;
       const total = BigInt(u[0].v) + BigInt(u[1].v);
-      if (total <= BigInt(q.fee)) break;
+      if (total <= fee) break;
       onStep('combining notes first');
-      await relay({ ins: [u[0], u[1]], outs: [{ to: keys, value: total - BigInt(q.fee) }, null], amount: 0n, recipient: ZERO, fee: BigInt(q.fee), relayer: q.relayer, onStep });
-      await waitFor(() => unspent().some((n) => BigInt(n.v) === total - BigInt(q.fee)));
+      await transact({ ins: [u[0], u[1]], outs: [{ to: keys, value: total - fee }, null], q, onStep });
+      await waitFor(() => unspent().some((n) => BigInt(n.v) === total - fee));
     }
     throw new Error('not enough in the pool for this amount and its fee');
   }
@@ -347,16 +401,16 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     watchReceive: () => keeperPost('/receive', { chainId: chain.chainId, npk: receiveKeys(zk, keys.zkWallet, RECEIVE_INDEX).npk.toString(), feeBps: RECEIVE_FEE_BPS }),
 
     // Pays `amount` wei out of the pool to `to` (0x…). → tx hash.
-    async withdraw({ to, amount, onStep = () => {} }) {
+    async withdraw({ to, amount, via = null, onStep = () => {} }) {
       if (!/^0x[0-9a-fA-F]{40}$/.test(String(to)) || BigInt(to) === 0n) throw new Error('enter a 0x address');
       const a = BigInt(amount);
       if (a <= 0n) throw new Error('enter an amount');
       await sync();
-      const q = await keeperGet('/quote');
-      const fee = BigInt(q.fee);
+      const q = await quoteFor(via);
+      const fee = q ? BigInt(q.fee) : 0n;
       const ins = await prepare(a + fee, q, onStep);
       const change = ins.reduce((s, n) => s + BigInt(n.v), 0n) - a - fee;
-      return relay({ ins, outs: [change > 0n ? { to: self, value: change } : null, null], amount: a, recipient: to, fee, relayer: q.relayer, onStep });
+      return transact({ ins, outs: [change > 0n ? { to: self, value: change } : null, null], extAmount: -a, recipient: to, q, onStep });
     },
 
     // A fresh receive box for a call intent's refund (anything returned is swept back into a note here), and asks
@@ -380,23 +434,53 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       const fee = BigInt(q.fee);
       const ins = await prepare(a + fee, q, onStep);
       const change = ins.reduce((s, n) => s + BigInt(n.v), 0n) - a - fee;
-      return relay({
-        ins, outs: [change > 0n ? { to: self, value: change } : null, null], amount: a, recipient: callEscrowAddress(intent, chain.router),
-        fee, relayer: q.relayer, extra: { call: callIntentJson(intent) }, onStep,
+      return transact({
+        ins, outs: [change > 0n ? { to: self, value: change } : null, null], extAmount: -a, recipient: callEscrowAddress(intent, chain.router),
+        q, extra: { call: callIntentJson(intent) }, onStep,
       });
     },
 
     // Sends `amount` wei privately to a Secret Sats address. → tx hash.
-    async send({ to, amount, onStep = () => {} }) {
+    async send({ to, amount, via = null, onStep = () => {} }) {
       const recipient = recipientOf(keys, to);
       const a = BigInt(amount);
       if (a <= 0n) throw new Error('enter an amount');
       await sync();
-      const q = await keeperGet('/quote');
-      const fee = BigInt(q.fee);
+      const q = await quoteFor(via);
+      const fee = q ? BigInt(q.fee) : 0n;
       const ins = await prepare(a + fee, q, onStep);
       const change = ins.reduce((s, n) => s + BigInt(n.v), 0n) - a - fee;
-      return relay({ ins, outs: [{ to: recipient, value: a }, { to: self, value: change }], amount: 0n, recipient: ZERO, fee, relayer: q.relayer, onStep });
+      return transact({ ins, outs: [{ to: recipient, value: a }, { to: self, value: change }], q, onStep });
+    },
+
+    // Deposits `amount` wei from the signer into a private note here. → tx hash.
+    async deposit({ amount, onStep = () => {} }) {
+      const a = BigInt(amount);
+      if (a <= 0n) throw new Error('enter an amount');
+      await sync();
+      return transact({ ins: [], outs: [{ to: self, value: a }, null], extAmount: a, onStep });
+    },
+
+    // Sweeps the private ETH address into a note here, submitted by the signer: no fee, any amount. → tx hash.
+    async sweep({ onStep = () => {} } = {}) {
+      const npk = receiveKeys(zk, keys.zkWallet, RECEIVE_INDEX).npk;
+      for (let round = 0; round < 4; round++) {
+        await sync();
+        const [bal, n] = await Promise.all([
+          chain.rpc('eth_getBalance', [box, 'latest']),
+          chain.rpc('eth_call', [{ to: chain.router, data: calldata('receiveCount(address)', ['address'], [box]) }, 'latest']),
+        ]);
+        const amount = BigInt(bal);
+        if (amount === 0n) throw new Error('nothing is waiting at your private ETH address');
+        const w = sweepWitness(zk, { asset, leaves: state().leaves.map(BigInt), npk, feeBps: RECEIVE_FEE_BPS, box, n: BigInt(n), amount, fee: 0n, relayer: ZERO, chainId: chain.chainId, pool: chain.pool });
+        onStep('proving on this device');
+        const { proof, publicSignals } = await prove(w.input);
+        const tx = toTx(proof, publicSignals, { recipient: ZERO, extAmount: amount.toString(), relayer: ZERO, fee: '0', memo0: '0x', memo1: '0x' });
+        const h = await sendSelf(chain.router, sweepData(npk, RECEIVE_FEE_BPS, tx), 0n, onStep);
+        if (h) return h;
+        onStep('someone else got in first, proving again');
+      }
+      throw new Error('the pool kept moving; try again');
     },
   };
 }

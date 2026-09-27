@@ -181,7 +181,8 @@ export function abiEncode(types, values) { return encodeTuple(types, values); }
 function encodeTuple(types, values) {
   if (types.length !== values.length) throw new Error('evm-pool-gateway: abi arity');
   const parts = types.map((t, i) => encodeOne(t, values[i]));
-  let off = BigInt(32 * types.length);
+  // A static tuple sits in the head at full length; everything dynamic takes one offset word.
+  let off = BigInt(types.reduce((n, t, i) => n + (isDyn(t) ? 32 : parts[i].length), 0));
   const heads = [], tails = [];
   types.forEach((t, i) => {
     if (isDyn(t)) { heads.push(be32(off)); tails.push(parts[i]); off += BigInt(parts[i].length); } else heads.push(parts[i]);
