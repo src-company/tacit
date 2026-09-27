@@ -104,7 +104,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=c875232e">
+<link rel="modulepreload" href="./tacit.js?cb=45681485">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -6431,20 +6431,9 @@ body[data-market-mode="asset"] .mkt-hero-price-usd,
 body[data-market-mode="asset"] .mkt-hero-delta-context {
   font-size: 10px;
 }
-body[data-market-mode="asset"] .mkt-hero-price-delta {
-  padding: 2px 5px;
-}
-/* Chip border/fill follows the same up/down tint as the text (was a
-   flat red-tinted chip regardless of sign — a green "+29%" print read as
-   a warning because the box around it was always brick-red). */
-body[data-market-mode="asset"] .mkt-hero-price-delta.mkt-hero-delta-up {
-  border: 1px solid rgba(26,117,72,0.28);
-  background: rgba(26,117,72,0.06);
-}
-body[data-market-mode="asset"] .mkt-hero-price-delta.mkt-hero-delta-down {
-  border: 1px solid rgba(183,55,44,0.24);
-  background: rgba(183,55,44,0.05);
-}
+/* Plain colored text, no chip box — a boxed "+29%" print next to the big
+   price number read as more cluttered than informative. Color alone (green/
+   red via .mkt-hero-delta-up/-down) carries the up/down signal. */
 body[data-market-mode="asset"] .mkt-hero-stats-row {
   padding: 9px 18px 11px;
   gap: 14px;
@@ -11580,7 +11569,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=c875232e"></script>
+<script type="module" src="./tacit.js?cb=45681485"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for
