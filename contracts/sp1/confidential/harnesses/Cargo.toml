@@ -114,6 +114,10 @@ name = "exec-fastlane"
 path = "exec-fastlane.rs"
 
 [[bin]]
+name = "decode-fastlane-pv"
+path = "decode-fastlane-pv.rs"
+
+[[bin]]
 name = "exec-bridgeburn"
 path = "exec-bridgeburn.rs"
 

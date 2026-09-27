@@ -326,7 +326,9 @@ fn main() {
     // them, so a padded or truncated list breaks a large settle); a bare fixture with no memos gets 64 empty ones.
     match f.get("memoHashes").and_then(|v| v.as_array()) {
         Some(mh) => { for h in mh { s.write(&hexv(h.as_str().unwrap())); } }
-        None => { for _ in 0..64u32 { s.write(&hexv("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")); } }
+        None => {
+            panic!("memoHashes missing: this harness always proves groth16 (no MODE=execute diagnostic path) — a placeholder memoRoot here commits to a proof that reverts MemoLeafMismatch on submission; supply the real keccak256(memo) per leaf+lock_leaf");
+        }
     }
 
     let client = ProverClient::builder().cpu().build();

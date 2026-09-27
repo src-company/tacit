@@ -101,7 +101,11 @@ fn main() {
     // them, so a padded or truncated list breaks a large settle); a bare fixture with no memos gets 64 empty ones.
     match f.get("memoHashes").and_then(|v| v.as_array()) {
         Some(mh) => { for h in mh { stdin.write(&hexv(h.as_str().unwrap())); } }
-        None => { for _ in 0..64u32 { stdin.write(&hexv("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")); } }
+        None => {
+            let m = std::env::var("MODE").unwrap_or_default();
+            assert!(m != "groth16", "memoHashes missing: a real groth16 proof needs the actual keccak256(memo) per leaf+lock_leaf, or it commits a placeholder memoRoot that reverts MemoLeafMismatch on submission");
+            for _ in 0..64u32 { stdin.write(&hexv("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")); }
+        }
     }
 
     let mode = std::env::var("MODE").unwrap_or_else(|_| "execute".into());
