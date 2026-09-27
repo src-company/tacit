@@ -114,10 +114,22 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
   // One signer, one nonce: the loop and relay requests send through this queue one at a time.
   let sending = Promise.resolve();
   const serial = (f) => { const run = sending.then(f, f); sending = run.catch(() => {}); return run; };
-  // The next nonce: the chain's pending count, or past what this process last sent if the RPC has not seen it yet
-  // (queued sends go out faster than a public RPC's pending view updates).
-  let sentNonce = -1;
-  const nextNonce = async () => Math.max(await pub.getTransactionCount({ address: account.address, blockTag: 'pending' }), sentNonce + 1);
+  // The next nonce: the chain's pending count; with the queue on (public mempool only), past what this process last
+  // sent while the RPC has not seen it yet. A private endpoint can drop a transaction without using its nonce, so
+  // there only the chain's count is trusted; and a send never seen within a minute is forgotten.
+  let sentNonce = -1, sentAt = 0;
+  const nextNonce = async () => {
+    const pending = await pub.getTransactionCount({ address: account.address, blockTag: 'pending' });
+    if (!cfg.pipeline || (pending <= sentNonce && Date.now() - sentAt > 60_000)) return pending;
+    return Math.max(pending, sentNonce + 1);
+  };
+  // Fees that survive several blocks of base-fee rises, with at least the configured tip (a private builder skips a
+  // transaction that pays it nothing).
+  const fees = async () => {
+    const [block, tip] = await Promise.all([pub.getBlock(), pub.estimateMaxPriorityFeePerGas().catch(() => 0n)]);
+    const prio = tip > cfg.minPriorityFee ? tip : cfg.minPriorityFee;
+    return { maxFeePerGas: (block.baseFeePerGas ?? 0n) * 2n + prio, maxPriorityFeePerGas: prio };
+  };
   const b32 = (x) => `0x${BigInt(x).toString(16).padStart(64, '0')}`;
 
   return {
@@ -156,7 +168,12 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
       return { registered, token: getAddress(underlying) };
     },
     balanceOf: (token, holder) => (token.toLowerCase() === ETH ? pub.getBalance({ address: holder }) : read(token, ERC20_ABI, 'balanceOf', [holder])),
-    gasPrice: () => pub.getGasPrice(),
+    // What a send pays per gas: the RPC's price, or the base fee plus the tip floor if that is more.
+    async gasPrice() {
+      const [gp, block] = await Promise.all([pub.getGasPrice(), pub.getBlock()]);
+      const floor = (block.baseFeePerGas ?? 0n) + cfg.minPriorityFee;
+      return gp > floor ? gp : floor;
+    },
     receiveBoxOf: async (npk, feeBps) => getAddress(await read(cfg.router, ROUTER_ABI, 'receiveBoxOf', [npk, feeBps])),
     receiveCount: async (box) => BigInt(await read(cfg.router, ROUTER_ABI, 'receiveCount', [box])),
     estimate: (functionName, args) => pub.estimateContractGas({ ...target(functionName), args, account }),
@@ -172,9 +189,10 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
         try {
           const wallet = createWalletClient({ account, chain: viemChain, transport: http(url) });
           return await withNonceRetry(functionName, async () => {
-            const nonce = await nextNonce();
-            const hash = await wallet.writeContract({ ...target(functionName), args, gas, nonce });
+            const [nonce, fee] = await Promise.all([nextNonce(), fees()]);
+            const hash = await wallet.writeContract({ ...target(functionName), args, gas, nonce, ...fee });
             sentNonce = nonce;
+            sentAt = Date.now();
             return hash;
           }, { log });
         } catch (e) {

@@ -107,6 +107,8 @@ export function loadKeeperConfig(env = process.env) {
     // default where sends go to private endpoints, which drop a reverting transaction and would leave a nonce gap.
     pipeline: str(env, 'EVM_POOL_KEEPER_PIPELINE', list(str(env, 'EVM_POOL_KEEPER_SEND_RPC_URLS', sendDefault)).length ? '0' : '1') !== '0',
     pipelineDepth: int(env, 'EVM_POOL_KEEPER_PIPELINE_DEPTH', 24),
+    // The least priority fee a send offers, in wei (a private builder on Ethereum skips a transaction tipping ~0).
+    minPriorityFee: big(env, 'EVM_POOL_KEEPER_MIN_PRIORITY_FEE', chainId === 1 ? 50_000_000n : 0n),
     // Public relaying of users' own transactions (withdrawals and transfers) at /evm-pool/keeper/relay.
     relay: str(env, 'EVM_POOL_KEEPER_RELAY', '1') !== '0',
     gasCap: big(env, 'EVM_POOL_KEEPER_GAS_CAP', 1500000n),
