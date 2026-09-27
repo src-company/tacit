@@ -46317,6 +46317,29 @@ function _syncTabChromeFor(name) {
   });
 }
 
+// Ethereum Send tab. Pulled out of _activateTab so the locked-state "Unlock
+// wallet" button (confidential-send-tab.js) can call back in after unlocking,
+// the same shape as every other lazy-unlock surface in the app (transfer
+// tab's asset select, market's ask/bid forms) — one unified wallet, unlocked
+// on demand from wherever the user actually is, not a separate Ethereum-only
+// connect flow.
+function _renderCsendTab() {
+  let myTacit = null;
+  try { myTacit = wallet && wallet.priv ? tacitAddressForWallet(wallet) : null; } catch { myTacit = null; }
+  renderSendTab(wallet, {
+    tacitAddress: myTacit,
+    resolveRecipient: resolveEvmShieldedRecipient,
+    ethNames: ethNamesBridge,
+    // Bridge affordance: only surfaced when the cross-lane path is live (pool deployed + an asset
+    // marked live). Stays hidden under the current staged posture; flips on with the deploy config
+    // alone — no code change. Opens the existing ETH↔BTC bridge modal (cETH ⇄ tETH).
+    crosslaneLive: _crosslaneConfigured(),
+    openBridge: () => { if (window._openBridgeModal) window._openBridgeModal(); },
+    unlock: async () => { await ensurePrivkey(); _renderCsendTab(); },
+    isUnlockCancelled,
+  });
+}
+
 function _activateTab(name) {
   name = _canonicalTabName(name);
   try { _setConfidentialNet(currentNetworkName()); } catch {}
@@ -46349,20 +46372,7 @@ function _activateTab(name) {
   if (name === 'cdp') { try { renderCdpTab(wallet); } catch (e) { console.error('cdp tab', e); } }
   if (name === 'otc') { try { renderOtcTab(wallet); } catch (e) { console.error('otc tab', e); } }
   if (name === 'csend') {
-    try {
-      let myTacit = null;
-      try { myTacit = wallet && wallet.priv ? tacitAddressForWallet(wallet) : null; } catch { myTacit = null; }
-      renderSendTab(wallet, {
-        tacitAddress: myTacit,
-        resolveRecipient: resolveEvmShieldedRecipient,
-        ethNames: ethNamesBridge,
-        // Bridge affordance: only surfaced when the cross-lane path is live (pool deployed + an asset
-        // marked live). Stays hidden under the current staged posture; flips on with the deploy config
-        // alone — no code change. Opens the existing ETH↔BTC bridge modal (cETH ⇄ tETH).
-        crosslaneLive: _crosslaneConfigured(),
-        openBridge: () => { if (window._openBridgeModal) window._openBridgeModal(); },
-      });
-    } catch (e) { console.error('csend tab', e); }
+    try { _renderCsendTab(); } catch (e) { console.error('csend tab', e); }
   }
   if (name === 'cswap') { try { renderSwapTab(wallet); } catch (e) { console.error('cswap tab', e); } }
   if (name === 'earn') { try { renderEarnTab(wallet); } catch (e) { console.error('earn tab', e); } }
@@ -91910,13 +91920,15 @@ function setupNetworkSelect() {
   const sel = $('#net-select');
   if (!sel) return;
   sel.value = NET.name;
+  const dot = $('#net-dot');
+  if (dot) dot.className = 'net-dot net-dot-' + NET.name;
   const dh = $('#discover-header-title');
   if (dh) dh.textContent = `assets · ${NET.name}`;
   // Mainnet banner: real BTC at stake, but show only until the user has
   // acknowledged ("× Acknowledge and hide" button). Once dismissed,
   // MAINNET_OK_KEY persists the ack and the banner stays hidden for that
-  // browser. The persistent red `mainnet` text inside the network selector
-  // is the lighter-touch indicator that remains.
+  // browser. The red/green dot beside the network selector is the
+  // lighter-touch indicator that remains.
   const banner = $('#mainnet-banner');
   const mainnetAcked = localStorage.getItem(MAINNET_OK_KEY) === '1';
   if (banner) {

@@ -512,6 +512,17 @@ header {
 .net-select:focus { outline: 2px solid var(--orange); outline-offset: 2px; }
 .net-select option { background: var(--ink); color: var(--bg); }
 .net-select:disabled { opacity: 0.65; cursor: not-allowed; }
+/* At-a-glance stakes indicator beside the mainnet/signet select — red for
+   real funds, green for the free test network — set by setupNetworkSelect()
+   (tacit.js). Same "read the state before you read the label" idea as the
+   Send tab's chain logos above; a bare select gives no visual weight to the
+   one bit of state (real money vs. play money) that matters most here. */
+.net-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--ink-faint, #999);
+}
+.net-dot.net-dot-mainnet { background: var(--red); box-shadow: 0 0 0 2px rgba(184,52,29,0.18); }
+.net-dot.net-dot-signet { background: var(--green-positive); }
 .net-control { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .net-lock-hint {
   font-size: 9px; letter-spacing: 0.05em; text-transform: none;
@@ -8557,13 +8568,16 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
    an underline on the active one — easy to miss as the first choice on the
    tab. Rendered as a real two-state segmented control instead, scoped to
    the send group only so every other tab's subtabs (Wallet, Trade, ...)
-   keep their existing flat-link treatment. */
+   keep their existing flat-link treatment. Each button carries the real
+   chain mark (same glyph as _btcLogoSvg/_ethLogoSvg in tacit.js and the
+   TAC market lane switch below) instead of reading as plain text. */
 .tabs.subtabs[data-group="send"] {
   border-bottom: 0; margin-top: 10px; gap: 6px;
 }
 .tabs.subtabs[data-group="send"] .tab {
   border: 1px solid var(--ink); background: var(--bg);
   color: var(--ink-mid); text-transform: uppercase;
+  display: inline-flex; align-items: center; gap: 6px;
 }
 .tabs.subtabs[data-group="send"] .tab:hover:not(.active) {
   background: var(--bg-alt); color: var(--ink);
@@ -8862,6 +8876,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
         </svg>
       </button>
       <button id="btn-faq" class="btn-help" type="button" aria-label="Help / FAQ" title="Frequently asked questions">?</button>
+      <span id="net-dot" class="net-dot" aria-hidden="true"></span>
       <select class="net-select" id="net-select" aria-label="Network">
         <option value="mainnet">mainnet</option>
         <option value="signet">signet</option>
@@ -8994,8 +9009,8 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
      _defaultChildForGroup); Ethereum confidential send is a sibling tab, gated per network
      (pool+router) by _tabLiveOnNet('csend'). -->
 <div class="tabs subtabs" data-group="send" style="display:none;">
-  <button class="tab active" data-tab="transfer" title="Send Bitcoin-native tacit assets (shielded amounts, optional stealth recipient) or plain sats — Bitcoin lane">Bitcoin</button>
-  <button class="tab" data-tab="csend" title="Send ETH, USDC, tacBTC, or tacUSD privately — to your own address, or to a third party via a one-time stealth address they claim later">Ethereum</button>
+  <button class="tab active" data-tab="transfer" title="Send Bitcoin-native tacit assets (shielded amounts, optional stealth recipient) or plain sats — Bitcoin lane"><svg viewBox="0 0 32 32" width="16" height="16" style="flex-shrink:0;border-radius:50%;display:block;"><circle cx="16" cy="16" r="16" fill="#f7931a"/><path fill="#fff" d="M21.8 14.6c.3-2-1.2-3-3.3-3.7l.7-2.8-1.7-.4-.7 2.7c-.5-.1-.9-.2-1.4-.3l.7-2.7-1.7-.4-.7 2.8c-.4-.1-.7-.2-1.1-.3l-2.3-.6-.4 1.8s1.2.3 1.2.3c.7.2.8.6.8.9l-.8 3.2c0 .1.1.1.2.2l-.2-.1-1.1 4.5c-.1.2-.3.5-.7.4 0 .1-1.2-.3-1.2-.3l-.8 1.9 2.2.5c.4.1.8.2 1.2.3l-.7 2.8 1.7.4.7-2.8c.5.1.9.2 1.3.3l-.7 2.8 1.7.4.7-2.8c2.9.5 5.1.3 6-2.3.7-2.1-.1-3.2-1.5-4 1.1-.2 1.9-1 2.1-2.4Zm-3.7 5.3c-.5 2-3.9 1-5 .6l.9-3.7c1.1.3 4.6.8 4.1 3Zm.5-5.4c-.5 1.8-3.4.9-4.3.6l.8-3.4c.9.2 3.9.7 3.5 2.8Z"/></svg>Bitcoin</button>
+  <button class="tab" data-tab="csend" title="Send ETH, USDC, tacBTC, or tacUSD privately — to your own address, or to a third party via a one-time stealth address they claim later"><svg viewBox="0 0 32 32" width="16" height="16" style="flex-shrink:0;border-radius:50%;display:block;"><circle cx="16" cy="16" r="16" fill="#627eea"/><polygon points="16,5 24,16 16,20.5 8,16" fill="#fff"/><polygon points="16,5 8,16 16,20.5" fill="#fff" fill-opacity="0.55"/><polygon points="16,21.8 24,17.3 16,27 8,17.3" fill="#fff" fill-opacity="0.85"/></svg>Ethereum</button>
 </div>
 
 <!-- Trade: production nav exposes the Bitcoin order book plus CDP. Pool swap and OTC stay

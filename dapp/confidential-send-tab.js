@@ -699,11 +699,33 @@ export async function renderSendTab(wallet, helpers = {}) {
   if (!confidentialPoolReady()) { body.innerHTML = confidentialUnavailableHTML('Confidential Send'); return; }
   const ux = getUx();
   if (!wallet || !wallet.priv) {
+    // Same wallet as the Bitcoin lane — no separate "connect an Ethereum
+    // wallet" step. This mirrors the Bitcoin transfer tab and the market
+    // ask/bid forms: an inline "Unlock wallet" button right where the user
+    // already is, instead of a dead-end message that sends them hunting
+    // for the unlock control elsewhere.
     body.innerHTML = `<div class="csend-empty">
       <div class="csend-empty-icon">\u{1F512}</div>
-      <div class="csend-empty-title">Unlock a wallet to send</div>
-      <div class="csend-empty-sub">Your keys stay in this browser. Unlock to view your shielded balance and send a private note.</div>
+      <div class="csend-empty-title">Unlock your wallet to send</div>
+      <div class="csend-empty-sub">Same wallet as the Bitcoin lane — one identity, both chains. Your keys stay in this browser.</div>
+      <button type="button" id="csend-unlock-btn" class="primary" style="margin-top:6px;">Unlock wallet</button>
     </div>`;
+    const unlockBtn = el('csend-unlock-btn');
+    if (unlockBtn && helpers.unlock) {
+      unlockBtn.addEventListener('click', async () => {
+        unlockBtn.disabled = true;
+        unlockBtn.textContent = 'Unlocking…';
+        try {
+          await helpers.unlock();
+        } catch (e) {
+          unlockBtn.disabled = false;
+          unlockBtn.textContent = 'Unlock wallet';
+          if (!helpers.isUnlockCancelled || !helpers.isUnlockCancelled(e)) {
+            notify('Unlock failed: ' + (e?.message || String(e)), 'error');
+          }
+        }
+      });
+    }
     return;
   }
   const id = ux.identity(wallet.priv);
