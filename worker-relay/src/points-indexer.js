@@ -6,7 +6,7 @@
 // only for now — this serves a leaderboard/lookup API; it does not mint or gate anything on-chain.
 
 import { createServer } from 'node:http';
-import { createWalletClient, http } from 'viem';
+import { createWalletClient, http, decodeEventLog } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { CFG, ADDR } from './lib/config.js';
 import { publicClient, clientForChain } from './lib/chain.js';
@@ -506,6 +506,87 @@ const WETH_DEPOSIT_EVENT = {
   ],
 };
 
+// Real pool factories per chain, for verifying a WETH transfer's destination is an actual DEX pool rather
+// than an attacker-controlled contract — zRouter's SafeExecutor (the snwap target) will call any contract the
+// caller names, which could otherwise emit fake Swap-shaped logs claiming huge amounts for free. A pool's own
+// factory() is a real, unspoofable on-chain read; only pools whose factory matches one of these are trusted.
+// Uniswap V2/Sushi, Uniswap V3, Aerodrome V2, Aerodrome Slipstream (CL) — addresses from zfi, checked against
+// zFi source and live chain data.
+const ZROUTER_POOL_FACTORIES = {
+  1: new Set(['0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f', '0xc0aee478e3658e2610c5f7a4a2e1777ce9e4f2ac', '0x1f98431c8ad98523631ae4a59f267346ea31f984']),
+  8453: new Set(['0x8909dc15e40173ff4699343b6eb8132c65e18ec6', '0x33128a8fc17869897dce68ed026d694621f6fdfd', '0x420dd381b31aef6683db6b902084cb0ffece40da', '0x5e7bb104d84c7cb9b682aac2f3d509f5f406809a']),
+  4663: new Set(['0x8bceaa40b9acdfaedf85adf4ff01f5ad6517937f', '0x1f7d7550b1b028f7571e69a784071f0205fd2efa']),
+};
+// zfi's own Precision AMM factory (same address on all 3 chains) — isPool() is that factory's own answer for
+// whether an address is a real pool it deployed, equally unspoofable.
+const PRECISION_POOL_FACTORY = '0x000000eb27b557ab426d9e99cfd54ec455799e81';
+const FACTORY_FN_ABI = [{ type: 'function', name: 'factory', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }];
+const IS_POOL_FN_ABI = [{ type: 'function', name: 'isPool', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }];
+const ERC20_TRANSFER_EVENT = {
+  type: 'event', name: 'Transfer',
+  inputs: [{ name: 'from', type: 'address', indexed: true }, { name: 'to', type: 'address', indexed: true }, { name: 'value', type: 'uint256', indexed: false }],
+};
+const PRECISION_SWAP_EVENT = {
+  type: 'event', name: 'Swap',
+  inputs: [
+    { name: 'tokenIn', type: 'address', indexed: true }, { name: 'amountIn', type: 'uint256', indexed: false },
+    { name: 'amountOut', type: 'uint256', indexed: false }, { name: 'to', type: 'address', indexed: true },
+  ],
+};
+
+// zRouter also exposes public deposit/wrap/sweep primitives with no trade at all — wrap ETH into WETH then
+// immediately sweep it back out (to the caller, a second wallet, or anywhere else) costs only gas and, before
+// this existed, was credited in full and repeatable without limit (a zfi review finding). This verifies real
+// ETH reached a pool that's independently provably real, reading logs directly off the tx's OWN receipt —
+// never Blockscout's decoded/tagged data, which isn't a security boundary since tags are informational.
+// Deliberately conservative: only WETH-routed (V2/V3/Aero/Slipstream) and Precision-pool swaps are verified
+// here. V4's native-ETH swaps are not yet — the BalanceDelta sign convention needs confirming against a real
+// transaction before this trusts it for anything that gates or sizes a reward, so a real V4 native-ETH zRouter
+// swap currently credits nothing rather than a guess (a known, deliberate gap, not an oversight).
+async function zRouterVerifiedSwapAmount(client, chainId, wethAddr, txHash, zRouter) {
+  const receipt = await client.getTransactionReceipt({ hash: txHash });
+  const factoryCache = new Map();
+  async function isKnownPool(address) {
+    const addr = address.toLowerCase();
+    if (factoryCache.has(addr)) return factoryCache.get(addr);
+    let ok = false;
+    try {
+      const factory = await client.readContract({ address, abi: FACTORY_FN_ABI, functionName: 'factory' });
+      ok = ZROUTER_POOL_FACTORIES[chainId]?.has(factory.toLowerCase()) ?? false;
+    } catch { /* not a V2/V3-shaped pool at all */ }
+    factoryCache.set(addr, ok);
+    return ok;
+  }
+  async function isPrecisionPool(address) {
+    const addr = address.toLowerCase();
+    if (factoryCache.has(`precision:${addr}`)) return factoryCache.get(`precision:${addr}`);
+    let ok = false;
+    try {
+      ok = await client.readContract({ address: PRECISION_POOL_FACTORY, abi: IS_POOL_FN_ABI, functionName: 'isPool', args: [address] });
+    } catch { /* factory not deployed on this chain, or call reverted */ }
+    factoryCache.set(`precision:${addr}`, ok);
+    return ok;
+  }
+
+  let total = 0n;
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() === wethAddr.toLowerCase()) {
+      let decoded;
+      try { decoded = decodeEventLog({ abi: [ERC20_TRANSFER_EVENT], data: log.data, topics: log.topics }); } catch { continue; }
+      if (decoded.args.from.toLowerCase() === zRouter.toLowerCase() && await isKnownPool(decoded.args.to)) {
+        total += decoded.args.value;
+      }
+      continue;
+    }
+    if (await isPrecisionPool(log.address)) {
+      let decoded;
+      try { decoded = decodeEventLog({ abi: [PRECISION_SWAP_EVENT], data: log.data, topics: log.topics }); } catch { continue; }
+      if (decoded.args.tokenIn === '0x0000000000000000000000000000000000000000') total += decoded.args.amountIn;
+    }
+  }
+  return total;
+}
+
 // zRouter is deployed at the same address on all three of these chains (confirmed with zfi) — only the RPC
 // and canonical WETH differ, so scanZRouterCycle below is called once per entry here.
 //
@@ -648,7 +729,17 @@ async function scanZRouterCycle(store, { chainId, client, wethAddr, signal1 = tr
     });
   }
 
-  const candidates = [...byTxHash.entries()].sort((a, b) => (a[1].blockNumber < b[1].blockNumber ? -1 : a[1].blockNumber > b[1].blockNumber ? 1 : 0));
+  // Verify each candidate actually reached a real pool before trusting its raw amount — "ETH entered
+  // zRouter" alone is not "ETH was swapped" (see zRouterVerifiedSwapAmount's own comment). A candidate with
+  // no verified leg is dropped entirely rather than credited at the unverified figure.
+  const verifiedCandidates = [];
+  for (const [txHash, candidate] of byTxHash.entries()) {
+    const verified = await zRouterVerifiedSwapAmount(client, chainId, wethAddr, txHash, ADDR.zRouter);
+    if (verified <= 0n) continue;
+    const amountWei = verified < candidate.amountWei ? verified : candidate.amountWei;
+    verifiedCandidates.push([txHash, { ...candidate, amountWei }]);
+  }
+  const candidates = verifiedCandidates.sort((a, b) => (a[1].blockNumber < b[1].blockNumber ? -1 : a[1].blockNumber > b[1].blockNumber ? 1 : 0));
 
   // For an L2, resolve each candidate's own blockTime to a mainnet block via mainnetBlockAtOrBefore (cached
   // per distinct blockTime — several candidates can share one). Gated on the LATEST candidate's resolved
