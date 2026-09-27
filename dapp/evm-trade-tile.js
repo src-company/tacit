@@ -123,6 +123,26 @@ async function waitForReceipt(hash, { intervalMs = RECEIPT_POLL_MS, timeoutMs = 
   }
 }
 
+// Same circle-badge language as tacit.js's _ethLogoSvg/_btcLogoSvg (a separate
+// ES module, not worth an import for one inline SVG — keep both in sync if the
+// glyphs change) so the pair label + pills read as the same mark as the lane
+// switch above them. tacLogoSvg mirrors the actual Tacit Coin mark shown in
+// the asset header (dark circle, orange italic serif "t"), not a generic
+// fallback, so the "TAC" side of the pair is recognizable at a glance too.
+const ETH_LOGO_SVG = `<svg viewBox="0 0 32 32" width="20" height="20" style="flex-shrink:0;border-radius:50%;display:block;">
+  <circle cx="16" cy="16" r="16" fill="#627eea"/>
+  <polygon points="16,5 24,16 16,20.5 8,16" fill="#fff"/>
+  <polygon points="16,5 8,16 16,20.5" fill="#fff" fill-opacity="0.55"/>
+  <polygon points="16,21.8 24,17.3 16,27 8,17.3" fill="#fff" fill-opacity="0.85"/>
+</svg>`;
+const TAC_LOGO_SVG = `<svg viewBox="0 0 32 32" width="20" height="20" style="flex-shrink:0;border-radius:50%;display:block;">
+  <circle cx="16" cy="16" r="16" fill="#0a0a0a"/>
+  <text x="16" y="23" font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-size="19" fill="#f7931a" text-anchor="middle">t</text>
+</svg>`;
+function pillIconFor(ticker) { return ticker === 'ETH' ? ETH_LOGO_SVG : TAC_LOGO_SVG; }
+const ACTION_BTN_STYLE = 'display:block;width:100%;padding:13px;font-size:13px;font-weight:500;text-transform:uppercase;letter-spacing:0.04em;background:var(--green-positive);color:#F2EBD4;border:0;cursor:pointer;';
+const SLIPPAGE_SELECT_STYLE = 'box-sizing:border-box;min-width:78px;height:28px;font-family:var(--mono);font-size:11px;line-height:1.2;padding:4px 22px 4px 8px;border:1px solid var(--ink);background:var(--bg);color:var(--ink);-webkit-appearance:none;-moz-appearance:none;appearance:none;cursor:pointer;';
+
 function tileHtml() {
   const flipSvg = `<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <path d="M4 1 L4 11 M1.5 8.5 L4 11 L6.5 8.5"></path>
@@ -131,8 +151,8 @@ function tileHtml() {
   return `
     <div class="evm-lane-tile" data-evm-lane-root>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
-      <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:bold;">
-        <span class="chain-badge eth"><span class="dot"></span>Ethereum</span> <span>ETH / TAC</span>
+      <div style="display:flex;align-items:center;gap:8px;font-size:15px;font-weight:bold;">
+        ${ETH_LOGO_SVG}<span>ETH / TAC</span>
       </div>
     </div>
     <div class="evm-lane-side" data-lane-side="pay">
@@ -142,7 +162,7 @@ function tileHtml() {
       </div>
       <div style="display:flex;align-items:center;gap:10px;">
         <input data-lane-input="pay" type="text" inputmode="decimal" placeholder="0" class="evm-lane-input">
-        <div class="evm-lane-pill" data-lane-pill="pay"><span data-lane-pill-label="pay">ETH</span></div>
+        <div class="evm-lane-pill" data-lane-pill="pay"><span data-lane-pill-icon="pay">${ETH_LOGO_SVG}</span><span data-lane-pill-label="pay">ETH</span></div>
       </div>
     </div>
     <div class="swap-flip-wrap">
@@ -155,7 +175,7 @@ function tileHtml() {
       </div>
       <div style="display:flex;align-items:center;gap:10px;">
         <input data-lane-input="receive" type="text" inputmode="decimal" placeholder="0" class="evm-lane-input" readonly>
-        <div class="evm-lane-pill" data-lane-pill="receive"><span data-lane-pill-label="receive">TAC</span></div>
+        <div class="evm-lane-pill" data-lane-pill="receive"><span data-lane-pill-icon="receive">${TAC_LOGO_SVG}</span><span data-lane-pill-label="receive">TAC</span></div>
       </div>
     </div>
     <div class="evm-lane-route muted" data-lane-route>Enter an amount to see the best route.</div>
@@ -166,7 +186,7 @@ function tileHtml() {
     <div style="display:flex;align-items:center;gap:8px;margin:10px 0;">
       <label style="font-size:10px;display:flex;align-items:center;gap:8px;">
         <span class="muted" style="text-transform:uppercase;letter-spacing:0.08em;">Slippage</span>
-        <select data-lane-slippage>
+        <select data-lane-slippage style="${SLIPPAGE_SELECT_STYLE}">
           <option value="10">0.1%</option>
           <option value="50" selected>0.5%</option>
           <option value="100">1%</option>
@@ -174,7 +194,7 @@ function tileHtml() {
         </select>
       </label>
     </div>
-    <button data-lane-action type="button" class="primary evm-lane-action" disabled style="display:block;width:100%;">Enter an amount</button>
+    <button data-lane-action type="button" class="evm-lane-action" disabled style="${ACTION_BTN_STYLE}">Enter an amount</button>
     <div data-lane-status class="muted evm-lane-status"></div>
     <div class="evm-lane-fine muted">TAC (ERC20): <a href="${ETHERSCAN_TOKEN}" target="_blank" rel="noopener noreferrer">${esc(short(TAC_ERC20))}</a></div>
     </div>`;
@@ -310,6 +330,10 @@ export function mountEvmTradeLane(host, opts) {
     const recvLbl = $('[data-lane-pill-label="receive"]');
     if (payLbl) payLbl.textContent = payTicker;
     if (recvLbl) recvLbl.textContent = recvTicker;
+    const payIcon = $('[data-lane-pill-icon="pay"]');
+    const recvIcon = $('[data-lane-pill-icon="receive"]');
+    if (payIcon) payIcon.innerHTML = pillIconFor(payTicker);
+    if (recvIcon) recvIcon.innerHTML = pillIconFor(recvTicker);
     const payPill = $('[data-lane-pill="pay"]');
     const recvPill = $('[data-lane-pill="receive"]');
     if (payPill) payPill.classList.toggle('eth', payTicker === 'ETH');

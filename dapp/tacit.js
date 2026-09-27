@@ -58046,14 +58046,16 @@ function _parseTabHash() {
 // changed since the early call keeps the cycle clean.
 let _tabHashLastConsumed = null;
 function _consumeTabUrlHash() {
+  (window.__dbg = window.__dbg || []).push({ t: 'entry', hash: location.hash, lastConsumed: _tabHashLastConsumed });
   // Normalize for comparison so a hash that gets rewritten in-place by
   // _writeMarketHash (e.g., uppercase aid → lowercase) doesn't defeat
   // the guard. The aid in _parseTabHash is already lowercased on parse;
   // matching on lowercase covers the common write-back case.
   const _curHash = (location.hash || '').toLowerCase();
-  if (_tabHashLastConsumed === _curHash) return;
+  if (_tabHashLastConsumed === _curHash) { window.__dbg.push({ t: 'dedup-hit' }); return; }
   _tabHashLastConsumed = _curHash;
   const parsed = _parseTabHash();
+  window.__dbg.push({ t: 'parsed', parsed });
   if (!parsed) return;
   if (parsed.requestedTab && parsed.requestedTab !== parsed.tab) {
     try { _writeTabHash(parsed.tab); } catch {}
@@ -58080,6 +58082,7 @@ function _consumeTabUrlHash() {
     }, 250);
   }
   const btn = document.querySelector(`.tab[data-tab="${parsed.tab}"]`);
+  console.log('[DEBUG _consumeTabUrlHash]', JSON.stringify(parsed), 'btnActive=', btn && btn.classList.contains('active'));
   if (!btn) return;
   if (!btn.classList.contains('active')) {
     btn.click();
@@ -58091,6 +58094,7 @@ function _consumeTabUrlHash() {
     if (parsed.aid && parsed.tab === 'market') {
       // Already on Market — drive the asset-detail view directly so a
       // hash-only change re-routes without requiring a tab re-click.
+      console.log('[DEBUG] calling goToMarketAsset', parsed.aid);
       if (typeof goToMarketAsset === 'function') goToMarketAsset(parsed.aid);
     } else if (parsed.tab === 'market') {
       // Aid-less variant: renderMarket() never fired because preboot
@@ -68622,6 +68626,25 @@ function _saveMarketTacLane(v) {
   try { if (v === 'btc' || v === 'eth') localStorage.setItem(_MARKET_TAC_LANE_KEY, v); } catch {}
 }
 let _marketTacLane = _loadMarketTacLane();
+// Real per-chain marks (not the generic .chain-badge dot) for anywhere a lane
+// needs to read as "Bitcoin" or "Ethereum" at a glance — the lane switch tabs
+// below and the Bitcoin swap tile's sats pill share this one definition.
+// evm-trade-tile.js duplicates the Ethereum glyph locally (separate ES module,
+// not worth an import for one inline SVG) — keep both in sync if it changes.
+function _btcLogoSvg(size = 24) {
+  return `<svg viewBox="0 0 32 32" width="${size}" height="${size}" style="flex-shrink:0;border-radius:50%;display:block;">
+    <circle cx="16" cy="16" r="16" fill="#f7931a"/>
+    <path fill="#fff" d="M21.8 14.6c.3-2-1.2-3-3.3-3.7l.7-2.8-1.7-.4-.7 2.7c-.5-.1-.9-.2-1.4-.3l.7-2.7-1.7-.4-.7 2.8c-.4-.1-.7-.2-1.1-.3l-2.3-.6-.4 1.8s1.2.3 1.2.3c.7.2.8.6.8.9l-.8 3.2c0 .1.1.1.2.2l-.2-.1-1.1 4.5c-.1.2-.3.5-.7.4 0 .1-1.2-.3-1.2-.3l-.8 1.9 2.2.5c.4.1.8.2 1.2.3l-.7 2.8 1.7.4.7-2.8c.5.1.9.2 1.3.3l-.7 2.8 1.7.4.7-2.8c2.9.5 5.1.3 6-2.3.7-2.1-.1-3.2-1.5-4 1.1-.2 1.9-1 2.1-2.4Zm-3.7 5.3c-.5 2-3.9 1-5 .6l.9-3.7c1.1.3 4.6.8 4.1 3Zm.5-5.4c-.5 1.8-3.4.9-4.3.6l.8-3.4c.9.2 3.9.7 3.5 2.8Z"/>
+  </svg>`;
+}
+function _ethLogoSvg(size = 24) {
+  return `<svg viewBox="0 0 32 32" width="${size}" height="${size}" style="flex-shrink:0;border-radius:50%;display:block;">
+    <circle cx="16" cy="16" r="16" fill="#627eea"/>
+    <polygon points="16,5 24,16 16,20.5 8,16" fill="#fff"/>
+    <polygon points="16,5 8,16 16,20.5" fill="#fff" fill-opacity="0.55"/>
+    <polygon points="16,21.8 24,17.3 16,27 8,17.3" fill="#fff" fill-opacity="0.85"/>
+  </svg>`;
+}
 // Segmented Bitcoin/Ethereum switch for TAC's asset page. Visually copies the Send
 // tab's lane switch (.tabs.subtabs[data-group="send"]) but is NOT a member of that
 // class family: _syncTabChromeFor / preboot's DOMContentLoaded handler hide every
@@ -68636,9 +68659,12 @@ function _tacLaneSwitchHtml(assetIdHex) {
   const lane = _marketTacLane;
   return `
     <div class="tac-lane-switch" data-tac-lane-switch role="tablist" aria-label="Trade TAC on Bitcoin or Ethereum">
-      <button type="button" class="tab${lane === 'btc' ? ' active' : ''}" data-tac-lane-btn="btc" role="tab" aria-selected="${lane === 'btc'}"><span class="chain-badge btc"><span class="dot"></span></span>Bitcoin</button>
-      <button type="button" class="tab${lane === 'eth' ? ' active' : ''}" data-tac-lane-btn="eth" role="tab" aria-selected="${lane === 'eth'}"><span class="chain-badge eth"><span class="dot"></span></span>Ethereum</button>
-    </div>`;
+      <button type="button" class="tab${lane === 'btc' ? ' active' : ''}" data-tac-lane-btn="btc" role="tab" aria-selected="${lane === 'btc'}">${_btcLogoSvg(16)}Bitcoin</button>
+      <button type="button" class="tab${lane === 'eth' ? ' active' : ''}" data-tac-lane-btn="eth" role="tab" aria-selected="${lane === 'eth'}">${_ethLogoSvg(16)}Ethereum</button>
+    </div>
+    <div class="tac-lane-note" data-tac-lane-note>${lane === 'btc'
+      ? 'Peer-to-peer order book · settles atomically on Bitcoin · sats-denominated'
+      : 'Aggregated best-execution swap · settles on Ethereum mainnet · a separate market from the Bitcoin book above'}</div>`;
 }
 // Wraps the existing Bitcoin content (swap tile + ladder/empty-pane) and the Ethereum
 // tile's mount host in sibling panels, toggled by the switch above. On every asset
@@ -68671,14 +68697,30 @@ function _bindTacLaneSwitch(scope, assetIdHex) {
     _saveMarketTacLane(lane);
     const btcPanel = scope.querySelector('[data-lane-panel="btc"]');
     const ethPanel = scope.querySelector('[data-lane-panel="eth"]');
+    const shownPanel = lane === 'btc' ? btcPanel : ethPanel;
     if (btcPanel) btcPanel.style.display = lane === 'btc' ? '' : 'none';
     if (ethPanel) ethPanel.style.display = lane === 'eth' ? '' : 'none';
+    // Brief fade+rise on the panel that just became visible so the switch reads
+    // as a transition rather than an instant swap — two structurally different
+    // markets (order book vs. AMM aggregator) live behind this toggle, and an
+    // abrupt cut made that harder to notice than it should be.
+    if (shownPanel) {
+      shownPanel.classList.remove('tac-lane-panel-enter');
+      void shownPanel.offsetWidth;
+      shownPanel.classList.add('tac-lane-panel-enter');
+    }
     if (switchEl) {
       switchEl.querySelectorAll('[data-tac-lane-btn]').forEach((b) => {
         const isActive = b.dataset.tacLaneBtn === lane;
         b.classList.toggle('active', isActive);
         b.setAttribute('aria-selected', String(isActive));
       });
+    }
+    const noteEl = scope.querySelector('[data-tac-lane-note]');
+    if (noteEl) {
+      noteEl.textContent = lane === 'btc'
+        ? 'Peer-to-peer order book · settles atomically on Bitcoin · sats-denominated'
+        : 'Aggregated best-execution swap · settles on Ethereum mainnet · a separate market from the Bitcoin book above';
     }
     if (lane === 'eth' && hostEl) mountEvmTradeLane(hostEl, evmTradeLaneWallet);
     if (_marketView && typeof _marketView === 'object' && _marketView.mode === 'asset' && _marketView.assetId === CANONICAL_TAC_ASSET_ID_HEX) {
@@ -69950,12 +69992,9 @@ function applyMarketFilters() {
           ? `<span data-asset-logo-slot data-uri="${escapeHtml(_swapImgUriRaw)}" style="display:inline-flex;flex-shrink:0;">${assetImageFallback(safeAid, ticker, 24)}</span>`
           : assetImageFallback(safeAid, ticker, 24));
     // Bitcoin logo SVG — inline so it loads with the page (no extra
-    // round-trip, no broken-image fallback). Standard ₿ on bitcoin-
-    // orange background.
-    const btcLogoHtml = `<svg viewBox="0 0 32 32" width="24" height="24" style="flex-shrink:0;border-radius:50%;display:block;">
-      <circle cx="16" cy="16" r="16" fill="#f7931a"/>
-      <path fill="#fff" d="M21.8 14.6c.3-2-1.2-3-3.3-3.7l.7-2.8-1.7-.4-.7 2.7c-.5-.1-.9-.2-1.4-.3l.7-2.7-1.7-.4-.7 2.8c-.4-.1-.7-.2-1.1-.3l-2.3-.6-.4 1.8s1.2.3 1.2.3c.7.2.8.6.8.9l-.8 3.2c0 .1.1.1.2.2l-.2-.1-1.1 4.5c-.1.2-.3.5-.7.4 0 .1-1.2-.3-1.2-.3l-.8 1.9 2.2.5c.4.1.8.2 1.2.3l-.7 2.8 1.7.4.7-2.8c.5.1.9.2 1.3.3l-.7 2.8 1.7.4.7-2.8c2.9.5 5.1.3 6-2.3.7-2.1-.1-3.2-1.5-4 1.1-.2 1.9-1 2.1-2.4Zm-3.7 5.3c-.5 2-3.9 1-5 .6l.9-3.7c1.1.3 4.6.8 4.1 3Zm.5-5.4c-.5 1.8-3.4.9-4.3.6l.8-3.4c.9.2 3.9.7 3.5 2.8Z"/>
-    </svg>`;
+    // round-trip, no broken-image fallback). Shared with the lane switch
+    // tabs (_btcLogoSvg) so the mark reads the same wherever it appears.
+    const btcLogoHtml = _btcLogoSvg(24);
     // Default limit cap. History: ±20% (launch-thin orderbook backstop)
     // → ±10% (post-launch, residuals were silently posting 20% above
     // mark which read as fat-finger bids in the ladder) → ±5% (this
@@ -75113,7 +75152,12 @@ function renderMarketAssetHeader(assetId, rows) {
     const title = isThinMove
       ? `24h change is computed from settled fills on a thin orderbook. The latest fill moved ${sign}${Math.abs(pct).toFixed(2)}% versus the 24h reference; that is real trade history, not a claim that the entire book cleared at that level. ${fillsLabel}.`
       : `24h last-fill change: latest settled fill versus the 24h reference. This is orderbook trade history, not VWAP or a claim that every resting order repriced. ${fillsLabel}.`;
-    return `<span class="mkt-hero-price-delta mkt-hero-delta-${cls}" title="${escapeHtml(title)}">${sign}${Math.abs(pct).toFixed(2)}%</span><span class="mkt-hero-price-delta-win" title="${escapeHtml(title)}">24h</span><span class="mkt-hero-delta-context" title="${escapeHtml(title)}">${escapeHtml(context)}</span>`;
+    // Wrapped as one group so the parent price row's grid/flex layout can
+    // never place "24h"/"last-fill delta" in a different cell than the "+X%"
+    // they qualify — they used to be three independent items and would land
+    // on separate rows of the asset-mode price-row grid, stranding "24h" far
+    // from the percentage it labels.
+    return `<span class="mkt-hero-delta-group"><span class="mkt-hero-price-delta mkt-hero-delta-${cls}" title="${escapeHtml(title)}">${sign}${Math.abs(pct).toFixed(2)}%</span><span class="mkt-hero-price-delta-win" title="${escapeHtml(title)}">24h</span><span class="mkt-hero-delta-context" title="${escapeHtml(title)}">${escapeHtml(context)}</span></span>`;
   })();
   const _heroVolUsdHtml = allGroup.volumeSats != null ? escapeHtml(fmtMarketUsdCompactFromSats(allGroup.volumeSats, '—')) : '—';
   const _heroHolderHtml = (() => {
@@ -79208,11 +79252,16 @@ async function _populateDepthChart(section, aid, decimals, ticker, markUnit) {
         const _markY = (midX != null && centerX != null && Math.abs(midX - centerX) < 50)
           ? (PT + 22)
           : (PT + 9);
+        // White halo (paint-order stroke) matches the price-history chart's
+        // overlay-label treatment — without it the vertical guide line shows
+        // through the gaps between glyphs (e.g. between "mid" and the number),
+        // reading as a line cutting through the label instead of a line
+        // sitting cleanly behind opaque text.
         const midOut = midX != null
-          ? `<line x1="${midX.toFixed(2)}" y1="${PT}" x2="${midX.toFixed(2)}" y2="${(PT + plotH).toFixed(2)}" stroke="#1A1A1A" stroke-width="1" stroke-dasharray="3,2" pointer-events="none"/><text x="${midX.toFixed(2)}" y="${(PT + 9).toFixed(2)}" font-size="9" fill="#1A1A1A" font-family="var(--mono, monospace)" text-anchor="middle" font-weight="500" pointer-events="none">mid ${escapeHtml(fmtUnitPriceSats(midUnit))}</text>`
+          ? `<line x1="${midX.toFixed(2)}" y1="${PT}" x2="${midX.toFixed(2)}" y2="${(PT + plotH).toFixed(2)}" stroke="#1A1A1A" stroke-width="1" stroke-dasharray="3,2" pointer-events="none"/><text x="${midX.toFixed(2)}" y="${(PT + 9).toFixed(2)}" font-size="9" fill="#1A1A1A" stroke="var(--bg-warm, #faf9f5)" stroke-width="3" paint-order="stroke fill" font-family="var(--mono, monospace)" text-anchor="middle" font-weight="500" pointer-events="none">mid ${escapeHtml(fmtUnitPriceSats(midUnit))}</text>`
           : '';
         const markOut = centerX != null
-          ? `<line x1="${centerX.toFixed(2)}" y1="${PT}" x2="${centerX.toFixed(2)}" y2="${(PT + plotH).toFixed(2)}" stroke="#B23A2E" stroke-width="0.8" stroke-dasharray="2,2" stroke-opacity="0.6" pointer-events="none"/><text x="${centerX.toFixed(2)}" y="${_markY.toFixed(2)}" font-size="9" fill="#B23A2E" font-family="var(--mono, monospace)" text-anchor="middle" pointer-events="none">mark ${escapeHtml(fmtUnitPriceSats(centerU))}</text>`
+          ? `<line x1="${centerX.toFixed(2)}" y1="${PT}" x2="${centerX.toFixed(2)}" y2="${(PT + plotH).toFixed(2)}" stroke="#B23A2E" stroke-width="0.8" stroke-dasharray="2,2" stroke-opacity="0.6" pointer-events="none"/><text x="${centerX.toFixed(2)}" y="${_markY.toFixed(2)}" font-size="9" fill="#B23A2E" stroke="var(--bg-warm, #faf9f5)" stroke-width="3" paint-order="stroke fill" font-family="var(--mono, monospace)" text-anchor="middle" pointer-events="none">mark ${escapeHtml(fmtUnitPriceSats(centerU))}</text>`
           : '';
         return midOut + markOut;
       })()}
@@ -93223,9 +93272,11 @@ async function init() {
   // _consumeTabUrlHash is idempotent (via _tabHashLastConsumed) so the
   // late call after the wallet await becomes a no-op when the hash
   // hasn't changed.
+  (window.__dbg = window.__dbg || []).push({ t: 'before-early-guard', hash: location.hash });
   if ((location.hash || '').startsWith('#tab=')) {
-    try { _consumeTabUrlHash(); } catch (e) { console.warn('[init] early tab deeplink failed:', e?.message || e); }
+    try { _consumeTabUrlHash(); } catch (e) { window.__dbg.push({ t: 'early-throw', msg: e?.message || String(e) }); console.warn('[init] early tab deeplink failed:', e?.message || e); }
   }
+  window.__dbg.push({ t: 'after-early-guard' });
   await refreshWallet();
   renderExtWalletPanel();
   renderEthWalletPanel();

@@ -2295,6 +2295,15 @@ tr[data-recent-activity] .market-token-sub::after {
 }
 .mkt-hero-delta-up { color: var(--green); }
 .mkt-hero-delta-down { color: var(--red); }
+/* Keeps "+X% · 24h · last-fill delta" together as one item wherever the
+   price row's layout wraps or grids its children — see the group's own
+   comment in tacit.js's _heroPrimaryDeltaHtml. */
+.mkt-hero-delta-group {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
 .portfolio-total-bar {
   border: 1px solid var(--ink);
   background: var(--bg-warm);
@@ -6567,9 +6576,18 @@ body[data-market-mode="asset"] .mkt-hero-delta-context {
   font-size: 10px;
 }
 body[data-market-mode="asset"] .mkt-hero-price-delta {
+  padding: 2px 5px;
+}
+/* Chip border/fill follows the same up/down tint as the text (was a
+   flat red-tinted chip regardless of sign — a green "+29%" print read as
+   a warning because the box around it was always brick-red). */
+body[data-market-mode="asset"] .mkt-hero-price-delta.mkt-hero-delta-up {
+  border: 1px solid rgba(26,117,72,0.28);
+  background: rgba(26,117,72,0.06);
+}
+body[data-market-mode="asset"] .mkt-hero-price-delta.mkt-hero-delta-down {
   border: 1px solid rgba(183,55,44,0.24);
   background: rgba(183,55,44,0.05);
-  padding: 2px 5px;
 }
 body[data-market-mode="asset"] .mkt-hero-stats-row {
   padding: 9px 18px 11px;
@@ -8721,7 +8739,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
    switch lives inside a single asset's page instead, so it gets its own,
    non-conflicting selector. */
 .tac-lane-switch {
-  display: flex; gap: 6px; margin: 14px 0;
+  display: flex; gap: 6px; margin: 14px 0 6px;
 }
 .tac-lane-switch .tab {
   border: 1px solid var(--ink); background: var(--bg);
@@ -8729,9 +8747,24 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   padding: 6px 12px; font-size: 10px; letter-spacing: 0.1em; font-weight: 500;
   border-bottom: 1px solid var(--ink); margin-bottom: 0;
   display: inline-flex; align-items: center; gap: 6px;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 .tac-lane-switch .tab:hover:not(.active) { background: var(--bg-alt); color: var(--ink); }
 .tac-lane-switch .tab.active { background: var(--ink); color: var(--bg); border-bottom-color: var(--ink); }
+/* One-line orientation under the switch: the two lanes are structurally
+   different markets (order book vs. AMM aggregator), not the same book on
+   a different chain, so it's worth saying which one you're looking at. */
+.tac-lane-note {
+  font-size: 10px; color: var(--ink-mid); margin: 0 0 10px; line-height: 1.4;
+}
+@keyframes tac-lane-panel-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.tac-lane-panel-enter { animation: tac-lane-panel-enter 200ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .tac-lane-panel-enter { animation: none; }
+}
 
 /* Ethereum tile box — same dashed-hairline card treatment as the Bitcoin
    swap tile ([data-swap-tile]'s inline style) so the two lanes read as the
