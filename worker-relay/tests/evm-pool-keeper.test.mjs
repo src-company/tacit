@@ -242,6 +242,11 @@ await test('a keeper key that derives to the shared relay EOA or the settle addr
   checkKeeperSigner(cfg, KEEPER);
 });
 
+await test('a receive fee floor above the canonical cap refuses to start', () => {
+  assert.throws(() => loadKeeperConfig({ ...baseEnv, EVM_POOL_KEEPER_MIN_RECEIVE_FEE_BPS: '26' }), /canonical receive fee cap 25/);
+  assert.equal(loadKeeperConfig({ ...baseEnv, EVM_POOL_KEEPER_MIN_RECEIVE_FEE_BPS: '25' }).minReceiveFeeBps, 25);
+});
+
 await test('token maps parse "eth" and addresses and reject junk', () => {
   const m = parseTokenMap(`eth:5,${TOKEN}:7`, 'X');
   assert.equal(m.get(ETH), 5n);

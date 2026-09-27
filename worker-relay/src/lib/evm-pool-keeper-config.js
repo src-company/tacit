@@ -5,6 +5,7 @@
 // nonce is shared by several services, and a second signer on it would race them.
 
 import { getAddress, isAddress } from 'viem';
+import { RECEIVE_FEE_BPS } from '../../../dapp/evm-pool-gateway.js';
 
 const ETH = '0x0000000000000000000000000000000000000000';
 // The shared relay EOA. A keeper key that derives to it is refused outright.
@@ -37,6 +38,14 @@ export function parseTokenMap(v, name) {
     out.set(token.toLowerCase(), BigInt(a));
   }
   return out;
+}
+
+// Every app shows the receive address with this fee cap; a keeper that requires more would refuse them all.
+export function checkReceiveFloor(minReceiveFeeBps) {
+  if (minReceiveFeeBps > RECEIVE_FEE_BPS) {
+    throw new Error(`EVM_POOL_KEEPER_MIN_RECEIVE_FEE_BPS=${minReceiveFeeBps} is above the canonical receive fee cap ${RECEIVE_FEE_BPS}; this keeper would refuse every app's receive address`);
+  }
+  return minReceiveFeeBps;
 }
 
 export function loadKeeperConfig(env = process.env) {
@@ -83,7 +92,7 @@ export function loadKeeperConfig(env = process.env) {
     relayGas: big(env, 'EVM_POOL_KEEPER_RELAY_GAS', 450000n),
     // Receive boxes are watched indefinitely; this caps how many, and the smallest fee cap worth registering.
     maxReceive: int(env, 'EVM_POOL_KEEPER_MAX_RECEIVE', 100000),
-    minReceiveFeeBps: int(env, 'EVM_POOL_KEEPER_MIN_RECEIVE_FEE_BPS', 1),
+    minReceiveFeeBps: checkReceiveFloor(int(env, 'EVM_POOL_KEEPER_MIN_RECEIVE_FEE_BPS', 1)),
     // An idle receive box is looked at least this often; re-posting it asks for a look now.
     receiveMaxBackoffSecs: int(env, 'EVM_POOL_KEEPER_RECEIVE_MAX_BACKOFF_SECS', 1800),
     // A receive box is watched closely this long after its last registration or sweep (re-posting renews it), and
