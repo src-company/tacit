@@ -533,18 +533,48 @@ const PRECISION_SWAP_EVENT = {
     { name: 'amountOut', type: 'uint256', indexed: false }, { name: 'to', type: 'address', indexed: true },
   ],
 };
+// Uniswap V4's PoolManager — same core contract, canonical address on every chain it's deployed to (verified
+// against zfi's addresses, and independently confirmed the sign convention below against two real mainnet
+// zRouter V4 transactions before trusting it here).
+const V4_POOL_MANAGER = {
+  1: '0x000000000004444c5dc75cb358380d2e3de08a90',
+  8453: '0x498581ff718922c3f8e6a244956af099b2652b2b',
+  4663: '0x8366a39cc670b4001a1121b8f6a443a643e40951',
+};
+const V4_SWAP_EVENT = {
+  type: 'event', name: 'Swap',
+  inputs: [
+    { name: 'id', type: 'bytes32', indexed: true }, { name: 'sender', type: 'address', indexed: true },
+    { name: 'amount0', type: 'int128', indexed: false }, { name: 'amount1', type: 'int128', indexed: false },
+    { name: 'sqrtPriceX96', type: 'uint160', indexed: false }, { name: 'liquidity', type: 'uint128', indexed: false },
+    { name: 'tick', type: 'int24', indexed: false }, { name: 'fee', type: 'uint24', indexed: false },
+  ],
+};
 
 // zRouter also exposes public deposit/wrap/sweep primitives with no trade at all — wrap ETH into WETH then
 // immediately sweep it back out (to the caller, a second wallet, or anywhere else) costs only gas and, before
 // this existed, was credited in full and repeatable without limit (a zfi review finding). This verifies real
 // ETH reached a pool that's independently provably real, reading logs directly off the tx's OWN receipt —
 // never Blockscout's decoded/tagged data, which isn't a security boundary since tags are informational.
-// Deliberately conservative: only WETH-routed (V2/V3/Aero/Slipstream) and Precision-pool swaps are verified
-// here. V4's native-ETH swaps are not yet — the BalanceDelta sign convention needs confirming against a real
-// transaction before this trusts it for anything that gates or sizes a reward, so a real V4 native-ETH zRouter
-// swap currently credits nothing rather than a guess (a known, deliberate gap, not an oversight).
+//
+// V4 native-ETH swaps: rather than resolving a pool's currency0 (V4 doesn't store it anywhere queryable
+// outside its one-time Initialize event, making that expensive to verify generally), this instead checks that
+// the PoolManager's own Swap event — from its fixed, canonical, unspoofable address, with sender == zRouter —
+// shows a paid-in amount exactly equal to this transaction's own tx.value. PoolManager only ever emits a
+// settled delta once every side has actually been paid in full, so that exact match is proof real ETH backed
+// it, without needing to know which side of the pool is currency0 at all. Confirmed on two real mainnet
+// zRouter V4 transactions (zfi) before trusting it for anything that sizes a reward.
+//
+// This only verifies a candidate scanZRouterCycle already found — it doesn't discover new ones. Since only
+// mainnet runs Signal 1 (the only signal that would surface a bare V4 native-ETH call, which never touches
+// WETH), a V4 native-ETH swap on Base/Robinhood still isn't discovered at all yet, verification aside. Closing
+// that needs its own getLogs-based discovery signal (a PoolManager Swap with sender == zRouter, cheap on any
+// chain since it needs no block bodies) — a real follow-up, not something this change closes for L2s.
 async function zRouterVerifiedSwapAmount(client, chainId, wethAddr, txHash, zRouter) {
-  const receipt = await client.getTransactionReceipt({ hash: txHash });
+  const [receipt, tx] = await Promise.all([
+    client.getTransactionReceipt({ hash: txHash }),
+    client.getTransaction({ hash: txHash }),
+  ]);
   const factoryCache = new Map();
   async function isKnownPool(address) {
     const addr = address.toLowerCase();
@@ -582,6 +612,14 @@ async function zRouterVerifiedSwapAmount(client, chainId, wethAddr, txHash, zRou
       let decoded;
       try { decoded = decodeEventLog({ abi: [PRECISION_SWAP_EVENT], data: log.data, topics: log.topics }); } catch { continue; }
       if (decoded.args.tokenIn === '0x0000000000000000000000000000000000000000') total += decoded.args.amountIn;
+      continue;
+    }
+    if (log.address.toLowerCase() === V4_POOL_MANAGER[chainId]) {
+      let decoded;
+      try { decoded = decodeEventLog({ abi: [V4_SWAP_EVENT], data: log.data, topics: log.topics }); } catch { continue; }
+      if (decoded.args.sender.toLowerCase() !== zRouter.toLowerCase()) continue;
+      if (-decoded.args.amount0 === tx.value) total += tx.value;
+      else if (-decoded.args.amount1 === tx.value) total += tx.value; // native ETH always sorts as currency0 in practice; kept for robustness
     }
   }
   return total;
