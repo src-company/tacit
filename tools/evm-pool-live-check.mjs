@@ -8,6 +8,8 @@
 //
 //   FUNDER_KEY=<0x…> node tools/evm-pool-live-check.mjs <chainId> <rpc> <keeper base> <deploy block> <unit wei>
 //
+// LEAN=1 (for Ethereum, where gas is dear): alice alone deposits 3u, pays bob 2u; no private-address deposit.
+//
 // Keys are written to tools/.live-check-<chain>.json (git-ignored) so notes stay recoverable if a step fails.
 
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -115,29 +117,32 @@ const t0 = Date.now();
 const shown = [];
 
 // 1. deposits: alice 5u, carol 3u, dave 4u self-serve; erin 6u through her private ETH address.
+const LEAN = process.env.LEAN === '1';
 const gasPrice = await pub.getGasPrice();
-const gasBudget = (gasPrice * 12n / 10n) * 600_000n * 3n;
-const amounts = { alice: 5n * UNIT, carol: 3n * UNIT, dave: 4n * UNIT };
+const gasBudget = (gasPrice * 13n / 10n) * (LEAN ? 1_000_000n : 1_800_000n);
+const amounts = LEAN ? { alice: 3n * UNIT } : { alice: 5n * UNIT, carol: 3n * UNIT, dave: 4n * UNIT };
 for (const n of Object.keys(amounts)) {
   const h = await funder.sendTransaction({ to: eoa[n].account.address, value: amounts[n] + gasBudget });
   await receipt(h);
 }
-log(`funded three depositor wallets (deposit + gas each)`);
+log(`funded ${Object.keys(amounts).length} depositor wallet(s) (deposit + gas each)`);
 for (const n of Object.keys(amounts)) {
   const r = await selfTransact(eoa[n], { inputs: [{ dummy: true }, { dummy: true }], outputs: [{ to: self(P[n]), value: amounts[n] }, null], extAmount: amounts[n] });
   shown.push([`${n} deposits ${eth(amounts[n])}`, r.transactionHash]);
   log(`${n} deposited ${eth(amounts[n])} ETH herself (gas ${r.gasUsed}) ${r.transactionHash}`);
 }
 const erinAmt = 6n * UNIT;
-{
+if (!LEAN) {
   const h = await funder.sendTransaction({ to: P.erin.w.receiveBox, value: erinAmt });
   await receipt(h);
   await P.erin.w.watchReceive();
   log(`erin paid ${eth(erinAmt)} ETH to her private ETH address ${P.erin.w.receiveBox}; waiting for the keeper`);
 }
-for (const n of ['alice', 'carol', 'dave']) await until(async () => (await P[n].w.sync()).balance > 0n, `${n} finds her note`);
-const erinSwept = await until(async () => { const x = await P.erin.w.sync(); return x.balance > 0n && x; }, 'keeper sweeps erin', 1_200_000);
-log(`keeper swept erin's address: she holds ${eth(erinSwept.balance)} ETH (sweep cost ${eth(erinAmt - erinSwept.balance)})`);
+for (const n of Object.keys(amounts)) await until(async () => (await P[n].w.sync()).balance > 0n, `${n} finds her note`);
+if (!LEAN) {
+  const erinSwept = await until(async () => { const x = await P.erin.w.sync(); return x.balance > 0n && x; }, 'keeper sweeps erin', 1_200_000);
+  log(`keeper swept erin's address: she holds ${eth(erinSwept.balance)} ETH (sweep cost ${eth(erinAmt - erinSwept.balance)})`);
+}
 
 // 2. alice pays bob 2u privately, spending her 5u note with 3u change, proved and submitted by alice.
 const aliceNote = P.alice.w.notes()[0];
@@ -158,7 +163,7 @@ if (BigInt(q.fee) + part > bobBal) throw new Error(`relayer fee ${eth(q.fee)} to
 const h3 = await P.bob.w.withdraw({ to: freshAddr, amount: part });
 const r3 = await receipt(h3);
 shown.push(['bob withdraws to a fresh address (relayed)', r3.transactionHash]);
-const got = await pub.getBalance({ address: freshAddr });
+const got = await until(async () => { const b = await pub.getBalance({ address: freshAddr }); return b >= part && b; }, 'fresh balance', 120_000).catch(() => 0n);
 log(`bob withdrew ${eth(part)} ETH to fresh ${freshAddr} via the relayer (fee ${eth(q.fee)}): received ${eth(got)} ${got === part ? '(exact)' : '(MISMATCH)'}`);
 
 // 4. what the chain shows.
@@ -172,7 +177,7 @@ const depositLeaves = new Set(); const allLeaves = await leavesNow();
 log(`  the withdrawal names no leaf and no depositor; its nullifier matches none of the ${allLeaves.filter((x) => x !== 0n).length} leaves in the pool, and every leaf is a hash that reveals no owner or amount`);
 
 // 5. return everything to the funder.
-for (const n of ['alice', 'carol', 'dave', 'erin', 'bob']) {
+for (const n of [...Object.keys(amounts), ...(LEAN ? [] : ['erin']), 'bob']) {
   const b = (await P[n].w.sync()).balance;
   const fee = BigInt((await P[n].w.quote()).fee);
   if (b > fee + 1n) {
@@ -181,7 +186,7 @@ for (const n of ['alice', 'carol', 'dave', 'erin', 'bob']) {
     log(`  returned ${n}'s ${eth(b - fee - 1n)} ETH to the funder`);
   }
 }
-for (const n of ['alice', 'carol', 'dave']) {
+for (const n of Object.keys(amounts)) {
   const bal = await pub.getBalance({ address: eoa[n].account.address });
   const cost = (await pub.getGasPrice()) * 2n * 21_000n;
   if (bal > cost) { await receipt(await eoa[n].sendTransaction({ to: funder.account.address, value: bal - cost, gas: 21_000n })); }
