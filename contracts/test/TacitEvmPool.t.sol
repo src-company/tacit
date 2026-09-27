@@ -416,6 +416,67 @@ contract TacitEvmPoolRulesTest is Test {
         ethPool.transact(z2, z22, z2, pub, address(0), -1, RELAYER, 0, "", "");
     }
 
+    function test_views_track_the_head_and_every_root_size() public {
+        assertEq(ethPool.ASSET_FIELD(), _assetField(ethPool, address(0)));
+        (bytes32 r, uint256 n) = ethPool.head();
+        assertEq(r, EMPTY_ROOT);
+        assertEq(n, 0);
+        assertEq(ethPool.rootSize(EMPTY_ROOT), 0);
+
+        _call(_onEth(_eth(111, 0, 0, 1 ether, 0, 1 ether)));
+        _call(_onEth(_eth(222, 42, 0, 0, 0, 0)));
+        (r, n) = ethPool.head();
+        assertEq(r, bytes32(uint256(222)));
+        assertEq(n, 4);
+        assertEq(ethPool.nextIndex(), 4);
+        assertEq(ethPool.rootSize(bytes32(uint256(111))), 2);
+        assertEq(ethPool.rootSize(bytes32(uint256(222))), 4);
+        assertEq(ethPool.rootSize(EMPTY_ROOT), 0);
+        assertTrue(ethPool.everKnownRoot(bytes32(uint256(111))));
+        assertFalse(ethPool.everKnownRoot(bytes32(uint256(333))));
+        vm.expectRevert(TacitEvmPool.UnknownMembershipRoot.selector);
+        ethPool.rootSize(bytes32(uint256(333)));
+
+        bytes32[] memory nfs = new bytes32[](3);
+        nfs[0] = bytes32(uint256(42));
+        nfs[1] = bytes32(uint256(43));
+        nfs[2] = bytes32(uint256(42));
+        bool[] memory spent = ethPool.isSpent(nfs);
+        assertEq(spent.length, 3);
+        assertTrue(spent[0]);
+        assertFalse(spent[1]);
+        assertTrue(spent[2]);
+        assertEq(ethPool.isSpent(new bytes32[](0)).length, 0);
+    }
+
+    function test_call_without_outputs_reports_the_current_size() public {
+        _call(_onEth(_eth(111, 0, 0, 1 ether, 0, 1 ether)));
+        Call memory c = _onEth(_eth(0, 5, 0, -0.5 ether, 0, 0));
+        c.noInsert = true;
+        vm.expectEmit(address(ethPool));
+        emit TacitEvmPool.Transact(
+            bytes32(uint256(5)), 0, 0, 0, 2, bytes32(uint256(111)), RECIPIENT, -0.5 ether, RELAYER, 0, "", ""
+        );
+        _call(c);
+        assertEq(ethPool.nextIndex(), 2);
+        assertEq(ethPool.rootSize(bytes32(uint256(111))), 2);
+    }
+
+    function test_membership_against_an_old_root_still_inserts_at_the_head() public {
+        _call(_onEth(_eth(111, 0, 0, 1 ether, 0, 1 ether)));
+        _call(_onEth(_eth(222, 0, 0, 1 ether, 0, 1 ether)));
+        Call memory c = _onEth(_eth(333, 1, 0, 0, 0, 0));
+        c.membershipRoot = EMPTY_ROOT;
+        vm.expectEmit(address(ethPool));
+        emit TacitEvmPool.Transact(
+            bytes32(uint256(1)), 0, bytes32(uint256(1)), 0, 4, bytes32(uint256(333)), RECIPIENT, 0, RELAYER, 0, "", ""
+        );
+        _call(c);
+        assertEq(ethPool.nextIndex(), 6);
+        assertEq(ethPool.rootSize(bytes32(uint256(333))), 6);
+        assertEq(ethPool.rootSize(bytes32(uint256(222))), 4);
+    }
+
     function test_fee_on_transfer_token_rejected() public {
         FeeToken ft = new FeeToken();
         TacitEvmPool p = new TacitEvmPool(address(new AcceptTransact()), address(ft));

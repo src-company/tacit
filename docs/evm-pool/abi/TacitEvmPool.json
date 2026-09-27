@@ -30,6 +30,19 @@
   },
   {
     "type": "function",
+    "name": "ASSET_FIELD",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "VERIFIER",
     "inputs": [],
     "outputs": [
@@ -46,7 +59,7 @@
     "name": "everKnownRoot",
     "inputs": [
       {
-        "name": "",
+        "name": "r",
         "type": "bytes32",
         "internalType": "bytes32"
       }
@@ -56,6 +69,43 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "head",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isSpent",
+    "inputs": [
+      {
+        "name": "nfs",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "spent",
+        "type": "bool[]",
+        "internalType": "bool[]"
       }
     ],
     "stateMutability": "view"
@@ -101,6 +151,25 @@
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rootSize",
+    "inputs": [
+      {
+        "name": "r",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"

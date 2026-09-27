@@ -8,7 +8,6 @@ import {IPermit2, IERC2612, IERC20Allowance} from "./ConfidentialRouter.sol";
 
 interface ITacitEvmPool {
     function ASSET() external view returns (address);
-    function nextIndex() external view returns (uint256);
     function transact(
         uint256[2] calldata pA,
         uint256[2][2] calldata pB,
@@ -157,6 +156,8 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         PERMIT2 = IPermit2(permit2_);
         V1 = IConfidentialPoolWrap(v1_);
         boxImpl = address(new TacitBox());
+        // The pool pulls only from its caller, and this router calls it only with its own deposits.
+        if (ASSET != address(0)) SafeTransferLib.safeApproveWithRetry(ASSET, pool_, type(uint256).max);
     }
 
     /// ETH arrives from boxes being released and from token→ETH zap swaps.
@@ -219,7 +220,7 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
     // ──────────────────── 3. Deposit boxes ────────────────────
 
     function depositBoxOf(DepositIntent calldata intent) public view returns (address) {
-        return LibClone.predictDeterministicAddress_PUSH0(boxImpl, _depositSalt(intent), address(this));
+        return _boxAt(_depositSalt(intent));
     }
 
     /// Permissionless. `t` must be a deposit of exactly `intent.amount` producing the intent's leaves and memos;
@@ -243,12 +244,13 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
     // ──────────────────── 4. Wrap boxes (into a V1 note) ────────────────────
 
     function wrapBoxOf(WrapIntent calldata intent) public view returns (address) {
-        return LibClone.predictDeterministicAddress_PUSH0(boxImpl, _wrapSalt(intent), address(this));
+        return _boxAt(_wrapSalt(intent));
     }
 
     /// Permissionless: wraps `intent.amount` to `intent.commit` on V1 and pays `intent.tip`.
     function completeWrap(WrapIntent calldata intent) external nonReentrant {
-        _completeWrap(intent);
+        bytes32 salt = _wrapSalt(intent);
+        _completeWrap(intent, salt, _boxAt(salt));
     }
 
     function reclaimWrap(WrapIntent calldata intent, address token) external nonReentrant {
@@ -260,15 +262,26 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
     /// Withdraw from the pool into `intent`'s wrap box (the proof binds the box as recipient, so the
     /// destination cannot be changed) and complete the wrap. The pool's relayer fee goes to `t.relayer`.
     function withdrawToV1(Tx calldata t, WrapIntent calldata intent) external nonReentrant {
-        if (t.extAmount >= 0 || t.recipient != wrapBoxOf(intent)) revert BadIntent();
+        bytes32 salt = _wrapSalt(intent);
+        address box = _boxAt(salt);
+        if (t.extAmount >= 0 || t.recipient != box) revert BadIntent();
         POOL.transact(t.pA, t.pB, t.pC, t.publicInputs, t.recipient, t.extAmount, t.relayer, t.fee, t.memo0, t.memo1);
-        _completeWrap(intent);
+        _completeWrap(intent, salt, box);
     }
 
     // ──────────────────── 6. Receive boxes ────────────────────
 
     function receiveBoxOf(uint256 npk, uint16 feeBps) public view returns (address) {
-        return LibClone.predictDeterministicAddress_PUSH0(boxImpl, _receiveSalt(npk, feeBps), address(this));
+        return _boxAt(_receiveSalt(npk, feeBps));
+    }
+
+    /// What the next sweep of `receiveBoxOf(npk, feeBps)` proves against: its sweep number `n`, the note's `rho`,
+    /// and the box's balance of the pool asset (the sweep's `extAmount`).
+    function receiveState(uint256 npk, uint16 feeBps) external view returns (address box, uint256 n, uint256 rho, uint256 balance) {
+        box = receiveBoxOf(npk, feeBps);
+        n = receiveCount[box];
+        rho = _receiveRho(box, n);
+        balance = ASSET == address(0) ? box.balance : SafeTransferLib.balanceOf(ASSET, box);
     }
 
     /// Permissionless. `t` deposits the box's whole balance of the pool asset (`t.extAmount`) into one note for
@@ -283,17 +296,20 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         if (t.recipient != address(0) || t.memo0.length != 0 || t.memo1.length != 0 || t.publicInputs[10] != 0) {
             revert BadIntent();
         }
-        address box = _deployBox(_receiveSalt(npk, feeBps));
+        bytes32 salt = _receiveSalt(npk, feeBps);
+        address box = _boxAt(salt);
         if ((ASSET == address(0) ? box.balance : SafeTransferLib.balanceOf(ASSET, box)) != amount) revert BadIntent();
         uint256 n = receiveCount[box]++;
-        uint256 rho = uint256(keccak256(abi.encode(RECEIVE_TAG, box, n))) % P;
+        uint256 rho = _receiveRho(box, n);
         uint256 value = amount - t.fee;
         if (t.publicInputs[9] != POSEIDON4.hash([ASSET_FIELD, value, npk, rho])) revert BadIntent();
-        uint256 index = POOL.nextIndex();
-        TacitBox(payable(box)).release(ASSET, address(this), amount);
+        _ensureBox(salt, box);
+        // Closing hands the box's ETH to this router; a token balance is released first.
+        if (ASSET != address(0)) TacitBox(payable(box)).release(ASSET, address(this), amount);
         TacitBox(payable(box)).close();
         _deposit(t, amount);
-        emit Received(box, n, index, value, rho, t.fee);
+        // The note is inserted at `startIndex`, which the pool requires to be its current size.
+        emit Received(box, n, t.publicInputs[3], value, rho, t.fee);
     }
 
     // ──────────────────── internals ────────────────────
@@ -308,15 +324,13 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         if (ASSET == address(0)) {
             POOL.transact{value: amount}(t.pA, t.pB, t.pC, t.publicInputs, t.recipient, t.extAmount, t.relayer, t.fee, t.memo0, t.memo1);
         } else {
-            _lazyApprove(ASSET, address(POOL), amount);
             POOL.transact(t.pA, t.pB, t.pC, t.publicInputs, t.recipient, t.extAmount, t.relayer, t.fee, t.memo0, t.memo1);
         }
     }
 
-    function _completeWrap(WrapIntent calldata intent) internal {
-        if (address(V1) == address(0)) revert BadTarget();
+    function _completeWrap(WrapIntent calldata intent, bytes32 salt, address box) internal {
         (address token, bool poolMinted) = _wrapToken(intent.assetId);
-        address box = _deployBox(_wrapSalt(intent));
+        _ensureBox(salt, box);
         TacitBox(payable(box)).release(token, address(this), intent.amount + intent.tip);
         if (token == address(0)) {
             V1.wrap{value: intent.amount}(intent.assetId, intent.amount, intent.commit);
@@ -358,9 +372,21 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         return keccak256(abi.encode(RECEIVE_TAG, npk, feeBps));
     }
 
-    function _deployBox(bytes32 salt) internal returns (address box) {
-        box = LibClone.predictDeterministicAddress_PUSH0(boxImpl, salt, address(this));
+    function _receiveRho(address box, uint256 n) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encode(RECEIVE_TAG, box, n))) % P;
+    }
+
+    function _boxAt(bytes32 salt) internal view returns (address) {
+        return LibClone.predictDeterministicAddress_PUSH0(boxImpl, salt, address(this));
+    }
+
+    function _ensureBox(bytes32 salt, address box) internal {
         if (box.code.length == 0) LibClone.cloneDeterministic_PUSH0(boxImpl, salt);
+    }
+
+    function _deployBox(bytes32 salt) internal returns (address box) {
+        box = _boxAt(salt);
+        _ensureBox(salt, box);
     }
 
     function _pullPermit2(address token, uint256 amount, IPermit2.PermitSingle calldata permitSingle, bytes calldata signature)
@@ -439,8 +465,8 @@ contract TacitBox {
         else SafeTransferLib.safeTransfer(token, to, amount);
     }
 
-    /// Removes a box created earlier in the same transaction (EIP-6780), leaving its address without code. Called
-    /// on an empty receive box only.
+    /// Removes a box created earlier in the same transaction (EIP-6780), leaving its address without code, and
+    /// hands its ETH to the router. Called on a receive box only, once its balance has been checked.
     function close() external {
         if (msg.sender != ROUTER) revert NotRouter();
         selfdestruct(payable(ROUTER));

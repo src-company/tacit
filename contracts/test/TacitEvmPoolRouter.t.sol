@@ -598,6 +598,47 @@ contract TacitEvmPoolRouterTest is TxBuilder {
         assertEq(freeBox.balance, 0);
     }
 
+    function test_receiveState_is_what_the_next_sweep_proves() public {
+        TacitEvmPoolRouter.Tx memory d = _tx(ethPool, 11, 0, _leaves(1, 2), address(0), 1 ether, address(0), 0, "", "");
+        vm.prank(user);
+        _send(ethPool, d, 1 ether);
+
+        (address box, uint256 n, uint256 rho, uint256 bal) = ethRouter.receiveState(NPK, 50);
+        assertEq(box, ethRouter.receiveBoxOf(NPK, 50));
+        assertEq(n, 0);
+        assertEq(rho, uint256(keccak256(abi.encode(RECEIVE_TAG, box, uint256(0)))) % P);
+        assertEq(bal, 0);
+
+        vm.deal(box, 2 ether);
+        (,,, bal) = ethRouter.receiveState(NPK, 50);
+        assertEq(bal, 2 ether);
+        TacitEvmPoolRouter.Tx memory t = _receiveTx(ethPool, ethRouter, NPK, 50, bal, 0);
+        vm.expectEmit(address(ethRouter));
+        emit TacitEvmPoolRouter.Received(box, 0, 2, 2 ether, rho, 0);
+        ethRouter.sweepReceive(NPK, 50, t);
+
+        (, n, rho, bal) = ethRouter.receiveState(NPK, 50);
+        assertEq(n, 1);
+        assertEq(rho, uint256(keccak256(abi.encode(RECEIVE_TAG, box, uint256(1)))) % P);
+        assertEq(bal, 0);
+        assertEq(address(ethRouter).balance, 0);
+
+        usdc.mint(router.receiveBoxOf(NPK, 30), 123);
+        (,,, bal) = router.receiveState(NPK, 30);
+        assertEq(bal, 123);
+    }
+
+    function test_token_router_approves_its_pool_once() public {
+        assertEq(usdc.allowance(address(router), address(pool)), type(uint256).max);
+        assertEq(usdc.allowance(address(router), address(zr)), 0);
+        TacitEvmPoolRouter.Tx memory t = _tx(pool, 11, 0, _leaves(1, 0), address(0), 500, address(0), 0, "", "");
+        vm.startPrank(user);
+        usdc.approve(address(permit2), type(uint256).max);
+        router.depositWithPermit2(t, _permit(address(usdc), 500, address(router)), "");
+        vm.stopPrank();
+        assertEq(usdc.allowance(address(router), address(pool)), type(uint256).max);
+    }
+
     function test_receive_box_for_a_token_pool() public {
         address box = router.receiveBoxOf(NPK, 30);
         usdc.mint(box, 10_000);

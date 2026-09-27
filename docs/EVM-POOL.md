@@ -64,7 +64,7 @@ too slow to prove can hand the witness to another prover without giving up custo
 npk  = Poseidon(Ak.x, Ak.y, NK.x, NK.y)            Ak = per-note spend key, NK = nk·Base8 (BabyJubJub)
 leaf = Poseidon(asset, v, npk, rho)                v < 2^120
 nf   = Poseidon(nk, leaf, index)
-asset        = keccak256(abi.encode(chainId, pool, address(0))) mod p
+asset        = keccak256(abi.encode(chainId, pool, address(0))) mod p     (the pool's ASSET_FIELD())
 extDataHash  = keccak256(abi.encode(chainId, pool, recipient, extAmount, relayer, fee,
                                     keccak256(memo0), keccak256(memo1))) mod p
 publicAmount = extAmount − fee mod p
@@ -109,16 +109,17 @@ function transact(
 owner signs.
 
 **Ordering.** A transaction with an output inserts two leaves at the pool's current size and must be proven
-against the current root (`oldRoot == root()`, `startIndex == nextIndex()`). If another transaction lands first it
-reverts with `StaleRoot` or `WrongInsertionIndex`: rebuild the witness against the new leaves and prove again; the
-owner's signature does not change. Submit through private order flow. A transaction with no outputs (a full
-withdrawal) inserts nothing and never goes stale. Membership may be proven against any root the pool has held
-(`everKnownRoot`).
+against the current root (`oldRoot == root()`, `startIndex == nextIndex()`; `head()` returns both in one call). If
+another transaction lands first it reverts with `StaleRoot` or `WrongInsertionIndex`: rebuild the witness against
+the new leaves and prove again; the owner's signature does not change. Submit through private order flow. A
+transaction with no outputs (a full withdrawal) inserts nothing and never goes stale. Membership may be proven against any root the pool has held
+(`everKnownRoot`); `rootSize(root)` is the leaf count the tree had when that root was current.
 
 **Indexing.** Rebuild the tree from `Transact` events in `firstIndex` order, appending `(outLeaf0, outLeaf1)`; skip
 events where both are zero (nothing was inserted). Notes are found by trial-decrypting the memos, and receive-box
 notes from the router's `Received` events. Key notes by
 `(leaf, index)`: the same leaf can appear twice if a deposit box is paid twice, and each copy is separately spendable.
+`isSpent(nullifiers)` checks a wallet's notes in one call.
 
 ## Router
 
@@ -158,7 +159,8 @@ wallet or exchange. Anyone then calls `sweepReceive(npk, feeBps, tx)` to move it
 (a sweep proves exactly the balance it finds, so rebuild if a payment lands first): the router computes the note
 itself, `leaf = Poseidon(asset, amount − fee, npk, rho)` with
 `rho = keccak256(abi.encode(keccak256("tacit-evm-pool-receive-box-v1"), box, n)) mod p` for the box's `n`-th sweep
-(`receiveCount(box)`), so a sweeper can only credit the owner and keeps at most `feeBps` of what it sweeps. The
+(`receiveCount(box)`), so a sweeper can only credit the owner and keeps at most `feeBps` of what it sweeps.
+`receiveState(npk, feeBps)` returns the box, its next `n` and `rho`, and the balance a sweep would take. The
 sweep takes no memos and a single output. Each sweep emits `Received(box, n, index, value, rho, fee)`. The box's
 contract exists only inside a sweep (created, emptied and removed in one transaction), so between sweeps the address
 has no code and takes any payment, including a plain 21,000-gas transfer from an exchange.
