@@ -58046,16 +58046,14 @@ function _parseTabHash() {
 // changed since the early call keeps the cycle clean.
 let _tabHashLastConsumed = null;
 function _consumeTabUrlHash() {
-  (window.__dbg = window.__dbg || []).push({ t: 'entry', hash: location.hash, lastConsumed: _tabHashLastConsumed });
   // Normalize for comparison so a hash that gets rewritten in-place by
   // _writeMarketHash (e.g., uppercase aid → lowercase) doesn't defeat
   // the guard. The aid in _parseTabHash is already lowercased on parse;
   // matching on lowercase covers the common write-back case.
   const _curHash = (location.hash || '').toLowerCase();
-  if (_tabHashLastConsumed === _curHash) { window.__dbg.push({ t: 'dedup-hit' }); return; }
+  if (_tabHashLastConsumed === _curHash) return;
   _tabHashLastConsumed = _curHash;
   const parsed = _parseTabHash();
-  window.__dbg.push({ t: 'parsed', parsed });
   if (!parsed) return;
   if (parsed.requestedTab && parsed.requestedTab !== parsed.tab) {
     try { _writeTabHash(parsed.tab); } catch {}
@@ -58082,7 +58080,6 @@ function _consumeTabUrlHash() {
     }, 250);
   }
   const btn = document.querySelector(`.tab[data-tab="${parsed.tab}"]`);
-  console.log('[DEBUG _consumeTabUrlHash]', JSON.stringify(parsed), 'btnActive=', btn && btn.classList.contains('active'));
   if (!btn) return;
   if (!btn.classList.contains('active')) {
     btn.click();
@@ -58094,7 +58091,6 @@ function _consumeTabUrlHash() {
     if (parsed.aid && parsed.tab === 'market') {
       // Already on Market — drive the asset-detail view directly so a
       // hash-only change re-routes without requiring a tab re-click.
-      console.log('[DEBUG] calling goToMarketAsset', parsed.aid);
       if (typeof goToMarketAsset === 'function') goToMarketAsset(parsed.aid);
     } else if (parsed.tab === 'market') {
       // Aid-less variant: renderMarket() never fired because preboot
@@ -71030,81 +71026,14 @@ function applyMarketFilters() {
   // whole point of the flip. Above the grid, it reads as a toolbar
   // for the asks panel.
   const _asksPagerHtml = marketListingPagerHtml(totalAskRows, _marketListingPage, totalAskPages, askShowingStart, askShowingEnd);
-  const _offerGalleryHtml = (() => {
-    const dec = Number.isInteger(_assetForBids?.decimals) && _assetForBids.decimals >= 0 && _assetForBids.decimals <= 8 ? _assetForBids.decimals : 0;
-    const ticker = _assetForBids?.ticker || 'token';
-    const nowSec = Math.floor(Date.now() / 1000);
-    const expiryGuard = nowSec + 60;
-    const minePub = myPubHexForMarket;
-    const seen = new Set();
-    const offers = [];
-    for (const l of rowsFull) {
-      if (l.kind !== 'preauth' && l.kind !== 'intent') continue;
-      if (l.expired || l._takenPending) continue;
-      if (Number(l.expiry || 0) <= expiryGuard) continue;
-      const ownerPub = l.kind === 'preauth' ? (l.seller_pubkey || '') : (l.maker_pubkey || '');
-      if (minePub && ownerPub === minePub) continue;
-      const amt = (() => { try { return BigInt(marketListingAmount(l) || '0'); } catch { return 0n; } })();
-      const ps = Number(marketListingPriceSats(l) || 0);
-      const unit = amt > 0n ? unitPriceSats(ps, amt, dec) : null;
-      if (!(Number.isFinite(unit) && unit > 0 && ps > 0 && amt > 0n)) continue;
-      const key = marketListingKey(l, _assetForBids);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      offers.push({ l, amt, ps, unit, key });
-    }
-    offers.sort((a, b) => {
-      const ka = a.l.kind === 'preauth' ? 0 : 1;
-      const kb = b.l.kind === 'preauth' ? 0 : 1;
-      return ka - kb || a.unit - b.unit || (marketListingTimestamp(b.l) - marketListingTimestamp(a.l));
-    });
-    const top = offers.slice(0, 8);
-    if (!top.length) return '';
-    const hidden = offers.length - top.length;
-    const instantCount = offers.filter(o => o.l.kind === 'preauth').length;
-    const intentCount = offers.length - instantCount;
-    const cards = top.map((o, idx) => {
-      const l = o.l;
-      const isPreauth = l.kind === 'preauth';
-      const expRel = Number(l.expiry || 0) > nowSec ? relativeUntil(Number(l.expiry || 0)) : '';
-      const amountText = fmtAssetAmountCompact(o.amt, dec);
-      const id = marketListingDisplayId(l);
-      const sid = l.sale_id || '';
-      const iid = l.intent_id || '';
-      const minTake = String(l.min_take_amount || '');
-      const fillAttrs = isPreauth
-        ? ` data-fill-aid="${escapeHtml(_marketView.assetId)}" data-fill-amount="${escapeHtml(o.amt.toString())}" data-fill-dec="${dec}" data-fill-ticker="${escapeHtml(ticker)}" data-fill-direction="buy" data-fill-unit="${escapeHtml(String(o.unit))}"`
-        : '';
-      const action = isPreauth
-        ? `<button data-act="market-take-preauth" data-aid="${escapeHtml(_marketView.assetId)}" data-sid="${escapeHtml(sid)}" data-price="${o.ps}" data-ticker="${escapeHtml(ticker)}" data-amount="${escapeHtml(o.amt.toString())}" data-dec="${dec}" data-expiry="${Number(l.expiry || 0)}" type="button" title="Take this exact listing atomically on Bitcoin.">Take</button>`
-        : `<button data-act="market-claim-intent" data-aid="${escapeHtml(_marketView.assetId)}" data-iid="${escapeHtml(iid)}" data-price="${o.ps}" data-ticker="${escapeHtml(ticker)}" data-amount="${escapeHtml(o.amt.toString())}" data-dec="${dec}" data-min-take="${escapeHtml(minTake)}" data-expiry="${Number(l.expiry || 0)}" type="button" title="Claim this atomic order, then wait for maker fulfilment before final take.">${minTake ? 'Buy...' : 'Claim'}</button>`;
-      const kindText = isPreauth ? 'instant' : 'claim';
-      const priceTitle = `${fmtUnitPriceSats(o.unit)} sats/${ticker} · total ${o.ps.toLocaleString('en-US')} sats · listing ${id}`;
-      const note = isPreauth
-        ? (idx === 0 ? 'best instant lot' : 'click row to load swap')
-        : 'maker fulfil required';
-      return `<div class="mkt-offer-card" data-offer-kind="${escapeHtml(l.kind)}"${fillAttrs} tabindex="0" role="button" title="${escapeHtml(isPreauth ? 'Click card to size the Swap tile, or Take listing to fill this exact lot.' : 'Atomic intent: click Claim order to reserve it.')}">
-        <div class="mkt-offer-card-main">
-          <span class="mkt-offer-size" title="${escapeHtml(fmtAssetAmount(o.amt, dec))} ${escapeHtml(ticker)}">${escapeHtml(amountText)} ${escapeHtml(ticker)}</span>
-          <span class="mkt-offer-kind">${escapeHtml(kindText)}</span>
-        </div>
-        <div class="mkt-offer-price" title="${escapeHtml(priceTitle)}">${escapeHtml(fmtUnitPriceSats(o.unit))} sats/${escapeHtml(ticker)}</div>
-        <div class="mkt-offer-meta">
-          <span>${o.ps.toLocaleString('en-US')} sats total</span>
-          <span>${expRel ? `in ${escapeHtml(expRel)}` : 'open'}</span>
-        </div>
-        <div class="mkt-offer-note">${escapeHtml(note)}</div>
-        ${action}
-      </div>`;
-    }).join('');
-    return `<section class="mkt-offer-gallery" data-mkt-offer-gallery>
-      <div class="mkt-offer-gallery-head">
-        <strong>Live offers</strong>
-        <span>${instantCount.toLocaleString('en-US')} instant · ${intentCount.toLocaleString('en-US')} claimable${hidden > 0 ? ` · ${hidden.toLocaleString('en-US')} more below` : ''}</span>
-      </div>
-      <div class="mkt-offer-gallery-grid">${cards}</div>
-    </section>`;
-  })();
+  // The "Live offers" teaser gallery that used to render here was removed:
+  // it duplicated the top of the ladder below (same listings, a second
+  // time, in a visually heavier card format capped to a scroll box that
+  // clipped mid-card) and — being outside the Simple/Advanced trade toggle
+  // — was the one surface with an always-live Take/Claim button while the
+  // ladder itself defaults to click-to-prime-the-swap-tile. One ladder,
+  // one interaction model: click a listing below to load it into the Swap
+  // tile above (or flip "Advanced trade" for direct per-row buttons).
   // design.html-shaped unified market tile. Order: hero → swap → depth
   // (with spread strip inline) → two-col asks|bids → tape (with → all
   // trades link to modal) → tiny footer. Listed/Activity tabs are gone
@@ -71142,7 +71071,7 @@ function applyMarketFilters() {
         ${_atomicDiscoveryHtml}
         ${noAtomicHint}
         ${simpleEmptyHint}
-        ${_offerGalleryHtml}
+        ${rowsForGrid.length > 0 ? `<div class="muted" style="font-size:10px;margin-bottom:6px;">Click a listing to load it into the Swap tile above.</div>` : ''}
         ${_asksHeaderRowHtml}
         <div id="market-grid" class="${_gridClass}" style="${rowsForGrid.length === 0 ? 'display:none;' : ''}"></div>
         ${_asksHiddenCount > 0 || _marketAsksShowAll
@@ -72302,18 +72231,6 @@ function applyMarketFilters() {
   grid.querySelectorAll('button[data-act="market-take-preauth-group"]').forEach(btn => {
     btn.onclick = async () => marketTakePreauthGroupHandler(btn);
   });
-  list.querySelectorAll('.mkt-offer-gallery button[data-act="market-take-preauth"]').forEach(btn => {
-    btn.onclick = async (ev) => {
-      ev.stopPropagation();
-      await marketTakePreauthHandler(btn);
-    };
-  });
-  list.querySelectorAll('.mkt-offer-gallery button[data-act="market-claim-intent"]').forEach(btn => {
-    btn.onclick = async (ev) => {
-      ev.stopPropagation();
-      await marketClaimIntentHandler(btn);
-    };
-  });
   // Sweep-level: each aggregated depth-row's primary CTA. Opens the
   // existing Sweep buy form preloaded with the level's total amount and
   // bucket cap so the user only sees a one-tap confirm. Falls back
@@ -72421,27 +72338,6 @@ function applyMarketFilters() {
         const dir = (ev.key === 'ArrowDown' || ev.key === 'ArrowRight') ? 1 : -1;
         const next = sibs[idx + dir];
         if (next) { ev.preventDefault(); next.focus(); }
-      }
-    };
-  });
-  list.querySelectorAll('.mkt-offer-card[data-fill-aid]').forEach(card => {
-    const _fire = (ev) => {
-      if (ev.target && (ev.target.closest('button') || ev.target.closest('a') || ev.target.closest('summary'))) return;
-      const _u = parseFloat(card.dataset.fillUnit || '');
-      primeSwapTileFromOrderbook({
-        aid: card.dataset.fillAid,
-        direction: card.dataset.fillDirection || 'buy',
-        amountBaseStr: card.dataset.fillAmount || '0',
-        decimals: parseInt(card.dataset.fillDec || '0', 10) || 0,
-        ticker: card.dataset.fillTicker || '',
-        targetUnit: Number.isFinite(_u) && _u > 0 ? _u : null,
-      });
-    };
-    card.onclick = _fire;
-    card.onkeydown = (ev) => {
-      if (ev.key === 'Enter' || ev.key === ' ') {
-        ev.preventDefault();
-        _fire(ev);
       }
     };
   });
@@ -81613,8 +81509,6 @@ async function populateMarketBidsLadder(scope, asset) {
   // pair, completing the bid alone without the buyer online. Best-effort
   // filter: drop bids posted by this wallet (you can't take your own).
   let _walkAwayBidsHtml = '';
-  let _walkAwayBidsForGallery = [];
-  let _walkAwayBidsVarForGallery = [];
   if (ENABLE_T_PREAUTH_BID || ENABLE_T_PREAUTH_BID_VAR) {
     const _me = (() => {
       try { return (typeof wallet !== 'undefined' && wallet?.pub) ? bytesToHex(wallet.pub).toLowerCase() : ''; } catch { return ''; }
@@ -81630,8 +81524,6 @@ async function populateMarketBidsLadder(scope, asset) {
     const _walkAwayBids = Array.isArray(_peekExact) ? _peekExact.filter(_liveFilter) : [];
     const _peekVar = ENABLE_T_PREAUTH_BID_VAR && typeof _preauthBidVarCachePeek === 'function' ? _preauthBidVarCachePeek(aid) : null;
     const _walkAwayBidsVar = Array.isArray(_peekVar) ? _peekVar.filter(_liveFilter) : [];
-    _walkAwayBidsForGallery = _walkAwayBids;
-    _walkAwayBidsVarForGallery = _walkAwayBidsVar;
     const _totalCount = _walkAwayBids.length + _walkAwayBidsVar.length;
     if (_totalCount > 0) {
       const _rowsExact = _walkAwayBids.map(b => {
@@ -81697,87 +81589,14 @@ async function populateMarketBidsLadder(scope, asset) {
         ${_rowsVar}`;
     }
   }
-  const _bidOfferGalleryHtml = (() => {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const bidOffers = ladder
-      .filter(b => !b._isMine && !b._isReserved && b._expiresIn > 0 && b._unit != null && b._unit > 0)
-      .filter(b => !(b._isLevel))
-      .slice(0, 5)
-      .map(b => {
-        const amt = (() => { try { return BigInt(b.remaining_amount || b.amount || '0'); } catch { return 0n; } })();
-        const sats = Number(b.price_sats || 0);
-        if (amt <= 0n || !(sats > 0)) return null;
-        return {
-          kind: 'bid',
-          id: b.bid_id || '',
-          amount: amt,
-          unit: b._unit,
-          total: sats,
-          expiry: Number(b.expiry || 0),
-          note: b.min_fill_amount && b.min_fill_amount !== '0' ? 'partial-fill bid' : 'click row to load sell',
-        };
-      }).filter(Boolean);
-    const walkExact = _walkAwayBidsForGallery.slice(0, 3).map(b => {
-      const amt = (() => { try { return BigInt(b.amount || '0'); } catch { return 0n; } })();
-      const sats = Number(b.price_sats || 0);
-      const unit = unitPriceSats(sats, amt, decimals);
-      if (amt <= 0n || !(sats > 0) || !(unit > 0)) return null;
-      return { kind: 'walkaway', id: b.bid_id || '', amount: amt, unit, total: sats, expiry: Number(b.expiry || 0), note: 'walk-away bid' };
-    }).filter(Boolean);
-    const walkVar = _walkAwayBidsVarForGallery.slice(0, 3).map(b => {
-      const maxBig = (() => { try { return BigInt(b.max_fill || '0'); } catch { return 0n; } })();
-      const priceBig = (() => { try { return BigInt(b.price_per_unit || '0'); } catch { return 0n; } })();
-      const scale = Number(b.decimals_scale || 0);
-      const maxBase = maxBig * (10n ** BigInt(scale));
-      const totalBig = maxBig * priceBig;
-      const total = totalBig > BigInt(Number.MAX_SAFE_INTEGER) ? null : Number(totalBig);
-      const unit = total != null ? unitPriceSats(total, maxBase, decimals) : null;
-      if (maxBase <= 0n || !(total > 0) || !(unit > 0)) return null;
-      return { kind: 'walkaway-var', id: b.bid_id || '', amount: maxBase, unit, total, expiry: Number(b.expiry || 0), note: 'walk-away partial' };
-    }).filter(Boolean);
-    const offers = bidOffers.concat(walkExact, walkVar)
-      .filter(o => o.expiry > nowSec)
-      .sort((a, b) => b.unit - a.unit)
-      .slice(0, 6);
-    if (!offers.length) return '';
-    const bidCount = bidOffers.length;
-    const walkCount = walkExact.length + walkVar.length;
-    const cards = offers.map(o => {
-      const expRel = o.expiry > nowSec ? relativeUntil(o.expiry) : '';
-      const fillAttrs = o.kind === 'bid'
-        ? ` data-fill-aid="${escapeHtml(aid)}" data-fill-amount="${escapeHtml(o.amount.toString())}" data-fill-dec="${decimals}" data-fill-ticker="${escapeHtml(ticker)}" data-fill-direction="sell" data-fill-unit="${escapeHtml(String(o.unit))}"`
-        : '';
-      const action = o.kind === 'bid'
-        ? `<button data-bid-action="fulfil-mkt" data-bid-id="${escapeHtml(o.id)}" type="button" title="Sell into this bid. Whole-bid bids commit immediately; variable-fill bids open a chunk picker first.">Sell</button>`
-        : o.kind === 'walkaway'
-          ? `<button data-act="market-take-walk-away-bid" data-aid="${escapeHtml(aid)}" data-bid-id="${escapeHtml(o.id)}" type="button" title="Fill this walk-away limit bid.">Take</button>`
-          : `<button data-act="market-take-walk-away-bid-var" data-aid="${escapeHtml(aid)}" data-bid-id="${escapeHtml(o.id)}" type="button" title="Fill any allowed ratio of this walk-away partial-fill bid.">Take</button>`;
-      const label = o.kind === 'bid' ? 'bid' : 'away';
-      return `<div class="mkt-offer-card" data-offer-kind="${o.kind === 'bid' ? 'bid' : 'walkaway'}"${fillAttrs} tabindex="0" role="button" title="${escapeHtml(o.kind === 'bid' ? 'Click row to size the Swap tile in sell mode, or Sell to fulfil directly.' : 'Walk-away bid: buyer pre-signed, so you can fill without them online.')}">
-        <div class="mkt-offer-card-main">
-          <span class="mkt-offer-size" title="${escapeHtml(fmtAssetAmount(o.amount, decimals))} ${escapeHtml(ticker)}">${escapeHtml(fmtAssetAmountCompact(o.amount, decimals))} ${escapeHtml(ticker)}</span>
-          <span class="mkt-offer-kind">${label}</span>
-        </div>
-        <div class="mkt-offer-price">${escapeHtml(fmtUnitPriceSats(o.unit))} sats/${escapeHtml(ticker)}</div>
-        <div class="mkt-offer-meta">
-          <span>${o.total.toLocaleString('en-US')} sats total</span>
-          <span>${expRel ? `in ${escapeHtml(expRel)}` : 'open'}</span>
-        </div>
-        <div class="mkt-offer-note">${escapeHtml(o.note)}</div>
-        ${action}
-      </div>`;
-    }).join('');
-    return `<section class="mkt-offer-gallery mkt-offer-gallery--bids" data-mkt-bid-offer-gallery>
-      <div class="mkt-offer-gallery-head">
-        <strong>Live bids</strong>
-        <span>${bidCount.toLocaleString('en-US')} live · ${walkCount.toLocaleString('en-US')} walk-away</span>
-      </div>
-      <div class="mkt-offer-gallery-grid">${cards}</div>
-    </section>`;
-  })();
+  // See the matching comment on the (removed) asks-side offer gallery: this
+  // "Live bids" teaser duplicated the top of the bids table below in a
+  // heavier, scroll-clipped card format with its own always-live Sell/Take
+  // buttons, inconsistent with the table's click-to-prime-the-swap-tile
+  // default. Removed for the same reason.
   list.innerHTML = `
     ${mineFilterRow}
-    ${_bidOfferGalleryHtml}
+    ${_fillableBidCount > 0 ? `<div class="muted" style="font-size:10px;margin-bottom:6px;">Click a bid to load it into the Swap tile above.</div>` : ''}
     <div class="market-bids-table" role="table" aria-label="${escapeHtml(ticker)} bids">
       <div class="market-bids-row market-bids-row-head" role="row">
         <span>price ↓</span>
@@ -81833,27 +81652,6 @@ async function populateMarketBidsLadder(scope, asset) {
     }
     _oldRows.clear();
   }
-  list.querySelectorAll('[data-mkt-bid-offer-gallery] .mkt-offer-card[data-fill-aid]').forEach(card => {
-    const _fire = (ev) => {
-      if (ev.target && (ev.target.closest('button') || ev.target.closest('a') || ev.target.closest('summary'))) return;
-      const _u = parseFloat(card.dataset.fillUnit || '');
-      primeSwapTileFromOrderbook({
-        aid: card.dataset.fillAid,
-        direction: card.dataset.fillDirection || 'sell',
-        amountBaseStr: card.dataset.fillAmount || '0',
-        decimals: parseInt(card.dataset.fillDec || '0', 10) || 0,
-        ticker: card.dataset.fillTicker || '',
-        targetUnit: Number.isFinite(_u) && _u > 0 ? _u : null,
-      });
-    };
-    card.onclick = _fire;
-    card.onkeydown = (ev) => {
-      if (ev.key === 'Enter' || ev.key === ' ') {
-        ev.preventDefault();
-        _fire(ev);
-      }
-    };
-  });
   // Live-reactivity for bids: same diff annotation as asks but applied
   // post-render since these rows use innerHTML template strings rather
   // than DOM construction. Key namespace `bid:${bid_id}` keeps it
@@ -93272,11 +93070,9 @@ async function init() {
   // _consumeTabUrlHash is idempotent (via _tabHashLastConsumed) so the
   // late call after the wallet await becomes a no-op when the hash
   // hasn't changed.
-  (window.__dbg = window.__dbg || []).push({ t: 'before-early-guard', hash: location.hash });
   if ((location.hash || '').startsWith('#tab=')) {
-    try { _consumeTabUrlHash(); } catch (e) { window.__dbg.push({ t: 'early-throw', msg: e?.message || String(e) }); console.warn('[init] early tab deeplink failed:', e?.message || e); }
+    try { _consumeTabUrlHash(); } catch (e) { console.warn('[init] early tab deeplink failed:', e?.message || e); }
   }
-  window.__dbg.push({ t: 'after-early-guard' });
   await refreshWallet();
   renderExtWalletPanel();
   renderEthWalletPanel();
