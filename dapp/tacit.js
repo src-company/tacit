@@ -68654,7 +68654,8 @@ function _tacLaneSwitchHtml(assetIdHex) {
   if (assetIdHex !== CANONICAL_TAC_ASSET_ID_HEX) return '';
   const lane = _marketTacLane;
   return `
-    <div class="tac-lane-switch" data-tac-lane-switch role="tablist" aria-label="Trade TAC on Bitcoin or Ethereum">
+    <div class="tac-lane-switch" data-tac-lane-switch data-lane="${lane}" role="tablist" aria-label="Trade TAC on Bitcoin or Ethereum">
+      <span class="tac-lane-switch-thumb" aria-hidden="true"></span>
       <button type="button" class="tab${lane === 'btc' ? ' active' : ''}" data-tac-lane-btn="btc" role="tab" aria-selected="${lane === 'btc'}">${_btcLogoSvg(16)}Bitcoin</button>
       <button type="button" class="tab${lane === 'eth' ? ' active' : ''}" data-tac-lane-btn="eth" role="tab" aria-selected="${lane === 'eth'}">${_ethLogoSvg(16)}Ethereum</button>
     </div>
@@ -68706,6 +68707,7 @@ function _bindTacLaneSwitch(scope, assetIdHex) {
       shownPanel.classList.add('tac-lane-panel-enter');
     }
     if (switchEl) {
+      switchEl.dataset.lane = lane;
       switchEl.querySelectorAll('[data-tac-lane-btn]').forEach((b) => {
         const isActive = b.dataset.tacLaneBtn === lane;
         b.classList.toggle('active', isActive);
@@ -76272,27 +76274,25 @@ function renderMarketPriceChartSVG(trades, ticker, decimals, markUnit = null, op
   // stroke fill, 3px white stroke) means the label reads over any
   // background — trace, dots, gridlines, area-fill — without the
   // visual weight of a filled rect billboard.
-  // Collect all in-plot overlay labels before rendering so we can detect
-  // collisions (two labels within ~14px vertically) and nudge them apart.
-  const _overlayLabels = [];
-  const _LABEL_H = 14;
+  // On-chart reference: just the current mark/last line. vwap / best bid /
+  // best ask used to each get their own dashed line + inline label — on a
+  // quiet market those three values sit within a few sats of each other
+  // and of the mark line, so the labels piled up in one cramped band and
+  // needed a collision-nudge pass to stay legible at all. Simpler and
+  // clearer: one line on the plot for the number that matters most
+  // (current price vs. history), the other three as a small text summary
+  // beside the chart caption (below) where they have room to breathe.
   let markLineStroke = '';
-  let _markLabelPushed = false;
+  let markLineLabel = '';
   if (markValid) {
     const yMark = yOf(markUnit);
     if (yMark >= PT && yMark <= PT + plotH) {
       const markLbl = `${_markLineLabelText} ${fmtUnitPriceSats(markUnit)} sats/${ticker} · now`;
       markLineStroke = `<line x1="${PL}" x2="${(PL + plotW).toFixed(0)}" y1="${yMark.toFixed(2)}" y2="${yMark.toFixed(2)}" stroke="var(--green)" stroke-width="1" stroke-dasharray="3,3" opacity="0.5"/>`;
-      _overlayLabels.push({ y: yMark - 3.5, x: PL + plotW - 4, anchor: 'end', fill: 'var(--green)', text: escapeHtml(markLbl), side: 'right', _kind: 'mark' });
-      _markLabelPushed = true;
+      markLineLabel = `<text x="${(PL + plotW - 4).toFixed(0)}" y="${(yMark - 3.5).toFixed(2)}" font-size="9" fill="var(--green)" stroke="#faf9f5" stroke-width="3" paint-order="stroke fill" font-family="var(--mono, monospace)" text-anchor="end" font-weight="600">${escapeHtml(markLbl)}</text>`;
     }
   }
-  const markLine = markLineStroke;
-  let vwapLineStroke = '';
-  let bidLineStroke = '';
-  let askLineStroke = '';
-  let bidEdgeBadge = '';
-  let askEdgeBadge = '';
+  let _vwapUnit = null;
   {
     let _vwapNum = 0, _vwapDen = 0;
     for (const p of points) {
@@ -76302,55 +76302,14 @@ function renderMarketPriceChartSVG(trades, ticker, decimals, markUnit = null, op
         _vwapDen += p.price;
       }
     }
-    const vwap = _vwapDen > 0 ? _vwapNum / _vwapDen : null;
-    if (vwap != null && vwap > 0) {
-      const yVwap = yOf(vwap);
-      if (yVwap >= PT && yVwap <= PT + plotH) {
-        const vwapLbl = `vwap ${fmtUnitPriceSats(vwap)} sats/${ticker}`;
-        vwapLineStroke = `<line x1="${PL}" x2="${(PL + plotW).toFixed(0)}" y1="${yVwap.toFixed(2)}" y2="${yVwap.toFixed(2)}" stroke="var(--amber)" stroke-width="1" stroke-dasharray="6,3" opacity="0.5"/>`;
-        _overlayLabels.push({ y: yVwap - 3.5, x: PL + 4, anchor: 'start', fill: 'var(--amber)', text: escapeHtml(vwapLbl), side: 'left' });
-      }
-    }
+    if (_vwapDen > 0) _vwapUnit = _vwapNum / _vwapDen;
   }
-  if (_bestBidOpt != null) {
-    const yBid = yOf(_bestBidOpt);
-    if (yBid >= PT && yBid <= PT + plotH) {
-      const lbl = `best bid ${fmtUnitPriceSats(_bestBidOpt)} sats/${ticker}`;
-      bidLineStroke = `<line x1="${PL}" x2="${(PL + plotW).toFixed(0)}" y1="${yBid.toFixed(2)}" y2="${yBid.toFixed(2)}" stroke="#1e6fbf" stroke-width="1" stroke-dasharray="2,4" opacity="0.55"/>`;
-      _overlayLabels.push({ y: yBid + 9, x: PL + plotW - 4, anchor: 'end', fill: '#1e6fbf', text: escapeHtml(lbl), side: 'right' });
-    } else if (yBid < PT) {
-      bidEdgeBadge = `<text x="${(PL + plotW - 4).toFixed(0)}" y="${(PT + 9).toFixed(0)}" font-size="9" fill="#1e6fbf" stroke="#faf9f5" stroke-width="3" paint-order="stroke fill" font-family="var(--mono, monospace)" text-anchor="end" font-weight="600">▲ best bid ${escapeHtml(fmtUnitPriceSats(_bestBidOpt))} sats/${escapeHtml(ticker)}</text>`;
-    }
-  }
-  if (_bestAskOpt != null) {
-    const yAsk = yOf(_bestAskOpt);
-    if (yAsk >= PT && yAsk <= PT + plotH) {
-      const lbl = `best ask ${fmtUnitPriceSats(_bestAskOpt)} sats/${ticker}`;
-      askLineStroke = `<line x1="${PL}" x2="${(PL + plotW).toFixed(0)}" y1="${yAsk.toFixed(2)}" y2="${yAsk.toFixed(2)}" stroke="var(--red)" stroke-width="1" stroke-dasharray="2,4" opacity="0.55"/>`;
-      _overlayLabels.push({ y: yAsk + 9, x: PL + 4, anchor: 'start', fill: 'var(--red)', text: escapeHtml(lbl), side: 'left' });
-    } else if (yAsk > PT + plotH) {
-      askEdgeBadge = `<text x="${(PL + 4).toFixed(0)}" y="${(PT + plotH - 3).toFixed(0)}" font-size="9" fill="var(--red)" stroke="#faf9f5" stroke-width="3" paint-order="stroke fill" font-family="var(--mono, monospace)" text-anchor="start" font-weight="600">▼ best ask ${escapeHtml(fmtUnitPriceSats(_bestAskOpt))} sats/${escapeHtml(ticker)}</text>`;
-    }
-  }
-  // Resolve label collisions per side. Sort by Y, push apart any pair
-  // closer than _LABEL_H px. Clamp to plot bounds.
-  for (const side of ['left', 'right']) {
-    const group = _overlayLabels.filter(l => l.side === side).sort((a, b) => a.y - b.y);
-    for (let i = 1; i < group.length; i++) {
-      const gap = group[i].y - group[i - 1].y;
-      if (gap < _LABEL_H) {
-        const shift = (_LABEL_H - gap) / 2 + 1;
-        group[i - 1].y = Math.max(PT + 4, group[i - 1].y - shift);
-        group[i].y = Math.min(PT + plotH - 2, group[i].y + shift);
-      }
-    }
-  }
-  const _labelSvg = (l) => `<text x="${l.x.toFixed(0)}" y="${l.y.toFixed(2)}" font-size="9" fill="${l.fill}" stroke="#faf9f5" stroke-width="3" paint-order="stroke fill" font-family="var(--mono, monospace)" text-anchor="${l.anchor}" font-weight="600">${l.text}</text>`;
-  const vwapLineLabel = _overlayLabels.filter(l => l.text.startsWith('vwap')).map(_labelSvg).join('');
-  const bidLineLabel = _overlayLabels.filter(l => l.text.includes('best bid')).map(_labelSvg).join('');
-  const askLineLabel = _overlayLabels.filter(l => l.text.includes('best ask')).map(_labelSvg).join('');
-  const markLineLabel = _markLabelPushed
-    ? _overlayLabels.filter(l => l._kind === 'mark').map(_labelSvg).join('')
+  const _refSummaryParts = [];
+  if (_vwapUnit != null && _vwapUnit > 0) _refSummaryParts.push(`<span style="color:var(--amber);">vwap ${escapeHtml(fmtUnitPriceSats(_vwapUnit))}</span>`);
+  if (_bestBidOpt != null) _refSummaryParts.push(`<span style="color:#1e6fbf;">best bid ${escapeHtml(fmtUnitPriceSats(_bestBidOpt))}</span>`);
+  if (_bestAskOpt != null) _refSummaryParts.push(`<span style="color:var(--red);">best ask ${escapeHtml(fmtUnitPriceSats(_bestAskOpt))}</span>`);
+  const _refSummaryHtml = _refSummaryParts.length
+    ? `<div class="muted" style="font-size:10px;margin-top:2px;">${_refSummaryParts.join(' &middot; ')} <span style="opacity:0.7;">sats/${escapeHtml(ticker)}</span></div>`
     : '';
   // Horizontal gridlines at the Y min / mid / max — gives the eye a
   // reference without committing to full axis ticks. Dashed light strokes
@@ -76389,7 +76348,8 @@ function renderMarketPriceChartSVG(trades, ticker, decimals, markUnit = null, op
       <span style="font-family:var(--serif);font-style:italic;font-size:18px;line-height:1;letter-spacing:-0.005em;">Price history</span>${_logBadge}
       <span class="muted" style="font-size:10px;letter-spacing:0;">${escapeHtml(_historyTail)} &middot; ${escapeHtml(fmtUnitPriceSats(_inBandTradeLo))}${_inBandTradeLo !== _inBandTradeHi ? ` – ${escapeHtml(fmtUnitPriceSats(_inBandTradeHi))}` : ''} sats/${escapeHtml(ticker)}${outlierCount > 0 ? ` &middot; <span style="color:var(--amber);" title="Trades outside the ${escapeHtml(_outlierBandLabel)} are usually dust, base-unit glitches, or fat-finger fills. Hidden from the chart so a single off-band fill can't manufacture a fake-dump visual; per-fill detail stays available in the trades tape and worker mark metadata.">${outlierCount} outlier${outlierCount === 1 ? '' : 's'} flagged</span>` : ''}</span>
     </div>
-    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" data-chart-svg data-cursor-points="${cursorDataAttr}" data-plot-pl="${PL}" data-plot-pr="${PR}" data-plot-pt="${PT}" data-plot-pb="${PB}" data-plot-w="${W}" data-plot-h="${H}" data-ticker="${escapeHtml(ticker)}" style="width:100%;height:auto;max-height:300px;display:block;background:var(--bg-warm, #faf9f5);border:1px solid var(--ink-faint);cursor:crosshair;">
+    ${_refSummaryHtml}
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" data-chart-svg data-cursor-points="${cursorDataAttr}" data-plot-pl="${PL}" data-plot-pr="${PR}" data-plot-pt="${PT}" data-plot-pb="${PB}" data-plot-w="${W}" data-plot-h="${H}" data-ticker="${escapeHtml(ticker)}" style="width:100%;height:auto;max-height:300px;display:block;background:var(--bg-warm, #faf9f5);border:1px solid var(--ink-faint);cursor:crosshair;margin-top:4px;">
       <defs>
         <linearGradient id="${_gradId}" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="var(--green)" stop-opacity="0.18"/>
@@ -76398,20 +76358,12 @@ function renderMarketPriceChartSVG(trades, ticker, decimals, markUnit = null, op
         </linearGradient>
       </defs>
       ${gridlines}
-      ${vwapLineStroke}
       ${markLineStroke}
-      ${bidLineStroke}
-      ${askLineStroke}
       ${areaPath ? `<path data-chart-area d="${areaPath}" fill="url(#${_gradId})" stroke="none"/>` : ''}
       ${linePath ? `<path data-chart-line d="${linePath}" fill="none" stroke="var(--green)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" stroke-opacity="0.92" vector-effect="non-scaling-stroke"/>` : ''}
       ${candleSVG}
       ${_chartMode === 'candle' ? '' : dots}
-      ${vwapLineLabel}
       ${markLineLabel}
-      ${bidLineLabel}
-      ${askLineLabel}
-      ${bidEdgeBadge}
-      ${askEdgeBadge}
       <!-- Volume strip: per-bucket trade volume in sats below the price plot.
            Same color as the trend line, faded so it reads as a quiet
            secondary chart rather than competing with the price signal. -->
