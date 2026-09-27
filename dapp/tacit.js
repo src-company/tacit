@@ -92348,6 +92348,16 @@ function buildCommandPaletteItems() {
 }
 
 function setupCommandPalette() {
+  // A farm/BTC-call action can bare-import './tacit.js' (see the comment on
+  // _wireEvmCerOnce above), evaluating a second copy of this module — and
+  // that copy's own init() calls setupCommandPalette() again. Without this
+  // guard, #btn-cmd ends up with two toggle listeners: the first click's
+  // event runs both, opening the palette and then immediately closing it
+  // again in the same tick. globalThis is shared across module copies
+  // (unlike this function's own state), so it's the one place a flag
+  // actually survives across them — same idiom as _wireEvmCerOnce.
+  if (globalThis.__tacitCmdPaletteWired) return;
+  globalThis.__tacitCmdPaletteWired = true;
   const palette = document.getElementById('cmd-palette');
   const input = document.getElementById('cmd-input');
   const list = document.getElementById('cmd-list');
