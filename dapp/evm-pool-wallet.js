@@ -556,7 +556,12 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       }
       for (const n of ins) pending.add(n.nf);
       onStep('waiting for it to be mined');
-      if (await landed(h)) return h;
+      if (await landed(h)) {
+        // Returns once this wallet sees it (spent notes gone, change in), so the next action can build on it.
+        const spent = new Set(ins.map((n) => n.nf));
+        await waitFor(() => !state().notes.some((n) => spent.has(n.nf)), 60_000).catch(() => {});
+        return h;
+      }
       for (const n of ins) pending.delete(n.nf);
     }
     throw new Error('the pool kept moving; try again');
@@ -680,8 +685,11 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     async deposit({ amount, onStep = () => {} }) {
       const a = BigInt(amount);
       if (a <= 0n) throw new Error('enter an amount');
-      await sync();
-      return transact({ ins: [], outs: [{ to: self, value: a }, null], extAmount: a, onStep });
+      const before = (await sync()).balance;
+      const h = await transact({ ins: [], outs: [{ to: self, value: a }, null], extAmount: a, onStep });
+      // Returns once the note is spendable here (log providers can trail the receipt by a few seconds).
+      await waitFor(() => summary().balance >= before + a, 60_000).catch(() => {});
+      return h;
     },
 
     // Sweeps the private ETH address into a note here, submitted by the signer: no fee, any amount. → tx hash.
