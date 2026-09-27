@@ -27948,6 +27948,21 @@ async function buildAndBroadcastTDClaim({
       throw new Error(`drop pool drained (remaining ${remaining}, per_claim ${drop.per_claim})`);
     }
   }
+  // Expiry gate. The claim list only shows drops the worker still considers
+  // active (it omits expired ones by default), but time can pass between
+  // that list load and this click — wallet unlock, funding prompts, a user
+  // stepping away. Without this check an expired drop would still build and
+  // broadcast a real commit+reveal tx that the validator's own expiry rule
+  // (worker-aided, checked at credit time — see loadCreditedDclaims) then
+  // never credits: real Bitcoin fees spent for nothing, with no warning.
+  // scanned_height is this same /drops-onchain response's own view of the
+  // chain tip; skip the check if it's unavailable rather than block a
+  // legitimate claim on a degraded worker.
+  if (Number.isInteger(drop.expiry_height) && drop.expiry_height > 0 && Number.isInteger(drop.scanned_height)) {
+    if (drop.scanned_height > drop.expiry_height) {
+      throw new Error(`drop expired at block ${drop.expiry_height} (chain is at ${drop.scanned_height}) — claims are no longer credited`);
+    }
+  }
 
   // Witness shape gate.
   const merkleRootZero = /^0+$/.test(drop.merkle_root);
@@ -38770,7 +38785,15 @@ const NOTIF_LOG_KEY = 'tacit-notif-log-v1';
 const NOTIF_LOG_MAX = 30;
 const NOTIF_LOG_TTL_MS = 24 * 3600 * 1000;
 const NOTIF_LAST_SEEN_KEY = 'tacit-notif-last-seen-v1';
-let _notifLog = (() => {
+// A farm/BTC-call action can bare-import './tacit.js' (see the comment on
+// _wireEvmCerOnce above), which evaluates a second copy of this whole module
+// alongside the main one. toast() lives in both copies, so without a shared
+// backing store each copy would keep its own notification history — a toast
+// fired from one copy would silently never show up in the other's bell log.
+// Stashing the log + last-seen marker on globalThis (shared across module
+// copies, unlike module-scope state) keeps every copy reading/writing the
+// same page-wide history, same idea as _wireEvmCerOnce's globalThis flag.
+let _notifLog = globalThis.__tacitNotifLog || (globalThis.__tacitNotifLog = (() => {
   try {
     const raw = localStorage.getItem(NOTIF_LOG_KEY);
     if (!raw) return [];
@@ -38779,11 +38802,11 @@ let _notifLog = (() => {
     const cutoff = Date.now() - NOTIF_LOG_TTL_MS;
     return parsed.filter(e => e && typeof e.at === 'number' && e.at >= cutoff).slice(-NOTIF_LOG_MAX);
   } catch { return []; }
-})();
-let _notifLastSeen = (() => {
+})());
+let _notifLastSeen = globalThis.__tacitNotifLastSeen ?? (globalThis.__tacitNotifLastSeen = (() => {
   try { return Number(localStorage.getItem(NOTIF_LAST_SEEN_KEY)) || 0; }
   catch { return 0; }
-})();
+})());
 function _notifLogPersist() {
   try { localStorage.setItem(NOTIF_LOG_KEY, JSON.stringify(_notifLog)); }
   catch { /* quota; fine to drop */ }
@@ -38800,6 +38823,7 @@ function _notifLogPush(entry) {
   const cutoff = Date.now() - NOTIF_LOG_TTL_MS;
   _notifLog = _notifLog.filter(e => e.at >= cutoff);
   if (_notifLog.length > NOTIF_LOG_MAX) _notifLog = _notifLog.slice(-NOTIF_LOG_MAX);
+  globalThis.__tacitNotifLog = _notifLog;
   _notifLogPersist();
   _updateNotifBadge();
 }
@@ -38840,6 +38864,7 @@ function _openNotifLog() {
   _renderNotifLog();
   modal.style.display = 'grid';
   _notifLastSeen = Date.now();
+  globalThis.__tacitNotifLastSeen = _notifLastSeen;
   try { localStorage.setItem(NOTIF_LAST_SEEN_KEY, String(_notifLastSeen)); } catch {}
   _updateNotifBadge();
 }
@@ -38865,6 +38890,7 @@ function _wireNotifLog() {
     clearBtn.dataset.wired = '1';
     clearBtn.onclick = () => {
       _notifLog = [];
+      globalThis.__tacitNotifLog = _notifLog;
       _notifLogPersist();
       _renderNotifLog();
       _updateNotifBadge();
@@ -50092,7 +50118,7 @@ function setupWalletButtons() {
 
 // ============== ETCH UI ==============
 let pendingCEtch = null;
-async function uploadImageToPinata(file) {
+async function uploadImageToPin(file) {
   if (!PIN_URL) throw new Error('upload disabled — set PIN_URL after deploying the Worker');
   if (file.size > MAX_UPLOAD_BYTES) throw new Error(`file too big (max ${MAX_UPLOAD_BYTES} bytes)`);
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
@@ -50109,7 +50135,7 @@ async function uploadImageToPinata(file) {
 
 // Pin a small ERC-721-style metadata JSON to IPFS via the Worker.
 // Returns the metadata CID, which the dApp stores in the CETCH envelope's image_uri.
-async function uploadMetadataToPinata(metadata) {
+async function uploadMetadataToPin(metadata) {
   if (!PIN_JSON_URL) throw new Error('metadata pinning disabled — no Worker configured');
   const resp = await fetch(PIN_JSON_URL, {
     method: 'POST',
@@ -50565,8 +50591,13 @@ function setupEtchForm() {
     const file = fileInput.files && fileInput.files[0];
     if (!file) return;
     fileStatus.textContent = `uploading ${file.name} (${(file.size/1024).toFixed(1)} KB)…`;
+    // Block a second pick while this one is in flight — the label stays
+    // clickable during an async upload otherwise, and a rapid double-click
+    // fires two concurrent pins racing to set #e-image (last response wins).
+    fileLabel.style.opacity = '0.4';
+    fileLabel.style.pointerEvents = 'none';
     try {
-      const cid = await uploadImageToPinata(file);
+      const cid = await uploadImageToPin(file);
       $('#e-image').value = `ipfs://${cid}`;
       // Programmatic .value = doesn't dispatch 'input', so do it explicitly so
       // the invalidate listener above fires.
@@ -50579,6 +50610,8 @@ function setupEtchForm() {
       console.error(e);
     } finally {
       fileInput.value = '';
+      fileLabel.style.opacity = '';
+      fileLabel.style.pointerEvents = '';
     }
   };
   $('#btn-etch-preview').onclick = async () => {
@@ -50752,7 +50785,7 @@ function setupEtchForm() {
             commitment: bytesToHex(commitment),
           };
         }
-        const metaCid = await uploadMetadataToPinata(md);
+        const metaCid = await uploadMetadataToPin(md);
         return `ipfs://${metaCid}`;
       };
 
@@ -55717,6 +55750,16 @@ function setupDropsForm() {
       if (!capRaw) throw new Error('cap required');
       const perClaim = parseAssetAmount(perRaw, meta.decimals);
       const capAmount = parseAssetAmount(capRaw, meta.decimals);
+      // Balance check up front — buildAndBroadcastTDrop re-checks this itself,
+      // but only after the confirm() dialogs and the burner-backup/funding
+      // prompts below, all of which can take real user effort. Catching it
+      // here means an under-funded issuer sees the real blocker immediately.
+      const dropHoldings = await scanHoldings();
+      const dropHeld = dropHoldings.get(assetIdHex);
+      const dropBalance = dropHeld ? dropHeld.balance : 0n;
+      if (dropBalance < capAmount) {
+        throw new Error(`insufficient balance: have ${fmtAssetAmountPlain(dropBalance, meta.decimals)} ${meta.ticker || ''}, drop needs ${fmtAssetAmountPlain(capAmount, meta.decimals)} ${meta.ticker || ''}`);
+      }
       const expiryInput = ($('#ondrop-expiry')?.value || '').trim();
       const expiryHeight = expiryInput ? parseInt(expiryInput, 10) : 0;
       if (!Number.isInteger(expiryHeight) || expiryHeight < 0) throw new Error('expiry must be a non-negative integer (0 = no expiry)');
@@ -55765,6 +55808,21 @@ function setupDropsForm() {
               `Sample mismatches: ${sample}. ` +
               `Either set per-claim to match every row, or rebuild the snapshot from the wizard steps above with a uniform amount, or use the worker-mediated fulfilment above instead of T_DROP.`,
             );
+          }
+          // Same review the open-FCFS branch below already requires — a
+          // matched snapshot verifies uniformity but not the terms
+          // themselves, and this is the one T_DROP path with no Preview step
+          // to catch a mistyped cap/per-claim before real sats lock up.
+          if (!confirm(
+            `Merkle-gated drop:\n\n` +
+            `  cap: ${capAmount.toString()} ${meta.ticker || ''}\n` +
+            `  per claim: ${perClaim.toString()} ${meta.ticker || ''}\n` +
+            `  max claims: ${(capAmount / perClaim).toString()}\n` +
+            `  snapshot rows: ${saved.rows.length}\n` +
+            `  expiry: ${expiryHeight > 0 ? `block ${expiryHeight}` : 'none'}\n\n` +
+            `Only addresses in this snapshot can claim. Confirm?`
+          )) {
+            throw new Error('cancelled');
           }
         } else {
           if (!confirm(

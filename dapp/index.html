@@ -104,7 +104,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=6eead5eb">
+<link rel="modulepreload" href="./tacit.js?cb=0438aeba">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -9342,79 +9342,124 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 <!-- ETCH TAB -->
 <div class="tab-panel" id="tab-etch">
   <div class="section etch-tile">
+    <div class="section-header"><span>etch · confidential supply</span></div>
     <div class="section-body">
-      <div class="form-row two">
-        <div>
-          <label>Ticker (1–8 chars, A–Z 0–9)</label>
-          <input id="e-ticker" placeholder="USDC" maxlength="8" autocomplete="off">
+      <div class="muted" style="font-size:12px;line-height:1.6;margin-bottom:14px;">
+        Mint a new asset with a hidden total supply — observers see a cryptographic commitment, not the number.
+      </div>
+
+      <div class="wiz-step">
+        <div class="wiz-step-head">
+          <span class="wiz-step-num">1</span>
+          <span class="wiz-step-title">Ticker, decimals &amp; supply</span>
         </div>
-        <div>
-          <label>Decimals</label>
-          <div class="preset-chips" id="e-decimals-presets">
-            <button type="button" class="preset-chip" data-decimals="0"><span class="num">0</span><span class="hint">whole</span></button>
-            <button type="button" class="preset-chip" data-decimals="2"><span class="num">2</span><span class="hint">cents</span></button>
-            <button type="button" class="preset-chip" data-decimals="6"><span class="num">6</span><span class="hint">USDC</span></button>
-            <button type="button" class="preset-chip" data-decimals="8"><span class="num">8</span><span class="hint">sats</span></button>
+        <div class="wiz-step-body">
+          <div class="form-row two">
+            <div>
+              <label>Ticker (1–8 chars, A–Z 0–9)</label>
+              <input id="e-ticker" placeholder="USDC" maxlength="8" autocomplete="off">
+            </div>
+            <div>
+              <label>Decimals</label>
+              <div class="preset-chips" id="e-decimals-presets">
+                <button type="button" class="preset-chip" data-decimals="0"><span class="num">0</span><span class="hint">whole</span></button>
+                <button type="button" class="preset-chip" data-decimals="2"><span class="num">2</span><span class="hint">cents</span></button>
+                <button type="button" class="preset-chip" data-decimals="6"><span class="num">6</span><span class="hint">USDC</span></button>
+                <button type="button" class="preset-chip" data-decimals="8"><span class="num">8</span><span class="hint">sats</span></button>
+              </div>
+              <input id="e-decimals" type="number" value="0" min="0" max="8" style="margin-top:6px;">
+            </div>
           </div>
-          <input id="e-decimals" type="number" value="0" min="0" max="8" style="margin-top:6px;">
+          <label style="margin-top:14px;">Supply</label>
+          <input id="e-supply" type="text" value="1000000" inputmode="decimal" placeholder="e.g. 1000000 or 1000.50">
+          <div id="e-preview-line" class="live-preview"></div>
         </div>
       </div>
-      <label>Name <span class="muted" style="font-weight:normal;text-transform:none;letter-spacing:0;font-size:11px;">optional, ≤64 chars</span></label>
-      <input id="e-name" type="text" maxlength="64" placeholder='e.g. "USD Coin"' autocomplete="off">
-      <div class="muted" style="margin-top:4px;font-size:10px;">Off-chain in the metadata blob; ticker stays the on-chain identity. Renderers display "Name (TICKER)" when both are set.</div>
-      <label style="margin-top:14px;">Supply</label>
-      <input id="e-supply" type="text" value="1000000" inputmode="decimal" placeholder="e.g. 1000000 or 1000.50">
-      <div id="e-preview-line" class="live-preview"></div>
-      <label style="margin-top:14px;">Image URI (optional) — token logo / icon, or metadata JSON CID</label>
-      <input id="e-image" type="text" placeholder="ipfs://bafybeih... or bare CID (Qm… / bafy…)" spellcheck="false">
-      <div class="flex" style="margin-top:8px;gap:8px;align-items:center;">
-        <label for="e-image-file" class="btn" style="margin:0;cursor:pointer;">↑ Upload to IPFS</label>
-        <input id="e-image-file" type="file" accept="image/png,image/jpeg,image/webp" style="display:none;">
-        <span id="e-image-status" class="muted" style="font-size:11px;"></span>
-      </div>
-      <label style="margin-top:14px;">Description (optional, ≤500 chars) — bundled into a metadata JSON pinned to IPFS</label>
-      <textarea id="e-description" maxlength="500" rows="2" placeholder="What this token is for, who issued it, etc." style="font-family:inherit;font-size:12px;padding:9px 10px;border:1px solid var(--ink);background:var(--bg);color:var(--ink);width:100%;resize:vertical;"></textarea>
-      <label style="margin-top:14px;">External URL (optional) — project website / docs</label>
-      <input id="e-external-url" type="text" placeholder="https://..." spellcheck="false">
-      <label class="checkbox-row">
-        <input id="e-attest-on-etch" type="checkbox" checked>
-        <span class="cbx-body"><strong>Publish supply opening</strong> <span style="color:#0a7d4e;">(recommended)</span> — anyone can cryptographically verify the announced supply against the on-chain commitment. The opening <code>(supply, blinding)</code> is bundled into the asset's metadata blob on IPFS (content-addressed, worker-independent) and also pinned to the discovery worker. <strong>Uncheck</strong> only if you have a specific reason to keep total supply confidential. Per-transfer amounts stay hidden either way — this checkbox only affects the announced total.</span>
-      </label>
-      <label class="checkbox-row">
-        <input id="e-mintable" type="checkbox">
-        <span class="cbx-body"><strong>Mintable</strong> — you (the etcher) can issue more supply later, signed by this wallet's key. Default off ⇒ supply is fixed at etch and can never increase. <strong>This choice is permanent</strong> — a fixed-supply asset can't be made mintable later.</span>
-      </label>
-      <div id="mintable-key-warning" style="display:none;margin-top:8px;padding:10px 12px;border:1px solid var(--red);background:#fff4f4;font-size:11px;color:var(--red);">
-        <strong>⚠ Back up your private key before etching.</strong> The mint authority is your wallet's local key. Clearing browser storage, losing the device, or switching browsers without exporting the key permanently freezes the supply — there is no recovery path. Click <strong>Export key</strong> on the Wallet tab and save the hex somewhere safe before you broadcast.
-      </div>
-      <details class="etch-why" style="margin-top:14px;">
-        <summary style="cursor:pointer;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);padding:6px 0;list-style:none;">
-          <span class="det-arrow">▸</span> Why is the supply hidden? · what gets pinned
-        </summary>
-        <div class="muted" style="padding-top:8px;border-top:1px dashed var(--ink-faint);margin-top:4px;line-height:1.6;">
-          The supply is committed to the chain via a 33-byte cryptographic commitment plus a ~700-byte zero-knowledge proof that the value is a valid 64-bit integer — only you know the actual number; observers see only the proof. The blinding factor that hides the supply is derived from your wallet's privkey, so a fresh device with just your key recovers the etched supply from chain data alone — no localStorage backup needed. Max supply per asset is ~1.84 × 10¹⁹ base units, which covers any realistic decimals setting. Etch is a 2-tx flow (commit + reveal) and broadcasts in seconds. Optional image / metadata is bundled into the envelope and propagates to recipients alongside the supply commitment.
+
+      <div class="wiz-step">
+        <div class="wiz-step-head">
+          <span class="wiz-step-num">2</span>
+          <span class="wiz-step-title">Metadata <span class="muted" style="font-weight:normal;font-size:11px;">· optional</span></span>
         </div>
-      </details>
-
-      <div id="etch-preview" style="display:none;"></div>
-
-      <div class="flex" style="margin-top:18px;">
-        <button id="btn-etch-preview">Preview etch</button>
-        <button id="btn-etch-broadcast" class="primary" disabled title="Click 'Preview etch' first to see what you're about to broadcast.">Etch &amp; broadcast</button>
+        <p class="wiz-step-hint">Name, logo, description, link. Skip this for a fast anonymous etch — the ticker is the only on-chain identity either way.</p>
+        <div class="wiz-step-body">
+          <details>
+            <summary class="muted" style="cursor:pointer;font-size:11px;">Add name, logo, description, link</summary>
+            <div style="margin-top:10px;">
+              <label>Name <span class="muted" style="font-weight:normal;text-transform:none;letter-spacing:0;font-size:11px;">optional, ≤64 chars</span></label>
+              <input id="e-name" type="text" maxlength="64" placeholder='e.g. "USD Coin"' autocomplete="off">
+              <div class="muted" style="margin-top:4px;font-size:10px;">Off-chain in the metadata blob; ticker stays the on-chain identity. Renderers display "Name (TICKER)" when both are set.</div>
+              <label style="margin-top:14px;">Image URI (optional) — token logo / icon, or metadata JSON CID</label>
+              <input id="e-image" type="text" placeholder="ipfs://bafybeih... or bare CID (Qm… / bafy…)" spellcheck="false">
+              <div class="flex" style="margin-top:8px;gap:8px;align-items:center;">
+                <label for="e-image-file" class="btn" style="margin:0;cursor:pointer;">↑ Upload to IPFS</label>
+                <input id="e-image-file" type="file" accept="image/png,image/jpeg,image/webp" style="display:none;">
+                <span id="e-image-status" class="muted" style="font-size:11px;"></span>
+              </div>
+              <label style="margin-top:14px;">Description (optional, ≤500 chars) — bundled into a metadata JSON pinned to IPFS</label>
+              <textarea id="e-description" maxlength="500" rows="2" placeholder="What this token is for, who issued it, etc." style="font-family:inherit;font-size:12px;padding:9px 10px;border:1px solid var(--ink);background:var(--bg);color:var(--ink);width:100%;resize:vertical;"></textarea>
+              <label style="margin-top:14px;">External URL (optional) — project website / docs</label>
+              <input id="e-external-url" type="text" placeholder="https://..." spellcheck="false">
+            </div>
+          </details>
+        </div>
       </div>
-      <!-- Inline progress strip — hidden until broadcast starts. JS toggles
-           per-step .done / .active classes via setProgressStrip() so the
-           user sees a 4-stage timeline instead of a single disabled button.
-           Steps map to: pin metadata (skipped if none), prove rangeproof,
-           broadcast commit, broadcast reveal, index locally. -->
-      <div id="etch-progress" class="progress-strip" style="display:none;" aria-live="polite">
-        <div class="progress-step" data-step="0"><span class="progress-num">1</span><span class="progress-label">Build</span></div>
-        <div class="progress-step" data-step="1"><span class="progress-num">2</span><span class="progress-label">Submit</span></div>
-        <div class="progress-step" data-step="2"><span class="progress-num">3</span><span class="progress-label">Confirm</span></div>
-        <div class="progress-step" data-step="3"><span class="progress-num">4</span><span class="progress-label">Index</span></div>
+
+      <div class="wiz-step">
+        <div class="wiz-step-head">
+          <span class="wiz-step-num">3</span>
+          <span class="wiz-step-title">Supply &amp; mint policy</span>
+        </div>
+        <p class="wiz-step-hint">Two permanent choices, locked in at etch — read both before continuing.</p>
+        <div class="wiz-step-body">
+          <label class="checkbox-row">
+            <input id="e-attest-on-etch" type="checkbox" checked>
+            <span class="cbx-body"><strong>Publish supply opening</strong> <span style="color:#0a7d4e;">(recommended)</span> — anyone can cryptographically verify the announced supply against the on-chain commitment. The opening <code>(supply, blinding)</code> is bundled into the asset's metadata blob on IPFS (content-addressed, worker-independent) and also pinned to the discovery worker. <strong>Uncheck</strong> only if you have a specific reason to keep total supply confidential. Per-transfer amounts stay hidden either way — this checkbox only affects the announced total.</span>
+          </label>
+          <label class="checkbox-row">
+            <input id="e-mintable" type="checkbox">
+            <span class="cbx-body"><strong>Mintable</strong> — you (the etcher) can issue more supply later, signed by this wallet's key. Default off ⇒ supply is fixed at etch and can never increase. <strong>This choice is permanent</strong> — a fixed-supply asset can't be made mintable later.</span>
+          </label>
+          <div id="mintable-key-warning" style="display:none;margin-top:8px;padding:10px 12px;border:1px solid var(--red);background:#fff4f4;font-size:11px;color:var(--red);">
+            <strong>⚠ Back up your private key before etching.</strong> The mint authority is your wallet's local key. Clearing browser storage, losing the device, or switching browsers without exporting the key permanently freezes the supply — there is no recovery path. Click <strong>Export key</strong> on the Wallet tab and save the hex somewhere safe before you broadcast.
+          </div>
+          <details class="etch-why" style="margin-top:14px;">
+            <summary style="cursor:pointer;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);padding:6px 0;list-style:none;">
+              <span class="det-arrow">▸</span> Why is the supply hidden? · what gets pinned
+            </summary>
+            <div class="muted" style="padding-top:8px;border-top:1px dashed var(--ink-faint);margin-top:4px;line-height:1.6;">
+              The supply is committed to the chain via a 33-byte cryptographic commitment plus a ~700-byte zero-knowledge proof that the value is a valid 64-bit integer — only you know the actual number; observers see only the proof. The blinding factor that hides the supply is derived from your wallet's privkey, so a fresh device with just your key recovers the etched supply from chain data alone — no localStorage backup needed. Max supply per asset is ~1.84 × 10¹⁹ base units, which covers any realistic decimals setting. Etch is a 2-tx flow (commit + reveal) and broadcasts in seconds. Optional image / metadata is bundled into the envelope and propagates to recipients alongside the supply commitment.
+            </div>
+          </details>
+        </div>
       </div>
-      <div id="etch-error" class="error"></div>
-      <div id="etch-success" style="display:none;margin-top:18px;"></div>
+
+      <div class="wiz-step">
+        <div class="wiz-step-head">
+          <span class="wiz-step-num">4</span>
+          <span class="wiz-step-title">Review &amp; etch</span>
+        </div>
+        <div class="wiz-step-body">
+          <div id="etch-preview" style="display:none;"></div>
+          <div class="flex" style="margin-top:4px;">
+            <button id="btn-etch-preview">Preview etch</button>
+            <button id="btn-etch-broadcast" class="primary" disabled title="Click 'Preview etch' first to see what you're about to broadcast.">Etch &amp; broadcast</button>
+          </div>
+          <!-- Inline progress strip — hidden until broadcast starts. JS toggles
+               per-step .done / .active classes via setProgressStrip() so the
+               user sees a 4-stage timeline instead of a single disabled button.
+               Steps map to: pin metadata (skipped if none), prove rangeproof,
+               broadcast commit, broadcast reveal, index locally. -->
+          <div id="etch-progress" class="progress-strip" style="display:none;" aria-live="polite">
+            <div class="progress-step" data-step="0"><span class="progress-num">1</span><span class="progress-label">Build</span></div>
+            <div class="progress-step" data-step="1"><span class="progress-num">2</span><span class="progress-label">Submit</span></div>
+            <div class="progress-step" data-step="2"><span class="progress-num">3</span><span class="progress-label">Confirm</span></div>
+            <div class="progress-step" data-step="3"><span class="progress-num">4</span><span class="progress-label">Index</span></div>
+          </div>
+          <div id="etch-error" class="error"></div>
+          <div id="etch-success" style="display:none;margin-top:18px;"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -9429,77 +9474,100 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
       <div class="muted" style="font-size:12px;line-height:1.6;margin-bottom:14px;">
         Deploy a token with a fixed cap and per-mint amount. <strong>You receive zero tokens at deploy</strong> — anyone can mint until the cap fills.
       </div>
-      <div class="form-row two">
-        <div>
-          <label>Ticker (1–8 chars, A–Z 0–9)</label>
-          <input id="p-ticker" placeholder="FAIR" maxlength="8" autocomplete="off">
+
+      <div class="wiz-step">
+        <div class="wiz-step-head">
+          <span class="wiz-step-num">1</span>
+          <span class="wiz-step-title">Ticker, decimals, cap &amp; per-mint</span>
         </div>
-        <div>
-          <label>Decimals</label>
-          <input id="p-decimals" type="number" value="0" min="0" max="8">
-        </div>
-      </div>
-      <div class="form-row two" style="margin-top:8px;">
-        <div>
-          <label>Cap amount (lifetime total, display units)</label>
-          <input id="p-cap" type="text" inputmode="decimal" placeholder="e.g. 21000000">
-        </div>
-        <div>
-          <label>Per-mint amount (display units)</label>
-          <input id="p-limit" type="text" inputmode="decimal" placeholder="e.g. 1000">
-        </div>
-      </div>
-      <div id="p-divisibility-hint" class="muted" style="margin-top:6px;font-size:11px;"></div>
-      <label style="margin-top:14px;">Image URI (optional)</label>
-      <input id="p-image" type="text" placeholder="ipfs://bafybeih... or bare CID" spellcheck="false">
-      <details style="margin-top:10px;">
-        <summary class="muted" style="cursor:pointer;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);padding:6px 0;list-style:none;">
-          <span class="det-arrow">▸</span> Advanced: mint window (optional)
-        </summary>
-        <div style="padding-top:10px;border-top:1px dashed var(--ink-faint);margin-top:4px;">
-          <div class="muted" style="font-size:11px;margin-bottom:8px;line-height:1.5;">
-            Restrict T_PMINTs to a Bitcoin block-height window. Leave both blank (or 0) for open-ended minting until the cap fills — that's the default. <strong>Both fields are permanent and locked at deploy</strong>; can't be changed after broadcast.
-          </div>
+        <div class="wiz-step-body">
           <div class="form-row two">
             <div>
-              <label>Mint start height (optional)</label>
-              <input id="p-mint-start" type="number" min="0" max="4294967295" placeholder="e.g. 950000" autocomplete="off">
+              <label>Ticker (1–8 chars, A–Z 0–9)</label>
+              <input id="p-ticker" placeholder="FAIR" maxlength="8" autocomplete="off">
             </div>
             <div>
-              <label>Mint end height (optional)</label>
-              <input id="p-mint-end" type="number" min="0" max="4294967295" placeholder="e.g. 980000" autocomplete="off">
+              <label>Decimals</label>
+              <input id="p-decimals" type="number" value="0" min="0" max="8">
             </div>
           </div>
-          <div class="muted" style="font-size:11px;margin-top:8px;line-height:1.5;">
-            Validation: start must be ≥ <em>deploy block + 1</em>, end must be > start, both must fit in u32. If start = 0 the dapp uses <em>deploy block + 1</em>; if end = 0 minting stays open until the cap fills. SPEC §3.4.
+          <div class="form-row two" style="margin-top:8px;">
+            <div>
+              <label>Cap amount (lifetime total, display units)</label>
+              <input id="p-cap" type="text" inputmode="decimal" placeholder="e.g. 21000000">
+            </div>
+            <div>
+              <label>Per-mint amount (display units)</label>
+              <input id="p-limit" type="text" inputmode="decimal" placeholder="e.g. 1000">
+            </div>
+          </div>
+          <div id="p-divisibility-hint" class="muted" style="margin-top:6px;font-size:11px;"></div>
+          <div class="muted" style="margin-top:8px;font-size:11px;line-height:1.6;">
+            ⚠ Cap and per-mint amount are <strong>permanent</strong>; per-mint must divide the cap evenly. Minting opens at the next confirmed block after this deploy lands (or at the start height below, if set).
           </div>
         </div>
-      </details>
-      <div class="muted" style="margin-top:8px;font-size:11px;line-height:1.6;">
-        ⚠ Cap and per-mint amount are <strong>permanent</strong>; per-mint must divide the cap evenly. Minting opens at the next confirmed block after this deploy lands (or at the start height above, if set).
       </div>
-      <details class="etch-why" style="margin-top:14px;">
-        <summary style="cursor:pointer;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);padding:6px 0;list-style:none;">
-          <span class="det-arrow">▸</span> How is this different from a confidential etch?
-        </summary>
-        <div class="muted" style="padding-top:8px;border-top:1px dashed var(--ink-faint);margin-top:4px;line-height:1.6;">
-          Mints publicly reveal <code>(amount, blinding)</code>, so the cap is auditable from chain alone — supply is fully observable, unlike CETCH where supply is committed but hidden. The deploy is a 2-tx flow (commit + reveal). Once the cap fills, no more T_PMINTs are accepted. SPEC §3.4.
+
+      <div class="wiz-step">
+        <div class="wiz-step-head">
+          <span class="wiz-step-num">2</span>
+          <span class="wiz-step-title">Image &amp; mint window <span class="muted" style="font-weight:normal;font-size:11px;">· optional</span></span>
         </div>
-      </details>
-      <div class="flex" style="margin-top:18px;">
-        <button id="btn-petch-broadcast" class="primary">Deploy public-mint asset</button>
+        <div class="wiz-step-body">
+          <label>Image URI (optional)</label>
+          <input id="p-image" type="text" placeholder="ipfs://bafybeih... or bare CID" spellcheck="false">
+          <details style="margin-top:10px;">
+            <summary class="muted" style="cursor:pointer;font-size:11px;">Restrict minting to a block-height window</summary>
+            <div style="margin-top:10px;">
+              <div class="muted" style="font-size:11px;margin-bottom:8px;line-height:1.5;">
+                Restrict T_PMINTs to a Bitcoin block-height window. Leave both blank (or 0) for open-ended minting until the cap fills — that's the default. <strong>Both fields are permanent and locked at deploy</strong>; can't be changed after broadcast.
+              </div>
+              <div class="form-row two">
+                <div>
+                  <label>Mint start height (optional)</label>
+                  <input id="p-mint-start" type="number" min="0" max="4294967295" placeholder="e.g. 950000" autocomplete="off">
+                </div>
+                <div>
+                  <label>Mint end height (optional)</label>
+                  <input id="p-mint-end" type="number" min="0" max="4294967295" placeholder="e.g. 980000" autocomplete="off">
+                </div>
+              </div>
+              <div class="muted" style="font-size:11px;margin-top:8px;line-height:1.5;">
+                Validation: start must be ≥ <em>deploy block + 1</em>, end must be > start, both must fit in u32. If start = 0 the dapp uses <em>deploy block + 1</em>; if end = 0 minting stays open until the cap fills. SPEC §3.4.
+              </div>
+            </div>
+          </details>
+          <details class="etch-why" style="margin-top:14px;">
+            <summary style="cursor:pointer;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink-mid);padding:6px 0;list-style:none;">
+              <span class="det-arrow">▸</span> How is this different from a confidential etch?
+            </summary>
+            <div class="muted" style="padding-top:8px;border-top:1px dashed var(--ink-faint);margin-top:4px;line-height:1.6;">
+              Mints publicly reveal <code>(amount, blinding)</code>, so the cap is auditable from chain alone — supply is fully observable, unlike CETCH where supply is committed but hidden. The deploy is a 2-tx flow (commit + reveal). Once the cap fills, no more T_PMINTs are accepted. SPEC §3.4.
+            </div>
+          </details>
+        </div>
       </div>
-      <!-- Same 4-step strip as #etch-progress, scoped to the public-mint
-           deploy flow. Steps map to: build (TLB encode + optional pin),
-           commit broadcast, reveal broadcast, post-broadcast register. -->
-      <div id="petch-progress" class="progress-strip" style="display:none;" aria-live="polite">
-        <div class="progress-step" data-step="0"><span class="progress-num">1</span><span class="progress-label">Build</span></div>
-        <div class="progress-step" data-step="1"><span class="progress-num">2</span><span class="progress-label">Submit</span></div>
-        <div class="progress-step" data-step="2"><span class="progress-num">3</span><span class="progress-label">Confirm</span></div>
-        <div class="progress-step" data-step="3"><span class="progress-num">4</span><span class="progress-label">Register</span></div>
+
+      <div class="wiz-step">
+        <div class="wiz-step-head">
+          <span class="wiz-step-num">3</span>
+          <span class="wiz-step-title">Deploy</span>
+        </div>
+        <div class="wiz-step-body">
+          <button id="btn-petch-broadcast" class="primary">Deploy public-mint asset</button>
+          <!-- Same 4-step strip as #etch-progress, scoped to the public-mint
+               deploy flow. Steps map to: build (TLB encode + optional pin),
+               commit broadcast, reveal broadcast, post-broadcast register. -->
+          <div id="petch-progress" class="progress-strip" style="display:none;" aria-live="polite">
+            <div class="progress-step" data-step="0"><span class="progress-num">1</span><span class="progress-label">Build</span></div>
+            <div class="progress-step" data-step="1"><span class="progress-num">2</span><span class="progress-label">Submit</span></div>
+            <div class="progress-step" data-step="2"><span class="progress-num">3</span><span class="progress-label">Confirm</span></div>
+            <div class="progress-step" data-step="3"><span class="progress-num">4</span><span class="progress-label">Register</span></div>
+          </div>
+          <div id="petch-error" class="error"></div>
+          <div id="petch-success" style="display:none;margin-top:18px;"></div>
+        </div>
       </div>
-      <div id="petch-error" class="error"></div>
-      <div id="petch-success" style="display:none;margin-top:18px;"></div>
     </div>
   </div>
 </div>
@@ -11629,7 +11697,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=6eead5eb"></script>
+<script type="module" src="./tacit.js?cb=0438aeba"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for
