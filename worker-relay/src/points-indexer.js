@@ -763,16 +763,16 @@ async function scanZRouterCycle(store, { chainId, client, wethAddr, signal1 = tr
       const block = await getBlock(b);
       for (const tx of block.transactions) {
         if (tx.to && tx.to.toLowerCase() === ADDR.zRouter.toLowerCase() && tx.value > 0n) {
-          // swapV2/swapV3 refund any msg.value above the actual amountIn in the same tx — crediting raw
-          // tx.value here would let anyone with idle ETH send a wildly oversized value on a trivial intended
-          // swap, get almost all of it refunded, and be credited for the gross amount at near-zero real cost
-          // (a zfi review finding). Net out any internal ETH transfer from zRouter straight back to the
-          // sender within this same tx before crediting.
-          const netAmount = tx.value - await zRouterRefundTo(tx.hash, tx.from.toLowerCase());
-          if (netAmount <= 0n) continue;
+          // The raw value only, un-netted — refund-netting happens later, and ONLY once a real swap is
+          // confirmed (see the verification pass below). zRouter has a plain receive() fallback on every
+          // chain, so a bare, no-calldata ETH transfer (anyone, ~21k gas, including by mistake) is a valid
+          // Signal-1 candidate with zero internal transactions of any kind — genuinely, permanently, not due
+          // to indexing lag. Netting a refund here unconditionally used to run the Blockscout lookup on that
+          // candidate immediately, which reads as "not indexed" forever and would have halted this whole
+          // chain's cursor on a single trivial, freely-repeatable transaction (a real zfi finding).
           byTxHash.set(tx.hash, {
             blockNumber: tx.blockNumber, blockTime: Number(block.timestamp),
-            amountWei: netAmount, depositor: tx.from.toLowerCase(),
+            amountWei: tx.value, depositor: tx.from.toLowerCase(),
           });
         }
       }
@@ -796,14 +796,62 @@ async function scanZRouterCycle(store, { chainId, client, wethAddr, signal1 = tr
     });
   }
 
+  // Signal 3: the V4 PoolManager's own Swap event with sender == zRouter, for chains that skip Signal 1 —
+  // native-ETH V4 swaps never touch WETH, so Signal 2 can't see them either, and zSwap's L2 pages route
+  // meaningful native-ETH volume through exactly this path (a zfi review finding — it's not the small edge
+  // case first assumed). getLogs on a single known address costs the same regardless of chain throughput, no
+  // block bodies needed, so it doesn't reintroduce the OOM risk Signal 1 has on a fast L2. Mainnet skips this:
+  // Signal 1 already finds these there, and adding it would just be a redundant second discovery of the same
+  // candidate. Every candidate found here still goes through the same zRouterVerifiedSwapAmount check below —
+  // no new security surface, it's discovery-only.
+  if (!signal1 && V4_POOL_MANAGER[chainId]) {
+    const v4Logs = await client.getLogs({
+      address: V4_POOL_MANAGER[chainId], event: V4_SWAP_EVENT, args: { sender: ADDR.zRouter }, fromBlock: from, toBlock: confirmedTip,
+    });
+    for (const evt of v4Logs) {
+      if (byTxHash.has(evt.transactionHash)) continue;
+      const block = await getBlock(evt.blockNumber);
+      const tx = await client.getTransaction({ hash: evt.transactionHash });
+      if (tx.value <= 0n) continue; // a token/token V4 leg with zRouter as sender but no native ETH at all
+      byTxHash.set(evt.transactionHash, {
+        blockNumber: evt.blockNumber, blockTime: Number(block.timestamp),
+        amountWei: tx.value, depositor: tx.from.toLowerCase(),
+      });
+    }
+  }
+
   // Verify each candidate actually reached a real pool before trusting its raw amount — "ETH entered
   // zRouter" alone is not "ETH was swapped" (see zRouterVerifiedSwapAmount's own comment). A candidate with
-  // no verified leg is dropped entirely rather than credited at the unverified figure.
+  // no verified leg is dropped entirely rather than credited at the unverified figure. This RPC-only check
+  // runs before any Blockscout lookup and for every candidate, not just ones that survive it: a bare ETH
+  // transfer to zRouter (its plain receive() fallback, ~21k gas, anyone) verifies to 0 here and is dropped
+  // immediately, never reaching the refund-netting below — that ordering is itself the fix for the finding
+  // below, not just an optimization.
   const verifiedCandidates = [];
   for (const [txHash, candidate] of byTxHash.entries()) {
     const verified = await zRouterVerifiedSwapAmount(client, chainId, wethAddr, txHash, ADDR.zRouter);
     if (verified <= 0n) continue;
-    const amountWei = verified < candidate.amountWei ? verified : candidate.amountWei;
+    let amountWei = verified < candidate.amountWei ? verified : candidate.amountWei;
+    // Net a swapV2/swapV3 refund only now that a real swap is confirmed — mainnet Signal 1 only, the one
+    // signal that ever credits raw tx.value. Netting this unconditionally during discovery (this session's
+    // own earlier attempt) ran the Blockscout lookup on EVERY candidate, including plain transfers that will
+    // NEVER index any internal transaction — reading as "not indexed" forever and halting this chain's
+    // cursor on one freely-repeatable, trivial transaction (a real zfi finding). A genuinely fresh, real
+    // swap whose indexing hasn't caught up yet still retries the whole cycle (thrown, caught by main()'s
+    // loop); past a 30-minute grace window from its own block, an unindexed result is instead treated as no
+    // refund and logged, so a single permanently-stuck Blockscout entry can't block every candidate after it
+    // forever either.
+    if (chainId === 1 && signal1) {
+      try {
+        amountWei = candidate.amountWei - await zRouterRefundTo(txHash, candidate.depositor);
+        if (amountWei < 0n) amountWei = 0n;
+        if (amountWei > verified) amountWei = verified;
+      } catch (err) {
+        if (Date.now() / 1000 - candidate.blockTime < 1800) throw err;
+        log(`zRouter refund check still unindexed 30+ min after block time for ${txHash}, crediting gross:`, err?.message || err);
+      }
+    }
+    if (amountWei <= 0n) continue;
     verifiedCandidates.push([txHash, { ...candidate, amountWei }]);
   }
   const candidates = verifiedCandidates.sort((a, b) => (a[1].blockNumber < b[1].blockNumber ? -1 : a[1].blockNumber > b[1].blockNumber ? 1 : 0));
