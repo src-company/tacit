@@ -801,6 +801,19 @@ const ZROUTER_CHAINS = [
 // both replays cover, so it can never throw) rather than the swap's own chain-local block: with a multi-hour
 // trailing window, the skew between "at the swap" and "now" is immaterial.
 
+// The shared explorerGet (lib/evm-pool-points.js) has no timeout either — a second real hang found live in
+// the same incident as blockscoutFetch above: internalEthTransferSum's per-candidate lookups go through it,
+// and one stuck connection there froze the pipeline again even after blockscoutFetch's own fix landed. Same
+// headers and contract as explorerGet (including the user-agent Robinhood's Blockscout requires), timeout-
+// bounded instead of going through the shared, un-timed-out helper.
+async function explorerGetTimed(url) {
+  const res = await fetch(url, {
+    headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (compatible; tacit-points)' },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`explorer ${res.status} ${url}`);
+  return res.json();
+}
 // A few quick retries with backoff before giving up on a single Blockscout call — observed in production:
 // its own gateway (524, a Cloudflare origin timeout) can time out transiently on the internal-transactions
 // endpoint specifically, on an otherwise perfectly real, already-settled historical transaction. Without
@@ -810,7 +823,7 @@ const ZROUTER_CHAINS = [
 async function explorerGetWithRetry(url, attempts = 3) {
   for (let i = 0; i < attempts; i++) {
     try {
-      return await explorerGet(url);
+      return await explorerGetTimed(url);
     } catch (err) {
       if (i === attempts - 1) throw err;
       await new Promise((r) => setTimeout(r, 500 * 2 ** i));
