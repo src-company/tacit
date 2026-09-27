@@ -618,8 +618,17 @@ async function zRouterVerifiedSwapAmount(client, chainId, wethAddr, txHash, zRou
       let decoded;
       try { decoded = decodeEventLog({ abi: [V4_SWAP_EVENT], data: log.data, topics: log.topics }); } catch { continue; }
       if (decoded.args.sender.toLowerCase() !== zRouter.toLowerCase()) continue;
-      if (-decoded.args.amount0 === tx.value) total += tx.value;
-      else if (-decoded.args.amount1 === tx.value) total += tx.value; // native ETH always sorts as currency0 in practice; kept for robustness
+      const paidIn = -decoded.args.amount0 === tx.value ? tx.value : -decoded.args.amount1 === tx.value ? tx.value : 0n;
+      if (paidIn === 0n) continue;
+      // V4 pools are permissionless — a matching NUMBER alone proves nothing: a farmer can initialize their
+      // own junk/junk pool, swap an amount that happens to equal tx.value, and separately sweep the real ETH
+      // straight back out untouched (a second zfi finding on this same check). Confirm real native ETH
+      // actually reached PoolManager: it can only receive native ETH as call value on zRouter's own settle()
+      // call, never for a token leg, so this must show an internal transfer of exactly that amount.
+      const apiBase = CFG.evmPoolExplorerApis[chainId];
+      if (apiBase && await internalEthTransferSum(apiBase, txHash, zRouter, V4_POOL_MANAGER[chainId]) >= paidIn) {
+        total += paidIn;
+      }
     }
   }
   return total;
@@ -674,18 +683,19 @@ const ZROUTER_CHAINS = [
 // Throws rather than fails open on a lookup error: crediting the unnetted gross value is exactly the
 // overcounting this exists to prevent, so a transient failure here should retry next cycle, not silently
 // trust the larger number.
-async function zRouterRefundTo(txHash, sender) {
-  const res = await fetch(`${PP_BLOCKSCOUT_BASE}/transactions/${txHash}/internal-transactions`);
-  if (!res.ok) throw new Error(`blockscout internal-transactions ${res.status}`);
-  const data = await res.json();
-  let refunded = 0n;
+async function internalEthTransferSum(apiBase, txHash, from, to) {
+  const data = await explorerGet(`${apiBase}/transactions/${txHash}/internal-transactions`);
+  let sum = 0n;
   for (const item of data.items || []) {
     if (item.success === false) continue;
-    const from = item.from && String(item.from.hash).toLowerCase();
-    const to = item.to && String(item.to.hash).toLowerCase();
-    if (from === ADDR.zRouter.toLowerCase() && to === sender) refunded += BigInt(item.value || 0);
+    const itemFrom = item.from && String(item.from.hash).toLowerCase();
+    const itemTo = item.to && String(item.to.hash).toLowerCase();
+    if (itemFrom === from.toLowerCase() && itemTo === to.toLowerCase()) sum += BigInt(item.value || 0);
   }
-  return refunded;
+  return sum;
+}
+async function zRouterRefundTo(txHash, sender) {
+  return internalEthTransferSum(PP_BLOCKSCOUT_BASE, txHash, ADDR.zRouter, sender);
 }
 async function scanZRouterCycle(store, { chainId, client, wethAddr, signal1 = true }) {
   const cursorBlock = store.loadZrouterCursor(chainId);
