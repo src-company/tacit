@@ -16,6 +16,7 @@ import { loadKeeperConfig, checkKeeperSigner } from './lib/evm-pool-keeper-confi
 import { openKeeperStore } from './lib/evm-pool-keeper-store.js';
 import { makeKeeperChain } from './lib/evm-pool-keeper-chain.js';
 import { makeLeafSync } from './lib/evm-pool-keeper-leaves.js';
+import { makePipeline } from './lib/evm-pool-keeper-pipeline.js';
 import { makeKeeperProver, loadZk } from './lib/evm-pool-keeper-prover.js';
 import { createIntakeHandler } from './lib/evm-pool-keeper-intake.js';
 import { createKeeper } from './lib/evm-pool-keeper-loop.js';
@@ -38,14 +39,15 @@ async function main() {
   const prover = await makeKeeperProver(cfg);
   const store = openKeeperStore(cfg.dbPath);
   const leafSync = makeLeafSync({ store, chain, zk, startBlock: cfg.startBlock, confirmations: cfg.confirmations, logChunk: cfg.logChunk, log });
-  const keeper = createKeeper({ store, chain, prover, zk, assetField, leafSync, cfg, log });
+  const pipeline = cfg.pipeline ? makePipeline({ chain, verify: prover.verify, assetField, baseTree: () => leafSync.sync(), maxDepth: cfg.pipelineDepth, log }) : null;
+  const keeper = createKeeper({ store, chain, prover, zk, assetField, leafSync, pipeline, cfg, log });
 
   const assetKey = chain.asset.toLowerCase();
   if (!cfg.minFees.has(assetKey) && !cfg.rates.has(assetKey)) log(`warning: no EVM_POOL_KEEPER_MIN_FEES or _TOKEN_RATES entry for the pool asset ${assetKey}; deposits will be skipped`);
   log(`keeper ${account.address} on chain ${chain.chainId}: pool ${chain.pool} router ${chain.router} asset ${chain.asset} vk ${prover.vkHash.slice(0, 16)}${cfg.dryRun ? ' (dry run)' : ''}`);
 
   let lastTickOk = true;
-  const handler = createIntakeHandler({ store, chain, zk, assetField, cfg, log, leafSync, isReady: () => lastTickOk });
+  const handler = createIntakeHandler({ store, chain, zk, assetField, cfg, log, leafSync, pipeline, isReady: () => lastTickOk });
   createServer(handler).listen(cfg.port, () => log(`listening on ${cfg.port}`));
 
   let lastHistory = 0;

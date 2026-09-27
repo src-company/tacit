@@ -4,6 +4,11 @@
 //   POST /evm-pool/keeper/wrap     a wrap intent
 //   POST /evm-pool/keeper/receive  { chainId, npk, feeBps }: a receive box to watch and sweep
 //   GET  /evm-pool/keeper/quote    the relayer address and fee to prove a relayed transaction with
+//   POST /evm-pool/keeper/reserve  { outLeaf0, outLeaf1, nfs }: a slot in the queue for a transfer or withdrawal about
+//                                  to be proven: the root and index to prove from, and the leaves queued ahead;
+//                                  then /relay { tx, reservation: id } within its time, or /cancel { reservation }
+//   GET  /evm-pool/keeper/head     { root, size, pending, tail }: the pool's head and the insertions queued after it;
+//                                  an unreserved relay proven against `tail` takes the next slot
 //   GET  /evm-pool/keeper/events?from=<block>   confirmed pool Transact and router Received events, whole blocks
 //                                  from..through; a wallet checks what it builds from them against the pool
 //   POST /evm-pool/keeper/relay    { tx, call?, wrap? }: submit a user's own proven withdrawal or transfer that pays
@@ -16,6 +21,7 @@ import { depositIntent, callIntent, callEscrowAddress } from '../../../dapp/evm-
 import { P_FR } from '../../../dapp/btc-pool-zk.js';
 import { ETH } from './evm-pool-keeper-config.js';
 import { coverCheck, quoteFee } from './evm-pool-keeper-loop.js';
+import { PipelineError } from './evm-pool-keeper-pipeline.js';
 import { revertName as defaultRevertName } from './evm-pool-keeper-chain.js';
 import { safeErr } from './safe-err.js';
 
@@ -281,9 +287,26 @@ const EVENTS_PAGE = 5000;
 
 export function createIntakeHandler({
   store, chain, zk, assetField, cfg, now = () => Math.floor(Date.now() / 1000), log = () => {}, isReady = () => true,
-  revertName = defaultRevertName, leafSync = null,
+  revertName = defaultRevertName, leafSync = null, pipeline = null,
 }) {
   const limited = makeRateLimiter({ perMin: cfg.ratePerMin, burst: Math.max(1, Math.min(10, cfg.ratePerMin)) });
+  // Reads a wallet makes around every spend (head, quote, events) have their own, larger allowance.
+  const readLimited = makeRateLimiter({ perMin: cfg.ratePerMin * 6, burst: Math.max(1, Math.min(30, cfg.ratePerMin * 3)) });
+  // /head is cached for a second, and until the queue changes, so many wallets polling it cost a few reads.
+  let headCache = null;
+  async function headNow() {
+    const size = pipeline ? pipeline.size() : 0;
+    if (headCache && Date.now() - headCache.at < 1000 && headCache.size === size) return headCache.value;
+    let value;
+    if (pipeline) value = await pipeline.head();
+    else {
+      const { root, nextIndex } = await chain.poolState();
+      const h = { root: BigInt(root).toString(), size: BigInt(nextIndex).toString() };
+      value = { ...h, pending: [], tail: h };
+    }
+    headCache = { at: Date.now(), size, value };
+    return value;
+  }
   const view = (r) => (r.kind === 'receive'
     ? { box: r.box, kind: r.kind, status: r.status === 'pending' ? 'watching' : r.status, ...(r.note ? { note: r.note } : {}) }
     : { box: r.box, kind: r.kind, status: r.status, reward: r.reward, ...(r.tx_hash ? { txHash: r.tx_hash } : {}) });
@@ -364,21 +387,80 @@ export function createIntakeHandler({
     };
   }
 
+  const asIntake = (e) => (e instanceof PipelineError ? Object.assign(new IntakeError(e.status, e.message), { stale: !!e.stale }) : e);
+  const txOf = (args) => { const [pA, pB, pC, publicInputs, recipient, extAmount, relayer, fee, memo0, memo1] = args; return { pA, pB, pC, publicInputs, recipient, extAmount, relayer, fee, memo0, memo1 }; };
+
+  // With a pipeline, a transaction that inserts notes joins the keeper's queue: a plain transfer or withdrawal in the
+  // slot it reserved (or, unreserved, at the tail it was proven against), checked off chain; a call or wrap only
+  // at the front of an empty queue, where it can be simulated. Its fee is checked before it is queued.
   async function relay(body) {
-    const { args, fee, functionName, sendArgs, wrap } = parseRelaySubmission(body, { keeper: chain.address, cfg, router: chain.router, now: now() });
+    const parsed = parseRelaySubmission(body, { keeper: chain.address, cfg, router: chain.router, now: now() });
+    const { args, fee, wrap, functionName, sendArgs } = parsed;
     if (wrap) {
       if (!chain.v1 || chain.v1.toLowerCase() === ETH) throw bad('this router has no wrap target');
       if ((await chain.wrapBoxOf(wrap)).toLowerCase() !== args[4].toLowerCase()) throw bad('tx.recipient is not the wrap intent\'s box');
     }
+    const inserts = args[3][9] !== 0n || args[3][10] !== 0n;
+    if (!pipeline || !inserts) return relayChecked(parsed);
+    const plain = functionName === 'pool.transact';
+    if (!plain && await pipeline.busy()) throw new IntakeError(429, 'transactions ahead of this one are still landing; try again in a few seconds');
+    let est = cfg.relayGas;
+    if (!plain) {
+      try { est = await chain.estimate(functionName, sendArgs); }
+      catch (e) {
+        const name = revertName(e);
+        if (STALE.has(name)) throw Object.assign(new IntakeError(409, `${name}: re-prove against the pool's current root`), { stale: true });
+        throw bad(name ? `the transaction reverts: ${name}` : 'the transaction reverts');
+      }
+    }
+    const price = await gasPrice();
+    const cov = coverCheck({ reward: fee, token: chain.asset, gas: est, gasPrice: price, cfg });
+    if (!cov.ok) throw Object.assign(bad(`fee too low: ${cov.reason}`), { needFee: quoteFee({ token: chain.asset, gas: est, gasPrice: price, cfg }).toString() });
+    if (cfg.dryRun) return { dryRun: true, gas: est.toString() };
+    const send = async ({ simulate }) => {
+      const hash = await chain.send(functionName, sendArgs, { gas: cov.gas, simulate });
+      log(`relayed ${plain ? (args[5] < 0n ? 'withdrawal' : 'transfer') : functionName} ${hash} fee ${fee}${simulate ? '' : ' (queued)'}`);
+      return hash;
+    };
+    const opts = { chainId: chain.chainId, pool: chain.pool, front: !plain };
+    try {
+      const hash = body.reservation != null
+        ? await pipeline.fulfil(String(body.reservation), txOf(args), send, opts)
+        : await pipeline.append(txOf(args), send, opts);
+      return { txHash: hash };
+    } catch (e) {
+      const name = revertName(e);
+      if (STALE.has(name) || name === 'AlreadyNullified') throw Object.assign(new IntakeError(409, `${name}: re-prove against the pool's current root`), { stale: true });
+      if (name) throw bad(`the transaction reverts: ${name}`);
+      throw asIntake(e);
+    }
+  }
+
+  // A slot in the queue for a transaction about to be proven: { outLeaf0, outLeaf1, nfs }.
+  async function reserve(body, owner) {
+    if (!pipeline) throw new IntakeError(404, 'this keeper does not queue');
+    const b = obj(body, 'body');
+    const outLeaf = [uint(b.outLeaf0, 'outLeaf0', P_FR), uint(b.outLeaf1, 'outLeaf1', P_FR)];
+    if (outLeaf[0] === 0n && outLeaf[1] === 0n) throw bad('nothing to insert: no slot needed');
+    if (!Array.isArray(b.nfs) || b.nfs.length > 2) throw bad('nfs must list at most two nullifiers');
+    const nfs = b.nfs.map((x, i) => uint(x, `nfs[${i}]`, P_FR));
+    try { return { chainId: chain.chainId, pool: chain.pool, ...(await pipeline.reserve({ outLeaf, nfs, owner })) }; }
+    catch (e) { throw asIntake(e); }
+  }
+
+  // queued: follows the keeper's unmined transactions, so it is sent unsimulated at the relay gas budget.
+  async function relayChecked({ args, fee, functionName, sendArgs }, { queued = false } = {}) {
     const keys = relayKeys(args);
     const t0 = Date.now();
     if (busyKeys(keys, t0)) throw Object.assign(new IntakeError(409, 'this spend is already being relayed'), { stale: true });
-    let est;
-    try { est = await chain.estimate(functionName, sendArgs); }
-    catch (e) {
-      const name = revertName(e);
-      if (STALE.has(name)) throw Object.assign(new IntakeError(409, `${name}: re-prove against the pool's current root`), { stale: true });
-      throw bad(name ? `the transaction reverts: ${name}` : 'the transaction reverts');
+    let est = cfg.relayGas;
+    if (!queued) {
+      try { est = await chain.estimate(functionName, sendArgs); }
+      catch (e) {
+        const name = revertName(e);
+        if (STALE.has(name)) throw Object.assign(new IntakeError(409, `${name}: re-prove against the pool's current root`), { stale: true });
+        throw bad(name ? `the transaction reverts: ${name}` : 'the transaction reverts');
+      }
     }
     const price = await gasPrice();
     const cov = coverCheck({ reward: fee, token: chain.asset, gas: est, gasPrice: price, cfg });
@@ -388,7 +470,7 @@ export function createIntakeHandler({
     const hold = Date.now() + cfg.receiptWaitSecs * 1000;
     for (const k of keys) inflight.set(k, hold);
     let hash;
-    try { hash = await chain.send(functionName, sendArgs, { gas: cov.gas }); }
+    try { hash = await chain.send(functionName, sendArgs, { gas: cov.gas, simulate: !queued }); }
     catch (e) {
       for (const k of keys) inflight.delete(k);
       const name = revertName(e);
@@ -425,16 +507,33 @@ export function createIntakeHandler({
       }
       if (p === `${PREFIX}/events` && req.method === 'GET') {
         if (!leafSync) return send(404, { error: 'no event feed' });
-        if (!limited(clientKey(req))) throw new IntakeError(429, 'rate limited');
+        if (!readLimited(clientKey(req))) throw new IntakeError(429, 'rate limited');
         const from = url.searchParams.get('from') ?? '0';
         if (!/^\d{1,12}$/.test(from)) throw bad('from must be a block number');
         const { events, through } = leafSync.eventsFrom(Number(from), EVENTS_PAGE);
         return send(200, { chainId: chain.chainId, pool: chain.pool, router: chain.router, from: Number(from), through, events });
       }
+      if (p === `${PREFIX}/head` && req.method === 'GET') {
+        if (!readLimited(clientKey(req))) throw new IntakeError(429, 'rate limited');
+        return send(200, { chainId: chain.chainId, pool: chain.pool, ...(await headNow()) });
+      }
       if (p === `${PREFIX}/quote` && req.method === 'GET') {
         if (!cfg.relay) return send(404, { error: 'relaying is off' });
-        if (!limited(clientKey(req))) throw new IntakeError(429, 'rate limited');
+        if (!readLimited(clientKey(req))) throw new IntakeError(429, 'rate limited');
         return send(200, await quote(url.searchParams.get('gas')));
+      }
+      if (p === `${PREFIX}/reserve` && req.method === 'POST') {
+        if (!cfg.relay) return send(404, { error: 'relaying is off' });
+        if (!limited(clientKey(req))) throw new IntakeError(429, 'rate limited');
+        return send(200, await reserve(await readJson(req, cfg.maxBody), clientKey(req)));
+      }
+      if (p === `${PREFIX}/cancel` && req.method === 'POST') {
+        if (!pipeline) return send(404, { error: 'this keeper does not queue' });
+        if (!readLimited(clientKey(req))) throw new IntakeError(429, 'rate limited');
+        const b = obj(await readJson(req, cfg.maxBody), 'body');
+        if (typeof b.reservation !== 'string' || !/^[0-9a-f]{24}$/.test(b.reservation)) throw bad('reservation must be a reservation id');
+        await pipeline.cancel(b.reservation);
+        return send(200, { ok: true });
       }
       if (p === `${PREFIX}/relay` && req.method === 'POST') {
         if (!cfg.relay) return send(404, { error: 'relaying is off' });

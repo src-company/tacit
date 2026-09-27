@@ -68,6 +68,9 @@ if (![cfg.wasm, cfg.zkey, cfg.vk].every(existsSync)) {
     const mine = toSolidityProof(proof, publicSignals);
     const big = (x) => (Array.isArray(x) ? x.map(big) : BigInt(x));
     assert.deepEqual([mine.pA, mine.pB, mine.pC, mine.publicInputs], big(cd));
+    assert.equal(await prover.verify(p), true, 'a calldata-shaped proof verifies');
+    assert.equal(await prover.verify({ ...p, publicInputs: p.publicInputs.map((x, i) => (i === 5 ? x ^ 1n : x)) }), false, 'a changed public input does not');
+    assert.equal(await prover.verify({ ...p, pA: [p.pA[0], p.pA[1] ^ 1n] }), false, 'a changed proof does not');
   });
 }
 

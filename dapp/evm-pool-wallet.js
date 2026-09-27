@@ -17,6 +17,7 @@
 import { secp, keccak_256, sha256, hmac, concatBytes } from './vendor/tacit-deps.min.js';
 import { makeBtcShieldedPool } from './btc-shielded-pool.js';
 import { poolAsset, extDataHash } from './evm-pool-zk.js';
+import { sharedSecrets } from './evm-pool-scan.js';
 import { receiveKeys, receivedNote, receiveBoxAddress, sweepWitness, callIntent, callEscrowAddress, callIntentJson, calldata, selector, bridgeEthCall, L2_BRIDGES, RECEIVE_FEE_BPS, RECEIVE_INDEX } from './evm-pool-gateway.js';
 
 export const MEMO_LEN = 65;
@@ -75,17 +76,33 @@ export function sealNote(zk, { to, value, asset, e = randomScalar() }) {
   return { v, npk: o.npk, rho: o.rho, leaf: zk.leafOf(asset, v, o.npk, o.rho), memo: concatBytes(G.multiply(BigInt(e)).toRawBytes(true), seal(s, v)) };
 }
 
-// The owned note behind (memo, leaf), or null: { v, rho, sk, nk, npk, s }.
-export function openNote(zk, keys, { memo, leaf, asset }) {
-  const m = memo instanceof Uint8Array ? memo : unhex(memo);
-  if (m.length !== MEMO_LEN) return null;
-  let s;
-  try { s = secp.ProjectivePoint.fromHex(m.subarray(0, 33)).multiply(keys.v).toRawBytes(true); } catch { return null; }
-  const v = open(s, m.subarray(33));
+const memoBytes = (memo) => (memo instanceof Uint8Array ? memo : unhex(memo));
+function opened(zk, keys, s, sealed, { leaf, asset }) {
+  const v = open(s, sealed);
   if (v === null || v >= VMAX) return null;
   const o = zk.ownedKeys(keys.zkWallet, s);
   if (zk.leafOf(asset, v, o.npk, o.rho) !== BigInt(leaf)) return null;
   return { v, rho: o.rho, sk: o.sk, nk: o.nk, npk: o.npk, s };
+}
+
+// The owned note behind (memo, leaf), or null: { v, rho, sk, nk, npk, s }.
+export function openNote(zk, keys, item) {
+  const m = memoBytes(item.memo);
+  if (m.length !== MEMO_LEN) return null;
+  let s;
+  try { s = secp.ProjectivePoint.fromHex(m.subarray(0, 33)).multiply(keys.v).toRawBytes(true); } catch { return null; }
+  return opened(zk, keys, s, m.subarray(33), item);
+}
+
+// openNote for each of [{ memo, leaf, asset }], with the shared secrets computed as one batch.
+export function openNotes(zk, keys, items) {
+  const ms = items.map((it) => memoBytes(it.memo));
+  const live = [];
+  ms.forEach((m, i) => { if (m.length === MEMO_LEN) live.push(i); });
+  const ss = sharedSecrets(keys.v, live.map((i) => ms[i].subarray(0, 33)));
+  const out = items.map(() => null);
+  live.forEach((i, j) => { if (ss[j]) out[i] = opened(zk, keys, ss[j], ms[i].subarray(33), items[i]); });
+  return out;
 }
 
 // A recipient from a Secret Sats address string.
@@ -242,7 +259,14 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     const tree = state.tree.clone();
     const received = new Map(receipts.map((r) => [r.index, r]));
     const leafAt = new Map();
-    for (const t of transacts) {
+    const want = [];
+    transacts.forEach((t, i) => {
+      if (t.outLeaf[0] === 0n && t.outLeaf[1] === 0n) return;
+      for (let k = 0; k < 2; k++) if (t.outLeaf[k] !== 0n && !received.has(t.firstIndex + k) && t.memo[k].length) want.push([i, k]);
+    });
+    const found = openNotes(zk, keys, want.map(([i, k]) => ({ memo: transacts[i].memo[k], leaf: transacts[i].outLeaf[k], asset })));
+    const opens = new Map(want.map(([i, k], j) => [`${i}:${k}`, found[j]]));
+    for (const [i, t] of transacts.entries()) {
       for (const nf of t.nf) if (nf !== 0n) spent.add(nf.toString());
       if (t.outLeaf[0] === 0n && t.outLeaf[1] === 0n) continue;
       if (t.firstIndex !== tree.size) throw new Error(`evm-pool-wallet: leaf ${t.firstIndex} out of order (have ${tree.size})`);
@@ -253,7 +277,7 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
         if (t.outLeaf[k] === 0n) continue;
         if (received.has(index)) { track.push(index); continue; }
         if (!t.memo[k].length) continue;
-        const o = openNote(zk, keys, { memo: t.memo[k], leaf: t.outLeaf[k], asset });
+        const o = opens.get(`${i}:${k}`);
         if (o && o.v > 0n) {
           track.push(index);
           notes.set(`${index}`, withKeys({ index, leaf: t.outLeaf[k].toString(), v: o.v.toString(), rho: o.rho.toString(), s: hex(o.s), block: t.block, tx: t.tx, kind: 'memo' }));
@@ -374,16 +398,23 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
 
   // ── spending ──
 
-  async function keeperGet(path) {
+  // A busy keeper answers 429 with Retry-After: wait and ask again a few times.
+  async function keeperFetch(path, init) {
     if (!keeper) throw new Error('no relayer is configured for this chain');
-    const r = await fetchImpl(`${keeper}${path}`);
+    for (let i = 0; ; i++) {
+      const r = await fetchImpl(`${keeper}${path}`, init);
+      if (r.status !== 429 || i >= 4) return r;
+      await new Promise((ok) => setTimeout(ok, (Number(r.headers?.get?.('retry-after')) || 3) * 1000 * (0.5 + Math.random())));
+    }
+  }
+  async function keeperGet(path) {
+    const r = await keeperFetch(path);
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || `relayer returned ${r.status}`);
     return j;
   }
   async function keeperPost(path, body) {
-    if (!keeper) throw new Error('no relayer is configured for this chain');
-    const r = await fetchImpl(`${keeper}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const r = await keeperFetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     return { status: r.status, body: j };
   }
@@ -421,28 +452,102 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     return signer.send({ to, data, value: BigInt(value) });
   }
 
+  const sleep =(ms) => new Promise((r) => setTimeout(r, ms));
+  const jitter = (round) => sleep(Math.min(8000, 500 * 2 ** round) * (0.5 + Math.random()));
+
+  // The tree a relayed insertion is proven against: this wallet's, plus the insertions the keeper has queued after
+  // the pool's head (GET /head), checked to reach the keeper's announced tail. With `empty`, waits for an empty
+  // queue (a call or wrap is simulated, so it cannot follow unmined ones). null: prove against the wallet's own.
+  async function queueTail(empty) {
+    for (let i = 0; i < 30; i++) {
+      let h;
+      try { h = await keeperGet('/head'); } catch { return null; }
+      if (empty && h.pending.length) { await sleep(3000); continue; }
+      let t = state().tree;
+      if (BigInt(h.root) !== t.root) {
+        await sync();
+        t = state().tree;
+        if (BigInt(h.root) !== t.root) { if (BigInt(h.size) >= BigInt(t.size)) { await sleep(1500); continue; } return null; }
+      }
+      const c = t.clone();
+      c.append(h.pending.flatMap((x) => [BigInt(x.outLeaf0), BigInt(x.outLeaf1)]));
+      return c.root === BigInt(h.tail.root) ? c : null;
+    }
+    return null;
+  }
+
+  // A slot in the keeper's queue for a transaction inserting `sealed`'s leaves and spending `ins`, and the tree to
+  // prove it against: this wallet's, plus the leaves queued ahead of the slot. Many wallets prove at once, each in
+  // its own slot. → { id, tree }, 'stale' (a spend is queued already: wait), or null (prove without a slot).
+  async function reserveSlot(sealed, ins) {
+    const leaf = (k) => String(sealed[k] ? sealed[k].leaf : 0n);
+    let r;
+    try {
+      const res = await keeperPost('/reserve', { outLeaf0: leaf(0), outLeaf1: leaf(1), nfs: ins.map((n) => n.nf) });
+      if (res.status === 409) return 'stale';
+      if (res.status !== 200) return null;
+      r = res.body;
+    } catch { return null; }
+    for (let i = 0; i < 3; i++) {
+      let t = state().tree;
+      if (BigInt(r.root) !== t.root) { await sync(); t = state().tree; }
+      if (BigInt(r.root) === t.root) {
+        const c = t.clone();
+        c.append(r.pending.flatMap((x) => [BigInt(x.outLeaf0), BigInt(x.outLeaf1)]));
+        if (c.root === BigInt(r.oldRoot) && c.size === Number(r.start)) return { id: r.id, tree: c };
+        break;
+      }
+      await sleep(1000);
+    }
+    await releaseSlot(r.id);
+    return null;
+  }
+  const releaseSlot = (id) => keeperPost('/cancel', { reservation: id }).catch(() => {});
+
+  // true once mined, false if it reverted, true on no answer in time (it may still land; sync will tell).
+  async function landed(hash) {
+    for (let i = 0; i < 90; i++) {
+      const r = await chain.rpc('eth_getTransactionReceipt', [hash]).catch(() => null);
+      if (r) return r.status === '0x1' || r.status === 1 || r.status === 'success';
+      await sleep(2000);
+    }
+    return true;
+  }
+
   // One transaction: spends `ins`, creates `outs` ([{ to, value } | null] × 2) and moves `extAmount` across the pool
   // boundary (> 0 in from the signer, < 0 out to `recipient`). With a relayer's quote `q` the relayer submits it
-  // for q.fee; without, the signer does and pays the gas. Re-proves when another transaction lands first. → tx hash.
+  // for q.fee, proven to follow what the relayer has queued; without, the signer does and pays the gas. Waits for
+  // it to be mined and proves again when another transaction lands first. → tx hash.
   // selfCall(tx) → { to, data }: what the signer submits, when not pool.transact (withdrawToV1).
   async function transact({ ins, outs, extAmount = 0n, recipient = ZERO, q = null, extra = {}, selfCall = null, onStep = () => {} }) {
     const sealed = outs.map((o) => (o ? sealNote(zk, { to: o.to, value: o.value, asset }) : null));
     const memo0 = sealed[0]?.memo ?? new Uint8Array(), memo1 = sealed[1]?.memo ?? new Uint8Array();
     const fee = q ? BigInt(q.fee) : 0n, relayer = q ? q.relayer : ZERO;
     const inputs = [...ins.map(asInput), ...Array(2 - ins.length).fill({ dummy: true })];
-    for (let round = 0; round < 4; round++) {
-      if (round) { onStep('someone else got in first, proving again'); await sync(); }
+    const inserts = sealed.some(Boolean);
+    const simulated = !!(extra.call || extra.wrap);
+    for (let round = 0; round < 8; round++) {
+      if (round) { onStep('someone else got in first, proving again'); await jitter(round); await sync(); }
+      let tree = state().tree, slot = null;
+      if (q && inserts && !simulated) {
+        const r = await reserveSlot(sealed, ins);
+        if (r === 'stale') continue;
+        if (r) { slot = r.id; tree = r.tree; }
+      } else if (q && inserts) tree = (await queueTail(true)) || tree;
       const eh = extDataHash({ chainId: BigInt(chain.chainId), pool: chain.pool, recipient, extAmount, relayer, fee, memo0, memo1 });
-      const w = zk.buildWitness({ asset, tree: state().tree, inputs, outputs: sealed.map((o) => (o ? { v: o.v, npk: o.npk, rho: o.rho } : null)), extAmount, fee, extDataHash: eh });
+      const w = zk.buildWitness({ asset, tree, inputs, outputs: sealed.map((o) => (o ? { v: o.v, npk: o.npk, rho: o.rho } : null)), extAmount, fee, extDataHash: eh });
       onStep('proving on this device');
-      const { proof, publicSignals } = await prove(w.input);
+      let proved;
+      try { proved = await prove(w.input); } catch (e) { if (slot) await releaseSlot(slot); throw e; }
+      const { proof, publicSignals } = proved;
       const tx = toTx(proof, publicSignals, { recipient, extAmount: extAmount.toString(), relayer, fee: fee.toString(), memo0: hex(memo0), memo1: hex(memo1) });
       let h;
       if (q) {
         onStep('sending through the relayer');
-        const r = await keeperPost('/relay', { tx, ...extra });
+        const r = await keeperPost('/relay', { tx, ...extra, ...(slot ? { reservation: slot } : {}) });
         if (r.status === 409 && r.body.stale) continue;
-        if (r.status !== 200 || !r.body.txHash) throw new Error(r.body.error || `relayer returned ${r.status}`);
+        if (r.status === 429) { await sleep(5000); continue; }
+        if (r.status !== 200 || !r.body.txHash) { if (slot) await releaseSlot(slot); throw new Error(r.body.error || `relayer returned ${r.status}`); }
         h = r.body.txHash;
       } else {
         const c = selfCall ? selfCall(tx) : { to: chain.pool, data: transactData(tx) };
@@ -450,7 +555,9 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
         if (!h) continue;
       }
       for (const n of ins) pending.add(n.nf);
-      return h;
+      onStep('waiting for it to be mined');
+      if (await landed(h)) return h;
+      for (const n of ins) pending.delete(n.nf);
     }
     throw new Error('the pool kept moving; try again');
   }

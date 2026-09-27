@@ -6,7 +6,8 @@
 // A deposit proof inserts at the pool's current root, so any transaction that lands first makes it stale. The
 // pool reverts StaleRoot / WrongInsertionIndex; the keeper resyncs and re-proves, a bounded number of times.
 
-import { completionWitness, sweepWitness } from '../../../dapp/evm-pool-gateway.js';
+import { completionWitness, sweepWitness, receiveRho } from '../../../dapp/evm-pool-gateway.js';
+import { PipelineError } from './evm-pool-keeper-pipeline.js';
 import { depositIntentArgs, wrapIntentArgs, hintArgs } from './evm-pool-keeper-intake.js';
 import { revertName as defaultRevertName } from './evm-pool-keeper-chain.js';
 import { ETH } from './evm-pool-keeper-config.js';
@@ -49,7 +50,7 @@ export function quoteFee({ token, gas, gasPrice, cfg, floor = true }) {
 const hexOf = (m) => (typeof m === 'string' ? m : '0x' + Buffer.from(m).toString('hex'));
 
 export function createKeeper({
-  store, chain, prover, zk, assetField, leafSync, cfg,
+  store, chain, prover, zk, assetField, leafSync, pipeline = null, cfg,
   now = () => Math.floor(Date.now() / 1000), log = () => {}, revertName = defaultRevertName,
 }) {
   const backoff = (r, t, note) => {
@@ -72,11 +73,31 @@ export function createKeeper({
     backoff(r, t, why);
   };
 
-  // Sends and waits. Returns 'completed' | 'reverted' | 'inflight' | 'dry'.
-  async function submit(r, functionName, args, gas, t) {
-    if (cfg.dryRun) { log(`${r.kind} ${r.box}: dry run, would send ${functionName} (gas ${gas})`); return 'dry'; }
-    const hash = await chain.send(functionName, args, { gas });
-    store.update(r.box, { tx_hash: hash, tx_sent_at: t, updated: t });
+  // A slot for the keeper's own insertion of `outLeaf`, and the tree to prove it against: the pool's, plus the
+  // leaves queued ahead of the slot. Without a pipeline, the pool's own. → { tree, root (the proof's oldRoot),
+  // slot, queued (other transactions ahead, so it cannot be simulated) }
+  async function slotTree(outLeaf) {
+    if (!pipeline) { const s = await leafSync.sync(); return { tree: s.tree, root: s.root, slot: null, queued: false }; }
+    const slot = await pipeline.reserve({ outLeaf, nfs: [], owner: 'keeper' });
+    for (let i = 0; i < 3; i++) {
+      const s = await leafSync.sync().catch(() => null);
+      if (s && s.tree.root === BigInt(slot.root)) {
+        s.tree.append(slot.pending.flatMap((x) => [BigInt(x.outLeaf0), BigInt(x.outLeaf1)]));
+        if (s.tree.root === BigInt(slot.oldRoot)) return { tree: s.tree, root: s.tree.root, slot, queued: slot.pending.length > 0 };
+      }
+      await new Promise((ok) => setTimeout(ok, 1000));
+    }
+    await pipeline.cancel(slot.id);
+    throw new PipelineError(409, 'the pool moved while reserving', { stale: true });
+  }
+
+  // Sends and waits. Returns 'completed' | 'reverted' | 'inflight' | 'dry'. With a slot, the transaction goes
+  // through the pipeline in its turn.
+  async function submit(r, functionName, args, gas, t, slot = null, tx = null) {
+    if (cfg.dryRun) { if (slot) await pipeline.cancel(slot.id); log(`${r.kind} ${r.box}: dry run, would send ${functionName} (gas ${gas})`); return 'dry'; }
+    const hash = slot
+      ? await pipeline.fulfil(slot.id, tx, ({ simulate }) => chain.send(functionName, args, { gas, simulate }), { chainId: chain.chainId, pool: chain.pool, own: true })
+      : await chain.send(functionName, args, { gas });    store.update(r.box, { tx_hash: hash, tx_sent_at: t, updated: t });
     log(`${r.kind} ${r.box}: sent ${functionName} ${hash}`);
     const rc = await chain.waitReceipt(hash, cfg.receiptWaitSecs * 1000);
     if (!rc) return 'inflight';
@@ -90,31 +111,39 @@ export function createKeeper({
     if (!pre.ok) return { skipped: pre.reason };
     const hint = hintArgs(r.hint);
     for (let round = 0; round <= cfg.staleRetries; round++) {
-      const { tree, root } = await leafSync.sync();
+      let slotted;
+      try { slotted = await slotTree([intent.outLeaf0, intent.outLeaf1]); }
+      catch (e) { if (e instanceof PipelineError) { log(`deposit ${r.box}: ${e.message}, next tick`); return { stale: true }; } throw e; }
+      const { tree, root, slot, queued } = slotted;
+      const release = () => (slot ? pipeline.cancel(slot.id) : null);
       const w = completionWitness(zk, { intent, hint, asset: assetField, tree, chainId: chain.chainId, pool: chain.pool, relayer: chain.address });
       if (BigInt(w.publicSignals[1]) !== root) {
+        await release();
         leafSync.invalidate();
         throw new Error('rebuilt leaves do not reach the pool root; resyncing');
       }
-      const p = await prover.prove(w.input);
-      if (p.publicInputs.length !== 11 || p.publicInputs.some((x, i) => BigInt(x) !== BigInt(w.publicSignals[i]))) throw new Error('prover returned different public inputs');
+      const p = await prover.prove(w.input).catch(async (e) => { await release(); throw e; });
+      if (p.publicInputs.length !== 11 || p.publicInputs.some((x, i) => BigInt(x) !== BigInt(w.publicSignals[i]))) { await release(); throw new Error('prover returned different public inputs'); }
       const tx = {
         pA: p.pA, pB: p.pB, pC: p.pC, publicInputs: p.publicInputs.map(BigInt),
         recipient: ETH, extAmount: intent.amount, relayer: chain.address, fee: hint.fee,
         memo0: hexOf(r.hint.memo0), memo1: hexOf(r.hint.memo1),
       };
-      let est;
-      try { est = await chain.estimate('completeDeposit', [intent, tx]); }
-      catch (e) {
-        if (STALE.has(revertName(e))) { log(`deposit ${r.box}: proof went stale (${revertName(e)}), re-proving`); continue; }
-        return { failed: revertName(e) || safeErr(e) };
+      let est = cfg.depositGas;
+      if (!queued) {
+        try { est = await chain.estimate('completeDeposit', [intent, tx]); }
+        catch (e) {
+          await release();
+          if (STALE.has(revertName(e))) { log(`deposit ${r.box}: proof went stale (${revertName(e)}), re-proving`); continue; }
+          return { failed: revertName(e) || safeErr(e) };
+        }
       }
       const cov = coverCheck({ reward: r.reward, token: r.token, gas: est, gasPrice: await chain.gasPrice(), cfg });
-      if (!cov.ok) return { skipped: cov.reason };
+      if (!cov.ok) { await release(); return { skipped: cov.reason }; }
       let out;
-      try { out = await submit(r, 'completeDeposit', [intent, tx], cov.gas, t); }
+      try { out = await submit(r, 'completeDeposit', [intent, tx], cov.gas, t, slot, tx); }
       catch (e) {
-        if (STALE.has(revertName(e))) { log(`deposit ${r.box}: lost the race at submission, re-proving`); continue; }
+        if ((e instanceof PipelineError && e.stale) || STALE.has(revertName(e))) { log(`deposit ${r.box}: lost the race at submission, re-proving`); continue; }
         throw e;
       }
       if (out === 'reverted') { log(`deposit ${r.box}: completion reverted on chain, re-proving`); continue; }
@@ -159,33 +188,42 @@ export function createKeeper({
     const pre = coverCheck({ reward: feeFor(bal), token: r.token, gas: cfg.sweepGas, gasPrice, cfg, floor });
     if (!pre.ok) return { skipped: pre.reason };
     for (let round = 0; round <= cfg.staleRetries; round++) {
-      const [{ tree, root }, n] = await Promise.all([leafSync.sync(), chain.receiveCount(r.box)]);
+      const n = await chain.receiveCount(r.box);
       const amount = round === 0 ? bal : BigInt(await chain.balanceOf(r.token, r.box));
       if (amount === 0n) return { idle: true };
       const f = feeFor(amount);
+      let slotted;
+      try { slotted = await slotTree([zk.leafOf(assetField, amount - f, BigInt(npk), receiveRho(r.box, n)), 0n]); }
+      catch (e) { if (e instanceof PipelineError) { log(`receive ${r.box}: ${e.message}, next tick`); return { stale: true }; } throw e; }
+      const { tree, root, slot, queued } = slotted;
+      const release = () => (slot ? pipeline.cancel(slot.id) : null);
       const w = sweepWitness(zk, { asset: assetField, tree, npk: BigInt(npk), feeBps: Number(feeBps), box: r.box, n, amount, fee: f, relayer: chain.address, chainId: chain.chainId, pool: chain.pool });
       if (BigInt(w.publicSignals[1]) !== root) {
+        await release();
         leafSync.invalidate();
         throw new Error('rebuilt leaves do not reach the pool root; resyncing');
       }
-      const p = await prover.prove(w.input);
-      if (p.publicInputs.length !== 11 || p.publicInputs.some((x, i) => BigInt(x) !== BigInt(w.publicSignals[i]))) throw new Error('prover returned different public inputs');
+      const p = await prover.prove(w.input).catch(async (e) => { await release(); throw e; });
+      if (p.publicInputs.length !== 11 || p.publicInputs.some((x, i) => BigInt(x) !== BigInt(w.publicSignals[i]))) { await release(); throw new Error('prover returned different public inputs'); }
       const tx = { pA: p.pA, pB: p.pB, pC: p.pC, publicInputs: p.publicInputs.map(BigInt), recipient: ETH, extAmount: amount, relayer: chain.address, fee: f, memo0: '0x', memo1: '0x' };
       const args = [BigInt(npk), Number(feeBps), tx];
-      let est;
-      try { est = await chain.estimate('sweepReceive', args); }
-      catch (e) {
-        const name = revertName(e);
-        if (STALE.has(name) || name === 'BadIntent') { log(`receive ${r.box}: raced (${name}), re-proving`); continue; }
-        return { failed: name || safeErr(e) };
+      let est = cfg.sweepGas;
+      if (!queued) {
+        try { est = await chain.estimate('sweepReceive', args); }
+        catch (e) {
+          await release();
+          const name = revertName(e);
+          if (STALE.has(name) || name === 'BadIntent') { log(`receive ${r.box}: raced (${name}), re-proving`); continue; }
+          return { failed: name || safeErr(e) };
+        }
       }
       const cov = coverCheck({ reward: f, token: r.token, gas: est, gasPrice: await chain.gasPrice(), cfg, floor });
-      if (!cov.ok) return { skipped: cov.reason };
+      if (!cov.ok) { await release(); return { skipped: cov.reason }; }
       let out;
-      try { out = await submit(r, 'sweepReceive', args, cov.gas, t); }
+      try { out = await submit(r, 'sweepReceive', args, cov.gas, t, slot, tx); }
       catch (e) {
         const name = revertName(e);
-        if (STALE.has(name) || name === 'BadIntent') { log(`receive ${r.box}: lost the race at submission, re-proving`); continue; }
+        if ((e instanceof PipelineError && e.stale) || STALE.has(name) || name === 'BadIntent') { log(`receive ${r.box}: lost the race at submission, re-proving`); continue; }
         throw e;
       }
       if (out === 'reverted') { log(`receive ${r.box}: sweep reverted on chain, re-proving`); continue; }

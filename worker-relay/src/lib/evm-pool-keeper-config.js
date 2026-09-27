@@ -103,6 +103,10 @@ export function loadKeeperConfig(env = process.env) {
     receiveWatchSecs: int(env, 'EVM_POOL_KEEPER_RECEIVE_WATCH_SECS', 14 * 86400),
     receiveSlowSecs: int(env, 'EVM_POOL_KEEPER_RECEIVE_SLOW_SECS', 86400),
     maxReceiveChecksPerTick: int(env, 'EVM_POOL_KEEPER_MAX_RECEIVE_CHECKS_PER_TICK', 100),
+    // Queued relaying (evm-pool-keeper-pipeline.js): relayed insertions follow the keeper's unmined ones. Off by
+    // default where sends go to private endpoints, which drop a reverting transaction and would leave a nonce gap.
+    pipeline: str(env, 'EVM_POOL_KEEPER_PIPELINE', list(str(env, 'EVM_POOL_KEEPER_SEND_RPC_URLS', sendDefault)).length ? '0' : '1') !== '0',
+    pipelineDepth: int(env, 'EVM_POOL_KEEPER_PIPELINE_DEPTH', 24),
     // Public relaying of users' own transactions (withdrawals and transfers) at /evm-pool/keeper/relay.
     relay: str(env, 'EVM_POOL_KEEPER_RELAY', '1') !== '0',
     gasCap: big(env, 'EVM_POOL_KEEPER_GAS_CAP', 1500000n),

@@ -79,6 +79,8 @@ const POOL_ABI = [
   ...ERRORS,
   fn('root', [], [{ type: 'bytes32' }], 'view'),
   fn('nextIndex', [], [{ type: 'uint256' }], 'view'),
+  fn('everKnownRoot', [{ type: 'bytes32' }], [{ type: 'bool' }], 'view'),
+  fn('isSpent', [{ type: 'bytes32[]' }], [{ type: 'bool[]' }], 'view'),
   ...parseAbi(['event Transact(bytes32 indexed nf0, bytes32 indexed nf1, bytes32 outLeaf0, bytes32 outLeaf1, uint256 firstIndex, bytes32 newRoot, address recipient, int256 extAmount, address relayer, uint256 fee, bytes memo0, bytes memo1)']),
 ];
 const V1_ABI = parseAbi(['function assets(bytes32) view returns (bool registered, address underlying, uint256 unitScale, bytes32 crossChainLink, bool poolMinted, uint8 decimals)']);
@@ -112,6 +114,11 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
   // One signer, one nonce: the loop and relay requests send through this queue one at a time.
   let sending = Promise.resolve();
   const serial = (f) => { const run = sending.then(f, f); sending = run.catch(() => {}); return run; };
+  // The next nonce: the chain's pending count, or past what this process last sent if the RPC has not seen it yet
+  // (queued sends go out faster than a public RPC's pending view updates).
+  let sentNonce = -1;
+  const nextNonce = async () => Math.max(await pub.getTransactionCount({ address: account.address, blockTag: 'pending' }), sentNonce + 1);
+  const b32 = (x) => `0x${BigInt(x).toString(16).padStart(64, '0')}`;
 
   return {
     address: account.address,
@@ -122,6 +129,8 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
     v1: getAddress(v1),
 
     blockNumber: () => pub.getBlockNumber(),
+    knownRoot: async (root) => read(cfg.pool, POOL_ABI, 'everKnownRoot', [b32(root)]),
+    spent: async (nfs) => read(cfg.pool, POOL_ABI, 'isSpent', [nfs.map(b32)]),
     async poolState(blockNumber) {
       const [root, nextIndex] = await Promise.all([read(cfg.pool, POOL_ABI, 'root', [], blockNumber), read(cfg.pool, POOL_ABI, 'nextIndex', [], blockNumber)]);
       return { root: BigInt(root), nextIndex };
@@ -154,14 +163,20 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
 
     // Private endpoints first; the read RPC last when public sends are allowed. Returns the tx hash.
     // Re-simulated inside the queue, right before signing, so state that moved since the caller's estimate
-    // (another relay spending the same note, a new root) fails here instead of on chain.
-    send: (functionName, args, { gas }) => serial(async () => {
-      await pub.estimateContractGas({ ...target(functionName), args, account });
+    // (another relay spending the same note, a new root) fails here instead of on chain; a transaction that
+    // follows the keeper's own unmined ones cannot be simulated yet and is sent with simulate: false.
+    send: (functionName, args, { gas, simulate = true }) => serial(async () => {
+      if (simulate) await pub.estimateContractGas({ ...target(functionName), args, account });
       let lastErr;
       for (const url of sendUrls) {
         try {
           const wallet = createWalletClient({ account, chain: viemChain, transport: http(url) });
-          return await withNonceRetry(functionName, () => wallet.writeContract({ ...target(functionName), args, gas }), { log });
+          return await withNonceRetry(functionName, async () => {
+            const nonce = await nextNonce();
+            const hash = await wallet.writeContract({ ...target(functionName), args, gas, nonce });
+            sentNonce = nonce;
+            return hash;
+          }, { log });
         } catch (e) {
           lastErr = e;
           log(`  submit via ${new URL(url).host} failed: ${safeErr(e)}`);

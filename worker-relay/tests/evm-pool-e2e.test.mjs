@@ -231,6 +231,36 @@ try {
     await assert.rejects(dave.withdraw({ to: fresh, amount: 1n, via: 'relay' }), /no wallet|no relayer|relayer/i);
   });
 
+  await test('five users relaying at once all land, several per block, proving each spend once', async () => {
+    const signerOf = (w) => ({ address: w.account.address, send: ({ to, data, value }) => w.sendTransaction({ to, data, value }) });
+    const users = [];
+    for (let i = 0; i < 5; i++) {
+      const acct = wallet('0x' + (0x60 + i).toString(16).repeat(32));
+      await pub.waitForTransactionReceipt({ hash: await deployer.sendTransaction({ to: acct.account.address, value: parseEther('1') }) });
+      const u = makeEvmPoolWallet({ zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(0x70 + i)), chain: chainCfg, keeper: KEEPER, prove, signer: signerOf(acct) });
+      await pub.waitForTransactionReceipt({ hash: await u.deposit({ amount: parseEther('0.2') }) });
+      users.push(u);
+    }
+    const dest = makeEvmPoolWallet({ zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(0x7f)), chain: chainCfg, prove });
+    for (const u of users) await u.sync();
+    await pub.request({ method: 'evm_setAutomine', params: [false] });
+    await pub.request({ method: 'evm_setIntervalMining', params: [3] });
+    try {
+      const proofs = users.map(() => 0), sentAt = users.map(() => []);
+      const t0 = Date.now();
+      const hashes = await Promise.all(users.map((u, i) => u.send({ to: dest.address, amount: parseEther('0.05'), onStep: (m) => { if (m === 'proving on this device') proofs[i]++; if (m === 'sending through the relayer') sentAt[i].push(((Date.now() - t0) / 1000).toFixed(1)); } })));
+      const blocks = await Promise.all(hashes.map(async (h) => (await pub.waitForTransactionReceipt({ hash: h })).blockNumber));
+      assert.equal((await until(async () => { const x = await dest.sync(); return x.notes === 5 && x; }, 'all five payments')).balance, parseEther('0.25'));
+      const perBlock = Math.max(...Object.values(blocks.reduce((m, b) => ({ ...m, [b]: (m[b] || 0) + 1 }), {})));
+      const info = `proofs ${proofs.join('+')}, sent at ${sentAt.map((x) => x.join('/')).join(' ')} s, blocks ${blocks.join(' ')}`;
+      assert.ok(perBlock >= 2, `the keeper put several in one block (max ${perBlock} per block): ${info}`);
+      assert.ok(proofs.reduce((a, b) => a + b, 0) <= 7, `${proofs.join('+')} proofs for five spends`);
+    } finally {
+      await pub.request({ method: 'evm_setIntervalMining', params: [0] });
+      await pub.request({ method: 'evm_setAutomine', params: [true] });
+    }
+  });
+
   await test('a spend cannot be replayed: the same calldata reverts on chain', async () => {
     const tx = await pub.getTransaction({ hash: sent });
     await assert.rejects(pub.call({ account: payer.account, to: pool, data: tx.input }), /AlreadyNullified|StaleRoot|revert/);

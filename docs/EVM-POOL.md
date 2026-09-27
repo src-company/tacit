@@ -250,6 +250,22 @@ With the keeper service:
 3. `POST /evm-pool/keeper/relay` with `{ tx: { pA, pB, pC, publicInputs, recipient, extAmount, relayer, fee, memo0,
    memo1 } }` (integers as decimal strings) → `{ txHash }`.
 
+**Many users at once.** The pool inserts only against its current head, so two transactions proven against the
+same head cannot both land. The keeper keeps a queue instead of a race. Output leaves are fixed before proving, and
+a spend's signature does not cover the root.
+1. `POST /reserve { outLeaf0, outLeaf1, nfs }` → `{ id, oldRoot, start, root, size, pending, expires }`: a slot. The
+   wallet proves from `oldRoot` at `start`, which is the pool at `root`/`size` with the `pending` leaves appended.
+   Any number of wallets prove at once, each in its own slot.
+2. `POST /relay { tx, reservation: id }`: the keeper checks the proof off chain against the slot and the transaction
+   (proof, extDataHash, fee, nullifiers), then sends the slots in order, several per block.
+3. A slot that is not fulfilled within 90 s is cut, with the slots behind it, and those wallets reserve again.
+   `POST /cancel { reservation }` gives a slot up early.
+
+Unreserved relays still work: proven against `GET /head`'s `tail`, one takes the next slot. A withdraw-and-call or a
+move to V1 is simulated before it is sent, so it waits for an empty queue. The queue runs where the keeper sends to
+the chain's public mempool (Base, Robinhood Chain), since a private endpoint drops a reverting transaction and would
+leave a nonce gap; on Ethereum each insertion proves against the head.
+
 **History feed.** `GET /evm-pool/keeper/events?from=<block>` → `{ through, events }`: the pool's `Transact` and the
 router's `Received` events in blocks `from..through`, confirmed, in chain order, whole blocks per page. A wallet syncs
 most of its history from it in a few requests instead of thousands of log queries. It trusts nothing in it: each page

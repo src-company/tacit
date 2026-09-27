@@ -38,6 +38,17 @@ export function toSolidityProof(proof, publicSignals) {
   };
 }
 
+// The inverse, for checking a proof that arrives as calldata.
+export function fromSolidityProof({ pA, pB, pC }) {
+  const s = (x) => BigInt(x).toString();
+  return {
+    protocol: 'groth16', curve: 'bn128',
+    pi_a: [s(pA[0]), s(pA[1]), '1'],
+    pi_b: [[s(pB[0][1]), s(pB[0][0])], [s(pB[1][1]), s(pB[1][0])], ['1', '0']],
+    pi_c: [s(pC[0]), s(pC[1]), '1'],
+  };
+}
+
 const sha256hex = (b) => createHash('sha256').update(b).digest('hex');
 
 // A local path, or an https URL pinned by SHA-256 and cached under `dir` (fetched once, checked on every load).
@@ -83,6 +94,8 @@ export async function makeKeeperProver({ wasm, zkey, vk, vkHash = '', wasmSha256
   const zkeyBytes = await loadArtifact(zkey, opts('zkey', zkeySha256));
   return {
     vkHash: hash,
+    // A proof in the verifier's calldata shape (a user's relayed transaction) against the ceremony key.
+    verify: ({ pA, pB, pC, publicInputs }) => verifyTransact(vkJson, publicInputs.map(String), fromSolidityProof({ pA, pB, pC }), { snarkjs }),
     async prove(input) {
       const { proof, publicSignals } = await proveTransact(input, { wasm: wasmBytes, zkey: zkeyBytes, snarkjs, singleThread });
       if (!(await verifyTransact(vkJson, publicSignals, proof, { snarkjs }))) throw new Error('fresh proof does not verify');
