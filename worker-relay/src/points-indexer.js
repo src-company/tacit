@@ -793,6 +793,23 @@ const ZROUTER_CHAINS = [
 // both replays cover, so it can never throw) rather than the swap's own chain-local block: with a multi-hour
 // trailing window, the skew between "at the swap" and "now" is immaterial.
 
+// A few quick retries with backoff before giving up on a single Blockscout call — observed in production:
+// its own gateway (524, a Cloudflare origin timeout) can time out transiently on the internal-transactions
+// endpoint specifically, on an otherwise perfectly real, already-settled historical transaction. Without
+// this, every caller's own 30-minute grace window burns on the FIRST attempt for an old backfill candidate
+// (whose block time is already well past 30 minutes old), turning a one-off timeout into a guaranteed skip
+// rather than the transient hiccup it actually was.
+async function explorerGetWithRetry(url, attempts = 3) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await explorerGet(url);
+    } catch (err) {
+      if (i === attempts - 1) throw err;
+      await new Promise((r) => setTimeout(r, 500 * 2 ** i));
+    }
+  }
+}
+
 // Sums any internal ETH transfer from `from` to `to` within `txHash`, walking every page (Blockscout pages
 // internal transactions at 50 — a busy multicall can exceed that). Also reports whether the result can be
 // trusted at all: Blockscout answers an empty list both for "genuinely no internal transfers" and for "this
@@ -805,7 +822,7 @@ async function internalEthTransferSum(apiBase, txHash, from, to) {
   const items = [];
   let params = '';
   for (let page = 0; page < 20; page++) {
-    const data = await explorerGet(`${apiBase}/transactions/${txHash}/internal-transactions${params}`);
+    const data = await explorerGetWithRetry(`${apiBase}/transactions/${txHash}/internal-transactions${params}`);
     items.push(...(data.items || []));
     if (!data.next_page_params) break;
     params = '?' + new URLSearchParams(
