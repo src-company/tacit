@@ -143,6 +143,8 @@ footer { font: 12px var(--mono); color: var(--dim); margin-top: 28px; }
 <script>
 (() => {
   const H = 'b0a246d1790151c722e42ccfa89450cb96c7f5a9f4b70a2162b7d9fc79b6ddb3';
+  // Contributions closed: sealed with this Bitcoin block's hash as the beacon.
+  const BEACON = 968840;
   const API = 'https://api.tacit.finance/ceremony/' + H;
   const MS = [[5, 'floor'], [30, 'comfort'], [100, 'strong']];
   const TARGET = MS[MS.length - 1][0];
@@ -193,12 +195,18 @@ footer { font: 12px var(--mono); color: var(--dim); margin-top: 28px; }
     const waiting = Math.max(0, (Number(live?.queue_length) || 0) - (busy ? 1 : 0));
     const lastAt = rows.length ? Number(rows[0].contributed_at) : Number(state.last_contributed_at || 0);
     let line;
+    const closing = BEACON && !state.finalized;
     if (state.finalized) line = 'Closed and finalized. Thank you to everyone who contributed.';
+    else if (closing) line = `Contributions closed · sealing with <a href="https://mempool.space/block/${BEACON}">Bitcoin block ${BEACON}</a>`;
     else if (busy) line = `<span class="hot">Contributing now</span> · ${dur(live.reservation.head_started_at || live.reservation.started_at)}` + (waiting ? ` · ${waiting} waiting` : '');
     else line = (lastAt ? `Last contribution <b>${ago(lastAt)}</b>` : 'Be the first to contribute') + (next ? ` · ${next[0] - n} more to reach ${next[1]}` : ' · every milestone reached');
     $('now').innerHTML = line;
     $('dot').classList.toggle('idle', !busy && !state.finalized && !(lastAt && Date.now() / 1000 - lastAt < 900));
-    $('livelabel').textContent = state.finalized ? 'ceremony closed' : (busy ? 'live · contributing now' : 'open ceremony');
+    $('livelabel').textContent = state.finalized ? 'ceremony closed' : closing ? 'closing · sealing' : (busy ? 'live · contributing now' : 'open ceremony');
+    document.querySelector('.cta').style.display = state.finalized || closing ? 'none' : '';
+    document.querySelector('.card .note').textContent = state.finalized || closing
+      ? 'Contributions are closed. Its hash, unknown until the block is mined, is mixed in as the final beacon.'
+      : 'A few minutes. No wallet needed. Contribute as often as you like.';
     for (const li of $('recent').querySelectorAll('li')) { const a = li.querySelector('.ago'); if (a) a.textContent = ago(Number(li.dataset.t)); }
   }
 

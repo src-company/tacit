@@ -382,6 +382,8 @@ const EVM_POOL_CEREMONY = Object.freeze({
   hash: 'b0a246d1790151c722e42ccfa89450cb96c7f5a9f4b70a2162b7d9fc79b6ddb3',
   ptauSha256: '1c401abb57c9ce531370f3015c3e75c0892e0f32b8b1e94ace0f6682d9695922',
   finalizedVkCid: null,  // set once finalized
+  // Contributions closed: the chain is sealed with this Bitcoin block's hash as the beacon.
+  closing: { beaconHeight: 968840 },
   label: 'Secret Sats EVM pool',
   milestones: [
     { count: 5,   label: 'floor',   desc: 'minimum sound: one honest contributor is enough' },
@@ -45053,11 +45055,14 @@ function _evmCerLive() {
   return { busy, waiting: Math.max(0, (Number(_evmCer.live?.queue) || 0) - (busy ? 1 : 0)) };
 }
 
+const _evmCerClosing = () => !!EVM_POOL_CEREMONY.closing && !_evmCerState()?.finalized;
+
 function _evmCerSummaryText(state) {
   const n = Number(state?.contribution_count) || 0;
   const { ms } = _evmCerMilestoneHtml(n);
   const head = `${n.toLocaleString('en-US')} contribution${n === 1 ? '' : 's'}`;
   if (state?.finalized) return `${head} · finalized`;
+  if (_evmCerClosing()) return `${head} · closed · sealing with Bitcoin block ${EVM_POOL_CEREMONY.closing.beaconHeight}`;
   const live = _evmCerLive();
   if (live.busy) return `${head} · someone contributing now${live.waiting ? ` · ${live.waiting} waiting` : ''}`;
   if (ms.next) return `${head} · next: ${ms.next.label} (${ms.next.count - n} to go)`;
@@ -45078,7 +45083,7 @@ function _evmCerPaint() {
     const summary = document.getElementById('evm-cer-banner-summary');
     if (summary) summary.textContent = state ? _evmCerSummaryText(state) : '';
     const cta = document.getElementById('evm-cer-banner-contribute');
-    if (cta) cta.textContent = contributed ? 'Contribute again' : 'Contribute';
+    if (cta) { cta.textContent = contributed ? 'Contribute again' : 'Contribute'; cta.style.display = _evmCerClosing() ? 'none' : ''; }
     banner.style.display = (hidden || !state || finalized) ? 'none' : '';
   }
 
@@ -45086,7 +45091,7 @@ function _evmCerPaint() {
   if (document.querySelector('.tab.active[data-tab="ceremony"]')) {
     _evmCerPaintDrawerStatus('evm-cer-tab-status');
     const tabGo = document.getElementById('evm-cer-tab-go');
-    if (tabGo) { tabGo.textContent = contributed ? 'Contribute again' : 'Contribute'; tabGo.disabled = finalized; }
+    if (tabGo) { tabGo.textContent = contributed ? 'Contribute again' : 'Contribute'; tabGo.disabled = finalized || _evmCerClosing(); }
   }
 
   const chip = document.getElementById('evm-cer-chip');
@@ -45123,6 +45128,7 @@ function _evmCerPaintDrawerStatus(elId = 'evm-cer-status') {
   const { ms, pills } = _evmCerMilestoneHtml(n);
   let line;
   if (state.finalized) line = `<strong>${n}</strong> contributions · finalized. The chain is closed.`;
+  else if (_evmCerClosing()) line = `<strong>${n}</strong> contributions · contributions are closed. The chain is sealed with Bitcoin block <strong>${EVM_POOL_CEREMONY.closing.beaconHeight}</strong>: its hash, unknown until it is mined, is mixed in as the final beacon. Thank you to everyone who contributed.`;
   else if (!ms.reached) line = `<strong>${n}</strong> contribution${n === 1 ? '' : 's'} so far; ${ms.next.count - n} more to reach the ${escapeHtml(ms.next.label)} milestone.`;
   else if (ms.next) line = `<strong>${n}</strong> contributions · past <strong>${escapeHtml(ms.reached.label)}</strong>; ${ms.next.count - n} more to reach <strong>${escapeHtml(ms.next.label)}</strong>.`;
   else line = `<strong>${n}</strong> contributions · every milestone reached. Contributions stay open until the beacon.`;
@@ -45134,6 +45140,7 @@ function _evmCerPaintDrawerStatus(elId = 'evm-cer-status') {
     `<div class="evm-cer-pills">${pills}</div>` +
     (head ? `<div class="evm-cer-head">current key <code title="${escapeHtml(head)}">${escapeHtml(head.slice(0, 18))}…</code></div>` : '');
   if (goBtn && state.finalized) { goBtn.disabled = true; goBtn.title = 'Ceremony finalized; the chain is closed.'; }
+  else if (goBtn && _evmCerClosing()) { goBtn.disabled = true; goBtn.title = 'Contributions are closed.'; }
 }
 
 function _evmCerFmtTime(sec) {
@@ -45374,7 +45381,7 @@ function _evmCerQueueSub() {
 
 async function _submitEvmPoolCeremonyContribution() {
   const C = EVM_POOL_CEREMONY;
-  if (!_evmCerConfigured() || _evmCer.inFlight || globalThis.__tacitEvmCerBusy) return;
+  if (!_evmCerConfigured() || _evmCer.inFlight || globalThis.__tacitEvmCerBusy || _evmCerClosing()) return;
   globalThis.__tacitEvmCerBusy = true;
   try { await _submitEvmPoolCeremonyContributionInner(); } finally { globalThis.__tacitEvmCerBusy = false; }
 }
