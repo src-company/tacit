@@ -26,10 +26,23 @@ const TX = {
     { name: 'relayer', type: 'address' }, { name: 'fee', type: 'uint256' }, { name: 'memo0', type: 'bytes' }, { name: 'memo1', type: 'bytes' },
   ],
 };
+const CALL_INTENT = {
+  name: 'intent', type: 'tuple', components: [
+    {
+      name: 'calls', type: 'tuple[]', components: [
+        { name: 'target', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'token', type: 'address' },
+        { name: 'amount', type: 'uint256' }, { name: 'push', type: 'bool' }, { name: 'data', type: 'bytes' },
+      ],
+    },
+    { name: 'outTokens', type: 'address[]' }, { name: 'minOuts', type: 'uint256[]' }, { name: 'to', type: 'address' },
+    { name: 'refund', type: 'address' }, { name: 'deadline', type: 'uint64' }, { name: 'nonce', type: 'uint256' },
+  ],
+};
 const fn = (name, inputs, outputs = [], stateMutability = 'nonpayable') => ({ type: 'function', name, stateMutability, inputs, outputs });
 const ERRORS = [
   // router
   'BadTarget', 'BadIntent', 'BadPermit2', 'AmountTooLarge', 'ShortSwapOutput', 'ZRouterCallFailed', 'NotExpired', 'NothingToReclaim',
+  'Expired', 'EscrowEmpty', 'ShortOutput',
   // pool
   'ZeroAddress', 'NotAContract', 'WrongAsset', 'StaleRoot', 'UnknownMembershipRoot', 'WrongInsertionIndex', 'PoolFull',
   'AlreadyNullified', 'BadProof', 'ValueOutOfRange', 'EthValueMismatch', 'EthNotAccepted', 'FeeOnTransferAsset',
@@ -50,6 +63,11 @@ export const ROUTER_ABI = [
   fn('receiveBoxOf', [{ type: 'uint256' }, { type: 'uint16' }], [{ type: 'address' }], 'view'),
   fn('receiveCount', [{ type: 'address' }], [{ type: 'uint256' }], 'view'),
   fn('sweepReceive', [{ type: 'uint256' }, { type: 'uint16' }, TX]),
+  fn('withdrawToV1', [TX, WRAP_INTENT]),
+  fn('callEscrowOf', [CALL_INTENT], [{ type: 'address' }], 'view'),
+  fn('withdrawAndCall', [TX, CALL_INTENT]),
+  fn('executeCall', [CALL_INTENT]),
+  fn('refundCall', [CALL_INTENT, { type: 'address' }]),
   ...ERRORS,
 ];
 const POOL_ABI = [

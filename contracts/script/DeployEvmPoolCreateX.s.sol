@@ -59,6 +59,12 @@ contract DeployEvmPoolCreateX is Script {
         address v1 = vm.envOr("EVM_POOL_V1", block.chainid == 1 ? V1_POOL_MAINNET : address(0));
         address zRouter = ZROUTER.code.length != 0 ? ZROUTER : address(0);
         address permit2 = PERMIT2.code.length != 0 ? PERMIT2 : address(0);
+        // The router is deployed once per chain, so a missing zRouter or Permit2 leaves zaps or Permit2 deposits off
+        // there for good: only with explicit consent.
+        require(
+            (zRouter != address(0) && permit2 != address(0)) || vm.envOr("EVM_POOL_ALLOW_MISSING_PERIPHERY", false),
+            "zRouter or Permit2 missing on this chain; set EVM_POOL_ALLOW_MISSING_PERIPHERY=true to deploy without"
+        );
 
         vm.startBroadcast(DEPLOYER);
         address poseidon4 = PoseidonT5Deploy.ensure();
@@ -70,6 +76,14 @@ contract DeployEvmPoolCreateX is Script {
             ROUTER
         );
         vm.stopBroadcast();
+
+        // Whatever was already at these addresses must be exactly this suite.
+        require(VERIFIER.codehash == keccak256(vm.getDeployedCode(verifierArtifact)), "code at VERIFIER is not the pinned verifier");
+        TacitEvmPool p = TacitEvmPool(POOL);
+        require(address(p.VERIFIER()) == VERIFIER && p.ASSET() == address(0), "pool wiring");
+        TacitEvmPoolRouter r = TacitEvmPoolRouter(payable(ROUTER));
+        require(address(r.POOL()) == POOL && address(r.POSEIDON4()) == poseidon4, "router wiring");
+        require(r.ZROUTER() == zRouter && address(r.PERMIT2()) == permit2 && address(r.V1()) == v1, "router periphery");
 
         console2.log("verifier", VERIFIER);
         console2.log("pool    ", POOL);

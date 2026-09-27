@@ -11,7 +11,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createPublicClient, createWalletClient, defineChain, encodeDeployData, http, parseEther } from 'viem';
+import { createPublicClient, createWalletClient, defineChain, encodeDeployData, encodeFunctionData, http, parseEther } from 'viem';
+import { callIntent } from '../../dapp/evm-pool-gateway.js';
 import { privateKeyToAccount } from 'viem/accounts';
 import { loadZk } from '../src/lib/evm-pool-keeper-prover.js';
 import { proveTransact } from '../../dapp/evm-pool-zk-prover.js';
@@ -142,6 +143,26 @@ try {
     assert.equal(await pub.getBalance({ address: fresh }), parseEther('0.1'));
     const b = await bob.sync();
     assert.ok(b.balance < parseEther('0.2') && b.balance > parseEther('0.19'));
+  });
+
+  await test('withdraw and call: one relayed transaction pays a bridge; the unspent rest returns to alice as a note', async () => {
+    const b = artifact('TacitEvmPoolRouterCall.t.sol', 'MockBridge');
+    const bridge = await deploy(b.abi, b.bytecode.object);
+    const dest = privateKeyToAccount('0x' + '43'.repeat(32)).address;
+    // A refund large enough that its capped sweep fee covers the keeper's gas, as it must on Ethereum.
+    const before = (await alice.sync()).balance;
+    const refund = await alice.refundBox();
+    assert.notEqual(refund.toLowerCase(), alice.receiveBox.toLowerCase(), 'not the public receive address');
+    const intent = callIntent({
+      calls: [{ target: bridge, value: parseEther('0.05'), data: encodeFunctionData({ abi: b.abi, functionName: 'depositETH', args: [dest, 8453n] }) }],
+      refund, deadline: BigInt(Math.floor(Date.now() / 1000) + 3600), nonce: 1n,
+    });
+    const hash = await alice.withdrawAndCall({ intent, amount: parseEther('0.45') });
+    assert.equal((await pub.waitForTransactionReceipt({ hash })).status, 'success');
+    assert.equal(await pub.getBalance({ address: bridge }), parseEther('0.05'));
+    assert.equal(await pub.readContract({ address: bridge, abi: b.abi, functionName: 'lastRecipient' }), dest);
+    const s = await until(async () => { const x = await alice.sync(); return x.balance > before - parseEther('0.45') && x; }, 'refund swept back');
+    assert.ok(s.balance > before - parseEther('0.053') && s.balance < before - parseEther('0.05'), 'bridge amount, the relay fee and the sweep fee left');
   });
 
   await test('stored state is view-level only, and a wallet rebuilt from it matches', async () => {

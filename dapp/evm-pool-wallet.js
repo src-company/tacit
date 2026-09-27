@@ -16,9 +16,10 @@
 import { secp, keccak_256, sha256, hmac, concatBytes } from './vendor/tacit-deps.min.js';
 import { makeBtcShieldedPool } from './btc-shielded-pool.js';
 import { poolAsset, extDataHash } from './evm-pool-zk.js';
-import { receiveKeys, receivedNote, receiveBoxAddress, RECEIVE_FEE_BPS, RECEIVE_INDEX } from './evm-pool-gateway.js';
+import { receiveKeys, receivedNote, receiveBoxAddress, callEscrowAddress, callIntentJson, RECEIVE_FEE_BPS, RECEIVE_INDEX } from './evm-pool-gateway.js';
 
 export const MEMO_LEN = 65;
+const REFUND_GAP = 20;
 const te = new TextEncoder();
 const TAG_AEAD = te.encode('tacit-evm-pool-aead-v1');
 const TAG_MAC = te.encode('tacit-evm-pool-aead-tag-v1');
@@ -130,7 +131,7 @@ function decodeTransact(log) {
 function decodeReceived(log) {
   const d = unhex(log.data);
   const w = (i) => toBig(d.subarray(32 * i, 32 * i + 32));
-  return { n: BigInt(log.topics[2]), index: Number(w(0)), value: w(1), rho: w(2), fee: w(3), block: Number(BigInt(log.blockNumber)), tx: log.transactionHash };
+  return { box: String(log.topics[1]).toLowerCase(), n: BigInt(log.topics[2]), index: Number(w(0)), value: w(1), rho: w(2), fee: w(3), block: Number(BigInt(log.blockNumber)), tx: log.transactionHash };
 }
 
 // ── wallet ──
@@ -141,21 +142,29 @@ function decodeReceived(log) {
 // (leaves, and each owned note's position, value, rho and shared secret); spend keys are derived in memory.
 export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store = null, fetchImpl = globalThis.fetch?.bind(globalThis) }) {
   const asset = poolAsset({ chainId: BigInt(chain.chainId), pool: chain.pool, token: ZERO });
-  const box = receiveBoxAddress(receiveKeys(zk, keys.zkWallet, RECEIVE_INDEX).npk, RECEIVE_FEE_BPS, chain.router);
-  const boxTopic = '0x' + box.slice(2).toLowerCase().padStart(64, '0');
+  const boxOf = (i) => receiveBoxAddress(receiveKeys(zk, keys.zkWallet, i).npk, RECEIVE_FEE_BPS, chain.router);
+  const box = boxOf(RECEIVE_INDEX);
+  const topicOf = (a) => '0x' + a.slice(2).toLowerCase().padStart(64, '0');
   const confirmations = chain.confirmations ?? 12;
   const skey = `tacit-evm-pool-v1:${chain.chainId}:${chain.pool.toLowerCase()}:${keys.address}`;
 
-  const blank = () => ({ block: Number(chain.deployBlock ?? 0) - 1, leaves: [], notes: [], spent: [] });
+  const blank = () => ({ block: Number(chain.deployBlock ?? 0) - 1, leaves: [], notes: [], spent: [], nextRefund: 1 });
   let saved = blank();
-  try { const j = store?.get(skey); if (j) saved = JSON.parse(j); } catch {}
+  try { const j = store?.get(skey); if (j) saved = { nextRefund: 1, ...JSON.parse(j) }; } catch {}
   let view = null; // saved state plus the unconfirmed tail, from the last sync
 
+  // Receive boxes watched: box 0 (the public receive address) and the refund boxes of call intents, indices 1 up
+  // to REFUND_GAP past the next unused one, so a wallet restored from its seed alone still finds every refund.
+  const boxIndex = new Map();
+  const boxTopics = () => {
+    for (let i = 0; i < saved.nextRefund + REFUND_GAP; i++) if (![...boxIndex.values()].includes(i)) boxIndex.set(topicOf(boxOf(i)), i);
+    return [...boxIndex.keys()];
+  };
+
   // Spend and nullifier keys of a stored note, from the wallet keys: never stored.
-  const recvKeys = () => receiveKeys(zk, keys.zkWallet, RECEIVE_INDEX);
   function withKeys(n) {
     if (n.nk) return n;
-    const k = n.kind === 'receive' ? recvKeys() : zk.ownedKeys(keys.zkWallet, unhex(n.s));
+    const k = n.kind === 'receive' ? receiveKeys(zk, keys.zkWallet, n.box ?? RECEIVE_INDEX) : zk.ownedKeys(keys.zkWallet, unhex(n.s));
     return { ...n, sk: k.sk.toString(), nk: k.nk.toString(), nf: zk.nullifier(k.nk, BigInt(n.leaf), n.index).toString() };
   }
   saved = { ...saved, notes: saved.notes.map(withKeys) };
@@ -184,10 +193,12 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       }
     }
     for (const r of receipts) {
-      const n = receivedNote(zk, keys.zkWallet, RECEIVE_INDEX, r);
+      const i = boxIndex.get(r.box) ?? RECEIVE_INDEX;
+      const n = receivedNote(zk, keys.zkWallet, i, r);
       const leaf = BigInt(leaves[r.index] ?? -1);
-      if (leaf < 0n || n.v === 0n) continue;
-      notes.set(`${r.index}`, withKeys({ index: r.index, leaf: leaf.toString(), v: n.v.toString(), rho: n.rho.toString(), block: r.block, tx: r.tx, kind: 'receive' }));
+      if (leaf < 0n || n.v === 0n || zk.leafOf(asset, n.v, receiveKeys(zk, keys.zkWallet, i).npk, n.rho) !== leaf) continue;
+      notes.set(`${r.index}`, withKeys({ index: r.index, leaf: leaf.toString(), v: n.v.toString(), rho: n.rho.toString(), block: r.block, tx: r.tx, kind: 'receive', box: i }));
+      if (i >= saved.nextRefund) saved.nextRefund = i + 1;
     }
     return { ...state, leaves, notes: [...notes.values()].sort((a, b) => a.index - b.index), spent: [...spent] };
   }
@@ -216,7 +227,7 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     if (from > tip) return summary();
     const [tlogs, rlogs] = await Promise.all([
       logs(chain.pool, [TRANSACT_TOPIC], from, tip),
-      logs(chain.router, [RECEIVED_TOPIC, boxTopic], from, tip),
+      logs(chain.router, [RECEIVED_TOPIC, boxTopics()], from, tip),
     ]);
     const ts = tlogs.map(decodeTransact).sort((a, b) => a.block - b.block || a.firstIndex - b.firstIndex);
     const rs = rlogs.map(decodeReceived);
@@ -271,7 +282,7 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
 
   // One relayed transaction: spends `ins`, creates `outs` ([{ to, value } | null] × 2), pays out `amount` to
   // `recipient` (0 for a transfer). Re-proves when another transaction lands first. → tx hash.
-  async function relay({ ins, outs, amount, recipient, fee, relayer, onStep = () => {} }) {
+  async function relay({ ins, outs, amount, recipient, fee, relayer, extra = {}, onStep = () => {} }) {
     const sealed = outs.map((o) => (o ? sealNote(zk, { to: o.to, value: o.value, asset }) : null));
     const memo0 = sealed[0]?.memo ?? new Uint8Array(), memo1 = sealed[1]?.memo ?? new Uint8Array();
     const extAmount = -BigInt(amount);
@@ -284,7 +295,7 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       const { proof, publicSignals } = await prove(w.input);
       onStep('sending through the relayer');
       const tx = toTx(proof, publicSignals, { recipient, extAmount: extAmount.toString(), relayer, fee: fee.toString(), memo0: hex(memo0), memo1: hex(memo1) });
-      const r = await keeperPost('/relay', { tx });
+      const r = await keeperPost('/relay', { tx, ...extra });
       if (r.status === 200 && r.body.txHash) {
         for (const n of ins) pending.add(n.nf);
         return r.body.txHash;
@@ -344,6 +355,33 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       const ins = await prepare(a + fee, q, onStep);
       const change = ins.reduce((s, n) => s + BigInt(n.v), 0n) - a - fee;
       return relay({ ins, outs: [change > 0n ? { to: self, value: change } : null, null], amount: a, recipient: to, fee, relayer: q.relayer, onStep });
+    },
+
+    // A fresh receive box for a call intent's refund (anything returned is swept back into a note here), and asks
+    // the relayer to watch it. → the box address.
+    async refundBox() {
+      const i = saved.nextRefund++;
+      persist();
+      const npk = receiveKeys(zk, keys.zkWallet, i).npk;
+      if (keeper) await keeperPost('/receive', { chainId: chain.chainId, npk: npk.toString(), feeBps: RECEIVE_FEE_BPS }).catch(() => {});
+      return boxOf(i);
+    },
+
+    // Withdraws `amount` wei into `intent`'s escrow (gateway callIntent) and has the relayer run it in the same
+    // transaction (router.withdrawAndCall). → tx hash.
+    // gas: what the withdrawal and its calls need; by default the relay's plus 250k per call.
+    async withdrawAndCall({ intent, amount, gas = null, onStep = () => {} }) {
+      const a = BigInt(amount);
+      if (a <= 0n) throw new Error('enter an amount');
+      await sync();
+      const q = await keeperGet(`/quote?gas=${gas ?? 450_000 + 250_000 * (intent.calls?.length ?? 1)}`);
+      const fee = BigInt(q.fee);
+      const ins = await prepare(a + fee, q, onStep);
+      const change = ins.reduce((s, n) => s + BigInt(n.v), 0n) - a - fee;
+      return relay({
+        ins, outs: [change > 0n ? { to: self, value: change } : null, null], amount: a, recipient: callEscrowAddress(intent, chain.router),
+        fee, relayer: q.relayer, extra: { call: callIntentJson(intent) }, onStep,
+      });
     },
 
     // Sends `amount` wei privately to a Secret Sats address. → tx hash.

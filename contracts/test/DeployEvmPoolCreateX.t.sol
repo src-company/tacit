@@ -42,6 +42,8 @@ contract DeployEvmPoolCreateXTest is Test {
         bytes memory init = vm.getCode("TransactVerifierDev.sol:TransactVerifierDev");
         vm.chainId(1);
         vm.etch(0x000000000Ed1eabD231Be41d93b719056F7febFC, hex"00");
+        vm.etch(0x000000000000FB114709235f1ccBFfb925F600e4, hex"00");
+        vm.etch(0x000000000022D473030F116dDEE9F6B43aC78BA3, hex"00");
         new DeployEvmPoolCreateX().deploy("TransactVerifierDev.sol:TransactVerifierDev", keccak256(init));
 
         TacitEvmPool pool = TacitEvmPool(payable(0x000000c2A20657CE25f2Ba99737933D031AFBEE9));
@@ -57,6 +59,37 @@ contract DeployEvmPoolCreateXTest is Test {
         uint256 npk0 = 4783613888947850950044057964142544727340891053660060203316524895455918575012;
         assertEq(router.receiveBoxOf(npk0, 25), 0x52fc37ee7741468a15CE879320a7a41CEBaeb232);
         assertEq(router.receiveBoxOf(npk0, 0), 0x7ABc01dEAC9A65A0d2480a87DB6F22EbC1342639);
+
+        // Call-escrow vector from dapp/evm-pool-gateway.js callEscrowAddress (tests/evm-pool-gateway.test.mjs).
+        TacitEvmPoolRouter.CallIntent memory i;
+        i.calls = new TacitEvmPoolRouter.Call[](2);
+        i.calls[0] = TacitEvmPoolRouter.Call(0x000000000000FB114709235f1ccBFfb925F600e4, 1 ether, address(0), 0, false, hex"deadbeef");
+        i.calls[1] = TacitEvmPoolRouter.Call(
+            0x000000000022D473030F116dDEE9F6B43aC78BA3, 0, 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48, 5000, true, ""
+        );
+        i.outTokens = new address[](2);
+        i.outTokens[0] = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+        i.minOuts = new uint256[](2);
+        i.minOuts[0] = 4000;
+        i.to = address(0xB0B);
+        i.refund = address(0x5AFE);
+        i.deadline = 2_000_000_000;
+        i.nonce = 7;
+        assertEq(router.callEscrowOf(i), 0xE1d80AEDC9571874805958A4189808489b731301);
+    }
+
+    function test_missing_periphery_needs_consent() public {
+        vm.etch(CREATEX, address(new MockCreateXPermissioned()).code);
+        bytes memory init = vm.getCode("TransactVerifierDev.sol:TransactVerifierDev");
+        DeployEvmPoolCreateX s = new DeployEvmPoolCreateX();
+        vm.expectRevert("zRouter or Permit2 missing on this chain; set EVM_POOL_ALLOW_MISSING_PERIPHERY=true to deploy without");
+        s.deploy("TransactVerifierDev.sol:TransactVerifierDev", keccak256(init));
+        vm.setEnv("EVM_POOL_ALLOW_MISSING_PERIPHERY", "true");
+        s.deploy("TransactVerifierDev.sol:TransactVerifierDev", keccak256(init));
+        vm.setEnv("EVM_POOL_ALLOW_MISSING_PERIPHERY", "false");
+        TacitEvmPoolRouter router = TacitEvmPoolRouter(payable(0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5));
+        assertEq(router.ZROUTER(), address(0));
+        assertEq(address(router.PERMIT2()), address(0));
     }
 
     function test_refuses_an_unpinned_verifier() public {

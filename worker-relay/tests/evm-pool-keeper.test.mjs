@@ -7,7 +7,9 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { keccak_256 } from '../../dapp/vendor/tacit-deps.min.js';
 import { poolAsset } from '../../dapp/evm-pool-zk.js';
-import { depositIntent, receiveRho, receiveKeys } from '../../dapp/evm-pool-gateway.js';
+import { encodeAbiParameters, keccak256 as viemKeccak, encodeFunctionData, decodeFunctionData, toHex } from 'viem';
+import { depositIntent, receiveRho, receiveKeys, callIntent, callIntentJson, callEscrowAddress, v1ZapShieldedNoteCall } from '../../dapp/evm-pool-gateway.js';
+import { ROUTER_ABI } from '../src/lib/evm-pool-keeper-chain.js';
 import { loadKeeperConfig, checkKeeperSigner, parseTokenMap, RELAY_EOA } from '../src/lib/evm-pool-keeper-config.js';
 import { openKeeperStore } from '../src/lib/evm-pool-keeper-store.js';
 import { makeLeafSync, LeafSyncError } from '../src/lib/evm-pool-keeper-leaves.js';
@@ -124,6 +126,13 @@ function mockChain({ log = [] } = {}) {
         if (ext < 0n) c.fund(TOKEN, recipient, -ext);
         c.fund(TOKEN, relayer, fee);
       };
+    }
+    if (functionName === 'withdrawAndCall' || functionName === 'withdrawToV1') {
+      const [t, intent] = args;
+      const box = functionName === 'withdrawAndCall' ? callEscrowAddress(intent, ROUTER) : c.boxOf('w', intent);
+      if (t.extAmount >= 0n || t.recipient.toLowerCase() !== box.toLowerCase()) throw revert('BadIntent');
+      if (c.callRevert) throw revert(c.callRevert);
+      return () => { c.fund(TOKEN, t.relayer, t.fee); c.fund(TOKEN, box, -t.extAmount); };
     }
     const [intent, t] = args;
     if (functionName === 'completeDeposit') {
@@ -783,6 +792,91 @@ await test('HTTP relay and receive: quote, submit, stale → 409, low fee → ne
     try {
       assert.equal((await fetch(`http://127.0.0.1:${off.address().port}/evm-pool/keeper/relay`, { method: 'POST', body: '{}' })).status, 404);
     } finally { off.close(); }
+  } finally { server.close(); }
+});
+
+// ── relay with a call or a wrap ──
+
+const ZAP_TARGET = '0x8888888888888888888888888888888888888888';
+const USDC = '0x9999999999999999999999999999999999999999';
+function makeCall({ deadline = T0 + 600, to = REFUND } = {}) {
+  return callIntent({
+    calls: [v1ZapShieldedNoteCall({ confidentialRouter: ZAP_TARGET, value: 4000n, tokenOut: USDC, wrapAmount: 10n, commit: '0x' + 'c1'.repeat(32), zrSwapData: '0x1234' })],
+    outputs: [{ token: USDC, min: 0n }], to, refund: REFUND, deadline, nonce: 5n,
+  });
+}
+
+await test('call intents: the gateway\'s escrow salt is abi.encode(tag, intent) as viem encodes it for the router ABI', () => {
+  const intent = makeCall();
+  const salt = viemKeccak(encodeAbiParameters(
+    [{ type: 'bytes32' }, ROUTER_ABI.find((f) => f.name === 'callEscrowOf').inputs[0]],
+    [viemKeccak(toHex('tacit-evm-pool-call-escrow-v1')), intent],
+  ));
+  const r = ROUTER.slice(2).toLowerCase();
+  const impl = viemKeccak(`0xd694${r}01`).slice(26);
+  const init = viemKeccak(`0x602d5f8160095f39f35f5f365f5f37365f73${impl}5af43d5f5f3e6029573d5ffd5b3d5ff3`);
+  const want = '0x' + viemKeccak(`0xff${r}${salt.slice(2)}${init.slice(2)}`).slice(26);
+  assert.equal(callEscrowAddress(intent, ROUTER).toLowerCase(), want);
+  const data = encodeFunctionData({ abi: ROUTER_ABI, functionName: 'callEscrowOf', args: [intent] });
+  assert.deepEqual(decodeFunctionData({ abi: ROUTER_ABI, data }).args[0].calls[0].data, intent.calls[0].data);
+});
+
+await test('relay parsing with a call: recipient must be the escrow, a withdrawal, a live deadline', () => {
+  const cfg = mkCfg();
+  const intent = makeCall();
+  const escrow = callEscrowAddress(intent, ROUTER);
+  const body = { ...relayTx({ recipient: escrow }), call: callIntentJson(intent) };
+  const p = parseRelaySubmission(body, { keeper: KEEPER, cfg, router: ROUTER, now: T0 });
+  assert.equal(p.functionName, 'withdrawAndCall');
+  assert.equal(p.sendArgs[1].calls[0].value, 4000n);
+  assert.equal(p.sendArgs[0].recipient.toLowerCase(), escrow.toLowerCase());
+  assert.throws(() => parseRelaySubmission({ ...relayTx(), call: callIntentJson(intent) }, { keeper: KEEPER, cfg, router: ROUTER, now: T0 }), /escrow/);
+  assert.throws(() => parseRelaySubmission({ ...relayTx({ recipient: escrow, ext: 0n }), call: callIntentJson(intent) }, { keeper: KEEPER, cfg, router: ROUTER, now: T0 }), /withdrawal/);
+  assert.throws(() => parseRelaySubmission(body, { keeper: KEEPER, cfg, router: ROUTER, now: T0 + 601 }), /deadline/);
+  const tampered = callIntentJson(intent); tampered.to = KEEPER;
+  assert.throws(() => parseRelaySubmission({ ...relayTx({ recipient: escrow }), call: tampered }, { keeper: KEEPER, cfg, router: ROUTER, now: T0 }), /escrow/);
+  const many = callIntentJson(intent); many.calls = Array(9).fill(many.calls[0]);
+  assert.throws(() => parseRelaySubmission({ ...relayTx({ recipient: escrow }), call: many }, { keeper: KEEPER, cfg, router: ROUTER, now: T0 }), /1 to 8/);
+  assert.throws(() => parseRelaySubmission({ ...body, wrap: makeWrap().intent }, { keeper: KEEPER, cfg, router: ROUTER, now: T0 }), /either/);
+  assert.equal(parseRelaySubmission(relayTx(), { keeper: KEEPER, cfg, router: ROUTER, now: T0 }).functionName, 'pool.transact');
+});
+
+await test('HTTP relay sends withdrawAndCall and withdrawToV1 through the router', async () => {
+  const cfg = mkCfg({ ratePerMin: 100 });
+  const store = openKeeperStore(':memory:');
+  const chain = mockChain();
+  const handler = createIntakeHandler({ store, chain, zk, assetField, cfg, now: () => T0 });
+  const server = createServer(handler);
+  await new Promise((r) => server.listen(0, r));
+  const post = (body) => fetch(`http://127.0.0.1:${server.address().port}/evm-pool/keeper/relay`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    const intent = makeCall();
+    const escrow = callEscrowAddress(intent, ROUTER);
+    const tx = relayTx({ recipient: escrow });
+    tx.tx.publicInputs[7] = '777';
+    let r = await post({ ...tx, call: callIntentJson(intent) });
+    assert.equal(r.status, 200, JSON.stringify(await r.clone().json()));
+    assert.equal(chain.sent.at(-1).functionName, 'withdrawAndCall');
+    assert.equal(await chain.balanceOf(TOKEN, escrow), 5000n);
+
+    chain.callRevert = 'ShortOutput';
+    const tx2 = relayTx({ recipient: escrow }); tx2.tx.publicInputs[7] = '778';
+    r = await post({ ...tx2, call: callIntentJson(intent) });
+    assert.equal(r.status, 400);
+    assert.match((await r.json()).error, /ShortOutput/);
+    chain.callRevert = null;
+
+    const wrap = makeWrap().intent;
+    const parsedWrap = parseWrapSubmission({ intent: wrap }, { now: T0, cfg: { ...cfg, minDeadlineSecs: 0 } }).intent;
+    const box = await chain.wrapBoxOf(parsedWrap);
+    const tw = relayTx({ recipient: box }); tw.tx.publicInputs[7] = '779';
+    r = await post({ ...tw, wrap });
+    assert.equal(r.status, 200);
+    assert.equal(chain.sent.at(-1).functionName, 'withdrawToV1');
+    const tw2 = relayTx(); tw2.tx.publicInputs[7] = '780';
+    r = await post({ ...tw2, wrap });
+    assert.equal(r.status, 400);
+    assert.match((await r.json()).error, /wrap intent's box/);
   } finally { server.close(); }
 });
 

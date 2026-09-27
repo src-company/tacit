@@ -59,16 +59,25 @@ interface IConfidentialPoolWrap {
 ///      a sweeper can only credit `npk` and keeps at most `feeBps` of what it sweeps. The box's code lives only
 ///      within a sweep, so the address takes plain transfers between sweeps. The owner recovers every note from
 ///      its keys and the Received events alone.
+///   7. WITHDRAW AND CALL (callEscrowOf / withdrawAndCall / executeCall / refundCall) — a withdrawal whose
+///      recipient is a counterfactual escrow keyed by a `CallIntent`: calls to run with the withdrawn funds, the
+///      outputs to deliver and their floors, a refund address and a deadline. The proof binds the escrow, so a
+///      relayer can change neither the calls nor where their outputs go. `withdrawAndCall` withdraws and runs it in
+///      one transaction; if any call fails or an output falls short, nothing happens and the notes stay unspent.
+///   8. FUNDING WITH A CALL (fundDeposit / fundReceive) — for contracts and bridge messages that deliver funds by
+///      calling a contract: pay a deposit box (publishing the keeper hint in the event, so any keeper can complete
+///      it) or a receive box, from msg.value or an approved token.
 ///
-/// Leaving this pool for anything else needs nothing here: a withdrawal whose recipient is a ConfidentialRouter
-/// exit-recipe escrow is run by that router's permissionless `activateExit`.
+/// On Ethereum mainnet a withdrawal can also name a ConfidentialRouter exit-recipe escrow, run by that router's
+/// permissionless `activateExit`.
 ///
 /// Trust model, as ConfidentialRouter: tokens pass through only within a call and each named leg is swept
 /// back to the caller; any stray balance is swept by the next caller, so never leave value resting here. The
 /// pool, zRouter, Permit2 and V1 pool are immutable. A box holds only the funds paid to it and releases them
-/// only to its intent's destination (the pool deposit / V1 wrap) or, after its deadline, any token to its `refund`. A
-/// tampered intent maps to a different, empty box. A receive box has no refund: it releases only the pool asset,
-/// only into a note for its `npk`, so anything else sent to it stays there. nonReentrant on every entrypoint.
+/// only to its intent's destination (the pool deposit / V1 wrap / the call intent's calls, outputs and refund) or,
+/// after its deadline, any token to its `refund`. A tampered intent maps to a different, empty box. A receive box has
+/// no refund: it releases only the pool asset, only into a note for its `npk`, so anything else sent to it stays
+/// there. nonReentrant on every entrypoint, so a called target cannot re-enter the router.
 contract TacitEvmPoolRouter is ReentrancyGuardTransient {
     ITacitEvmPool public immutable POOL;
     address public immutable ASSET; // the pool's asset, address(0) = native ETH
@@ -82,6 +91,7 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
     bytes32 internal constant DEPOSIT_TAG = keccak256("tacit-evm-pool-deposit-box-v1");
     bytes32 internal constant WRAP_TAG = keccak256("tacit-evm-pool-wrap-box-v1");
     bytes32 internal constant RECEIVE_TAG = keccak256("tacit-evm-pool-receive-box-v1");
+    bytes32 internal constant CALL_TAG = keccak256("tacit-evm-pool-call-escrow-v1");
     uint256 internal constant P = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
     /// Sweeps so far per receive box; the next sweep's rho is derived from it.
@@ -127,6 +137,30 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         uint256 nonce;
     }
 
+    /// One step of a call escrow: if `token` and `amount` are set, first transfer (`push`) or approve that much of
+    /// `token` to `target`, then call `target` with `value` wei and `data`. An approval left unspent is reset to 0.
+    struct Call {
+        address target;
+        uint256 value;
+        address token;
+        uint256 amount;
+        bool push;
+        bytes data;
+    }
+
+    /// What a withdrawal to `callEscrowOf(intent)` does. The escrow runs `calls` in order, then sends its whole
+    /// balance of each `outTokens[i]` (address(0) = ETH), at least `minOuts[i]`, to `to`, and whatever is left of
+    /// the pool asset to `refund`. Until `deadline` anyone can run it; after, anyone returns its funds to `refund`.
+    struct CallIntent {
+        Call[] calls;
+        address[] outTokens;
+        uint256[] minOuts;
+        address to;
+        address refund;
+        uint64 deadline;
+        uint256 nonce;
+    }
+
     error BadTarget();
     error BadIntent();
     error BadPermit2();
@@ -135,8 +169,14 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
     error ZRouterCallFailed();
     error NotExpired();
     error NothingToReclaim();
+    error Expired();
+    error EscrowEmpty();
 
     event DepositBoxCompleted(address indexed box, address indexed completer);
+    event CallExecuted(address indexed escrow, address indexed caller);
+    /// A deposit box paid through `fundDeposit`: the intent and the hint a keeper proves it from.
+    event DepositFunded(address indexed box, DepositIntent intent, bytes hint);
+    event ReceiveFunded(address indexed box, uint256 npk, uint16 feeBps, uint256 amount);
     event WrapBoxCompleted(address indexed box, address indexed completer);
     event BoxReclaimed(address indexed box, address indexed refund, uint256 amount);
     /// One sweep of a receive box: the note (value, rho) at leaf `index`, and the sweeper's fee.
@@ -304,15 +344,97 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
         uint256 value = amount - t.fee;
         if (t.publicInputs[9] != POSEIDON4.hash([ASSET_FIELD, value, npk, rho])) revert BadIntent();
         _ensureBox(salt, box);
-        // Closing hands the box's ETH to this router; a token balance is released first.
-        if (ASSET != address(0)) TacitBox(payable(box)).release(ASSET, address(this), amount);
-        TacitBox(payable(box)).close();
+        if (ASSET == address(0)) {
+            // Closing hands the box's ETH to this router and removes its code, so the address keeps taking plain
+            // transfers. If closing fails or leaves the ETH, the box keeps its code and releases it instead.
+            (bool closed,) = box.call{gas: 50_000}(abi.encodeCall(TacitBox.close, ()));
+            if (!closed || box.balance != 0) TacitBox(payable(box)).release(address(0), address(this), box.balance);
+        } else {
+            // A token payment never runs the box's code, so the box stays; anything else sent to it stays with it.
+            TacitBox(payable(box)).release(ASSET, address(this), amount);
+        }
         _deposit(t, amount);
         // The note is inserted at `startIndex`, which the pool requires to be its current size.
         emit Received(box, n, t.publicInputs[3], value, rho, t.fee);
     }
 
+    // ──────────────────── 7. Withdraw and call ────────────────────
+
+    function callEscrowOf(CallIntent calldata intent) public view returns (address) {
+        return LibClone.predictDeterministicAddress_PUSH0(boxImpl, _callSalt(intent), address(this));
+    }
+
+    /// Withdraw from the pool into `intent`'s escrow (the proof binds it as recipient) and run the intent. Any failed
+    /// call or short output reverts the whole transaction, spending nothing. The pool's relayer fee goes to `t.relayer`.
+    function withdrawAndCall(Tx calldata t, CallIntent calldata intent) external nonReentrant {
+        if (t.extAmount >= 0 || t.recipient != callEscrowOf(intent)) revert BadIntent();
+        POOL.transact(t.pA, t.pB, t.pC, t.publicInputs, t.recipient, t.extAmount, t.relayer, t.fee, t.memo0, t.memo1);
+        _runCall(intent);
+    }
+
+    /// Permissionless, until the deadline: runs an escrow that holds the pool asset, for a withdrawal that reached
+    /// it without `withdrawAndCall` (sent to the pool directly) or any other payment to it.
+    function executeCall(CallIntent calldata intent) external nonReentrant {
+        if (_balanceOf(ASSET, callEscrowOf(intent)) == 0) revert EscrowEmpty();
+        _runCall(intent);
+    }
+
+    /// Permissionless, after the deadline: the escrow's whole balance of `token` (address(0) = ETH) goes to
+    /// `intent.refund`, without running the calls.
+    function refundCall(CallIntent calldata intent, address token) external nonReentrant {
+        _reclaim(_callSalt(intent), token, intent.refund, intent.deadline);
+    }
+
+    // ──────────────────── 8. Funding with a call ────────────────────
+
+    /// Pays `intent`'s deposit box exactly `intent.amount` from the caller (msg.value, or a transferFrom of the
+    /// pool's token) and publishes `hint` in DepositFunded, so any keeper can complete it without an off-chain
+    /// handoff. Refuses a box that is already paid or completed, or past its deadline.
+    function fundDeposit(DepositIntent calldata intent, bytes calldata hint) external payable nonReentrant {
+        if (block.timestamp > intent.deadline) revert Expired();
+        if (intent.refund == address(0)) revert BadIntent();
+        address box = depositBoxOf(intent);
+        if (box.code.length != 0 || _balanceOf(ASSET, box) != 0) revert BadIntent();
+        _pay(box, intent.amount);
+        emit DepositFunded(box, intent, hint);
+    }
+
+    /// Pays `amount` into receive box (npk, feeBps) from the caller (msg.value, or a transferFrom of the pool's
+    /// token), announcing the box on chain so a keeper can sweep it without registration.
+    function fundReceive(uint256 npk, uint16 feeBps, uint256 amount) external payable nonReentrant {
+        if (address(POSEIDON4) == address(0)) revert BadTarget();
+        if (npk == 0 || npk >= P || feeBps > 10_000) revert BadIntent();
+        address box = receiveBoxOf(npk, feeBps);
+        _pay(box, amount);
+        emit ReceiveFunded(box, npk, feeBps, amount);
+    }
+
     // ──────────────────── internals ────────────────────
+
+    function _runCall(CallIntent calldata intent) internal {
+        if (block.timestamp > intent.deadline) revert Expired();
+        if (intent.refund == address(0) || intent.outTokens.length != intent.minOuts.length) revert BadIntent();
+        if (intent.outTokens.length != 0 && intent.to == address(0)) revert BadIntent();
+        address escrow = _deployBox(_callSalt(intent));
+        TacitBox(payable(escrow)).run(intent, ASSET, address(POOL));
+        emit CallExecuted(escrow, msg.sender);
+    }
+
+    /// Moves `amount` of the pool asset from the caller to `to`: exactly msg.value for ETH, a transferFrom otherwise.
+    function _pay(address to, uint256 amount) internal {
+        if (amount == 0) revert BadIntent();
+        if (ASSET == address(0)) {
+            if (msg.value != amount) revert BadIntent();
+            SafeTransferLib.safeTransferETH(to, amount);
+        } else {
+            if (msg.value != 0) revert BadIntent();
+            SafeTransferLib.safeTransferFrom(ASSET, msg.sender, to, amount);
+        }
+    }
+
+    function _balanceOf(address token, address holder) internal view returns (uint256) {
+        return token == address(0) ? holder.balance : SafeTransferLib.balanceOf(token, holder);
+    }
 
     function _depositAmount(Tx calldata t) internal pure returns (uint256) {
         if (t.extAmount <= 0) revert BadIntent();
@@ -370,6 +492,10 @@ contract TacitEvmPoolRouter is ReentrancyGuardTransient {
 
     function _receiveSalt(uint256 npk, uint16 feeBps) internal pure returns (bytes32) {
         return keccak256(abi.encode(RECEIVE_TAG, npk, feeBps));
+    }
+
+    function _callSalt(CallIntent calldata intent) internal pure returns (bytes32) {
+        return keccak256(abi.encode(CALL_TAG, intent));
     }
 
     function _receiveRho(address box, uint256 n) internal pure returns (uint256) {
@@ -454,6 +580,8 @@ contract TacitBox {
     address private immutable ROUTER;
 
     error NotRouter();
+    error BadTarget();
+    error ShortOutput();
 
     constructor() {
         ROUTER = msg.sender;
@@ -461,8 +589,35 @@ contract TacitBox {
 
     function release(address token, address to, uint256 amount) external {
         if (msg.sender != ROUTER) revert NotRouter();
-        if (token == address(0)) SafeTransferLib.forceSafeTransferETH(to, amount);
-        else SafeTransferLib.safeTransfer(token, to, amount);
+        _send(token, to, amount);
+    }
+
+    /// Runs a call intent from this box's funds: the calls in order, then each output in full to `c.to` (at least
+    /// its floor) and the rest of the pool asset to `c.refund`. Called by the router on a call escrow only.
+    function run(TacitEvmPoolRouter.CallIntent calldata c, address asset, address pool) external {
+        if (msg.sender != ROUTER) revert NotRouter();
+        for (uint256 i; i < c.calls.length; ++i) {
+            TacitEvmPoolRouter.Call calldata k = c.calls[i];
+            if (k.target == pool || k.target == ROUTER || k.target == address(this)) revert BadTarget();
+            bool moves = k.token != address(0) && k.amount != 0;
+            if (moves) {
+                if (k.push) SafeTransferLib.safeTransfer(k.token, k.target, k.amount);
+                else SafeTransferLib.safeApproveWithRetry(k.token, k.target, k.amount);
+            }
+            (bool ok, bytes memory ret) = k.target.call{value: k.value}(k.data);
+            if (!ok) {
+                assembly ("memory-safe") {
+                    revert(add(ret, 0x20), mload(ret))
+                }
+            }
+            if (moves && !k.push) SafeTransferLib.safeApproveWithRetry(k.token, k.target, 0);
+        }
+        for (uint256 i; i < c.outTokens.length; ++i) {
+            uint256 bal = _balance(c.outTokens[i]);
+            if (bal < c.minOuts[i]) revert ShortOutput();
+            _send(c.outTokens[i], c.to, bal);
+        }
+        _send(asset, c.refund, _balance(asset));
     }
 
     /// Removes a box created earlier in the same transaction (EIP-6780), leaving its address without code, and
@@ -470,6 +625,16 @@ contract TacitBox {
     function close() external {
         if (msg.sender != ROUTER) revert NotRouter();
         selfdestruct(payable(ROUTER));
+    }
+
+    function _balance(address token) internal view returns (uint256) {
+        return token == address(0) ? address(this).balance : SafeTransferLib.balanceOf(token, address(this));
+    }
+
+    function _send(address token, address to, uint256 amount) internal {
+        if (amount == 0) return;
+        if (token == address(0)) SafeTransferLib.forceSafeTransferETH(to, amount);
+        else SafeTransferLib.safeTransfer(token, to, amount);
     }
 
     receive() external payable {}

@@ -10,8 +10,9 @@ pool as live once it has code on chain (`eth_getCode(pool) != "0x"`).
 
 ## Addresses
 
-Identical on every EVM chain (CreateX CREATE3, salts locked to deployer `0x68575B073DE49a94e3E3ACf6F3A0d6E3b66267C7`;
-no other sender can deploy at these addresses).
+The same on Ethereum (1), Base (8453) and Robinhood Chain (4663), the chains the suite is deployed on (CreateX
+CREATE3, salts locked to deployer `0x68575B073DE49a94e3E3ACf6F3A0d6E3b66267C7`; no other sender can deploy at these
+addresses). On any other chain, treat code at these addresses as unrelated.
 
 | Contract | Address |
 |---|---|
@@ -174,6 +175,8 @@ has no code and takes any payment, including a plain 21,000-gas transfer from an
 - Payments into one box are public and linked to each other, like any reused address. Spends of the swept notes
   are not: they reveal nullifiers, never the note key.
 - Only the pool's asset leaves a receive box. Anything else sent to it stays there.
+- Pay a receive box from a plain transfer or a call that does nothing else first. A sweep removes the box's code at the
+  end of its transaction, so ETH paid to the box later in that same transaction is lost with it.
 
 **Receive address (canonical, every app shows the same one).** The address a wallet displays depends on every
 value below, so all apps use exactly these:
@@ -207,6 +210,25 @@ makes public anyway; it never learns anything that spends. The owner can always 
 **Zaps.** `zapTokenToDepositWithPermit2(tx, amountIn, permit, sig, swapData)` swaps any ERC-20 to ETH through the
 pinned aggregator and deposits exactly the proven amount, refunding the rest.
 
+**Withdraw and call.** A withdrawal can run actions with the funds in the same transaction: a swap, a bridge
+deposit, a wrap or zap into a V1 note, or any call. A `CallIntent` lists the calls (target, value, data, and a token to
+transfer or approve first), the tokens to deliver to `to` with their minimum amounts, a refund address and a deadline.
+`callEscrowOf(intent)` is its escrow address; a withdrawal with that recipient binds the whole intent through the proof,
+so a relayer can change neither the calls nor where their outputs go. `withdrawAndCall(tx, intent)` withdraws and runs
+it at once: if any call fails or an output falls short, the transaction reverts and nothing is spent. Funds that reach
+the escrow another way are run by anyone with `executeCall(intent)` before the deadline, and returned to `refund` with
+`refundCall(intent, token)` after it. Whatever is left of the pool asset after the calls goes to `refund`; making
+`refund` the owner's own receive box (`callRefundBox`) returns it to the pool privately. A keeper sweeps a box only
+when its capped fee covers the gas, so on Ethereum a small refund waits there until it grows or the owner sweeps it. Calls cannot target the pool,
+the router or the escrow itself. Client helpers in `dapp/evm-pool-gateway.js`: `callIntent`, `callEscrowAddress`,
+`callWithdrawalWitness`, and call builders for V1 (`v1WrapCall`, `v1ZapShieldedNoteCall`, `v1ZapCanonicalNoteCall`).
+
+**Funding with a call.** Contracts and bridge messages that deliver funds by calling a contract use
+`fundDeposit(intent, hint)` (pays a deposit box exactly `intent.amount` and publishes the keeper hint in
+`DepositFunded`, so any keeper can complete it) or `fundReceive(npk, feeBps, amount)` (pays a receive box and announces
+it in `ReceiveFunded`, so a keeper sweeps it without registration). A published hint shows the note's value and public
+key material; it does not let anyone spend the note or link its later spends.
+
 ## Relaying
 
 A user never needs gas or a funded address: a relayer submits the transaction and is paid `fee` out of the
@@ -238,7 +260,8 @@ that the funds' origin is any V1 note holder rather than a public wallet.
 | V1 → pool | A V1 settle withdrawal with `recipient = depositBoxOf(intent)` (native ETH, `value × 10^10` wei). `settle` pays an address with no code, so it cannot revert on the box. A keeper completes the deposit afterwards. |
 | V1, other asset → pool | A V1 exit recipe (`ConfidentialRouter.exitAndExecute`) swaps to ETH and sweeps to `finalRecipient = depositBoxOf(intent)`. |
 | Pool → V1 | `withdrawToV1(tx, intent)` with `intent.assetId` = the native ETH id above and `intent.commit` = the V1 note commitment. |
-| Pool → anything | Withdraw with `recipient = ConfidentialRouter.escrowAddressFor(recipe)`, then anyone calls `activateExit(recipe)`. Every recipe V1 supports applies. |
+| Pool → V1 shielded note (any asset) | `withdrawAndCall` with a `v1ZapShieldedNoteCall` or `v1ZapCanonicalNoteCall`: swap and shield into V1 in the same transaction. |
+| Pool → anything | `withdrawAndCall(tx, intent)` (above), on every chain. On Ethereum, a withdrawal can also name `ConfidentialRouter.escrowAddressFor(recipe)`, run by anyone with `activateExit(recipe)`. |
 
 ## Checklist
 

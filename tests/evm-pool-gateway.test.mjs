@@ -7,7 +7,11 @@ import * as snarkjs from 'snarkjs';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7 } from 'poseidon-lite';
 import { makeEvmPoolZk, poolAsset } from '../dapp/evm-pool-zk.js';
 import { proveTransact, verifyTransact } from '../dapp/evm-pool-zk-prover.js';
-import { depositIntent, completionWitness, withdrawalWitness, receiveKeys, receiveRho, sweepWitness, receivedNote, evmPoolWallet, receiveBoxAddress, RECEIVE_FEE_BPS, RECEIVE_INDEX } from '../dapp/evm-pool-gateway.js';
+import {
+  depositIntent, completionWitness, withdrawalWitness, receiveKeys, receiveRho, sweepWitness, receivedNote, evmPoolWallet, receiveBoxAddress,
+  RECEIVE_FEE_BPS, RECEIVE_INDEX, call, callIntent, callEscrowAddress, callWithdrawalWitness, callRefundBox, callIntentJson,
+  v1ZapShieldedNoteCall, encodeDepositHint, decodeDepositHint,
+} from '../dapp/evm-pool-gateway.js';
 
 const DIR = new URL('../dapp/circuits/evm-pool/build/', import.meta.url).pathname;
 const wasm = readFileSync(DIR + 'transact_js/transact.wasm');
@@ -115,6 +119,78 @@ console.log('receive boxes (real proof)');
   const p2 = await proveTransact(spend.input, { wasm, zkey, snarkjs });
   assert.ok(await verifyTransact(vk, p2.publicSignals, p2.proof, { snarkjs }));
   ok('the swept note, recovered from the seed and its event, spends (500 out, 495 change)');
+}
+
+console.log('withdraw and call');
+{
+  const USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+  const vector = callIntent({
+    calls: [
+      call({ target: '0x000000000000FB114709235f1ccBFfb925F600e4', value: 10n ** 18n, data: '0xdeadbeef' }),
+      call({ target: '0x000000000022D473030F116dDEE9F6B43aC78BA3', token: USDC, amount: 5000n, push: true }),
+    ],
+    outputs: [{ token: USDC, min: 4000n }, { token: '0x0000000000000000000000000000000000000000' }],
+    to: '0x0000000000000000000000000000000000000B0B', refund: '0x0000000000000000000000000000000000005AFE', deadline: 2_000_000_000n, nonce: 7n,
+  });
+  // Also asserted against the router's callEscrowOf in contracts/test/DeployEvmPoolCreateX.t.sol.
+  assert.strictEqual(callEscrowAddress(vector), '0xE1d80AEDC9571874805958A4189808489b731301');
+  ok('callEscrowAddress matches the canonical router\'s callEscrowOf');
+
+  assert.notStrictEqual(callEscrowAddress({ ...vector, to: KEEPER }), callEscrowAddress(vector));
+  assert.notStrictEqual(callEscrowAddress({ ...vector, minOuts: [3999n, 0n] }), callEscrowAddress(vector));
+  assert.notStrictEqual(callEscrowAddress(vector, POOL), callEscrowAddress(vector));
+  ok('any change to the intent, or another router, is another escrow');
+
+  assert.throws(() => callIntent({ calls: [], refund: REFUND, deadline: 1n }), /at least one call/);
+  assert.throws(() => callIntent({ calls: [{ target: USDC }], refund: '0x' + '0'.repeat(40), deadline: 1n }), /refund/);
+  assert.throws(() => callIntent({ calls: [{ target: USDC }], outputs: [{ token: USDC }], refund: REFUND, deadline: 1n }), /`to`/);
+  ok('an intent needs a call, a refund, and a `to` when it has outputs');
+
+  // Also asserted in contracts/test/TacitEvmPoolRouterCall.t.sol.
+  const zap = v1ZapShieldedNoteCall({ confidentialRouter: '0x000000005dA3E3B73726af3c774Deeb9472D4992', value: 1n, tokenOut: USDC, wrapAmount: 5n, commit: '0x' + '11'.repeat(32), zrSwapData: '0xabcd' });
+  assert.ok(zap.data.startsWith('0x65dcbb8e000000000000000000000000a0b86991'));
+  assert.strictEqual(zap.value, 1n);
+  ok('the V1 zap call encodes as abi.encodeCall(zapETHToShieldedNote, …)');
+
+  const wallet = zk.walletKeys(new Uint8Array(32).fill(7), 'mainnet');
+  const refundBox = callRefundBox(zk, wallet, 1);
+  assert.strictEqual(refundBox, receiveBoxAddress(receiveKeys(zk, wallet, 1).npk));
+  assert.throws(() => callRefundBox(zk, wallet, 0), /own index/);
+  ok('a call refund goes to a receive box of its own, never the canonical box 0');
+
+  const intent = callIntent({ calls: [zap], outputs: [{ token: USDC }], to: REFUND, refund: refundBox, deadline: 2_000_000_000n, nonce: 1n });
+  const k = zk.ownedKeys(alice, s(0));
+  const note = { v: 990n, rho: k.rho, nk: k.nk, sk: k.sk, index: 2 };
+  const w = callWithdrawalWitness(zk, { intent, asset, leaves, inputs: [note, null], change: out(690n, 8), amount: 290n, relayer: KEEPER, fee: 10n, chainId: CHAIN_ID, pool: POOL });
+  assert.strictEqual(w.tx.recipient, callEscrowAddress(intent));
+  const { proof, publicSignals } = await proveTransact(w.input, { wasm, zkey, snarkjs });
+  assert.ok(await verifyTransact(vk, publicSignals, proof, { snarkjs }));
+  const other = withdrawalWitness(zk, { asset, leaves, inputs: [note, null], change: out(690n, 8), amount: 290n, recipient: callEscrowAddress({ ...intent, to: KEEPER }), relayer: KEEPER, fee: 10n, chainId: CHAIN_ID, pool: POOL });
+  assert.notStrictEqual(other.input.extDataHash, w.input.extDataHash);
+  ok('a withdrawal into the escrow proves (real proof) and its extDataHash commits to the intent');
+
+  const json = callIntentJson(intent);
+  assert.strictEqual(json.calls[0].value, '1');
+  assert.strictEqual(JSON.parse(JSON.stringify(json)).deadline, '2000000000');
+  ok('intent JSON for the keeper carries integers as decimal strings');
+}
+
+console.log('funding a deposit box with a call');
+{
+  const h = encodeDepositHint({ outputs: [{ v: 990n, npk: 5n, rho: 6n }, null], memo0: '0xa11ce0', memo1: '0x' });
+  const back = decodeDepositHint(h);
+  assert.deepStrictEqual(back.outputs, [{ v: 990n, npk: 5n, rho: 6n }, null]);
+  assert.deepStrictEqual([...back.memo0], [0xa1, 0x1c, 0xe0]);
+  assert.strictEqual(back.memo1.length, 0);
+  ok('deposit hint round-trips through abi.encode(v0, npk0, rho0, v1, npk1, rho1, memo0, memo1)');
+
+  const decoded = decodeDepositHint(encodeDepositHint(hint));
+  const again = depositIntent(zk, { asset, amount: intent.amount, outputs: decoded.outputs, memo0: decoded.memo0, memo1: decoded.memo1, refund: REFUND, deadline: intent.deadline, nonce: intent.nonce });
+  assert.strictEqual(again.intent.outLeaf0, intent.outLeaf0);
+  assert.strictEqual(again.intent.memo0Hash, intent.memo0Hash);
+  ok('a keeper rebuilds the intent\'s leaves and memo hashes from the on-chain hint alone');
+  assert.throws(() => decodeDepositHint('0x' + '00'.repeat(100)), /short hint/);
+  ok('a truncated hint is refused');
 }
 
 console.log(`${n} checks passed`);

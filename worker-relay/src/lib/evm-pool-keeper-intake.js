@@ -4,11 +4,13 @@
 //   POST /evm-pool/keeper/wrap     a wrap intent
 //   POST /evm-pool/keeper/receive  { chainId, npk, feeBps }: a receive box to watch and sweep
 //   GET  /evm-pool/keeper/quote    the relayer address and fee to prove a relayed transaction with
-//   POST /evm-pool/keeper/relay    { tx }: submit a user's own proven withdrawal or transfer that pays this keeper
+//   POST /evm-pool/keeper/relay    { tx, call?, wrap? }: submit a user's own proven withdrawal or transfer that pays
+//                                  this keeper, straight to the pool, or with a call intent (withdrawAndCall) or a
+//                                  wrap intent (withdrawToV1) through the router
 // Request bodies are capped before parsing. Hints are never echoed back or logged.
 
 import { getAddress, isAddress } from 'viem';
-import { depositIntent } from '../../../dapp/evm-pool-gateway.js';
+import { depositIntent, callIntent, callEscrowAddress } from '../../../dapp/evm-pool-gateway.js';
 import { P_FR } from '../../../dapp/btc-pool-zk.js';
 import { ETH } from './evm-pool-keeper-config.js';
 import { coverCheck, quoteFee } from './evm-pool-keeper-loop.js';
@@ -131,9 +133,66 @@ const coords = (x, len, name) => {
   return x;
 };
 
+const MAX_CALLS = 8;
+// A call intent (router §7) from JSON, normalized through the gateway. `now` bounds the deadline.
+export function parseCallIntent(j, { now, cfg }) {
+  const c = obj(j, 'call');
+  if (!Array.isArray(c.calls) || c.calls.length === 0 || c.calls.length > MAX_CALLS) throw bad(`call.calls must hold 1 to ${MAX_CALLS} calls`);
+  const outTokens = Array.isArray(c.outTokens) ? c.outTokens : [];
+  const minOuts = Array.isArray(c.minOuts) ? c.minOuts : [];
+  if (outTokens.length !== minOuts.length || outTokens.length > MAX_CALLS) throw bad('call.outTokens and call.minOuts must match in length');
+  const anyAddr = (x, name) => { if (typeof x !== 'string' || !isAddress(x)) throw bad(`${name} must be an address`); return getAddress(x); };
+  const d = uint(c.deadline, 'call.deadline', 1n << 64n);
+  if (d <= BigInt(now)) throw bad('call.deadline has passed');
+  try {
+    return callIntent({
+      calls: c.calls.map((k, i) => {
+        obj(k, `call.calls[${i}]`);
+        return {
+          target: anyAddr(k.target, `call.calls[${i}].target`), value: uint(k.value ?? '0', `call.calls[${i}].value`),
+          token: k.token == null ? ETH : anyAddr(k.token, `call.calls[${i}].token`), amount: uint(k.amount ?? '0', `call.calls[${i}].amount`),
+          push: k.push === true, data: memo(k.data, `call.calls[${i}].data`, cfg.maxBody),
+        };
+      }),
+      outputs: outTokens.map((t, i) => ({ token: anyAddr(t, `call.outTokens[${i}]`), min: uint(minOuts[i], `call.minOuts[${i}]`) })),
+      to: c.to == null ? ETH : anyAddr(c.to, 'call.to'),
+      refund: addr(c.refund, 'call.refund'),
+      deadline: d,
+      nonce: uint(c.nonce ?? '0', 'call.nonce'),
+    });
+  } catch (e) {
+    if (e instanceof IntakeError) throw e;
+    throw bad(String(e.message || e).replace(/^evm-pool-gateway: /, ''));
+  }
+}
+
 // A user's proven pool transaction for relaying: it must pay this keeper (relayer) and must not be a deposit,
-// which would draw on the sender's own funds. → the pool.transact arguments and the fee.
-export function parseRelaySubmission(body, { keeper, cfg }) {
+// which would draw on the sender's own funds. → the pool.transact arguments and the fee, and what to send:
+//   { tx }                pool.transact
+//   { tx, call }          router.withdrawAndCall(tx, call): tx.recipient must be the call intent's escrow
+//   { tx, wrap }          router.withdrawToV1(tx, wrap): tx.recipient must be the wrap box (checked on chain)
+export function parseRelaySubmission(body, { keeper, cfg, router = null, now = Math.floor(Date.now() / 1000) }) {
+  const parsed = parseRelayTx(body, { keeper, cfg });
+  const [pA, pB, pC, publicInputs, recipient, extAmount, relayer, fee, memo0, memo1] = parsed.args;
+  const t = { pA, pB, pC, publicInputs, recipient, extAmount, relayer, fee, memo0, memo1 };
+  if (body.call != null && body.wrap != null) throw bad('send either call or wrap, not both');
+  if (body.call != null) {
+    if (!router) throw bad('this keeper does not relay calls');
+    if (extAmount >= 0n) throw bad('a call needs a withdrawal');
+    const intent = parseCallIntent(body.call, { now, cfg });
+    if (callEscrowAddress(intent, router).toLowerCase() !== recipient.toLowerCase()) throw bad('tx.recipient is not the call intent\'s escrow');
+    return { ...parsed, functionName: 'withdrawAndCall', sendArgs: [t, intent], call: intent };
+  }
+  if (body.wrap != null) {
+    if (!router) throw bad('this keeper does not relay wraps');
+    if (extAmount >= 0n) throw bad('a wrap needs a withdrawal');
+    const { intent } = parseWrapSubmission({ intent: body.wrap }, { now, cfg: { ...cfg, minDeadlineSecs: 0 } });
+    return { ...parsed, functionName: 'withdrawToV1', sendArgs: [t, intent], wrap: intent };
+  }
+  return { ...parsed, functionName: 'pool.transact', sendArgs: parsed.args };
+}
+
+function parseRelayTx(body, { keeper, cfg }) {
   const t = obj(obj(body, 'body').tx, 'tx');
   const pA = coords(t.pA, 2, 'pA').map((v, i) => uint(v, `pA[${i}]`, SNARK_Q));
   const pB = coords(t.pB, 2, 'pB').map((row, i) => coords(row, 2, `pB[${i}]`).map((v, j) => uint(v, `pB[${i}][${j}]`, SNARK_Q)));
@@ -281,18 +340,30 @@ export function createIntakeHandler({
   };
   const busyKeys = (keys, t) => keys.some((k) => (inflight.get(k) ?? 0) > t);
 
-  async function quote() {
-    const q = quoteFee({ token: chain.asset, gas: cfg.relayGas, gasPrice: await gasPrice(), cfg });
-    return { chainId: chain.chainId, pool: chain.pool, relayer: chain.address, asset: chain.asset, fee: q.toString(), gas: cfg.relayGas.toString() };
+  // The fee for `gas` (default relayGas; a withdrawal that also runs calls asks for more), within the gas cap.
+  async function quote(gasParam) {
+    let gas = cfg.relayGas;
+    if (gasParam != null) {
+      if (!/^\d{1,9}$/.test(gasParam)) throw bad('gas must be a whole number');
+      gas = BigInt(gasParam);
+      if (gas < cfg.relayGas) gas = cfg.relayGas;
+      if (gas > cfg.gasCap) throw bad(`gas above the ${cfg.gasCap} cap`);
+    }
+    const q = quoteFee({ token: chain.asset, gas, gasPrice: await gasPrice(), cfg });
+    return { chainId: chain.chainId, pool: chain.pool, relayer: chain.address, asset: chain.asset, fee: q.toString(), gas: gas.toString() };
   }
 
   async function relay(body) {
-    const { args, fee } = parseRelaySubmission(body, { keeper: chain.address, cfg });
+    const { args, fee, functionName, sendArgs, wrap } = parseRelaySubmission(body, { keeper: chain.address, cfg, router: chain.router, now: now() });
+    if (wrap) {
+      if (!chain.v1 || chain.v1.toLowerCase() === ETH) throw bad('this router has no wrap target');
+      if ((await chain.wrapBoxOf(wrap)).toLowerCase() !== args[4].toLowerCase()) throw bad('tx.recipient is not the wrap intent\'s box');
+    }
     const keys = relayKeys(args);
     const t0 = Date.now();
     if (busyKeys(keys, t0)) throw Object.assign(new IntakeError(409, 'this spend is already being relayed'), { stale: true });
     let est;
-    try { est = await chain.estimate('pool.transact', args); }
+    try { est = await chain.estimate(functionName, sendArgs); }
     catch (e) {
       const name = revertName(e);
       if (STALE.has(name)) throw Object.assign(new IntakeError(409, `${name}: re-prove against the pool's current root`), { stale: true });
@@ -306,7 +377,7 @@ export function createIntakeHandler({
     const hold = Date.now() + cfg.receiptWaitSecs * 1000;
     for (const k of keys) inflight.set(k, hold);
     let hash;
-    try { hash = await chain.send('pool.transact', args, { gas: cov.gas }); }
+    try { hash = await chain.send(functionName, sendArgs, { gas: cov.gas }); }
     catch (e) {
       for (const k of keys) inflight.delete(k);
       const name = revertName(e);
@@ -317,7 +388,7 @@ export function createIntakeHandler({
     // Held until a receipt settles it; with none in time the hold simply lapses (a failed send is released above).
     chain.waitReceipt(hash, cfg.receiptWaitSecs * 1000).then((rc) => { if (rc) for (const k of keys) inflight.delete(k); }).catch(() => {});
     for (const [k, until] of inflight) if (until <= Date.now()) inflight.delete(k);
-    log(`relayed ${args[5] < 0n ? 'withdrawal' : 'transfer'} ${hash} fee ${fee}`);
+    log(`relayed ${functionName === 'pool.transact' ? (args[5] < 0n ? 'withdrawal' : 'transfer') : functionName} ${hash} fee ${fee}`);
     return { txHash: hash };
   }
 
@@ -344,7 +415,7 @@ export function createIntakeHandler({
       if (p === `${PREFIX}/quote` && req.method === 'GET') {
         if (!cfg.relay) return send(404, { error: 'relaying is off' });
         if (!limited(clientKey(req))) throw new IntakeError(429, 'rate limited');
-        return send(200, await quote());
+        return send(200, await quote(url.searchParams.get('gas')));
       }
       if (p === `${PREFIX}/relay` && req.method === 'POST') {
         if (!cfg.relay) return send(404, { error: 'relaying is off' });
