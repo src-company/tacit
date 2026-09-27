@@ -1,0 +1,30 @@
+{
+  "note": "transact.circom phase-2 ceremony key: 176 contributions plus a Bitcoin block beacon.",
+  "system": "groth16-bn254",
+  "circuit": "dapp/circuits/evm-pool/transact.circom",
+  "circuit_hash": "b0a246d1790151c722e42ccfa89450cb96c7f5a9f4b70a2162b7d9fc79b6ddb3",
+  "contributions": 176,
+  "beacon": {
+    "block_height": 968840,
+    "block_hash": "000000000000000000019b1eec61f35a8da876de173e61f8a32109986182c033",
+    "iterations_exp": 10
+  },
+  "ptau": {
+    "file": "powersOfTau28_hez_final_16.ptau",
+    "blake2b": "6a6277a2f74e1073601b4f9fed6e1e55226917efb0f0db8a07d98ab01df1ccf43eb0e8c3159432acd4960e2f29fe84a4198501fa54c8dad9e43297453efec125",
+    "sha256": "1c401abb57c9ce531370f3015c3e75c0892e0f32b8b1e94ace0f6682d9695922"
+  },
+  "vk": "transact_vk.json",
+  "vk_hash": "43d11e6e1607e1ea7f3980c9bca91beed95e2e80d173d0873189e99d402e5757",
+  "vk_sha256": "f3e36ac06ad59428003b90abd80b807180badeb06c3960c50b060ebc59b626b3",
+  "wasm": "transact.wasm",
+  "wasm_sha256": "02dd5e84970e5bc629a7a3cd4d7eae5fc9ca05579fa22c9b39b5ea70c8d8a6c1",
+  "wasm_bytes": 4916992,
+  "zkey": "transact_final.zkey",
+  "zkey_sha256": "40758061a0786fb0bdc5e5dec4c354bbf85fc106f7412716e25e781af4e79c4b",
+  "zkey_bytes": 28558285,
+  "zkey_cid": "bafybeia6c36bgww2svm6jfg6nl2pk337prc7t6gcfsvhuo5sufqjpi7z4a",
+  "verifier": "TransactVerifier.sol",
+  "verifier_sha256": "78d6a432bf95502b0c3f1ffba041970014d054b998b48ebdeb02dc757cf0c0cb",
+  "bundle_cid": "bafybeia4yvn2zoggvgpjwg5vpwpt6aivjbcm6tgzxoxsukao2nm5yyypfy"
+}

@@ -4,8 +4,8 @@ A native-ETH shielded pool that users prove on their own device. Balances are fu
 single transaction can deposit, pay someone privately with change, withdraw, and pay a relayer. The contracts are
 immutable: no owner, no pause, no upgrade. Design and measurements: [`DESIGN-evm-client-pool.md`](../contracts/sp1/confidential/DESIGN-evm-client-pool.md).
 
-**Status.** The circuit is frozen and its public trusted-setup ceremony runs on tacit.finance. The contracts deploy
-when the ceremony finalizes, at the addresses below, which are fixed now. Integrate against them today and treat the
+**Status.** The circuit's public trusted-setup ceremony is closed: 176 contributions, sealed with Bitcoin block
+968840 as the beacon. The contracts deploy at the addresses below, which are fixed. Integrate against them today and treat the
 pool as live once it has code on chain (`eth_getCode(pool) != "0x"`).
 
 ## Addresses
@@ -43,9 +43,10 @@ pairing check on chain.
 
 | Artifact | Size | Where |
 |---|---|---|
-| `transact.wasm` (witness generator) | ~4.9 MB | pinned on IPFS at finalize |
-| `transact_final.zkey` (proving key) | ~28.5 MB | pinned on IPFS at finalize |
-| verification key hash | 32 B | published at finalize; clients refuse any other key |
+| `transact.wasm` (witness generator) | ~4.9 MB | `bafybeia7b7euebs6dr7muhhvwf4yh472ftxodikyecxubipam4d7o7sxta`, and tacit.finance/evm-pool/ |
+| `transact_final.zkey` (proving key) | ~28.5 MB | `bafybeia6c36bgww2svm6jfg6nl2pk337prc7t6gcfsvhuo5sufqjpi7z4a`, and tacit.finance/evm-pool/ |
+| verification key hash | 32 B | `43d11e6e1607e1ea7f3980c9bca91beed95e2e80d173d0873189e99d402e5757`; clients refuse any other key |
+| ceremony bundle (transcript, keys, verifier) | | `bafybeia4yvn2zoggvgpjwg5vpwpt6aivjbcm6tgzxoxsukao2nm5yyypfy` |
 
 The reference client is plain ES modules with no build step:
 

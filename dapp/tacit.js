@@ -381,7 +381,7 @@ const EVM_POOL_CEREMONY = Object.freeze({
   key: 'evm_pool_transact',
   hash: 'b0a246d1790151c722e42ccfa89450cb96c7f5a9f4b70a2162b7d9fc79b6ddb3',
   ptauSha256: '1c401abb57c9ce531370f3015c3e75c0892e0f32b8b1e94ace0f6682d9695922',
-  finalizedVkCid: null,  // set once finalized
+  finalizedVkCid: 'bafkreiht4nvma2wvsquaao4qvpmaxadrqc5n5mdmhfqmkcygb26ftnrgwm',
   // Contributions closed: the chain is sealed with this Bitcoin block's hash as the beacon.
   closing: { beaconHeight: 968840 },
   label: 'Secret Sats EVM pool',
