@@ -10714,7 +10714,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
     <div class="section-header"><span>documentation</span></div>
     <div class="section-body protocol-body">
       <p class="protocol-lede">Confidential money across Bitcoin and Ethereum — one shielded note you can send, swap, borrow against, and bridge, settled in ordinary on-chain transactions.</p>
-      <p>Tacit is a Bitcoin metaprotocol: Bitcoin orders and stores the data, and open-source indexers enforce the token rules by reading the chain. The same note extends into a <strong>confidential pool</strong> on Ethereum, where it transfers, trades on an AMM, backs a cUSD loan and bridges back, with amounts hidden and your key as your backup throughout.</p>
+      <p>Tacit is a Bitcoin metaprotocol: Bitcoin orders and stores the data, and open-source indexers enforce the token rules by reading the chain. The same note extends into a <strong>confidential pool</strong> on Ethereum, where it transfers, trades on an AMM, borrows and lends, and bridges back — amounts hidden and your key as your backup throughout.</p>
       <p style="margin-top:12px;">The Ethereum contracts are live on mainnet at Etherscan-verified addresses. The ConfidentialPool, ConfidentialRouter, asset factory and SP1 guests are immutable: no owner, no proxy, no pause. The CollateralEngine and FarmManager are governed by a 2-of-4 multisig within fixed bounds. Addresses are in <a href="https://github.com/z0r0z/tacit/blob/main/docs/DEPLOYMENTS.md" target="_blank" rel="noopener noreferrer">DEPLOYMENTS.md</a>.</p>
 
       <div class="protocol-grid">
@@ -10754,9 +10754,9 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
           <p class="crypto-claim">SP1 zero-knowledge reflection · each burn pays once</p>
         </div>
         <div class="protocol-card">
-          <h4>cUSD &amp; cBTC</h4>
-          <p>Mint <strong>cUSD</strong> against cBTC collateral, or <strong>cBTC</strong> / tacBTC 1:1 from a reflected Bitcoin lock. Note balances stay hidden; a CDP position's amounts are public so they can be priced, but its owner is not linked to it.</p>
-          <p class="crypto-claim">Unlinkable CDP positions · conservation-backed cBTC peg</p>
+          <h4>cUSD loans</h4>
+          <p>Borrow <strong>cUSD</strong> against cBTC collateral. A CDP position's amounts are public so it can be priced, but its owner is not linked to it.</p>
+          <p class="crypto-claim">Unlinkable CDP positions · 150% mint / 130% liquidation</p>
         </div>
         <div class="protocol-card">
           <h4>Gasless by relay <span class="mode">opt-in</span></h4>
