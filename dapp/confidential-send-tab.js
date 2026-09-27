@@ -13,7 +13,7 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater, lockedWalletHTML, wireUnlockButton } from './confidential-deployments.js';
 import { formatUnits as fmtUnits } from './confidential-payout.js';
 import { makeConfidentialInvoice } from './confidential-invoice.js';
 import { makeConfidentialNames, makeMainnetCall, NameError } from './confidential-names.js';
@@ -704,28 +704,8 @@ export async function renderSendTab(wallet, helpers = {}) {
     // ask/bid forms: an inline "Unlock wallet" button right where the user
     // already is, instead of a dead-end message that sends them hunting
     // for the unlock control elsewhere.
-    body.innerHTML = `<div class="csend-empty">
-      <div class="csend-empty-icon">\u{1F512}</div>
-      <div class="csend-empty-title">Unlock your wallet to send</div>
-      <div class="csend-empty-sub">Same wallet as the Bitcoin lane — one identity, both chains. Your keys stay in this browser.</div>
-      <button type="button" id="csend-unlock-btn" class="primary" style="margin-top:6px;">Unlock wallet</button>
-    </div>`;
-    const unlockBtn = el('csend-unlock-btn');
-    if (unlockBtn && helpers.unlock) {
-      unlockBtn.addEventListener('click', async () => {
-        unlockBtn.disabled = true;
-        unlockBtn.textContent = 'Unlocking…';
-        try {
-          await helpers.unlock();
-        } catch (e) {
-          unlockBtn.disabled = false;
-          unlockBtn.textContent = 'Unlock wallet';
-          if (!helpers.isUnlockCancelled || !helpers.isUnlockCancelled(e)) {
-            notify('Unlock failed: ' + (e?.message || String(e)), 'error');
-          }
-        }
-      });
-    }
+    body.innerHTML = lockedWalletHTML('send', 'csend-unlock-btn');
+    wireUnlockButton('csend-unlock-btn', helpers);
     return;
   }
   const id = ux.identity(wallet.priv);

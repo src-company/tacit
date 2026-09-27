@@ -9,7 +9,7 @@
 
 import { secp, sha256, keccak_256, hmac } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater, protectOutpoint, listProtectedOutpoints, listReservedLocks, reservedLockSats, evmAccountHint, decOf } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater, protectOutpoint, listProtectedOutpoints, listReservedLocks, reservedLockSats, evmAccountHint, decOf, lockedWalletHTML, wireUnlockButton } from './confidential-deployments.js';
 import { makeConfidentialCdp } from './confidential-cdp.js';
 import { makeConfidentialFarm } from './confidential-farm.js';
 import { makeConfidentialDefiActions } from './confidential-defi-actions.js';
@@ -430,24 +430,29 @@ function wireCbtc(wallet, ux) {
   }
 }
 
-export async function renderCdpTab(wallet) {
+export async function renderCdpTab(wallet, helpers = {}) {
   const body = el('cdp-body');
   if (!body) return;
   if (!confidentialPoolReady()) { body.innerHTML = confidentialUnavailableHTML('Borrowing (CDP)'); return; }
   const ux = getUx();
+  const conceptHtml = `<div class="note-concept"><b>cUSD &amp; cBTC.</b>
+      <b>cUSD</b> is the <span class="btc-word">bitcoin-backed dollar</span>: lock cBTC as collateral and mint a
+      cUSD note. A position's amounts are public so it can be priced, but its owner is not linked to it.
+      <b>cBTC</b> is minted 1:1 from an SP1-reflected Bitcoin lock; tacBTC is its ERC-20 form. A slashable
+      wstETH escrow (1.5× the lock today) deters spending the lock; it does not back the peg. Both are ordinary
+      shielded notes that transfer, trade and exit like anything else in the pool.</div>`;
   if (!wallet || !wallet.priv) {
-    body.innerHTML = '<div class="muted">Unlock a wallet to open a collateralized position.</div>';
+    // Same wallet as the Bitcoin lane — no separate "connect an Ethereum
+    // wallet" step. Keeps the concept blurb visible even locked, so the tab
+    // explains itself instead of reading as a single dead-end sentence.
+    body.innerHTML = conceptHtml + lockedWalletHTML('borrow', 'cdp-unlock-btn');
+    wireUnlockButton('cdp-unlock-btn', helpers);
     return;
   }
   const acct = ux.account(wallet.priv);
   body.innerHTML = `
     <div class="tab-form">
-    <div class="note-concept"><b>cUSD &amp; cBTC.</b>
-      <b>cUSD</b> is the <span class="btc-word">bitcoin-backed dollar</span>: lock cBTC as collateral and mint a
-      cUSD note. A position's amounts are public so it can be priced, but its owner is not linked to it.
-      <b>cBTC</b> is minted 1:1 from an SP1-reflected Bitcoin lock; tacBTC is its ERC-20 form. A slashable
-      wstETH escrow (1.5× the lock today) deters spending the lock; it does not back the peg. Both are ordinary
-      shielded notes that transfer, trade and exit like anything else in the pool.</div>
+    ${conceptHtml}
     <div>Account: <code class="addr" style="font-size:11px;">${acct.address}</code></div>
     ${evmAccountHint()}
     <div id="cdp-status" class="muted">Scanning the pool for collateral…</div>

@@ -46340,6 +46340,14 @@ function _renderCsendTab() {
   });
 }
 
+// CDP (borrow) tab — same locked-state "Unlock wallet" shape as _renderCsendTab above.
+function _renderCdpTab() {
+  renderCdpTab(wallet, {
+    unlock: async () => { await ensurePrivkey(); _renderCdpTab(); },
+    isUnlockCancelled,
+  });
+}
+
 function _activateTab(name) {
   name = _canonicalTabName(name);
   try { _setConfidentialNet(currentNetworkName()); } catch {}
@@ -46369,7 +46377,7 @@ function _activateTab(name) {
   else stopMixerAutoRefresh();
   stopPoolAutoRefresh(); // 'pool'/'farms' redirect in _canonicalTabName; nothing to render
   if (name === 'confidential-pool') { try { renderConfidentialPoolTab(wallet); } catch (e) { console.error('confidential-pool tab', e); } }
-  if (name === 'cdp') { try { renderCdpTab(wallet); } catch (e) { console.error('cdp tab', e); } }
+  if (name === 'cdp') { try { _renderCdpTab(); } catch (e) { console.error('cdp tab', e); } }
   if (name === 'otc') { try { renderOtcTab(wallet); } catch (e) { console.error('otc tab', e); } }
   if (name === 'csend') {
     try { _renderCsendTab(); } catch (e) { console.error('csend tab', e); }

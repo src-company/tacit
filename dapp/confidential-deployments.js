@@ -356,6 +356,39 @@ export function confidentialUnavailableHTML(what, alt) {
     + `deployed on this network. Available now on ${elsewhere}.${alt ? ' ' + alt : ''}</div>`;
 }
 
+// Shared "no wallet unlocked yet" panel for an Ethereum-lane surface (Send, CDP, ...) — one wallet for both
+// chains, so this is always "unlock", never a separate Ethereum-wallet-connect flow. Pair with
+// wireUnlockButton() to make the button actually unlock in place instead of dead-ending the tab.
+export function lockedWalletHTML(action, btnId) {
+  return `<div class="tab-locked-empty">
+    <div class="tab-locked-empty-icon">\u{1F512}</div>
+    <div class="tab-locked-empty-title">Unlock your wallet to ${action}</div>
+    <div class="tab-locked-empty-sub">Same wallet as the Bitcoin lane — one identity, both chains. Your keys stay in this browser.</div>
+    <button type="button" id="${btnId}" class="primary tab-locked-empty-cta">Unlock wallet</button>
+  </div>`;
+}
+
+// Wires the button lockedWalletHTML() renders. `helpers.unlock` (set by the tacit.js tab-activation hook)
+// re-unlocks the shared wallet and re-renders the tab on success; failure re-arms the button so the user can
+// retry instead of it going dead after one rejected attempt.
+export function wireUnlockButton(btnId, helpers) {
+  const btn = document.getElementById(btnId);
+  if (!btn || !helpers || !helpers.unlock) return;
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'Unlocking…';
+    try {
+      await helpers.unlock();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Unlock wallet';
+      if (!helpers.isUnlockCancelled || !helpers.isUnlockCancelled(e)) {
+        notify('Unlock failed: ' + (e?.message || String(e)), 'error');
+      }
+    }
+  });
+}
+
 // Shared UI helpers for every confidential surface (pool/send/swap/otc/defi/govern tabs), so error strings
 // and HTML escaping are consistent across the confidential lane rather than reimplemented per module.
 
