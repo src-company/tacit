@@ -13,6 +13,9 @@
 //   await w.send(bp1, wei)          → private payment                            → tx hash
 //   await w.withdraw(0x…, wei)      → out of the pool to any address             → tx hash
 //   await w.quote()                 → the relayer's { fee, receiveMin, … } (needs relay)
+//   await w.bridgeOut(l2, wei, { l2Rpc }) → from the Ethereum pool to this wallet's private ETH address on Base
+//                                     (8453) or Robinhood Chain (4663, needs l2Rpc) via the canonical bridge
+//                                     (needs relay)                              → tx hash
 //   await w.rescan()                → rebuilds the synced state from chain logs alone (no keeper feed)
 //   w.terminate()                   → stops the prove worker
 // Each action takes an optional last argument { via: 'self' | 'relay', onStep(msg) }. Without `relay` everything
@@ -121,6 +124,7 @@ export async function makeEvmPoolWallet({ provider, chainId, identityKey, artifa
     send: (to, wei, o) => w.send({ to, amount: wei, ...opts(o) }),
     withdraw: (to, wei, o) => w.withdraw({ to, amount: wei, ...opts(o) }),
     quote: () => w.quote(),
+    bridgeOut: (toChainId, wei, o = {}) => w.bridgeOut({ toChainId, amount: wei, l2Rpc: o.l2Rpc ? jsonRpc(o.l2Rpc) : null, onStep: o.onStep ?? (() => {}) }),
     rescan: async () => (last = await w.rescan()),
     terminate: () => prover.terminate(),
   };

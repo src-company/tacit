@@ -276,6 +276,47 @@ export function v1WrapCall({ v1, token, assetId, amount, commit }) {
   });
 }
 
+// ──────────────────── bridging out of an Ethereum pool ────────────────────
+//
+// A withdraw-and-call whose one call deposits ETH through an L2's canonical bridge. The receive box of an npk is at
+// the same address on every chain (the router is), so `to` is normally the wallet's own private ETH address there,
+// which that chain's keeper sweeps into a note. The escrow is a contract, which fixes the calls:
+//  - OP Stack (Base): L1StandardBridge.depositETHTo; depositETH is onlyEOA.
+//  - Arbitrum Orbit (Robinhood Chain): Inbox.createRetryableTicket naming `to` for the value and both refunds;
+//    depositEth from a contract credits the contract's L2 alias, which no one controls. The call value also prepays
+//    the L2 execution; what is left refunds on L2 to `to`.
+// The amount and `to` are public on Ethereum; what stays private is which note paid.
+
+export const L2_BRIDGES = {
+  8453: { kind: 'op', bridge: '0x3154Cf16ccdb4C6d922629664174b904d80F2C35' },
+  4663: { kind: 'arbitrum', inbox: '0x1A07cc4BD17E0118BdB54D70990D2158AbAD7a2D' },
+};
+
+// → { call, value }: the call for callIntent and the ETH it spends (the withdrawal amount).
+//   OP Stack:       { chainId, to, amount, minGasLimit? }
+//   Arbitrum Orbit: { chainId, to, amount, maxSubmissionCost, gasLimit, maxFeePerGas } (amount is what lands on L2)
+export function bridgeEthCall({ chainId, to, amount, minGasLimit = 200_000, maxSubmissionCost, gasLimit, maxFeePerGas }) {
+  const b = L2_BRIDGES[Number(chainId)];
+  if (!b) throw new Error(`evm-pool-gateway: no bridge known for chain ${chainId}`);
+  if (!isAddr(to) || BigInt(to) === 0n) throw new Error('evm-pool-gateway: bridge recipient must be an address');
+  const a = BigInt(amount);
+  if (a <= 0n) throw new Error('evm-pool-gateway: bridge amount must be positive');
+  if (b.kind === 'op') {
+    return { value: a, call: call({ target: b.bridge, value: a, data: calldata('depositETHTo(address,uint32,bytes)', ['address', 'uint32', 'bytes'], [to, minGasLimit, '0x']) }) };
+  }
+  if (maxSubmissionCost == null || gasLimit == null || maxFeePerGas == null) throw new Error('evm-pool-gateway: a retryable needs maxSubmissionCost, gasLimit and maxFeePerGas');
+  const value = a + BigInt(maxSubmissionCost) + BigInt(gasLimit) * BigInt(maxFeePerGas);
+  return {
+    value,
+    call: call({
+      target: b.inbox, value,
+      data: calldata('createRetryableTicket(address,uint256,uint256,address,address,uint256,uint256,bytes)',
+        ['address', 'uint256', 'uint256', 'address', 'address', 'uint256', 'uint256', 'bytes'],
+        [to, a, maxSubmissionCost, to, to, gasLimit, maxFeePerGas, '0x']),
+    }),
+  };
+}
+
 // ──────────────────── funding a box with a call (router §8) ────────────────────
 //
 // fundDeposit(intent, hint) pays a deposit box and publishes `hint` in DepositFunded, so any keeper can complete it

@@ -17,7 +17,7 @@
 import { secp, keccak_256, sha256, hmac, concatBytes } from './vendor/tacit-deps.min.js';
 import { makeBtcShieldedPool } from './btc-shielded-pool.js';
 import { poolAsset, extDataHash } from './evm-pool-zk.js';
-import { receiveKeys, receivedNote, receiveBoxAddress, sweepWitness, callEscrowAddress, callIntentJson, calldata, selector, RECEIVE_FEE_BPS, RECEIVE_INDEX } from './evm-pool-gateway.js';
+import { receiveKeys, receivedNote, receiveBoxAddress, sweepWitness, callIntent, callEscrowAddress, callIntentJson, calldata, selector, bridgeEthCall, L2_BRIDGES, RECEIVE_FEE_BPS, RECEIVE_INDEX } from './evm-pool-gateway.js';
 
 export const MEMO_LEN = 65;
 const REFUND_GAP = 20;
@@ -481,14 +481,18 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   }
 
   const self = { V: keys.V, A: keys.A, N: keys.N };
+  const NODE_INTERFACE = '0x00000000000000000000000000000000000000C8';
+  const hasCode = async (rpc, a) => { const c = await rpc('eth_getCode', [a, 'latest']); return !!c && c !== '0x'; };
 
-  return {
+  const api = {
     address: keys.address,
     receiveBox: box,
     asset,
     sync,
     summary,
     notes: () => unspent(),
+    // Sets the user's own wallet for self-submitted actions ({ address, send }, as the signer option).
+    connect(s) { signer = s; },
     // Forgets the synced state and rebuilds it from chain logs alone (no feed).
     async rescan() {
       saved = blank(); view = null; persist();
@@ -583,5 +587,44 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       }
       throw new Error('the pool kept moving; try again');
     },
+
+    // Moves `amount` wei from this Ethereum pool to the same wallet's private ETH address on an L2 (8453 Base, 4663
+    // Robinhood Chain) in one relayed withdraw-and-call through the L2's canonical bridge; that chain's keeper then
+    // sweeps it into a note there (watchReceive on the L2 wallet). Arrives in minutes. The amount and the address
+    // are public on Ethereum; which note paid is not. l2Rpc (a jsonRpc on the L2) is needed for Robinhood Chain,
+    // whose retryable is priced from the L2. → tx hash.
+    async bridgeOut({ toChainId, amount, l2Rpc = null, onStep = () => {} }) {
+      if (Number(chain.chainId) !== 1) throw new Error('bridging out starts from the Ethereum pool');
+      const b = L2_BRIDGES[Number(toChainId)];
+      if (!b) throw new Error(`no bridge to chain ${toChainId}`);
+      const a = BigInt(amount);
+      if (a <= 0n) throw new Error('enter an amount');
+      // Code at `to` on Ethereum would make an Arbitrum refund land on its alias; a box has code only mid-sweep.
+      if (await hasCode(chain.rpc, box)) throw new Error('your private ETH address is mid-sweep on Ethereum; try again in a minute');
+      let args = { chainId: toChainId, to: box, amount: a };
+      if (b.kind === 'arbitrum') {
+        if (!l2Rpc) throw new Error('bridging to this chain needs an RPC for it');
+        if (await hasCode(l2Rpc, box)) throw new Error('your private ETH address is mid-sweep on the destination; try again in a minute');
+        const block = await chain.rpc('eth_getBlockByNumber', ['latest', false]);
+        const maxSubmissionCost = BigInt(await chain.rpc('eth_call', [{ to: b.inbox, data: calldata('calculateRetryableSubmissionFee(uint256,uint256)', ['uint256', 'uint256'], [0n, BigInt(block.baseFeePerGas) * 2n]) }, 'latest']));
+        // A thin fee cap strands the ticket if the L2 base fee moves before it runs; unused gas refunds to `to`.
+        const gp = BigInt(await l2Rpc('eth_gasPrice'));
+        const maxFeePerGas = gp * 8n > 100_000_000n ? gp * 8n : 100_000_000n;
+        let gasLimit = 300_000n;
+        try {
+          const est = BigInt(await l2Rpc('eth_estimateGas', [{ to: NODE_INTERFACE, data: calldata('estimateRetryableTicket(address,uint256,address,uint256,address,address,bytes)',
+            ['address', 'uint256', 'address', 'uint256', 'address', 'address', 'bytes'], [box, 10n ** 18n + 1n, box, 1n, box, box, '0x']) }]));
+          gasLimit = (est * 3n) / 2n;
+        } catch {}
+        args = { ...args, maxSubmissionCost, gasLimit, maxFeePerGas };
+      }
+      const { call: c, value } = bridgeEthCall(args);
+      const refund = await api.refundBox();
+      const nonce = BigInt(hex(globalThis.crypto.getRandomValues(new Uint8Array(16))));
+      const intent = callIntent({ calls: [c], refund, deadline: BigInt(Math.floor(Date.now() / 1000) + 3600), nonce });
+      // The OP portal burns L1 gas to buy the deposit's L2 gas (~620k in all); a retryable costs ~100k.
+      return api.withdrawAndCall({ intent, amount: value, gas: b.kind === 'op' ? 1_300_000 : 700_000, onStep });
+    },
   };
+  return api;
 }

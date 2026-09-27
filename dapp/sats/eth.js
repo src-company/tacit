@@ -7,7 +7,7 @@
 // Link: /sats#eth=<chain id>[&do=send|withdraw] opens this panel on that chain, at that form.
 
 import { makeEvmPoolZk } from '/evm-pool-zk.js?cb=2f062779';
-import { evmPoolKeys, makeEvmPoolWallet, jsonRpc } from '/evm-pool-wallet.js?cb=13177af5';
+import { evmPoolKeys, makeEvmPoolWallet, jsonRpc } from '/evm-pool-wallet.js?cb=2885ab88';
 import { vkHash } from '/evm-pool-zk-prover.js?cb=00ff69c2';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7 } from '../vendor/tacit-poseidon.min.js';
 
@@ -209,18 +209,34 @@ export async function mount(root, ctx) {
     } catch (e) { say(`Could not read the pool: ${ctx.errMsg ? ctx.errMsg(e) : e.message}`, 'error'); }
   }
 
-  // ETH at the private ETH address, and the smallest amount the relayer collects at today's gas price.
+  // A browser wallet (EIP-1193) on this chain, as the pool wallet's signer.
+  async function browserSigner() {
+    const eth = globalThis.ethereum;
+    if (!eth?.request) throw new Error('no browser wallet found');
+    const [from] = await eth.request({ method: 'eth_requestAccounts' });
+    const want = '0x' + chain.chainId.toString(16);
+    if ((await eth.request({ method: 'eth_chainId' })) !== want) await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: want }] });
+    return { address: from, send: ({ to, data, value }) => eth.request({ method: 'eth_sendTransaction', params: [{ from, to, data, value: '0x' + BigInt(value).toString(16) }] }) };
+  }
+
+  // ETH at the private ETH address, the smallest amount the relayer collects at today's gas price, and what a
+  // relayed send or withdrawal costs now.
   async function showWaiting() {
     const p = root.querySelector('#eth-wait');
     if (!p || !W) return;
     const [held, q] = await Promise.all([W.waiting(), chain.keeper ? W.quote().catch(() => null) : null]);
     const min = q?.receiveMin ? ((BigInt(q.receiveMin) + 10n ** 12n - 1n) / 10n ** 12n) * 10n ** 12n : null; // rounded up to what fmtEth shows
+    const stuck = held > 0n && min && held < min;
     p.textContent = '';
-    if (held > 0n) p.textContent = min && held < min
-      ? `${fmtEth(held)} is at your private ETH address. It is collected once it reaches ${fmtEth(min)} at today's gas price; add more or wait for cheaper gas.`
+    if (held > 0n) p.textContent = stuck
+      ? `${fmtEth(held)} is at your private ETH address. The relayer collects it once it reaches ${fmtEth(min)} at today's gas price.`
       : `${fmtEth(held)} is at your private ETH address, on its way into your private balance.`;
     else if (min) p.textContent = `At today's gas price, send at least ${fmtEth(min)} at a time.`;
     p.hidden = !p.textContent;
+    const collect = root.querySelector('#eth-collect');
+    if (collect) collect.hidden = !(held > 0n && (stuck || !chain.keeper) && globalThis.ethereum?.request);
+    const fee = root.querySelector('#eth-fee');
+    if (fee) { fee.textContent = q?.fee ? `The relayer's fee is ${fmtEth(BigInt(q.fee))} now, taken from your private balance.` : ''; fee.hidden = !fee.textContent; }
   }
 
   function main() {
@@ -237,9 +253,11 @@ export async function mount(root, ctx) {
       el('div', { class: 'kv' }, el('span', {}, 'private balance'), el('b', { id: 'eth-bal' }, '…')),
       ...copyRow('private ETH address', w.receiveBox, `Send ETH here from any wallet or exchange on ${chain.name}. It moves into your private balance within minutes, less at most 0.25%.`),
       el('p', { class: 'note small', id: 'eth-wait', hidden: true }),
+      el('div', { class: 'row' }, el('button', { class: 'btn quiet sm', type: 'button', id: 'eth-collect', hidden: true }, 'Collect it now from my wallet')),
       ...copyRow('private address', w.address, 'For private payments from other Tacit users, in sats or ETH. Nothing on chain links a payment to it.'),
       el('div', { class: 'row' }, checkBtn),
       relayer ? null : el('p', { class: 'note' }, `Sending and withdrawing open on ${chain.name} when its relayer is announced.`),
+      el('p', { class: 'note small', id: 'eth-fee', hidden: true }),
       el('h3', {}, 'Send privately'),
       field('eth-to', 'To: a Secret Sats address (bp1…)', 'bp1…'),
       field('eth-amt', 'Amount (ETH)', '0.01', 'decimal'),
@@ -248,13 +266,43 @@ export async function mount(root, ctx) {
       field('eth-wto', 'To: any 0x address, a fresh one leaves no link to you', '0x…'),
       field('eth-wamt', 'Amount (ETH)', '0.01', 'decimal'),
       el('div', { class: 'row' }, wdBtn),
+      ...(chain.chainId === 1 && relayer ? [
+        el('h3', {}, 'Move to an L2'),
+        el('p', { class: 'note small' }, 'Moves ETH from here to your private ETH address on Base or Robinhood Chain through its canonical bridge, in one relayed transaction. It arrives in minutes and is collected into your private balance there. The amount is public on Ethereum; which of your notes paid is not.'),
+        el('div', { class: 'seg', role: 'group', 'aria-label': 'Destination', id: 'eth-bdest' },
+          ...CHAINS.filter((c) => c.chainId !== 1).map((c, i) => el('button', { type: 'button', 'data-chain': String(c.chainId), 'aria-pressed': String(i === 0) }, c.name))),
+        field('eth-bamt', 'Amount (ETH)', '0.01', 'decimal'),
+        el('div', { class: 'row' }, el('button', { class: 'btn quiet', type: 'button', id: 'eth-bbtn' }, 'Move privately')),
+      ] : []),
     ].filter(Boolean));
+    const collectBtn = root.querySelector('#eth-collect');
+    collectBtn.title = 'Proves on this device and sends from your browser wallet: you pay the gas, no fee.';
+    collectBtn.onclick = () => action(collectBtn, async () => {
+      w.connect(await browserSigner());
+      const h = await w.sweep({ onStep: step });
+      status.replaceChildren('Collected in ', explorer(h), '.');
+      refresh();
+    });
     checkBtn.onclick = () => action(checkBtn, async () => { await w.watchReceive(); say('Asked the relayer to check your private ETH address.'); await refresh(); });
     sendBtn.onclick = () => action(sendBtn, async () => {
       const h = await w.send({ to: root.querySelector('#eth-to').value, amount: parseEth(root.querySelector('#eth-amt').value), onStep: step });
       status.replaceChildren('Sent privately in ', explorer(h), '.');
       refresh();
     });
+    const bseg = root.querySelector('#eth-bdest');
+    if (bseg) {
+      for (const b of bseg.querySelectorAll('button')) b.onclick = () => { for (const x of bseg.querySelectorAll('button')) x.setAttribute('aria-pressed', String(x === b)); };
+      const bBtn = root.querySelector('#eth-bbtn');
+      bBtn.onclick = () => action(bBtn, async () => {
+        const dest = CHAINS.find((c) => String(c.chainId) === bseg.querySelector('[aria-pressed="true"]').dataset.chain);
+        const h = await w.bridgeOut({ toChainId: dest.chainId, amount: parseEth(root.querySelector('#eth-bamt').value), l2Rpc: jsonRpc(dest.rpc), onStep: step });
+        // The destination's keeper collects the arrival; tell it to watch (the wallet there may never have been opened).
+        const there = makeEvmPoolWallet({ zk, keys: evmPoolKeys(zk, ctx.wallet.priv), keeper: dest.keeper, prove: null, chain: { chainId: dest.chainId, pool: POOL, router: ROUTER, rpc: jsonRpc(dest.rpc), deployBlock: dest.deployBlock } });
+        there.watchReceive().catch(() => {});
+        status.replaceChildren(`Sent to ${dest.name} in `, explorer(h), '. It arrives at your private ETH address there in a few minutes.');
+        refresh();
+      });
+    }
     wdBtn.onclick = () => action(wdBtn, async () => {
       const h = await w.withdraw({ to: root.querySelector('#eth-wto').value.trim(), amount: parseEth(root.querySelector('#eth-wamt').value), onStep: step });
       status.replaceChildren('Withdrawn in ', explorer(h), '.');
@@ -263,7 +311,7 @@ export async function mount(root, ctx) {
     if (relayer) w.watchReceive().catch(() => {});
     // The proving key (about 33 MB the first time, cached after) starts downloading once a form is in use.
     const warm = () => { prover((name, got, total) => say(`Getting the proving key once: ${name} ${total ? Math.floor((got / total) * 100) + '%' : ''}`)).then(() => say('')).catch(() => {}); };
-    for (const id of ['eth-to', 'eth-amt', 'eth-wto', 'eth-wamt']) root.querySelector('#' + id)?.addEventListener('focus', warm, { once: true });
+    for (const id of ['eth-to', 'eth-amt', 'eth-wto', 'eth-wamt', 'eth-bamt']) root.querySelector('#' + id)?.addEventListener('focus', warm, { once: true });
     if (focus) root.querySelector('#' + focus)?.focus();
     refresh();
   }

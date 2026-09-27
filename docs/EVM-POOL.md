@@ -292,6 +292,21 @@ private ETH address and `w.receive.waiting()` what sits there unswept. With `rel
 keeper's feed first (checked as below); `w.rescan()` rebuilds from chain logs alone. `w.terminate()` stops the
 worker. Synced state stays small as the pool grows: the tree's right edge and the paths of the wallet's own notes.
 
+## Moving to an L2
+
+From the Ethereum pool, `wallet.bridgeOut({ toChainId, amount, l2Rpc })` withdraws into a call escrow whose one call
+deposits through the L2's canonical bridge to the wallet's own private ETH address there (a receive box is at the same
+address on every chain, since the router is); that chain's keeper sweeps it into a note. Gateway builder:
+`bridgeEthCall`.
+
+| To | Call from the escrow | Notes |
+|---|---|---|
+| Base (8453) | `L1StandardBridge.depositETHTo(to, 200000, 0x)` at `0x3154Cf16…2C35` | `depositETH` is EOA-only. Arrives in 1–3 min, exact. The portal burns about 620k L1 gas to buy the deposit's L2 gas. |
+| Robinhood Chain (4663) | `Inbox.createRetryableTicket(to, amount, sc, to, to, gasLimit, maxFeePerGas, 0x)` at `0x1A07cc4B…7a2D` | Never `depositEth`, which credits a contract's L2 alias. `sc` = `calculateRetryableSubmissionFee(0, 2 × L1 basefee)`; `gasLimit` = 1.5 × `NodeInterface.estimateRetryableTicket`; `maxFeePerGas` = max(8 × L2 gas price, 0.1 gwei), so the ticket runs even if the L2 fee moves. Unused gas refunds to `to` on L2. `to` must have no code on Ethereum when the ticket is made. |
+
+The amount and destination address are public on Ethereum; which note paid is not. Coming back from an L2 is the
+canonical exit (about a week); no fast path is wired.
+
 ## Moving between V1 and this pool
 
 The pools keep separate notes, so value moves by a public exit from one and a public entry into the other. Both

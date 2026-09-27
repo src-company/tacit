@@ -10,8 +10,9 @@ import { proveTransact, verifyTransact } from '../dapp/evm-pool-zk-prover.js';
 import {
   depositIntent, completionWitness, withdrawalWitness, receiveKeys, receiveRho, sweepWitness, receivedNote, evmPoolWallet, receiveBoxAddress,
   RECEIVE_FEE_BPS, RECEIVE_INDEX, call, callIntent, callEscrowAddress, callWithdrawalWitness, callRefundBox, callIntentJson,
-  v1ZapShieldedNoteCall, encodeDepositHint, decodeDepositHint,
+  v1ZapShieldedNoteCall, encodeDepositHint, decodeDepositHint, bridgeEthCall, calldata,
 } from '../dapp/evm-pool-gateway.js';
+import { createRequire } from 'node:module';
 
 const DIR = new URL('../dapp/circuits/evm-pool/build/', import.meta.url).pathname;
 const wasm = readFileSync(DIR + 'transact_js/transact.wasm');
@@ -191,6 +192,30 @@ console.log('funding a deposit box with a call');
   ok('a keeper rebuilds the intent\'s leaves and memo hashes from the on-chain hint alone');
   assert.throws(() => decodeDepositHint('0x' + '00'.repeat(100)), /short hint/);
   ok('a truncated hint is refused');
+}
+
+{
+  const viem = createRequire(new URL('../worker-relay/package.json', import.meta.url))('viem');
+  const to = '0x' + 'ab'.repeat(20);
+  const op = bridgeEthCall({ chainId: 8453, to, amount: 5n });
+  assert.equal(op.value, 5n);
+  assert.equal(op.call.target, '0x3154Cf16ccdb4C6d922629664174b904d80F2C35');
+  assert.equal(op.call.value, 5n);
+  assert.equal(op.call.data, viem.encodeFunctionData({ abi: viem.parseAbi(['function depositETHTo(address,uint32,bytes)']), args: [to, 200000, '0x'] }));
+  ok('Base: depositETHTo(to, 200000, 0x) on the L1StandardBridge, carrying the amount');
+  const arb = bridgeEthCall({ chainId: 4663, to, amount: 5n, maxSubmissionCost: 7n, gasLimit: 11n, maxFeePerGas: 13n });
+  assert.equal(arb.value, 5n + 7n + 11n * 13n);
+  assert.equal(arb.call.target, '0x1A07cc4BD17E0118BdB54D70990D2158AbAD7a2D');
+  assert.equal(arb.call.data, viem.encodeFunctionData({ abi: viem.parseAbi(['function createRetryableTicket(address,uint256,uint256,address,address,uint256,uint256,bytes)']), args: [to, 5n, 7n, to, to, 11n, 13n, '0x'] }));
+  ok('Robinhood Chain: a retryable naming `to` for the value and both refunds, prepaying the L2 gas');
+  assert.throws(() => bridgeEthCall({ chainId: 4663, to, amount: 5n }), /retryable needs/);
+  assert.throws(() => bridgeEthCall({ chainId: 10, to, amount: 5n }), /no bridge/);
+  ok('an unpriced retryable or an unknown chain is refused');
+  const PAIR = { tuple: ['uint256', 'uint256'] };
+  const types = [PAIR, { tuple: [PAIR, PAIR] }, 'bytes'];
+  assert.equal(calldata('f(uint256[2],uint256[2][2],bytes)', types, [[1n, 2n], [[3n, 4n], [5n, 6n]], '0xabcd']),
+    viem.encodeFunctionData({ abi: viem.parseAbi(['function f(uint256[2],uint256[2][2],bytes)']), args: [[1n, 2n], [[3n, 4n], [5n, 6n]], '0xabcd'] }));
+  ok('static tuples take their full width in the head, so offsets after them are right');
 }
 
 console.log(`${n} checks passed`);
