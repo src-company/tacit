@@ -228,7 +228,8 @@ function rowKey(base, n) {
 
 // ctx: { store, state, chainId, client, apiBase, startBlock, pool, router, v1Pool, v1Router, excluded (Set),
 //        confirmations, chunk, maxChunks, resolvePerCycle, capTip?(tip), explorerGet, pointsFor(amountWei, prior),
-//        evalBlock(chainId, blockNumber, blockTime), covered(evalBlock), multipliers(address, evalBlock), log }
+//        evalBlock(chainId, blockNumber, blockTime), covered(evalBlock), multipliers(address, evalBlock) →
+//        { tacB, zShareB, ppB }, log }
 function hopsFor(ctx) {
   return {
     direct: new Set([lc(ctx.v1Pool), lc(ctx.v1Router)].filter(Boolean)),
@@ -238,13 +239,13 @@ function hopsFor(ctx) {
 
 async function credit(ctx, { key, blockNumber, blockTime, depositor, amountWei }) {
   const evalBlock = await ctx.evalBlock(ctx.chainId, blockNumber, blockTime);
-  const { tacB, zShareB } = ctx.multipliers(depositor, evalBlock);
+  const { tacB, zShareB, ppB = 1 } = ctx.multipliers(depositor, evalBlock);
   const prior = ctx.store.countByActivity(EVM_POOL_ACTIVITY);
   return ctx.store.recordDeposit({
     txHash: key, blockNumber: Number(blockNumber), blockTime: Number(blockTime),
     depositor, amountWei: amountWei.toString(), priorDepositCount: prior,
-    points: ctx.pointsFor(amountWei, prior) * tacB * zShareB, activity: EVM_POOL_ACTIVITY,
-    tacBoost: tacB, zShareBoost: zShareB, chainId: ctx.chainId,
+    points: ctx.pointsFor(amountWei, prior) * ppB * tacB * zShareB, activity: EVM_POOL_ACTIVITY,
+    ppBoosted: ppB > 1 ? 1 : 0, tacBoost: tacB, zShareBoost: zShareB, chainId: ctx.chainId,
   });
 }
 

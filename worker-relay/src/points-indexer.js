@@ -691,7 +691,11 @@ function evmPoolCtx(store, evmState, { chainId, client }) {
       return evalCache.get(t);
     },
     covered: (b) => capToBoostCoverage(b) >= b,
-    multipliers: (address, b) => ({ tacB: tacMultiplier(address, b), zShareB: zShareMultiplier(address, b) }),
+    multipliers: (address, b) => ({
+      tacB: tacMultiplier(address, b), zShareB: zShareMultiplier(address, b),
+      // The same Privacy Pools rule as a V1 wrap, judged at the deposit's mainnet block.
+      ppB: store.hasEarlierPpWithdrawal(address, Number(b)) ? CFG.ppBoostMultiplier : 1,
+    }),
   };
 }
 

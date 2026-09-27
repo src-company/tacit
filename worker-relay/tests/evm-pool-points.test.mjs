@@ -105,6 +105,21 @@ await test('direct deposit is credited to tx.from', async () => {
   w.cleanup();
 });
 
+await test('the Privacy Pools boost multiplies a deposit and is recorded', async () => {
+  const w = world();
+  w.ctx.multipliers = (a) => ({ tacB: 1, zShareB: 1, ppB: a === ALICE ? 1.2 : 1 });
+  transact(w.chain, { hash: h(8), block: 200n, extAmount: ETH });
+  transact(w.chain, { hash: h(9), block: 201n, extAmount: ETH });
+  w.chain.txs.set(h(8), { from: ALICE, to: POOL, typeHex: '0x2' });
+  w.chain.txs.set(h(9), { from: BOB, to: POOL, typeHex: '0x2' });
+  await scanEvmPoolChain(w.ctx);
+  const [a] = rows(w.store, ALICE), [b] = rows(w.store, BOB);
+  assert.equal(!!a.pp_boosted, true);
+  assert.equal(!!b.pp_boosted, false);
+  assert.ok(Math.abs(a.points / w.ctx.pointsFor(ETH, 0) - 1.2) < 1e-9);
+  w.cleanup();
+});
+
 await test('router zap is credited to tx.from', async () => {
   const w = world();
   transact(w.chain, { hash: h(2), block: 300n, extAmount: ETH });
