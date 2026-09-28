@@ -11,11 +11,12 @@
 // is used to GRANT something (governance weight, ceremony eligibility, a role) needs the real check here
 // instead, mirroring the dapp's own bar for crediting a balance.
 //
-// Scope: covers the opcodes ordinary TAC circulation takes — T_CETCH, T_MINT, T_CXFER(_BPP), T_BURN,
-// T_AXFER(_BPP). An ancestor under any other opcode (T_AXFER_VAR family, T_CXFER_BOUND, a Bitcoin-pool
-// exit note, a cross-out mint, …) fails closed — verification stops and the UTXO is treated as unproven,
-// not credited. That is a coverage gap for a holder whose TAC arrived by one of those rarer paths, not a
-// soundness gap: failing closed can only ever under-grant, never over-grant.
+// Scope: covers every opcode whose conservation is provable from Bitcoin data alone — T_CETCH, T_MINT,
+// T_CXFER(_BPP), T_BURN, T_AXFER(_BPP), T_AXFER_VAR(_BPP), T_CXFER_BOUND. An ancestor under any other
+// opcode (a Bitcoin-pool exit note, a cross-out mint whose validity rests on the reflection guest's own
+// Ethereum-state proof rather than on anything checkable here, …) fails closed — verification stops and
+// the UTXO is treated as unproven, not credited. That is a coverage gap for a holder whose TAC arrived by
+// one of those rarer paths, not a soundness gap: failing closed can only ever under-grant, never over-grant.
 //
 // All deps are injected (same convention as dapp/confidential-stealth.js etc.) so this module shares the
 // caller's own secp/hash instances and reuses index.js's already-verified crypto primitives rather than
@@ -33,6 +34,7 @@ export function makeTacAncestry({
   const safeMult = (P, s) => { const x = ((BigInt(s) % SECP_N) + SECP_N) % SECP_N; return x === 0n ? ZERO : P.multiply(x); };
 
   const T_CETCH = 0x21, T_CXFER_BPP = 0x22, T_CXFER = 0x23, T_MINT = 0x24, T_BURN = 0x25, T_AXFER = 0x26, T_AXFER_BPP = 0x3C;
+  const T_AXFER_VAR = 0x37, T_AXFER_VAR_BPP = 0x3D, T_CXFER_BOUND = 0x39;
 
   // ---- local decoders (raw-byte fields — kernel_sig/rangeproof/issuer_sig included, unlike index.js's
   // display-only decoders, which discard exactly those fields since they never needed to verify them) ----
@@ -133,6 +135,53 @@ export function makeTacAncestry({
     const rpLen = payload[p] | (payload[p + 1] << 8); p += 2;
     if (p + rpLen !== payload.length) return null;
     return { assetId, assetInputCount, kernelSig, outputs: dec.outputs, rangeproof: payload.slice(p, p + rpLen) };
+  }
+  // T_AXFER_VAR(_BPP): the decoder's own SPEC-mandated tightenings (asset_input_count exactly 1, N exactly
+  // 2) leave asset_input_count out of the return value on purpose — a caller that needs it would be
+  // misusing this opcode's single-input, two-output shape.
+  function decAxferVarLike(payload, opcode) {
+    if (!payload || payload.length < 1 + 32 + 1 + 64 + 1 || payload[0] !== opcode) return null;
+    let p = 1;
+    const assetId = payload.slice(p, p + 32); p += 32;
+    const assetInputCount = payload[p]; p += 1;
+    if (assetInputCount !== 1) return null;
+    const kernelSig = payload.slice(p, p + 64); p += 64;
+    const n = payload[p]; p += 1;
+    if (n !== 2) return null;
+    const dec = decOutputs(payload, p, n);
+    if (!dec) return null;
+    p = dec.p;
+    if (p + 2 > payload.length) return null;
+    const rpLen = payload[p] | (payload[p + 1] << 8); p += 2;
+    if (p + rpLen !== payload.length) return null;
+    return { assetId, kernelSig, outputs: dec.outputs, rangeproof: payload.slice(p, p + rpLen) };
+  }
+  // T_AXFER_VAR's on-chain layout is interleaved, not contiguous: vout 0 = recipient (outputs[0]), vout 1 =
+  // the maker's plain BTC payment (not tacit), vout 2 = maker change (outputs[1]), vout 3+ = OP_RETURN
+  // recovery / taker BTC change (not tacit). Returns the payload output index for a tacit vout, or null.
+  function axferVarOutputIndexForVout(vout) {
+    if (vout === 0) return 0;
+    if (vout === 2) return 1;
+    return null;
+  }
+  // T_CXFER_BOUND (0x39): T_CXFER's body behind a 32-byte target_chain_binding header — same asset_id,
+  // kernel_sig and output layout, just offset by the extra field. The binding matters to the reflection
+  // guest, not to Bitcoin-side conservation, so it plays no part in the kernel transcript below.
+  function decCxferBound(payload) {
+    if (!payload || payload.length < 1 + 32 + 32 + 64 + 1 || payload[0] !== T_CXFER_BOUND) return null;
+    let p = 1;
+    p += 32; // target_chain_binding
+    const assetId = payload.slice(p, p + 32); p += 32;
+    const kernelSig = payload.slice(p, p + 64); p += 64;
+    const n = payload[p]; p += 1;
+    if (![1, 2, 4, 8].includes(n)) return null;
+    const dec = decOutputs(payload, p, n);
+    if (!dec) return null;
+    p = dec.p;
+    if (p + 2 > payload.length) return null;
+    const rpLen = payload[p] | (payload[p + 1] << 8); p += 2;
+    if (p + rpLen !== payload.length) return null;
+    return { assetId, kernelSig, outputs: dec.outputs, rangeproof: payload.slice(p, p + rpLen) };
   }
 
   function assetIdForRaw(etchTxidHex, etchVout) {
@@ -305,6 +354,95 @@ export function makeTacAncestry({
       }
       memoAll(memo, txidHex, N, { ok: true, assetIdHex: ourAssetIdHex }, (j) => dec.outputs[j].commitment);
       return memo.get(key);
+    }
+
+    if (envelope.opcode === T_CXFER_BOUND) {
+      const dec = decCxferBound(envelope.payload);
+      if (!dec) { const r = { ok: false, reason: 'invalid T_CXFER_BOUND payload' }; memo.set(key, r); return r; }
+      const N = dec.outputs.length;
+      if (vout >= N) { const r = { ok: false, reason: `vout ${vout} is not a tacit output of this tx` }; memo.set(key, r); return r; }
+      if (tx.vin.length < 2 || tx.vin.length - 1 > 255) {
+        return memoAll(memo, txidHex, N, { ok: false, reason: 'too few or too many inputs for T_CXFER_BOUND' });
+      }
+      const ourAssetIdHex = bytesToHex(dec.assetId);
+      const inputCommitments = [];
+      for (let i = 1; i < tx.vin.length; i++) {
+        const inp = tx.vin[i];
+        const r = await _walk(env, inp.txid, inp.vout, network, memo, depth + 1, maxDepth);
+        if (!r.ok) return memoAll(memo, txidHex, N, { ok: false, reason: `input ${inp.txid}:${inp.vout}: ${r.reason}` });
+        if (r.assetIdHex !== ourAssetIdHex) {
+          return memoAll(memo, txidHex, N, { ok: false, reason: `input ${inp.txid}:${inp.vout} is a different asset` });
+        }
+        inputCommitments.push(r.commitment);
+      }
+      let Cpts;
+      try { Cpts = dec.outputs.map((o) => toPoint(o.commitment)); }
+      catch { return memoAll(memo, txidHex, N, { ok: false, reason: 'bad output commitment' }); }
+      // Unlike every other opcode here, the proof scheme isn't opcode-selected — both classic and BP+
+      // proofs ride the same 0x39 byte, distinguished only by the proof's own length (mirrors the dapp's
+      // validateOutpoint exactly, cxfer-core's verify_range dispatch).
+      const bppLen = 99 + 96 + Math.log2(64 * N) * 66;
+      const rpOk = dec.rangeproof.length === bppLen ? bppRangeVerify(Cpts, dec.rangeproof) : bpRangeAggVerify(Cpts, dec.rangeproof);
+      if (!rpOk) return memoAll(memo, txidHex, N, { ok: false, reason: 'output rangeproof failed' });
+      let EPrime = ZERO;
+      try {
+        for (const o of dec.outputs) EPrime = EPrime.add(toPoint(o.commitment));
+        for (const c of inputCommitments) EPrime = EPrime.add(toPoint(c).negate());
+      } catch { return memoAll(memo, txidHex, N, { ok: false, reason: 'commitment arithmetic failed' }); }
+      if (EPrime.equals(ZERO)) return memoAll(memo, txidHex, N, { ok: false, reason: 'zero kernel excess' });
+      const exBytes = EPrime.toRawBytes(true).slice(1);
+      const inputOutpoints = tx.vin.slice(1).map((v) => ({ txid: v.txid, vout: v.vout }));
+      const outputCommitments = dec.outputs.map((o) => o.commitment);
+      // Same kernel domain/shape as plain CXFER (no burn term, no binding-aware transcript) — the
+      // target_chain_binding header byte plays no part in conservation.
+      const msg = kernelMsg(dec.assetId, inputOutpoints, outputCommitments, 0n);
+      if (!verifySchnorr(dec.kernelSig, msg, exBytes)) {
+        return memoAll(memo, txidHex, N, { ok: false, reason: 'kernel signature invalid' });
+      }
+      memoAll(memo, txidHex, N, { ok: true, assetIdHex: ourAssetIdHex }, (j) => dec.outputs[j].commitment);
+      return memo.get(key);
+    }
+
+    if (envelope.opcode === T_AXFER_VAR || envelope.opcode === T_AXFER_VAR_BPP) {
+      const isBpp = envelope.opcode === T_AXFER_VAR_BPP;
+      const dec = decAxferVarLike(envelope.payload, envelope.opcode);
+      if (!dec) { const r = { ok: false, reason: 'invalid T_AXFER_VAR payload' }; memo.set(key, r); return r; }
+      const outIdx = axferVarOutputIndexForVout(vout);
+      if (outIdx === null) { const r = { ok: false, reason: `vout ${vout} is not a tacit output of this tx` }; memo.set(key, r); return r; }
+      // Only vout 0 and vout 2 are tacit for this opcode (see axferVarOutputIndexForVout) — memoAll's
+      // sequential-vout assumption doesn't apply, so memoize those two positions directly instead.
+      const markBothTacitVouts = (result) => {
+        memo.set(`${txidHex}:0`, result.ok ? { ...result, commitment: dec.outputs[0].commitment } : result);
+        memo.set(`${txidHex}:2`, result.ok ? { ...result, commitment: dec.outputs[1].commitment } : result);
+        return memo.get(key);
+      };
+      if (tx.vin.length < 2) return markBothTacitVouts({ ok: false, reason: 'too few inputs for T_AXFER_VAR' });
+      const ourAssetIdHex = bytesToHex(dec.assetId);
+      const inp = tx.vin[1];
+      const r = await _walk(env, inp.txid, inp.vout, network, memo, depth + 1, maxDepth);
+      if (!r.ok) return markBothTacitVouts({ ok: false, reason: `input ${inp.txid}:${inp.vout}: ${r.reason}` });
+      if (r.assetIdHex !== ourAssetIdHex) {
+        return markBothTacitVouts({ ok: false, reason: `input ${inp.txid}:${inp.vout} is a different asset` });
+      }
+      let Cpts;
+      try { Cpts = dec.outputs.map((o) => toPoint(o.commitment)); }
+      catch { return markBothTacitVouts({ ok: false, reason: 'bad output commitment' }); }
+      const rpOk = isBpp ? bppRangeVerify(Cpts, dec.rangeproof) : bpRangeAggVerify(Cpts, dec.rangeproof);
+      if (!rpOk) return markBothTacitVouts({ ok: false, reason: 'output rangeproof failed' });
+      let EPrime = ZERO;
+      try {
+        for (const o of dec.outputs) EPrime = EPrime.add(toPoint(o.commitment));
+        EPrime = EPrime.add(toPoint(r.commitment).negate());
+      } catch { return markBothTacitVouts({ ok: false, reason: 'commitment arithmetic failed' }); }
+      if (EPrime.equals(ZERO)) return markBothTacitVouts({ ok: false, reason: 'zero kernel excess' });
+      const exBytes = EPrime.toRawBytes(true).slice(1);
+      const inputOutpoints = [{ txid: inp.txid, vout: inp.vout }];
+      const outputCommitments = dec.outputs.map((o) => o.commitment);
+      const msg = kernelMsg(dec.assetId, inputOutpoints, outputCommitments, 0n);
+      if (!verifySchnorr(dec.kernelSig, msg, exBytes)) {
+        return markBothTacitVouts({ ok: false, reason: 'kernel signature invalid' });
+      }
+      return markBothTacitVouts({ ok: true, assetIdHex: ourAssetIdHex });
     }
 
     const r = { ok: false, reason: `opcode 0x${envelope.opcode.toString(16)} is not covered by ancestry verification yet` };
