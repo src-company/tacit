@@ -572,16 +572,22 @@ async function scanWeinameCycle(store) {
       depositor = tx.from.toLowerCase();
     }
 
-    // The ETH NameNFT actually kept — a free .id.wei name has none, and simply scores 0 below. Same grace
-    // window and fail-closed direction as the V4 settlement check: a fresh lookup that's genuinely still
-    // unindexed retries the whole cycle, but past 30 minutes from this registration's own block, treat it as
-    // unresolved and skip crediting for it rather than guessing (a registration itself is never in doubt —
-    // NameRegistered came from NameNFT's own canonical address — only how much ETH it cost is uncertain here).
+    // The ETH NameNFT actually kept — a free .id.wei name has none, and simply scores 0 below. Netted, not a
+    // one-directional sum: zRouter's revealName forwards its whole balance to NameNFT.reveal (confirmed against
+    // its verified mainnet source), and the registry refunds any overpayment straight back to zRouter as a
+    // separate internal transfer before zRouter sweeps that refund out to the buyer — so a plain zRouter→NameNFT
+    // sum counts the gross amount forwarded, not the net amount actually kept, whenever a reveal executes for
+    // less than the router's balance at call time (premium decay between quote and mining, or dust left over
+    // from an earlier leg of the same multicall). Same grace window and fail-closed direction as the V4
+    // settlement check: a fresh lookup that's genuinely still unindexed retries the whole cycle, but past 30
+    // minutes from this registration's own block, treat it as unresolved and skip crediting for it rather than
+    // guessing (a registration itself is never in doubt — NameRegistered came from NameNFT's own canonical
+    // address — only how much ETH it cost is uncertain here).
     let amountWei;
     try {
-      const { sum, indexed } = await internalEthTransferSum(PP_BLOCKSCOUT_BASE, txHash, ADDR.zRouter, ADDR.nameNft);
+      const { net, indexed } = await internalEthTransferNet(PP_BLOCKSCOUT_BASE, txHash, ADDR.zRouter, ADDR.nameNft);
       if (!indexed) throw new Error(`internal-transactions not yet indexed for ${txHash}`);
-      amountWei = sum;
+      amountWei = net;
     } catch (err) {
       if (Date.now() / 1000 - blockTime < 1800) throw err;
       log(`weiname ETH-kept lookup still unresolved 30+ min after block time for ${txHash}, skipping:`, err?.message || err);
@@ -839,7 +845,7 @@ async function explorerGetWithRetry(url, attempts = 3) {
 // empty list is never a confirmed zero — callers must treat `indexed: false` as "retry later, not now",
 // never as zero. Trusting an unindexed empty list as zero would have reopened the refund-overcounting fix
 // this same helper backs: an in-flight refund reading as "no refund" credits the unnetted gross value again.
-async function internalEthTransferSum(apiBase, txHash, from, to) {
+async function fetchInternalTxs(apiBase, txHash) {
   const items = [];
   let params = '';
   for (let page = 0; page < 20; page++) {
@@ -850,6 +856,10 @@ async function internalEthTransferSum(apiBase, txHash, from, to) {
       Object.fromEntries(Object.entries(data.next_page_params).map(([k, v]) => [k, String(v)])),
     ).toString();
   }
+  return items;
+}
+async function internalEthTransferSum(apiBase, txHash, from, to) {
+  const items = await fetchInternalTxs(apiBase, txHash);
   let sum = 0n;
   for (const item of items) {
     if (item.success === false) continue;
@@ -858,6 +868,23 @@ async function internalEthTransferSum(apiBase, txHash, from, to) {
     if (itemFrom === from.toLowerCase() && itemTo === to.toLowerCase()) sum += BigInt(item.value || 0);
   }
   return { sum, indexed: items.length > 0 };
+}
+// A contract that forwards its whole balance onward (rather than a computed exact amount) relies on the
+// receiving side's own overpayment refund to make itself whole — that refund is a separate internal transfer
+// in the opposite direction, in the same tx. Summing only the forward leg counts the gross amount sent, not
+// the net amount actually kept; this nets both legs from one fetch so the two reads can't drift out of sync
+// with each other the way two separate calls could under indexing lag.
+async function internalEthTransferNet(apiBase, txHash, from, to) {
+  const items = await fetchInternalTxs(apiBase, txHash);
+  let net = 0n;
+  for (const item of items) {
+    if (item.success === false) continue;
+    const itemFrom = item.from && String(item.from.hash).toLowerCase();
+    const itemTo = item.to && String(item.to.hash).toLowerCase();
+    if (itemFrom === from.toLowerCase() && itemTo === to.toLowerCase()) net += BigInt(item.value || 0);
+    else if (itemFrom === to.toLowerCase() && itemTo === from.toLowerCase()) net -= BigInt(item.value || 0);
+  }
+  return { net, indexed: items.length > 0 };
 }
 // Throws rather than fails open on an unindexed or lookup-failed result: crediting the unnetted gross value
 // is exactly the overcounting this exists to prevent, so an ambiguous read should retry next cycle, not
