@@ -9,7 +9,8 @@
 //
 // Window derivation (the conservative ESTIMATE used when no authoritative `anchored` signal is given):
 //   Ethereum finality (~13 min, finalized beacon slot)
-// + Bitcoin burial REFLECTION_CONFIRMATIONS = 6 (~60 min)
+// + Bitcoin burial REFLECTION_CONFIRMATIONS = 24 on mainnet (~240 min; contracts/script/DeployV1Suite.s.sol
+//   requires >= 24 on chain 1 — this is the deployed, immutable value, not the generic Bitcoin norm)
 // + one reflection prove/attest cycle (~5-20 min)
 // The authoritative signal is `anchored` (the consume present in the reflected spent set); pass it when
 // known and it overrides the time estimate. Elapsed time alone NEVER claims hard-final — it only stops
@@ -17,7 +18,7 @@
 // Node tests run identical logic.
 
 export const FINALITY = {
-  anchorWindowMs: 90 * 60 * 1000, // conservative ETH-settle → Bitcoin-anchored window
+  anchorWindowMs: 270 * 60 * 1000, // conservative ETH-settle → Bitcoin-anchored window
 };
 
 // Human ETA from a millisecond remainder. Coarse on purpose (a finality estimate, not a clock).
