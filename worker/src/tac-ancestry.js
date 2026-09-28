@@ -196,7 +196,9 @@ export function makeTacAncestry({
       if (!bpRangeAggVerify([Cpt], dec.rangeproof)) {
         const r = { ok: false, reason: 'CETCH rangeproof failed' }; memo.set(key, r); return r;
       }
-      const r = { ok: true, assetIdHex: bytesToHex(assetIdForRaw(txidHex, 0)), commitment: dec.commitment };
+      // mintAuthority/mintable ride along so a T_MINT child can read them straight off this result instead of
+      // re-fetching and re-decoding the same etch tx a second time (see below).
+      const r = { ok: true, assetIdHex: bytesToHex(assetIdForRaw(txidHex, 0)), commitment: dec.commitment, mintAuthority: dec.mintAuthority, mintable: dec.mintable };
       memo.set(key, r);
       return r;
     }
@@ -210,15 +212,11 @@ export function makeTacAncestry({
         const r = { ok: false, reason: 'T_MINT asset_id does not match its etch ancestor' }; memo.set(key, r); return r;
       }
       // The CETCH ancestor must itself verify (real rangeproof, real root) before its mint_authority is trusted.
+      // Its own successful result already carries mintAuthority/mintable, so there's no need to fetch and
+      // re-decode the same etch tx a second time just to read those two fields.
       const etchR = await _walk(env, etchTxidHex, 0, network, memo, depth + 1, maxDepth);
       if (!etchR.ok) { const r = { ok: false, reason: `T_MINT etch ancestor: ${etchR.reason}` }; memo.set(key, r); return r; }
-      let etchTx, etchEnvelope, etchDec;
-      try { etchTx = await apiJson(env, `/tx/${etchTxidHex}`, {}, network); } catch (e) {
-        const r = { ok: false, reason: `fetch etch ${etchTxidHex} failed: ${e.message || 'unknown'}` }; memo.set(key, r); return r;
-      }
-      try { etchEnvelope = decodeEnvelopeScript(hexToBytes(etchTx.vin[0].witness[1])); } catch { etchEnvelope = null; }
-      etchDec = etchEnvelope && etchEnvelope.opcode === T_CETCH ? decCetch(etchEnvelope.payload) : null;
-      if (!etchDec || !etchDec.mintable) {
+      if (!etchR.mintable) {
         const r = { ok: false, reason: 'T_MINT etch ancestor is not mintable' }; memo.set(key, r); return r;
       }
       // Anchor the issuer signature to the mint's own commit tx funding outpoint (see computeMintMsg above).
@@ -229,7 +227,7 @@ export function makeTacAncestry({
       if (!ci) { const r = { ok: false, reason: 'mint commit tx has no funding input' }; memo.set(key, r); return r; }
       const mintAnchor = concatBytes(reverseBytes(hexToBytes(ci.txid)), u32le(ci.vout));
       const mintMsg = computeMintMsg(dec.assetId, mintAnchor, dec.commitment, dec.encryptedAmount);
-      if (!verifySchnorr(dec.issuerSig, mintMsg, etchDec.mintAuthority)) {
+      if (!verifySchnorr(dec.issuerSig, mintMsg, etchR.mintAuthority)) {
         const r = { ok: false, reason: 'T_MINT issuer signature invalid' }; memo.set(key, r); return r;
       }
       let Cpt;
@@ -245,6 +243,10 @@ export function makeTacAncestry({
     if (envelope.opcode === T_CXFER || envelope.opcode === T_CXFER_BPP || envelope.opcode === T_BURN
       || envelope.opcode === T_AXFER || envelope.opcode === T_AXFER_BPP) {
       const isBurn = envelope.opcode === T_BURN;
+      // The dapp gates _BPP envelopes behind a client-side opt-out toggle (bppEnabled()) so a cautious user can
+      // choose not to trust Bulletproofs+-sourced balances before it's battle-tested. That's a display
+      // preference, not a protocol rule — bppRangeVerify either accepts a genuinely valid proof or it doesn't,
+      // so a custody check has no reason to mirror the opt-out here.
       const isBpp = envelope.opcode === T_CXFER_BPP || envelope.opcode === T_AXFER_BPP;
       const isAxfer = envelope.opcode === T_AXFER || envelope.opcode === T_AXFER_BPP;
       const dec = isBurn ? decBurn(envelope.payload)
