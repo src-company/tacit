@@ -75183,14 +75183,22 @@ function renderMarketAssetHeader(assetId, rows) {
             const r = BigInt('0x' + att.blinding);
             const onchain = bytesToPoint(hexToBytes(commitHex));
             if (pedersenCommit(s, r).equals(onchain) && s < (1n << BigInt(N_BITS))) {
-              const imgUri = a.image_uri || '';
-              const m = String(imgUri).match(/^(?:ipfs:\/\/)?([A-Za-z0-9]+)/);
-              const cid = m ? m[1] : '';
-              const pubUrl = cid ? publicIpfsUrl(cid) : null;
-              if (pubUrl) {
-                sourceTag = ` <a href="${escapeHtml(pubUrl)}" target="_blank" rel="noopener" title="${cid ? 'metadata CID ' + escapeHtml(cid) + ' — ' : ''}verified supply opening on IPFS" style="color:var(--ink-mid);border-bottom:0.5px dotted var(--ink-faint);text-decoration:none;font-size:9px;">ipfs</a>`;
+              // Non-mintable assets with a known etch get the standalone, interactive verifier
+              // (mirrors renderDiscoverCard's "verify supply ✓" link) — a reader can re-derive the
+              // asset id, mint authority, and this same opening themselves, not just view raw JSON.
+              if (a.mintable === false && a.etch_txid) {
+                const _vq = `?asset_id=${encodeURIComponent(a.asset_id)}&txid=${encodeURIComponent(a.etch_txid)}`;
+                sourceTag = ` <a href="/verify${_vq}" target="_blank" rel="noopener" title="Verify this fixed supply yourself, from Bitcoin + IPFS — no server or indexer trusted" style="color:var(--ink-mid);border-bottom:0.5px dotted var(--ink-faint);text-decoration:none;font-size:9px;">verify ✓</a>`;
               } else {
-                sourceTag = ' <span class="muted" style="font-size:9px;" title="supply verified against on-chain Pedersen commitment">verified</span>';
+                const imgUri = a.image_uri || '';
+                const m = String(imgUri).match(/^(?:ipfs:\/\/)?([A-Za-z0-9]+)/);
+                const cid = m ? m[1] : '';
+                const pubUrl = cid ? publicIpfsUrl(cid) : null;
+                if (pubUrl) {
+                  sourceTag = ` <a href="${escapeHtml(pubUrl)}" target="_blank" rel="noopener" title="${cid ? 'metadata CID ' + escapeHtml(cid) + ' — ' : ''}verified supply opening on IPFS" style="color:var(--ink-mid);border-bottom:0.5px dotted var(--ink-faint);text-decoration:none;font-size:9px;">ipfs</a>`;
+                } else {
+                  sourceTag = ' <span class="muted" style="font-size:9px;" title="supply verified against on-chain Pedersen commitment">verified</span>';
+                }
               }
             }
           } catch {}
