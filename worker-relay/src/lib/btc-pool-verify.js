@@ -22,7 +22,8 @@ const strip = (h) => String(h || '').replace(/^0x/, '').toLowerCase();
 
 export function loadBtcPoolKey({ env = process.env, network = 'signet', pinPath = env.BTC_POOL_PIN || DEFAULT_PIN_PATH } = {}) {
   const pin = JSON.parse(readFileSync(pinPath, 'utf8'));
-  if (pin.network !== network && !env.BTC_POOL_VK_HASH) throw new Error(`pin ${pinPath} is for ${pin.network}, not ${network}`);
+  const pinNetworks = String(pin.network || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!pinNetworks.includes(network) && !env.BTC_POOL_VK_HASH) throw new Error(`pin ${pinPath} is for ${pinNetworks.join(', ')}, not ${network}`);
   const dir = dirname(pinPath);
   const want = strip(env.BTC_POOL_VK_HASH || pin.vk_hash);
   if (!/^[0-9a-f]{128}$/.test(want)) throw new Error('vk_hash pin malformed');
