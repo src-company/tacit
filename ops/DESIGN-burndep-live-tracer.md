@@ -182,6 +182,30 @@ to a sequential walk. If a real note's lineage ever gets deep enough for this to
 is an async job pattern (start the trace, return a job id, poll for the result) — the codebase already has
 this shape for reflection job assembly; this endpoint doesn't have it yet.
 
+## Update: persistent cross-request cache in the registry KV
+
+The block-witness trim (above) only shrinks a constant factor — the walk itself is still a cold esplora crawl
+every time, and a long enough lineage will eventually hit a gateway timeout again regardless. The real fix for
+that is not per-hop speed, it's not re-crawling at all: what a txid IS for burn-deposit purposes (a cxfer, a
+CETCH leaf, a funding input, or neither) is a permanent fact once it's confirmed — Bitcoin doesn't reorg
+confirmed history in ordinary operation, and this module already requires `status.confirmed` before resolving
+anything. So it never needs to be looked up twice.
+
+`resolveTxid` (replacing the old `fetchTx`) now checks `env.REGISTRY_KV` (`burndephop:{network}:{txid}`)
+before touching esplora, and writes its answer there permanently on a miss — no TTL, no invalidation, because
+the answer cannot change. Both directions that used to fetch independently (`getCxferByOutput`'s own DAG hop,
+and `classifyInput`'s one-hop-back input resolution) now go through this one function, so a txid reached via
+either path is fetched from esplora at most once, ever, across every request that ever asks about it — not
+just once per request, which the old in-memory-only cache already gave, but once total. A cache hit costs one
+KV read and zero esplora calls.
+
+This also means the endpoint doubles as its own crawler: every trace that completes warms the cache for every
+other note whose lineage overlaps it — a real, common case, since burn-deposit lineages fan out from shared
+ancestors (the 100-TAC burn's own 38-hop chain shares its first several hops with any other note spent from
+the same earlier transfers). A deliberate warm-up pass (calling this endpoint for known real notes, from
+anywhere — this repo's own tooling, or a separate always-on box with better esplora rate-limit headroom) is
+just normal use of the endpoint, not a special mode.
+
 ## What NOT to do
 
 - Do not skip the byte-for-byte diff against real historical burns and ship on "it looks right."
