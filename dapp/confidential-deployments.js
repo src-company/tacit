@@ -451,8 +451,12 @@ export function evmAccountHint() {
 }
 
 // Surface a terminal success/failure in the app's shared toast + notification bell, so confidential-tab
-// actions are logged like the core flows. `kind` is '' | 'ok' | 'error' (matches tacit.js toast()). No-op
-// if the host bundle hasn't wired the hook yet (e.g. under node tests).
+// actions are logged like the core flows. `kind` is '' | 'ok' | 'error' (matches tacit.js toast()). `title`
+// is either a plain string or { title, onClick } — passed straight through to toast(), whose 4th argument
+// already accepts either shape. onClick only fires on the LIVE toast: the notification bell persists entries
+// as plain JSON (localStorage), so a function can't survive a reload — a replayed bell entry is text-only,
+// which is why a message that needs to survive a refresh should say where to go, not just imply a click.
+// No-op if the host bundle hasn't wired the hook yet (e.g. under node tests).
 export function notify(msg, kind = '', title = '') {
   try { if (typeof window !== 'undefined' && window.__tacitToast) window.__tacitToast(msg, kind, 4000, title); } catch {}
 }

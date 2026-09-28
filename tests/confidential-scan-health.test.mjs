@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import {
-  scanHealth, scanHealthHtml, scanHealthSuffix, pendingWrapsText,
+  scanHealth, scanHealthHtml, scanHealthSuffix, pendingWrapRowsHtml, notifyPendingWrapsOnce,
   noteIsInbound, inboundBadgeHtml, inboundBadgeText, inboundSummaryText, inboundSummaryHtml,
   recoveryCoverage, recoveryCoverageHtml, lockScanHealth, lockScanHealthHtml, channelLabel, escapeHtml,
 } from '../dapp/confidential-scan-health.js';
@@ -63,12 +63,42 @@ test('a truncated deposit walk counts as incomplete even with no error', () => {
   assert.match(h.text, /the deposit scan stopped at its index limit/);
 });
 
-test('pending deposits are reported as their own, non-alarming line', () => {
-  assert.equal(pendingWrapsText(cleanDiag), '');
-  assert.equal(pendingWrapsText({ wrap: { pending: [{ index: 3 }] } }),
-    '1 deposit is on-chain but has not settled into a note yet.');
-  assert.equal(pendingWrapsText({ wrap: { pending: [{}, {}] } }),
-    '2 deposits are on-chain but have not settled into a note yet.');
+const mockUx = { tickerOf: () => 'cETH', assets: [{ assetId: '0xaa', tacitDecimals: 8 }] };
+
+test('pending deposits render as their own banner with a Resume button, not a passive line', () => {
+  assert.equal(pendingWrapRowsHtml(cleanDiag, mockUx), '');
+  const one = pendingWrapRowsHtml({ wrap: { pending: [{ index: 3, asset: '0xaa', value: '100000000' }] } }, mockUx);
+  assert.match(one, /1 deposit waiting to settle/);
+  assert.match(one, /class="cpool-resume-wrap"/);
+  assert.match(one, />Resume</);
+  assert.match(one, /data-pending-index="3"/);
+  const two = pendingWrapRowsHtml({ wrap: { pending: [{ index: 0, asset: '0xaa', value: '1' }, { index: 1, asset: '0xaa', value: '2' }] } }, mockUx);
+  assert.match(two, /2 deposits waiting to settle/);
+  assert.equal((two.match(/cpool-resume-wrap/g) || []).length, 2);
+});
+
+test('pending-wrap HTML escapes an asset id the same as any other interpolated value', () => {
+  const evilUx = { tickerOf: () => '<img onerror=alert(1)>', assets: [] };
+  const html = pendingWrapRowsHtml({ wrap: { pending: [{ index: 0, asset: '"><script>', value: '1' }] } }, evilUx);
+  // "onerror=" as inert escaped text is harmless — what matters is that no RAW '<' survived to open an
+  // actual tag or attribute. Both malicious inputs' angle brackets must come through as &lt;/&gt; only.
+  assert.doesNotMatch(html, /<script>|<img /);
+  assert.match(html, /&lt;script&gt;/);
+  assert.match(html, /&lt;img onerror=alert\(1\)&gt;/);
+});
+
+test('notifyPendingWrapsOnce notifies only when something is pending', () => {
+  // This suite runs plain Node (no jsdom — see the file header), so sessionStorage doesn't exist; the
+  // function's try/catch falls through and notifies unconditionally here. The cross-tab once-per-session
+  // dedup itself only applies in a real browser and isn't exercised by this pure-function test.
+  const calls = [];
+  const notify = (msg, kind, opts) => calls.push({ msg, kind, opts });
+  notifyPendingWrapsOnce(cleanDiag, notify);
+  assert.equal(calls.length, 0, 'nothing pending — no notification');
+  notifyPendingWrapsOnce({ wrap: { pending: [{ index: 0 }] } }, notify);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].msg, /1 confidential-pool deposit is on-chain/);
+  assert.equal(typeof calls[0].opts.onClick, 'function');
 });
 
 test('channel labels cover every key balance() and recover() can emit', () => {

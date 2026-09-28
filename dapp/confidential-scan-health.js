@@ -19,6 +19,16 @@ export function escapeHtml(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// formatUnits from confidential-payout.js, inlined for the same reason.
+function formatUnits(value, decimals) {
+  const v = BigInt(value);
+  const neg = v < 0n;
+  const s = (neg ? -v : v).toString().padStart(decimals + 1, '0');
+  const int = decimals ? s.slice(0, -decimals) : s;
+  const frac = decimals ? s.slice(-decimals).replace(/0+$/, '') : '';
+  return (neg ? '-' : '') + (frac ? `${int}.${frac}` : int);
+}
+
 // One phrase per scan channel, as a user would name it. Keys match `diag.errors` / recover()'s `d.errors`.
 const CHANNEL_LABEL = {
   wrap: 'the deposit scan',
@@ -87,12 +97,48 @@ export function scanHealthSuffix(diag) {
   return h.ok ? '' : ' — ' + h.text;
 }
 
-// Deposits the pool has recorded but no note has settled from yet. Not a failure; it is the other reason a
-// balance can read low, and the tabs that show the health banner show this beside it.
-export function pendingWrapsText(diag) {
-  const n = ((diag && diag.wrap && diag.wrap.pending) || []).length;
-  if (!n) return '';
-  return `${n} deposit${n === 1 ? '' : 's'} ${n === 1 ? 'is' : 'are'} on-chain but ${n === 1 ? 'has' : 'have'} not settled into a note yet.`;
+// Deposits the pool has recorded but no note has settled from yet — a dropped connection or relay hiccup
+// between the wrap tx (pool.wrap()/routerWrap(), already mined) and its settle proof, never a failure of the
+// deposit itself: the escrow is safe and the note is deterministically recoverable from the same wallet key
+// at the same index (see confidential-pool-ux.js buildWrap/submitWrapSettle). Not just a passive count: this
+// is the one state on a balance screen that means "you have money sitting in limbo," so every tab renders it
+// as its own bordered banner (matching scanHealthHtml's warning weight) with a per-deposit Resume button, not
+// blended into the balance list. Callers still need their own wireResumeWraps (DOM wiring doesn't belong in
+// this no-DOM, no-network module — see the file header) to make the buttons this renders actually do anything.
+export function pendingWrapRowsHtml(diag, ux) {
+  const pending = (diag && diag.wrap && diag.wrap.pending) || [];
+  if (!pending.length) return '';
+  const rows = pending.map((p) => {
+    const ticker = ux.tickerOf(p.asset) || 'cETH';
+    const meta = ux.assets.find((x) => x.assetId.toLowerCase() === String(p.asset).toLowerCase());
+    const dec = meta ? (meta.tacitDecimals ?? meta.decimals) : 8;
+    return `<div class="list-row" data-pending-asset="${escapeHtml(p.asset)}" data-pending-index="${p.index}" style="padding:6px 0;">`
+      + `<span>${formatUnits(p.value, dec)} ${escapeHtml(ticker)} <span class="muted">deposited, not yet settled</span></span>`
+      + `<button class="cpool-resume-wrap" style="padding:4px 10px;font-size:10px;flex:0 0 auto;">Resume</button></div>`;
+  }).join('');
+  return `<div class="warn" style="margin:8px 0;padding:8px 10px;">`
+    + `<div style="font-weight:600;margin-bottom:4px;">${pending.length} deposit${pending.length === 1 ? '' : 's'} waiting to settle</div>`
+    + rows + `</div>`;
+}
+
+// Fires at most once per browser session, across every tab that scans for pending wraps (csend and the pool
+// tab both can), so a wallet with a stuck deposit gets exactly one toast + one persistent notification-bell
+// entry regardless of which surface finds it first or how many times its scan re-runs. sessionStorage (not a
+// module-level flag) is what makes the cross-tab dedup work, since csend and confidential-pool-tab.js are
+// separate lazily-loaded modules with no shared state otherwise. The bell entry is what matters most: it's
+// plain-text, localStorage-backed (tacit-notif-log-v1, 24h TTL — see tacit.js), so it survives a hard refresh
+// even though the live toast's click-to-navigate does not (a function can't survive the bell's JSON persist).
+export function notifyPendingWrapsOnce(diag, notify) {
+  const pending = (diag && diag.wrap && diag.wrap.pending) || [];
+  if (!pending.length) return;
+  const FLAG = 'tacit:pending-wrap-notified-v1';
+  try { if (sessionStorage.getItem(FLAG)) return; sessionStorage.setItem(FLAG, '1'); } catch { /* fall through and notify anyway */ }
+  const n = pending.length;
+  notify(
+    `${n} confidential-pool deposit${n === 1 ? '' : 's'} ${n === 1 ? 'is' : 'are'} on-chain but not yet settled into a note — open the Pool tab and click Resume to finish.`,
+    '',
+    { title: 'Your funds are safe; this just needs the settle step to run again.', onClick: () => { location.hash = '#tab=confidential-pool'; } },
+  );
 }
 
 // ── inbound (memo-only) notes ────────────────────────────────────────────────────────────────────

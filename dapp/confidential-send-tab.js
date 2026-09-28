@@ -19,7 +19,7 @@ import { makeConfidentialInvoice } from './confidential-invoice.js';
 import { makeConfidentialNames, makeMainnetCall, NameError } from './confidential-names.js';
 import { payoutPanelHtml, wirePayout } from './confidential-payout-panel.js';
 import { makeStealthSendStore } from './confidential-secret-store.js';
-import { scanHealthHtml, lockScanHealthHtml, inboundSummaryHtml, pendingWrapsText } from './confidential-scan-health.js';
+import { scanHealthHtml, lockScanHealthHtml, inboundSummaryHtml, pendingWrapRowsHtml, notifyPendingWrapsOnce } from './confidential-scan-health.js';
 
 let _ux = null;
 let _pendingSend = null;
@@ -401,6 +401,44 @@ function wireSend(wallet, ux, notes, helpers) {
   };
 }
 
+// Deposits already on-chain (wireHold's pool.wrap()/routerWrap() broadcast and confirmed) whose settle proof
+// never landed — a dropped connection or relay hiccup before submitWrapSettle. The escrow is safe and the
+// note is deterministically recoverable from this wallet's own key (buildWrap re-derives the exact same
+// commitment for a given index — see confidential-pool-ux.js), so resuming never re-broadcasts the deposit:
+// it only rebuilds the OP_WRAP witness and resubmits it for settle. Shared HTML lives in
+// confidential-scan-health.js (pendingWrapRowsHtml); this is just the DOM wiring for the buttons it renders.
+// `onDone` re-renders this tab afterward — same refresh-on-success pattern wireHold/wireSend already use.
+function wireResumeWraps(wallet, ux, diag, onDone) {
+  const pending = (diag && diag.wrap && diag.wrap.pending) || [];
+  if (!pending.length) return;
+  const byKey = new Map(pending.map((p) => [`${String(p.asset).toLowerCase()}:${p.index}`, p]));
+  for (const row of document.querySelectorAll('[data-pending-asset]')) {
+    const btn = row.querySelector('.cpool-resume-wrap');
+    if (!btn) continue;
+    const key = `${row.getAttribute('data-pending-asset').toLowerCase()}:${row.getAttribute('data-pending-index')}`;
+    const p = byKey.get(key);
+    if (!p) continue;
+    btn.onclick = async () => {
+      btn.disabled = true;
+      const prevText = btn.textContent;
+      btn.textContent = 'Settling…';
+      try {
+        const ticker = ux.tickerOf(p.asset) || 'cETH';
+        const meta = ux.assets.find((x) => x.assetId.toLowerCase() === String(p.asset).toLowerCase());
+        const unitScale = BigInt((meta && meta.unitScale) || '1');
+        const built = ux.buildWrap({ walletPriv: wallet.priv, amountWei: (BigInt(p.value) * unitScale).toString(), ticker, index: p.index });
+        await ux.submitWrapSettle({ built });
+        notify(`Settled — ${fmtUnits(p.value, meta ? (meta.tacitDecimals ?? meta.decimals) : 8)} ${ticker} note ready`, 'ok');
+        setTimeout(onDone, 1500);
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = prevText;
+        notify(formatSpecErr(e, 'Resume wrap'), 'error');
+      }
+    };
+  }
+}
+
 // "Just hold it privately": wrap public ETH/token into a confidential note the user owns — no recipient,
 // no send. Gasless one-tx router wrap when the router is live; direct pool deposit otherwise (native ETH).
 function wireHold(wallet, ux, helpers) {
@@ -418,18 +456,29 @@ function wireHold(wallet, ux, helpers) {
     const amountWei = amount * unitScale;
     btn.disabled = true;
     if (statusEl) statusEl.textContent = `Wrapping ${fmtUnits(amount, dec)} ${ticker} into a private note you own…`;
+    let r; // declared outside try so the catch block can still report a txHash from a step after broadcast
     try {
-      const r = routerOK
+      r = routerOK
         ? await ux.routerWrap({ walletPriv: wallet.priv, amountWei, ticker })
         : await ux.wrap({ walletPriv: wallet.priv, amountWei, ticker });
       if (statusEl) statusEl.innerHTML = `Wrap broadcast${routerOK ? ' (one-tx router)' : ''}`
         + (r && r.txHash ? ` (<code class="addr">${esc(r.txHash)}</code>)` : '')
-        + ` — your ${esc(ticker)} note appears once the deposit settles.`;
-      notify('Wrap broadcast — awaiting settle', 'ok');
+        + ' — waiting for it to confirm…';
+      await ux.waitReceipt(r.txHash);
+      if (statusEl) statusEl.textContent = 'Deposit confirmed — submitting for settle (proving your note; can take a minute)…';
+      await ux.submitWrapSettle({ built: r });
+      if (statusEl) statusEl.innerHTML = `Settled${r && r.txHash ? ` (<code class="addr">${esc(r.txHash)}</code>)` : ''} — your ${esc(ticker)} note is ready.`;
+      notify(`Wrapped ${fmtUnits(amount, dec)} ${ticker}`, 'ok');
       setTimeout(() => renderSendTab(wallet, helpers), 2000);
     } catch (e) {
       const m = formatSpecErr(e, 'Wrap');
-      if (statusEl) statusEl.textContent = m; notify(m, 'error');
+      // The deposit itself may already be irreversibly on-chain even though this failed (a dropped
+      // connection after broadcast, a settle timeout) — never imply otherwise, since the fix here is to
+      // resubmit the SAME deposit's settle via Resume, not to re-wrap and double-deposit.
+      if (statusEl) statusEl.textContent = r && r.txHash
+        ? `${m} — the deposit (${r.txHash}) is on-chain; do not re-wrap the same amount. Reload this tab — the pending deposit will show above with a Resume button.`
+        : m;
+      notify(m, 'error');
       btn.disabled = false;
     }
   };
@@ -895,10 +944,10 @@ export async function renderSendTab(wallet, helpers = {}) {
       : '';
     // A figure from a scan that lost a channel is shown with what it could not reach named above it. The
     // cBTC and bridge channels have no memo to fall back on, so an endpoint outage there reads as zero.
-    const pendingWraps = pendingWrapsText(diag);
+    notifyPendingWrapsOnce(diag, notify);
     if (balEl) {
       balEl.innerHTML = scanHealthHtml(diag, { style: 'margin:0 0 8px;' })
-        + (pendingWraps ? `<div class="muted" style="margin-bottom:4px;">${esc(pendingWraps)}</div>` : '')
+        + pendingWrapRowsHtml(diag, ux)
         + (assets.length
         ? '<div style="font-weight:600;color:var(--ink);margin-bottom:4px;">Shielded balance</div>'
           + assets.map((a) => {
@@ -914,6 +963,7 @@ export async function renderSendTab(wallet, helpers = {}) {
     }
     wireSend(wallet, ux, notes || [], helpers);
     wirePayout({ ux, wallet, scan: { notes: notes || [], poolStats, diag }, own: myTacit || id.pubHex, keccak256: keccak_256 });
+    wireResumeWraps(wallet, ux, diag, () => renderSendTab(wallet, helpers));
   } catch (e) {
     const balEl = el('csend-balance');
     if (balEl) balEl.textContent = 'Could not scan existing notes. Fresh ETH wrap-and-send is still available.';

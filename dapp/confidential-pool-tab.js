@@ -8,7 +8,7 @@ import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
 import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater, evmAccountHint } from './confidential-deployments.js';
 import { formatUnits as fmtUnits } from './confidential-payout.js';
 import { classifyFinality, finalityBadgeHtml, listProvisional } from './confidential-finality.js';
-import { scanHealthHtml, inboundBadgeHtml, inboundSummaryHtml, recoveryCoverageHtml, recoveryCoverage } from './confidential-scan-health.js';
+import { scanHealthHtml, inboundBadgeHtml, inboundSummaryHtml, recoveryCoverageHtml, recoveryCoverage, pendingWrapRowsHtml, notifyPendingWrapsOnce } from './confidential-scan-health.js';
 import { renderLanePanel } from './cross-chain-lane.js';
 
 let _ux = null;
@@ -69,24 +69,15 @@ function wireWrap(wallet, ux) {
   };
 }
 
+// pendingWrapRowsHtml / notifyPendingWrapsOnce now live in confidential-scan-health.js, shared with csend
+// (same wrap()/routerWrap() call, same failure mode). This file keeps only the DOM wiring below, which the
+// shared module deliberately stays free of (see its file header: no DOM, no network).
+
 // Deposits already on-chain (pool.wrap()/routerWrap() broadcast and confirmed) whose settle proof never
 // landed — a dropped connection or relay hiccup after wireWrap's broadcast step, before its submitWrapSettle
 // step. The escrow is safe and the note is deterministically recoverable from this wallet's own key
 // (buildWrap re-derives the exact same commitment for a given index — see confidential-pool-ux.js), so
 // resuming never re-broadcasts the deposit: it only rebuilds the OP_WRAP witness and resubmits it for settle.
-function pendingWrapRowsHtml(diag, ux) {
-  const pending = (diag && diag.wrap && diag.wrap.pending) || [];
-  if (!pending.length) return '';
-  return pending.map((p) => {
-    const ticker = ux.tickerOf(p.asset) || 'cETH';
-    const meta = ux.assets.find((x) => x.assetId.toLowerCase() === String(p.asset).toLowerCase());
-    const dec = meta ? (meta.tacitDecimals ?? meta.decimals) : 8;
-    return `<div class="list-row" data-pending-asset="${esc(p.asset)}" data-pending-index="${p.index}">`
-      + `<span>${fmtUnits(p.value, dec)} ${esc(ticker)} <span class="muted">deposited, not yet settled</span></span>`
-      + `<button class="cpool-resume-wrap" style="padding:4px 10px;font-size:10px;flex:0 0 auto;">Resume</button></div>`;
-  }).join('');
-}
-
 function wireResumeWraps(wallet, ux, diag) {
   const pending = (diag && diag.wrap && diag.wrap.pending) || [];
   if (!pending.length) return;
@@ -326,6 +317,7 @@ export async function renderConfidentialPoolTab(wallet) {
         ? `${notes.length} shielded note${notes.length === 1 ? '' : 's'} recovered`
         : 'No shielded notes yet — wrap ETH to mint your first cETH note.';
     }
+    notifyPendingWrapsOnce(diag, notify);
     if (balEl) {
       // A channel that failed is said so above the figure, not swallowed: an unreachable cBTC or bridge
       // endpoint makes a real holding read as zero, and "no notes yet" is the wrong thing to tell someone
