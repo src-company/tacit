@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-+pLxFtanFZzfbCvviFdqnJOGTW+Jh2Z+pD0/yNSxNuk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-KbZVJGJpGAF0iaZCveX3+GGJKmn2h8P4zL/Csd5l3C8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit lite</title>
 <meta name="description" content="Private ETH, the TAC airdrop, TAC farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -194,6 +194,8 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .status:empty { display: none; }
 .status a { color: var(--ink); }
 .note { font-size: 12.5px; color: var(--mute); margin: 12px 0 0; }
+.note.err { color: var(--err); }
+.rcpt .note { margin: 6px 0 2px; }
 .gate { text-align: center; padding: 26px 8px 8px; }
 .gate p { color: var(--mute); margin: 0 auto 4px; max-width: 38ch; font-size: 13px; }
 .big { font: 400 56px/1 var(--serif); letter-spacing: -.02em; margin: 10px 0 6px; }
@@ -513,6 +515,9 @@ const errText = (e) => {
 const FLASH = {};
 const say = (el, view) => { if (!el) return; const v = view instanceof Raw ? view : html`${view}`; if (el.id) FLASH[el.id] = v; mount(el, v); };
 const sayErr = (el, e) => say(el, html`<span class="err">${errText(e)}</span>`);
+// Quote-time notes live in the receipt; the status line only reports actions.
+const warn = (rc, view) => { rc.insertAdjacentHTML('beforeend', html`<p class="note err">${view}</p>`.s); rc.hidden = false; };
+const quoteErr = (rc, e) => { mount(rc, html``); warn(rc, errText(e)); };
 
 // While an action runs, its sheet is not re-rendered underneath it (its status line would be detached).
 // Re-renders asked for meanwhile are queued and run when it ends.
@@ -526,19 +531,22 @@ async function busy(btn, fn) {
     if (--inflight === 0 && deferred.size) { const names = [...deferred]; deferred.clear(); for (const n of names) rerender(n); }
   }
 }
-// Re-render a subtree without losing what the user typed or where the caret was.
+// Re-render a subtree without losing what the user typed or where the caret was. Typed values live for the
+// sheet's lifetime, so a render that briefly has no field (a loading state) does not drop them.
+const KEPT = {};
+const clearField = (i) => { i.value = ''; delete KEPT[i.id]; };
 function keep(root, fn) {
-  const vals = new Map(); let focus = null;
+  let focus = null;
   for (const i of root.querySelectorAll('input[id]')) {
     if (i.type === 'checkbox') continue;
-    if (i.value) vals.set(i.id, i.value);
+    if (i.value) KEPT[i.id] = i.value; else delete KEPT[i.id];
     if (i === document.activeElement) focus = { id: i.id, s: i.selectionStart, e: i.selectionEnd };
   }
   fn();
   for (const s of root.querySelectorAll('.status[id]')) if (FLASH[s.id] && !s.innerHTML) mount(s, FLASH[s.id]);
-  for (const [id, v] of vals) {
-    const i = root.querySelector('#' + CSS.escape(id));
-    if (i && !i.value) { i.value = v; i.closest('[hidden]')?.removeAttribute('hidden'); i.dispatchEvent(new Event('input')); }
+  for (const i of root.querySelectorAll('input[id]')) {
+    if (i.type === 'checkbox' || i.value || !KEPT[i.id]) continue;
+    i.value = KEPT[i.id]; i.closest('[hidden]')?.removeAttribute('hidden'); i.dispatchEvent(new Event('input'));
   }
   if (focus) { const i = root.querySelector('#' + CSS.escape(focus.id)); if (i) { i.focus(); try { i.setSelectionRange(focus.s, focus.e); } catch {} } }
 }
@@ -555,16 +563,16 @@ function lossGate(id, pct, what) {
     ? html`<label class="ack"><span>Type <b>${n}</b> to accept losing about ${n}% of this ${what} to the pool's price move.</span><input id="${id}" inputmode="numeric" autocomplete="off" aria-label="Type ${n} to accept" value="${prior ? n : ''}"></label>`
     : html`<label class="ack"><input type="checkbox" id="${id}" ${prior ? 'checked' : ''}><span>I accept losing about ${n}% of this ${what} to the pool's price move.</span></label>`;
 }
-function wireAck(id, pct, then) {
-  const el = document.getElementById(id);
+function wireAck(box, id, pct, then) {
+  const el = box.querySelector('input');
   if (!el) return;
   const n = Math.round(pct);
   const on = () => { acked[id] = (el.type === 'checkbox' ? el.checked : el.value.trim() === String(n)) ? n : null; then(); };
   el.addEventListener('input', on); el.addEventListener('change', on);
 }
-function lossOk(id, pct) {
+function lossOk(box, pct) {
   if (!(pct >= 15)) return true;
-  const el = document.getElementById(id);
+  const el = box.querySelector('input');
   if (!el) return false;
   return pct >= 30 ? el.value.trim() === String(Math.round(pct)) : el.checked;
 }
@@ -729,6 +737,7 @@ for (const d of $$('dialog.sheet')) {
   d.addEventListener('click', (e) => { if (e.target === d) d.close(); });
   d.addEventListener('close', () => {
     for (const s of d.querySelectorAll('.status[id]')) delete FLASH[s.id];
+    for (const k of Object.keys(KEPT)) delete KEPT[k];
     if (location.hash.length > 1) history.replaceState(null, '', location.pathname);
   });
   $$('[data-close]', d).forEach((b) => b.onclick = () => d.close());
@@ -761,13 +770,10 @@ function wireUnlock(id, after) {
 }
 // Connected and unlocked, or the gate that gets there.
 function needKey(el, why, after) {
-  if (!S.address) { mount(el, gate(why, 'Connect wallet', el.id + '-go')); wireConnect(el.id + '-go', after); return false; }
-  if (!S.key) {
-    mount(el, gate(`${why} Sign once to open your Tacit key; the same wallet opens the same balance on tacit.finance.`, 'Unlock with wallet', el.id + '-go'));
-    wireUnlock(el.id + '-go', after);
-    return false;
-  }
-  return true;
+  if (S.key) return true;
+  mount(el, gate(`${why} One signature opens your Tacit key, the same one tacit.finance opens for this wallet.`, S.address ? 'Unlock with wallet' : 'Connect and unlock', el.id + '-go'));
+  wireUnlock(el.id + '-go', after);
+  return false;
 }
 const segSub = (name, cur, items) => html`<div class="seg sub" role="tablist">${items.map(([k, label]) => html`<button type="button" role="tab" data-${name}="${k}" aria-selected="${k === cur}">${label}</button>`)}</div>`;
 function wireSub(el, name, set) { $$(`[data-${name}]`, el).forEach((b) => b.onclick = () => set(b.getAttribute(`data-${name}`))); }
@@ -844,15 +850,15 @@ function v1Wrap(el, status) {
   let bal = null, q = null, seq = 0;
   ethBalance().then((b) => { bal = b; $('#w-bal').textContent = fmt(b, 18, 4); });
   $('#w-max').onclick = () => { if (bal != null) { const gas = 2n * 10n ** 15n; const v = bal > gas ? ((bal - gas) / E10) * E10 : 0n; input.value = v ? plain(v, 18) : ''; input.dispatchEvent(new Event('input')); } };
-  input.oninput = debounce(async () => {
+  input.oninput = debounce(async (e) => {
     const wei = parseUnits(input.value);
-    q = null; go.disabled = true; say(status, '');
+    q = null; go.disabled = true; if (e?.isTrusted) say(status, '');
     if (!wei) { rc.hidden = true; return; }
-    if (wei % E10 !== 0n) { rc.hidden = true; say(status, html`<span class="err">Up to 8 decimals.</span>`); return; }
+    if (wei % E10 !== 0n) { mount(rc, html``); warn(rc, 'Up to 8 decimals.'); return; }
     const my = ++seq;
     try {
       const j = await (await fetch(`${API}/confidential/quote?asset=cETH&amountWei=${wei}`)).json();
-      if (my !== seq) return;
+      if (my !== seq || !input.isConnected) return;
       const tip = BigInt(j.recommendedWrapTipWei || 0), to = j.recommendedTipRecipient;
       if (!/^0x[0-9a-fA-F]{40}$/.test(to || '')) throw new Error('The relay did not name a tip recipient. Try again in a moment.');
       q = { wei, tip, to };
@@ -863,14 +869,14 @@ function v1Wrap(el, status) {
       rc.hidden = false;
       const over = bal != null && wei + tip > bal;
       go.disabled = over;
-      if (over) say(status, html`<span class="err">More than your wallet holds.</span>`);
-    } catch (e) { if (my === seq) sayErr(status, e); }
+      if (over) warn(rc, 'More than your wallet holds.');
+    } catch (e) { if (my === seq) quoteErr(rc, e); }
   });
   go.onclick = () => busy(go, async () => {
     if (!q) return;
     try {
       const t = await getUx(), priv = walletPriv();
-      say(status, 'Picking a fresh note slot, a few seconds…');
+      say(status, 'Picking a fresh note slot from the pool\'s history, about half a minute…');
       const index = await t.nextWrapIndex({ walletPriv: priv, ticker: 'cETH' });
       const w = t.buildWrap({ walletPriv: priv, amountWei: q.wei, ticker: 'cETH', index });
       const hash = await sendTx({ to: ADDR.wrapTip, data: SEL.wrapWithTip + strip(w.commit) + word(q.wei) + addrWord(q.to), value: q.wei + q.tip });
@@ -879,7 +885,7 @@ function v1Wrap(el, status) {
       // The deposit is in escrow from here on; if this step fails, Finish rebuilds the same note at the same index.
       say(status, html`Deposited ${txLink(hash)}. The relay is proving your note, about a minute…`);
       await t.submitWrapSettle({ built: w, waitOpts: { timeoutMs: 15 * 60e3 } });
-      input.value = ''; rc.hidden = true;
+      clearField(input); rc.hidden = true;
       toast(`${fmt(q.wei, 18, 8)} tETH is private`);
       await scanPrivate(true).catch(() => {});
       rerender('eth'); say($('#v1-status'), html`<span class="ok">Wrapped.</span> ${txLink(hash)}`);
@@ -924,15 +930,15 @@ function v1Send(el, status) {
   const to = $('#s-to'), amt = $('#s-amt'), go = $('#s-go'), rc = $('#s-rcpt');
   let who = null, seq = 0;
   $('#s-max').onclick = () => { amt.value = held ? plain(held, 8) : ''; amt.dispatchEvent(new Event('input')); };
-  const check = async () => {
+  const check = async (e) => {
     const units = parseUnits(amt.value, 8);
-    go.disabled = true; who = null; say(status, '');
+    go.disabled = true; who = null; if (e?.isTrusted) say(status, '');
     const raw = to.value.trim();
     if (!raw) { rc.hidden = true; return; }
     const my = ++seq;
     try {
       const r = await resolveTo(raw);
-      if (my !== seq) return;
+      if (my !== seq || !amt.isConnected) return;
       who = r;
       const t = await getUx();
       const exact = (P.scan?.eth.notes || []).some((n) => BigInt(n.value) === units);
@@ -942,8 +948,8 @@ function v1Send(el, status) {
         ${split ? html`<div class="kv"><span>Sizing fee</span><b>${fmt(split, 8, 8)} tETH</b></div>` : ''}`);
       rc.hidden = false;
       go.disabled = !units || units + BigInt(split) > held;
-      if (units && units + BigInt(split) > held) say(status, html`<span class="err">More than your private balance.</span>`);
-    } catch (e) { if (my === seq) { rc.hidden = true; sayErr(status, e); } }
+      if (units && units + BigInt(split) > held) warn(rc, 'More than your private balance.');
+    } catch (e) { if (my === seq) quoteErr(rc, e); }
   };
   to.oninput = amt.oninput = debounce(check);
   go.onclick = () => busy(go, async () => {
@@ -964,7 +970,7 @@ function v1Send(el, status) {
           txHash: r?.txHash, createdAt: Date.now(), recipientName: who.name || undefined,
         }).catch(() => {});
       }
-      to.value = ''; amt.value = ''; rc.hidden = true;
+      clearField(to); clearField(amt); rc.hidden = true;
       toast('Sent privately');
       await scanPrivate(true).catch(() => {});
       rerender('eth'); say($('#v1-status'), html`<span class="ok">Sent.</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
@@ -986,22 +992,22 @@ function v1Out(el, status) {
   let q = null, seq = 0;
   $('#o-me').onclick = () => { to.value = S.address; to.dispatchEvent(new Event('input')); };
   $('#o-max').onclick = () => { amt.value = held ? plain(held, 8) : ''; amt.dispatchEvent(new Event('input')); };
-  const check = async () => {
+  const check = async (e) => {
     const units = parseUnits(amt.value, 8);
-    q = null; go.disabled = true; say(status, '');
+    q = null; go.disabled = true; if (e?.isTrusted) say(status, '');
     if (!units) { rc.hidden = true; return; }
     const my = ++seq;
     try {
       const t = await getUx();
       const minFee = await t.quoteOpFee('cETH', 'sendunwrap');
       const { fee } = t.quoteUnwrapFee(units, 'cETH', { minFee });
-      if (my !== seq) return;
+      if (my !== seq || !amt.isConnected) return;
       q = { units, fee };
       mount(rc, html`<div class="kv"><span>Relay fee</span><b>${fmt(fee, 8, 8)} ETH</b></div><div class="kv"><span>Arrives</span><b>${fmt(units - fee > 0n ? units - fee : 0n, 8, 8)} ETH</b></div>`);
       rc.hidden = false;
       go.disabled = units > held || units <= fee || !/^0x[0-9a-fA-F]{40}$/.test(to.value.trim());
-      if (units > held) say(status, html`<span class="err">More than your private balance.</span>`);
-    } catch (e) { if (my === seq) sayErr(status, e); }
+      if (units > held) warn(rc, 'More than your private balance.');
+    } catch (e) { if (my === seq) quoteErr(rc, e); }
   };
   to.oninput = amt.oninput = debounce(check);
   go.onclick = () => busy(go, async () => {
@@ -1023,7 +1029,7 @@ function v1Out(el, status) {
       }
       say(status, 'The relay is proving your withdrawal…');
       const r = await t.sendUnwrap({ note, walletPriv: priv, recipient, amount: q.units, waitOpts: { timeoutMs: 15 * 60e3 } });
-      amt.value = ''; rc.hidden = true;
+      clearField(amt); rc.hidden = true;
       toast('Withdrawn');
       await scanPrivate(true).catch(() => {});
       rerender('eth'); say($('#v1-status'), html`<span class="ok">Withdrawn.</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
@@ -1141,7 +1147,7 @@ function renderDevice(el) {
         const W2 = await deviceWallet();
         W2.connect({ address: S.address, send: ({ to, data, value }) => sendTx({ to, data, value: BigInt(value || 0), chainId: c.chainId }) });
         const h = await W2.deposit({ amount, onStep: step });
-        $('#d-amt').value = '';
+        clearField($('#d-amt'));
         await deviceSync(); rerender('eth'); say($('#d-status'), html`<span class="ok">Deposited.</span> ${explorer(h)}`);
       } catch (e) { sayErr(status, e); }
     });
@@ -1157,7 +1163,7 @@ function renderDevice(el) {
         const amount = parseUnits($('#d-amt').value);
         if (!amount) throw new Error('Enter an amount.');
         const h = await (await deviceWallet()).send({ to: $('#d-to').value.trim(), amount, onStep: step });
-        $('#d-amt').value = '';
+        clearField($('#d-amt'));
         await deviceSync(); rerender('eth'); say($('#d-status'), html`<span class="ok">Sent privately.</span> ${explorer(h)}`);
       } catch (e) { sayErr(status, e); }
     });
@@ -1174,7 +1180,7 @@ function renderDevice(el) {
         const amount = parseUnits($('#d-amt').value);
         if (!amount) throw new Error('Enter an amount.');
         const h = await (await deviceWallet()).withdraw({ to: $('#d-to').value.trim(), amount, onStep: step });
-        $('#d-amt').value = '';
+        clearField($('#d-amt'));
         await deviceSync(); rerender('eth'); say($('#d-status'), html`<span class="ok">Withdrawn.</span> ${explorer(h)}`);
       } catch (e) { sayErr(status, e); }
     });
@@ -1214,7 +1220,7 @@ function renderAirdrop(el) {
   if (!S.address) { mount(el, gate('Connect the wallet that held the snapshot tokens.', 'Connect wallet', 'air-connect')); return wireConnect('air-connect', () => rerender('tac')); }
   if (!AIR) { mount(el, html`<div class="gate"><p>Checking ${short(S.address)}…</p></div>`); return; }
   const s = AIR;
-  if (s.error) { mount(el, gate(`Could not read the airdrop: ${s.error.message}`, 'Try again', 'air-retry')); $('#air-retry').onclick = () => { AIR = null; loadAirdrop().then(() => rerender('tac')); render.tac(); }; return; }
+  if (s.error) { mount(el, gate(`Could not read the airdrop: ${s.error.message}`, 'Try again', 'air-retry')); $('#air-retry').onclick = () => { AIR = null; loadAirdrop().then(() => rerender('tac')); rerender('tac'); }; return; }
   const amount = s.amountWei ? fmt(BigInt(s.amountWei), 18, 4) : '0';
   if (s.reason === 'not-listed') {
     mount(el, html`<div class="gate"><div class="big">0 <small>TAC</small></div><p>${short(S.address)} has no allocation. Try the wallet that held the snapshot tokens, or buy TAC with ETH.</p></div>`);
@@ -1239,7 +1245,7 @@ function renderAirdrop(el) {
   const finish = async (r) => {
     say(status, html`Claiming… ${txLink(r.txHash)}`);
     const w = await air.waitClaimed(S.address);
-    if (w.claimed) { await loadAirdrop(); render.tac(); toast('TAC claimed'); }
+    if (w.claimed) { await loadAirdrop(); rerender('tac'); toast('TAC claimed'); }
     else say(status, html`Still pending. ${txLink(r.txHash)}`);
   };
   const c = $('#air-claim');
@@ -1264,19 +1270,20 @@ function renderBuy(el) {
     <div id="b-ack"></div>
     <button class="btn" type="button" id="b-go" disabled>Buy TAC</button>
     <div class="status" id="b-status"></div>`);
-  const input = $('#b-amt'), go = $('#b-go'), rc = $('#b-rcpt'), status = $('#b-status');
+  const input = $('#b-amt'), go = $('#b-go'), rc = $('#b-rcpt'), status = $('#b-status'), ackBox = $('#b-ack');
   let bal = null, q = null, seq = 0;
   ethBalance().then((b) => { bal = b; $('#b-bal').textContent = fmt(b, 18, 4); });
   $('#b-max').onclick = () => { if (bal != null) { const v = bal > 3n * 10n ** 15n ? bal - 3n * 10n ** 15n : 0n; input.value = v ? plain(v, 18) : ''; input.dispatchEvent(new Event('input')); } };
-  const gateOk = () => { go.disabled = !q || (bal != null && q.paid > bal) || !lossOk('b-ackv', q.impact); };
-  input.oninput = debounce(async () => {
+  const gateOk = () => { go.disabled = !q || (bal != null && q.paid > bal) || !lossOk(ackBox, q.impact); };
+  input.oninput = debounce(async (e) => {
     const wei = parseUnits(input.value);
-    q = null; go.disabled = true; say(status, ''); mount($('#b-ack'), html``);
+    if (!input.isConnected) return;
+    q = null; go.disabled = true; if (e?.isTrusted) say(status, ''); mount(ackBox, html``);
     if (!wei) { rc.hidden = true; return; }
     const my = ++seq;
     try {
       const [r, sp] = await Promise.all([venues.quoteAll({ dir: 'ETH_TO_TAC', amountIn: wei, account: S.address, includeZQuoter: false }), ethCall(ADDR.precisionPool, SEL.sqrtPrice)]);
-      if (my !== seq) return;
+      if (my !== seq || !input.isConnected) return;
       if (!r.best) throw new Error('No pool can fill this right now.');
       const s = Number(BigInt(sp)) / 1e18, mid = Number(wei) * s * s;          // TAC wei at the band's mid price
       const impact = mid > 0 ? Math.max(0, (1 - Number(r.best.amountOut) / mid) * 100) : 0;
@@ -1286,21 +1293,21 @@ function renderBuy(el) {
         ${lossLine(impact)}
         <div class="kv"><span>Route</span><b>${r.best.venue === 'precision' ? 'Precision pool' : 'Tacit public pool'} · zRouter</b></div>`);
       rc.hidden = false;
-      mount($('#b-ack'), lossGate('b-ackv', impact, 'trade'));
-      wireAck('b-ackv', impact, gateOk);
-      if (bal != null && wei > bal) say(status, html`<span class="err">More than your wallet holds.</span>`);
-      else if (impact >= 5) say(status, html`<span class="err">This pool is thin: smaller amounts move the price less.</span>`);
+      mount(ackBox, lossGate('b-ackv', impact, 'trade'));
+      wireAck(ackBox, 'b-ackv', impact, gateOk);
+      if (bal != null && wei > bal) warn(rc, 'More than your wallet holds.');
+      else if (impact >= 5) warn(rc, 'This pool is thin: smaller amounts move the price less.');
       gateOk();
-    } catch (e) { if (my === seq) { rc.hidden = true; sayErr(status, e); } }
+    } catch (e) { if (my === seq) quoteErr(rc, e); }
   });
   go.onclick = () => busy(go, async () => {
-    if (!q || !lossOk('b-ackv', q.impact)) return;
+    if (!q || !lossOk(ackBox, q.impact)) return;
     try {
       const tx = venues.build({ quote: q, dir: 'ETH_TO_TAC', account: S.address, slippageBps: 50, deadline: deadline() });
       const hash = await sendTx({ to: tx.to, data: tx.data, value: tx.value });
       say(status, html`Buying… ${txLink(hash)}`);
       await waitTx(hash);
-      input.value = ''; rc.hidden = true; mount($('#b-ack'), html``);
+      clearField(input); rc.hidden = true; mount(ackBox, html``);
       toast('TAC bought'); say(status, html`<span class="ok">Bought.</span> ${txLink(hash)}`);
       loadPrecision().catch(() => {});
     } catch (e) { sayErr(status, e); }
@@ -1309,7 +1316,9 @@ function renderBuy(el) {
 
 // ── farms ────────────────────────────────────────────────────────────────────────────────────────────────
 const FARM = { precision: null, program: null, open: 'precision', mode: 'zap', positions: null };
+let precisionSeq = 0;
 async function loadPrecision() {
+  const my = ++precisionSeq;
   const p = ADDR.precisionPool, f = ADDR.precisionFarm;
   const calls = [
     { to: p, data: SEL.reserve0 }, { to: p, data: SEL.reserve1 }, { to: p, data: SEL.totalSupply }, { to: p, data: SEL.sqrtPrice },
@@ -1319,7 +1328,7 @@ async function loadPrecision() {
     { to: ADDR.tac, data: SEL.balanceOf + addrWord(S.address) }, { to: ADDR.tac, data: SEL.allowance + addrWord(S.address) + addrWord(f) });
   const r = await multicall(calls);
   const w = (i) => r[i] ? wordAt(r[i], 0) : 0n;
-  const x = { r0: w(0), r1: w(1), supply: w(2), sp: w(3), totalStaked: w(4), rate: w(5), finish: Number(w(6)), t: Number(w(7)) || now(), staked: w(8), earned: w(9), tac: w(10), allowance: w(11) };
+  const x = { who: S.address, r0: w(0), r1: w(1), supply: w(2), sp: w(3), totalStaked: w(4), rate: w(5), finish: Number(w(6)), t: Number(w(7)) || now(), staked: w(8), earned: w(9), tac: w(10), allowance: w(11) };
   x.live = x.t < x.finish;
   CLOCK.skew = x.t - now();
   x.perDay = x.live ? x.rate * 86400n : 0n;
@@ -1328,6 +1337,7 @@ async function loadPrecision() {
   x.value = Number(x.r0) + (s > 0 ? Number(x.r1) / (s * s) : 0);                 // pool value in ETH wei at mid
   x.tacEth = s > 0 ? 1 / (s * s) : 0;                                              // ETH per TAC
   if (S.address) x.bal = await ethBalance();
+  if (my !== precisionSeq) return FARM.precision;             // a newer read is in flight or done; keep its answer
   FARM.precision = x;
   return x;
 }
@@ -1397,6 +1407,7 @@ function renderPrecision(el) {
   const x = FARM.precision;
   if (!x) { mount(el, html`<p class="note">Reading the farm…</p>`); return; }
   if (!S.address) { mount(el, gate('Deposit ETH, or ETH with TAC, and the farm stakes it for you. TAC streams to you every second.', 'Connect wallet', 'pf-connect')); return wireConnect('pf-connect', () => rerender('farm')); }
+  if (x.who !== S.address) { mount(el, html`<p class="note">Reading your balances…</p>`); loadFarms().then(() => rerender('farm')).catch(() => {}); return; }
   const has = x.staked > 0n;
   mount(el, html`
     ${has ? html`
@@ -1414,12 +1425,13 @@ function renderPrecision(el) {
     <button class="btn" type="button" id="pf-go" disabled>${FARM.mode === 'zap' ? 'Farm with ETH' : 'Farm with ETH + TAC'}</button>
     <div class="status" id="pf-status"></div>`);
   wireSub(el, 'pfm', (m) => { FARM.mode = m; keep($('#sheet-farm'), render.farm); });
-  const input = $('#pf-amt'), go = $('#pf-go'), rc = $('#pf-rcpt'), status = $('#pf-status');
+  const input = $('#pf-amt'), go = $('#pf-go'), rc = $('#pf-rcpt'), status = $('#pf-status'), ackBox = $('#pf-ack');
   let q = null, seq = 0;
-  const gateOk = () => { go.disabled = !q || q.over || !lossOk('pf-ackv', q.loss); };
-  const requote = async () => {
+  const gateOk = () => { go.disabled = !q || q.over || !lossOk(ackBox, q.loss); };
+  const requote = async (e) => {
     const wei = parseUnits(input.value);
-    q = null; go.disabled = true; mount($('#pf-ack'), html``); say(status, '');
+    if (!input.isConnected) return;
+    q = null; go.disabled = true; mount(ackBox, html``); if (e?.isTrusted) say(status, '');
     if (!wei || wei <= 0n) { rc.hidden = true; return; }
     const my = ++seq;
     try {
@@ -1436,7 +1448,7 @@ function renderPrecision(el) {
         if (wordAt(r, 0) !== 1n || wordAt(r, 1) === 0n) throw new Error('The pool would refuse this deposit.');
         lp = wordAt(r, 1);
       }
-      if (my !== seq) return;
+      if (my !== seq || !input.isConnected) return;
       const share = lp * 10000n / (x.totalStaked + lp);
       q = { wei, lp, tac, loss, over: (x.bal != null && wei > x.bal) || (tac > 0n && tac > x.tac) };
       mount(rc, html`
@@ -1445,19 +1457,19 @@ function renderPrecision(el) {
         <div class="kv"><span>Share of the farm</span><b>${(Number(share) / 100).toFixed(2)}%</b></div>
         <div class="kv"><span>Earns about</span><b>${fmt(x.perDay * lp / (x.totalStaked + lp), 18, 2)} TAC a day</b></div>`);
       rc.hidden = false;
-      mount($('#pf-ack'), lossGate('pf-ackv', loss, 'deposit'));
-      wireAck('pf-ackv', loss, gateOk);
-      if (q.over) say(status, html`<span class="err">${wei > (x.bal ?? wei) ? 'More ETH than your wallet holds.' : html`Not enough TAC. <button class="link" type="button" id="pf-buy">Buy TAC</button> or claim the airdrop.`}</span>`);
-      else if (loss >= 0.5) say(status, html`<span class="err">Depositing ETH alone swaps half through this thin pool.</span> ${x.tac > 0n ? html`<button class="link" type="button" id="pf-pair">Add TAC too</button>` : ''}`);
-      $('#pf-buy')?.addEventListener('click', () => { $('#sheet-farm').close(); openSheet('buy'); });
-      $('#pf-pair')?.addEventListener('click', () => { FARM.mode = 'pair'; keep($('#sheet-farm'), render.farm); });
+      mount(ackBox, lossGate('pf-ackv', loss, 'deposit'));
+      wireAck(ackBox, 'pf-ackv', loss, gateOk);
+      if (q.over) warn(rc, wei > (x.bal ?? wei) ? 'More ETH than your wallet holds.' : html`Not enough TAC. <button class="link" type="button" data-go="buy">Buy TAC</button> or claim the airdrop.`);
+      else if (loss >= 0.5) warn(rc, html`Depositing ETH alone swaps half through this thin pool.${x.tac > 0n ? html` <button class="link" type="button" data-go="pair">Add TAC too</button>` : ''}`);
+      rc.querySelector('[data-go="buy"]')?.addEventListener('click', () => { $('#sheet-farm').close(); openSheet('buy'); });
+      rc.querySelector('[data-go="pair"]')?.addEventListener('click', () => { FARM.mode = 'pair'; keep($('#sheet-farm'), render.farm); });
       gateOk();
-    } catch (e) { if (my === seq) { rc.hidden = true; sayErr(status, e); } }
+    } catch (e) { if (my === seq) quoteErr(rc, e); }
   };
   input.oninput = debounce(requote);
   $('#pf-max').onclick = () => { if (x.bal) { const v = x.bal > 3n * 10n ** 15n ? x.bal - 3n * 10n ** 15n : 0n; input.value = v ? plain(v, 18) : ''; requote(); } };
   go.onclick = () => busy(go, async () => {
-    if (!q || !lossOk('pf-ackv', q.loss)) return;
+    if (!q || !lossOk(ackBox, q.loss)) return;
     try {
       const minShares = q.lp * 995n / 1000n, dl = deadline();
       let hash;
@@ -1472,14 +1484,15 @@ function renderPrecision(el) {
       }
       say(status, html`Staking… ${txLink(hash)}`);
       await waitTx(hash);
+      clearField(input); delete acked['pf-ackv'];
+      say(status, html`<span class="ok">Staked.</span> ${txLink(hash)}`);
+      await loadFarms(); rerender('farm');
       toast('Staked. TAC is streaming to you.');
-      input.value = '';
-      await loadFarms(); render.farm(); say($('#pf-status'), html`<span class="ok">Staked.</span> ${txLink(hash)}`);
     } catch (e) { sayErr(status, e); }
   });
   const c = $('#pf-claim');
   if (c) c.onclick = () => busy(c, async () => {
-    try { const hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.claim }); say(status, html`Claiming… ${txLink(hash)}`); await waitTx(hash); toast('TAC claimed'); await loadFarms(); render.farm(); }
+    try { const hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.claim }); say(status, html`Claiming… ${txLink(hash)}`); await waitTx(hash); await loadFarms(); rerender('farm'); toast('TAC claimed'); }
     catch (e) { sayErr(status, e); }
   });
   const ex = $('#pf-exit');
@@ -1491,7 +1504,7 @@ function renderPrecision(el) {
       const min0 = wordAt(sim, 0) * 995n / 1000n, min1 = wordAt(sim, 1) * 995n / 1000n;
       const hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.exitAndRemove + word(min0) + word(min1) + word(dl) });
       say(status, html`Withdrawing ETH, TAC and rewards… ${txLink(hash)}`);
-      await waitTx(hash); toast('Withdrawn to your wallet'); await loadFarms(); render.farm();
+      await waitTx(hash); await loadFarms(); rerender('farm'); toast('Withdrawn to your wallet');
     } catch (e) { sayErr(status, e); }
   });
 }
@@ -1551,8 +1564,9 @@ async function loadBorrow() {
     esplora(`/address/${addr}/utxo`).catch(() => null), esplora('/blocks/tip/height').catch(() => null),
     fetch(`${API}/reflection/status?network=mainnet`).then((r) => r.json()).catch(() => null),
   ]);
-  const st = { addr, sats: utxos ? utxos.reduce((s, u) => s + BigInt(u.value), 0n) : null, pendingSats: utxos ? utxos.filter((u) => !u.status?.confirmed).reduce((s, u) => s + BigInt(u.value), 0n) : 0n, tip, refl };
   const rec = LOCK.rec;
+  // The state carries the record it was computed for, so a render never pairs a new record with old numbers.
+  const st = { rec, addr, sats: utxos ? utxos.reduce((s, u) => s + BigInt(u.value), 0n) : null, pendingSats: utxos ? utxos.filter((u) => !u.status?.confirmed).reduce((s, u) => s + BigInt(u.value), 0n) : 0n, tip, refl, needEth: 0n, needWst: 0n, usd: 0n, ratio: 15000n };
   if (rec) {
     const op = outpointOf(t, rec);
     const [lockStatus, calls] = await Promise.all([
@@ -1586,7 +1600,7 @@ load.borrow = () => loadBorrow();
 render.borrow = () => {
   const el = $('#borrow-body');
   if (!needKey(el, 'Lock BTC in an output only your key can spend, mint cBTC one to one, and borrow cUSD against it.', () => openSheet('borrow'))) return;
-  const st = LOCK.state, rec = LOCK.rec;
+  const st = LOCK.state, rec = st?.rec;
   if (!st) { mount(el, html`<p class="note">Reading your Bitcoin…</p><div class="status" id="bw-status"></div>`); loadBorrow().then(() => rerender('borrow')).catch((e) => sayErr($('#bw-status'), e)); return; }
   const stepCls = (done, now2) => done ? 'step done' : now2 ? 'step now' : 'step';
   const s1 = !!rec, s2 = !!st.bonded, s3 = !!rec?.minted, s4 = !!rec?.borrowed;

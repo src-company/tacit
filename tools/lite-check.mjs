@@ -2,8 +2,8 @@
 // the fork and window.ethereum is an EIP-1193 stub that sends as the chosen account (anvil's first key, or an
 // impersonated one). The relay's submit and the EVM-pool keepers are stubbed, so nothing reaches a live service.
 //   airdrop  a listed recipient claims its TAC; the tile updates
-//   farm     a one-sided ETH zap waits for its typed loss acceptance, stakes, claims, then withdraws everything
 //   pair     ETH + TAC staked in one transaction with an EIP-2612 permit
+//   farm     a one-sided ETH zap waits for its typed loss acceptance, stakes, claims, then withdraws everything
 //   buy      TAC bought with ETH through zRouter
 //   v1       the identity signature unlocks the key; a tipped wrap lands and its settle is submitted
 //   device   a deposit into the EVM pool, proved in the page's worker
@@ -24,7 +24,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,farm,pair,buy,v1,device,borrow').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,pair,farm,buy,v1,device,borrow').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -63,8 +63,17 @@ async function openPage({ account, key = null }) {
     const r = await fetch(ANVIL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: route.request().postData() });
     await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: await r.text() });
   });
-  await ctx.route('https://api.tacit.finance/confidential/submit', (route) => { submits.push(JSON.parse(route.request().postData() || '{}')); return json(route, { jobId: 'stub-' + submits.length }); });
-  await ctx.route('https://api.tacit.finance/confidential/status**', (route) => json(route, { status: 'failed', error: 'stubbed in the fork check' }));
+  // On localhost the modules send relay calls to the page's own origin (confidential-deployments.js), so both that
+  // path and the live host are covered: submits and job status are stubbed, reads pass through to the live API.
+  const relay = async (route) => {
+    const u = new URL(route.request().url());
+    if (u.pathname === '/confidential/submit') { submits.push(JSON.parse(route.request().postData() || '{}')); return json(route, { jobId: 'stub-' + submits.length }); }
+    if (u.pathname === '/confidential/status') return json(route, { status: 'failed', error: 'stubbed in the fork check' });
+    const r = await fetch('https://api.tacit.finance' + u.pathname + u.search, { method: route.request().method(), headers: { 'content-type': 'application/json' }, body: route.request().method() === 'GET' ? undefined : route.request().postData() });
+    return route.fulfill({ status: r.status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: await r.text() });
+  };
+  await ctx.route(/^https:\/\/api\.tacit\.finance\/confidential\/(submit|status)/, relay);
+  await ctx.route(new RegExp(`^http://127\\.0\\.0\\.1:${WEB}/(confidential|farm|reflection)/`), relay);
   await ctx.route('https://tacit-evm-pool-keeper*.onrender.com/**', (route) => json(route, /\/quote/.test(route.request().url())
     ? { relayer: '0x0000000000000000000000000000000000000001', fee: '329000000000000', sweepFee: '439000000000000', receiveMin: '175600000000000000' } : { ok: true }));
   await ctx.exposeFunction('__wallet', async (method, params = []) => {
@@ -92,7 +101,7 @@ async function openPage({ account, key = null }) {
   await ctx.addInitScript(() => { window.ethereum = { request: ({ method, params }) => window.__wallet(method, params), on() {}, removeListener() {} }; });
   const page = await ctx.newPage();
   const errors = [];
-  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('pageerror', (e) => errors.push(`${e.message} @ ${(e.stack || '').split('\n').slice(1, 3).map((s) => s.trim()).join(' < ')}`));
   return { browser, page, errors, url: `http://127.0.0.1:${WEB}/lite/` };
 }
 
@@ -128,20 +137,44 @@ await step('airdrop', async () => {
   await rpc('eth_sendTransaction', [{ from: RECIPIENT, to: TAC, data: '0xa9059cbb' + addrWord(A0) + word(1000n * 10n ** 18n) }]);
 });
 
+await step('pair', async () => {
+  await page.goto(url + '#farm');
+  await page.waitForSelector('#pf-connect, [data-pfm]', { timeout: 60000 });
+  if (await page.$('#pf-connect')) await page.click('#pf-connect');
+  await page.waitForSelector('[data-pfm="pair"]', { timeout: 60000 });
+  await page.click('[data-pfm="pair"]');
+  await page.fill('#pf-amt', '0.002');
+  await until(page, () => !document.querySelector('#pf-go').disabled || /\S/.test(document.querySelector('#pf-status')?.textContent || ''));
+  if (await page.isDisabled('#pf-go')) throw new Error(`the ETH + TAC deposit stayed disabled: ${await text(page, '#pf-status')} | ${await text(page, '#pf-rcpt')}`);
+  const s0 = await stakedOf(A0), t0 = await tacOf(A0);
+  await page.click('#pf-go');
+  await until(page, () => /Staked/.test(document.querySelector('#toasts')?.textContent || '') || /err/.test(document.querySelector('#pf-status')?.innerHTML || ''));
+  ok((await stakedOf(A0)) > s0 && (await tacOf(A0)) < t0, `pair: ETH + TAC staked with a permit ${await text(page, '#pf-status')}`);
+});
+
 await step('farm', async () => {
   await page.goto(url + '#farm');
-  await page.click('#pf-connect');
-  await page.waitForSelector('#pf-amt');
+  await page.waitForSelector('#pf-connect, [data-pfm]', { timeout: 60000 });
+  if (await page.$('#pf-connect')) await page.click('#pf-connect');
+  await page.waitForSelector('[data-pfm="zap"]', { timeout: 60000 });
+  await page.click('[data-pfm="zap"]');
   await page.fill('#pf-amt', '0.05');
-  await page.waitForSelector('#pf-ackv', { timeout: 60000 });
+  try { await page.waitForSelector('#pf-ackv', { timeout: 60000 }); } catch (e) {
+    if (process.env.DEBUG) console.log('   farm state:', JSON.stringify(await page.evaluate(() => ({ amt: document.querySelector('#pf-amt')?.value, open: document.querySelector('.farm[aria-expanded="true"]')?.dataset.farm, mode: document.querySelector('[data-pfm][aria-selected="true"]')?.dataset.pfm, rcpt: document.querySelector('#pf-rcpt')?.textContent.replace(/\s+/g, ' '), status: document.querySelector('#pf-status')?.textContent, go: document.querySelector('#pf-go')?.disabled }))));
+    throw e;
+  }
   ok(await page.isDisabled('#pf-go'), 'farm: a zap this size waits for its loss to be accepted');
-  await page.fill('#pf-ackv', await page.$eval('.ack b', (b) => b.textContent));
-  await until(page, () => !document.querySelector('#pf-go').disabled, null, 20000);
+  for (let i = 0; i < 5 && await page.isDisabled('#pf-go'); i++) {              // a requote can move the loss by a point
+    await page.fill('#pf-ackv', await page.$eval('.ack b', (b) => b.textContent));
+    await sleep(1500);
+    if (process.env.DEBUG) console.log('   ', JSON.stringify(await page.evaluate(() => ({ go: document.querySelector('#pf-go')?.disabled, ack: document.querySelector('#pf-ackv')?.value, b: document.querySelector('.ack b')?.textContent, mode: document.querySelector('[data-pfm][aria-selected="true"]')?.dataset.pfm, status: document.querySelector('#pf-status')?.textContent, rcpt: document.querySelector('#pf-rcpt')?.textContent }))));
+  }
+  ok(!(await page.isDisabled('#pf-go')), 'farm: typing the loss enables the zap');
   await shot(page, 'farm-zap');
   await page.click('#pf-go');
   await page.waitForSelector('#pf-exit', { timeout: 60000 });
   ok((await stakedOf(A0)) > 0n, 'farm: zapETH staked');
-  await rpc('evm_increaseTime', [600]); await rpc('evm_mine', []);
+  await rpc('evm_increaseTime', [60]); await rpc('evm_mine', []);
   await page.evaluate(() => { location.hash = ''; location.hash = '#farm'; });
   await until(page, () => { const b = document.querySelector('#pf-claim'); return b && !b.disabled; });
   const before = await tacOf(A0);
@@ -152,19 +185,6 @@ await step('farm', async () => {
   await page.click('#pf-exit');
   await until(page, () => /Withdrawn/.test(document.querySelector('#toasts')?.textContent || '') || /err/.test(document.querySelector('#pf-status')?.innerHTML || ''));
   ok((await stakedOf(A0)) === 0n, `farm: withdraw all leaves nothing staked ${await text(page, '#pf-status')}`);
-});
-
-await step('pair', async () => {
-  await page.goto(url + '#farm');
-  if (await page.$('#pf-connect')) await page.click('#pf-connect');
-  await page.waitForSelector('[data-pfm="pair"]', { timeout: 60000 });
-  await page.click('[data-pfm="pair"]');
-  await page.fill('#pf-amt', '0.002');
-  await until(page, () => !document.querySelector('#pf-go').disabled);
-  const s0 = await stakedOf(A0), t0 = await tacOf(A0);
-  await page.click('#pf-go');
-  await until(page, () => /Staked/.test(document.querySelector('#toasts')?.textContent || '') || /err/.test(document.querySelector('#pf-status')?.innerHTML || ''));
-  ok((await stakedOf(A0)) > s0 && (await tacOf(A0)) < t0, `pair: ETH + TAC staked with a permit ${await text(page, '#pf-status')}`);
 });
 
 await step('buy', async () => {
