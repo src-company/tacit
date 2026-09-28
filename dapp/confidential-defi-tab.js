@@ -42,8 +42,8 @@ const xOnly = (priv) => '0x' + [...G.multiply(BigInt(priv)).toRawBytes(true).sli
 // mod N. `keyNonce` here is just "the Nth position opened against this controller" — recovering after a wipe
 // means walking keyNonce = 0, 1, 2, … and matching each derived positionOwner against on-chain
 // CdpPositionInserted events, the same style of scan scanCbtc already does for cBTC locks.
+const toBytes = (v) => v instanceof Uint8Array ? v : Uint8Array.from((String(v).replace(/^0x/, '').match(/../g) || []).map((h) => parseInt(h, 16)));
 function derivePositionOwnerPriv(walletPriv, controller, keyNonce) {
-  const toBytes = (v) => v instanceof Uint8Array ? v : Uint8Array.from((String(v).replace(/^0x/, '').match(/../g) || []).map((h) => parseInt(h, 16)));
   const domain = new TextEncoder().encode('tacit-cdp-position-v1');
   const controllerBytes = toBytes(controller);
   const nonceBytes = new Uint8Array(4);
@@ -76,24 +76,33 @@ const loadPositions = () => _posStore.list();
 // so a new position derived the SAME owner key as a still-open one. That is the same shape as the wrap-index
 // bug that was fixed by making nextWrapIndex throw instead of falling back to 0, and the same remedy applies:
 // `recoverCdpPositions` already walks the chain for this exact number and returns it as `nextKeyNonce`, so
-// take that as the authority and never silently fall back to 0.
+// take that as the authority and never silently fall back to 0. A walk that could not read every loan
+// transaction (`skipped`) may undercount, so it does not count either.
+//
+// The floor is kept per key, in the same slot the weld page uses: another key's loans in this browser must not
+// push this key's index past the gap a key-only recovery walks, so only this key's own descriptors count toward it.
 const KEY_NONCE_PREFIX = 'tacit-cdp-next-key-nonce:';
-function localKeyNonceFloor(controller) {
+function keyNonceSlot(walletPriv, controller) {
+  const pub = [...secp.getPublicKey(toBytes(walletPriv), true)].map((x) => x.toString(16).padStart(2, '0')).join('');
+  return `${KEY_NONCE_PREFIX}${String(controller).toLowerCase()}:${pub}`;
+}
+function localKeyNonceFloor(walletPriv, controller) {
   const c = String(controller).toLowerCase();
   let n = 0;
-  try { n = Math.max(0, parseInt(localStorage.getItem(KEY_NONCE_PREFIX + c), 10) || 0); } catch {}
+  try { n = Math.max(0, parseInt(localStorage.getItem(keyNonceSlot(walletPriv, c)), 10) || 0); } catch {}
   for (const p of loadPositions()) {
-    if (String(p.controller).toLowerCase() === c && Number.isInteger(p.keyNonce)) n = Math.max(n, p.keyNonce + 1);
+    if (String(p.controller).toLowerCase() !== c || !Number.isInteger(p.keyNonce)) continue;
+    const mine = xOnly(derivePositionOwnerPriv(walletPriv, controller, p.keyNonce)).toLowerCase();
+    if (String(p.positionOwner || '').toLowerCase() === mine) n = Math.max(n, p.keyNonce + 1);
   }
   return n;
 }
 async function nextKeyNonce(ux, walletPriv, controller) {
-  const c = String(controller).toLowerCase();
-  const local = localKeyNonceFloor(controller);
+  const local = localKeyNonceFloor(walletPriv, controller);
   let onchain = null;
   try {
     const r = await ux.recoverCdpPositions({ walletPriv });
-    if (r && Number.isInteger(r.nextKeyNonce)) onchain = r.nextKeyNonce;
+    if (r && Number.isInteger(r.nextKeyNonce) && !(r.skipped || []).length) onchain = r.nextKeyNonce;
   } catch { /* handled below */ }
   if (onchain == null && local === 0) {
     throw new Error('cannot establish the next CDP position key index: the chain walk failed and this browser '
@@ -101,7 +110,7 @@ async function nextKeyNonce(ux, walletPriv, controller) {
       + 'once the RPC is reachable rather than proceeding.');
   }
   const n = Math.max(local, onchain ?? 0);
-  try { localStorage.setItem(KEY_NONCE_PREFIX + c, String(n + 1)); } catch {}
+  try { localStorage.setItem(keyNonceSlot(walletPriv, controller), String(n + 1)); } catch {}
   return n;
 }
 
