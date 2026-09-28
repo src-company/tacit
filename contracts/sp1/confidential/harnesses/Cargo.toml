@@ -20,6 +20,10 @@ edition = "2021"
 name = "exec"
 path = "src/main.rs"
 
+[[bin]]
+name = "vkey"
+path = "vkey.rs"
+
 [dependencies]
 sp1-sdk = { version = "=6.2.3", features = ["blocking", "network", "native-gnark", "profiling"] }
 hex = "0.4"
