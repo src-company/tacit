@@ -8763,9 +8763,11 @@ async function verifyCeremonyEligibilityProof(env, envelopeBytes, expectedContri
   //     unspent. Accumulate Pedersen commitments for the range-proof check.
   let sumCommitment = PEDERSEN_ZERO;
   const holderHash160Hex = bytesToHex(hash160(dec.holderPubkey));
+  // Shared across every outpoint in this proof — see the same note in governance.js's verifyThresholdAttestation.
+  const ancestryMemo = new Map();
   for (const op of dec.outpoints) {
     // Full chain-of-custody proof, not just a decode of this one envelope — see tac-ancestry.js.
-    const resolved = await verifyTacAncestry(env, op.txid, op.vout, CER_ELIGIBILITY_NETWORK);
+    const resolved = await verifyTacAncestry(env, op.txid, op.vout, CER_ELIGIBILITY_NETWORK, { memo: ancestryMemo });
     if (!resolved.ok) {
       return { ok: false, status: 403, reason: `eligibility_proof: ${op.txid}:${op.vout} ${resolved.reason}` };
     }
@@ -8860,9 +8862,11 @@ async function verifyDiscordGateProof(env, envelopeBytes) {
 
   let sumCommitment = PEDERSEN_ZERO;
   const holderHash160Hex = bytesToHex(hash160(dec.holderPubkey));
+  // Shared across every outpoint in this proof — see the same note in governance.js's verifyThresholdAttestation.
+  const ancestryMemo = new Map();
   for (const op of dec.outpoints) {
     // Full chain-of-custody proof, not just a decode of this one envelope — see tac-ancestry.js.
-    const resolved = await verifyTacAncestry(env, op.txid, op.vout, CER_ELIGIBILITY_NETWORK);
+    const resolved = await verifyTacAncestry(env, op.txid, op.vout, CER_ELIGIBILITY_NETWORK, { memo: ancestryMemo });
     if (!resolved.ok) {
       return { ok: false, status: 403, reason: `discord_gate: ${op.txid}:${op.vout} ${resolved.reason}` };
     }

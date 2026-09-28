@@ -180,11 +180,15 @@ export function buildGovernance(deps) {
     // (5) resolve outpoints: TAC, owned by holder, unspent; sum commitments.
     let sumC = PEDERSEN_ZERO;
     const holderHash160Hex = bytesToHex(hash160(dec.holderPubkey));
+    // Shared across every outpoint in this attestation — cited UTXOs routinely share ancestry (e.g. one
+    // note split into several), so this turns what would be redundant re-walks of the same shared hops
+    // into memo hits.
+    const ancestryMemo = new Map();
     for (const op of dec.outpoints) {
       // Full chain-of-custody proof (kernel signature + rangeproof at every hop back to a CETCH root), not
       // just a decode of this one envelope — commitmentForUtxo alone would trust a self-declared asset_id
       // and commitment with nothing backing them (see worker/src/tac-ancestry.js for why).
-      const resolved = await verifyTacAncestry(env, op.txid, op.vout, network);
+      const resolved = await verifyTacAncestry(env, op.txid, op.vout, network, { memo: ancestryMemo });
       if (!resolved.ok) {
         return { ok: false, status: 403, reason: `weight_proof: ${op.txid}:${op.vout} ${resolved.reason}` };
       }
