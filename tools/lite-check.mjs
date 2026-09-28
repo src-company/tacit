@@ -8,6 +8,10 @@
 //   v1       the identity signature unlocks the key; a tipped wrap lands and its settle is submitted
 //   device   a deposit into the EVM pool, proved in the page's worker
 //   borrow   the Bitcoin deposit address renders; a bond for a lock record posts through the escrow helper
+//   keys     an Ethereum signature opens a key; after locking, "continue" reopens the same tacit1 address; a pasted key opens
+//   saved    a passphrase-locked key saved the way tacit.finance saves it opens through tacit.js's own prompt
+//   bitcoin  a (stubbed, deterministic) UniSat wallet opens a key through tacit.js, then funds a lock in one call
+//   passkey  a virtual authenticator with PRF creates a passkey wallet, and signing in again opens the same key
 //   PLAYWRIGHT=<path to playwright-core> node tools/lite-check.mjs [scenario,…] [fork rpc]   (SHOTS=<dir> saves screenshots)
 
 import { spawn } from 'node:child_process';
@@ -24,7 +28,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,pair,farm,buy,v1,device,borrow').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,pair,farm,buy,v1,device,borrow,keys,saved,bitcoin,passkey').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -56,7 +60,7 @@ const RPC_HOSTS = ['ethereum-rpc.publicnode.com', 'eth.drpc.org', '1rpc.io', 'ma
 const submits = [];
 const json = (route, body) => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
 
-async function openPage({ account, key = null }) {
+async function openPage({ account, key = null, host = '127.0.0.1', init = null }) {
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   for (const h of RPC_HOSTS) await ctx.route(`https://${h}/**`, async (route) => {
@@ -73,7 +77,7 @@ async function openPage({ account, key = null }) {
     return route.fulfill({ status: r.status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: await r.text() });
   };
   await ctx.route(/^https:\/\/api\.tacit\.finance\/confidential\/(submit|status)/, relay);
-  await ctx.route(new RegExp(`^http://127\\.0\\.0\\.1:${WEB}/(confidential|farm|reflection)/`), relay);
+  await ctx.route(new RegExp(`^http://(127\\.0\\.0\\.1|localhost):${WEB}/(confidential|farm|reflection)/`), relay);
   await ctx.route('https://tacit-evm-pool-keeper*.onrender.com/**', (route) => json(route, /\/quote/.test(route.request().url())
     ? { relayer: '0x0000000000000000000000000000000000000001', fee: '329000000000000', sweepFee: '439000000000000', receiveMin: '175600000000000000' } : { ok: true }));
   await ctx.exposeFunction('__wallet', async (method, params = []) => {
@@ -99,10 +103,11 @@ async function openPage({ account, key = null }) {
     return rpc(method, params);
   });
   await ctx.addInitScript(() => { window.ethereum = { request: ({ method, params }) => window.__wallet(method, params), on() {}, removeListener() {} }; });
+  if (init) await ctx.addInitScript(init.fn, init.arg);
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(`${e.message} @ ${(e.stack || '').split('\n').slice(1, 3).map((s) => s.trim()).join(' < ')}`));
-  return { browser, page, errors, url: `http://127.0.0.1:${WEB}/lite/` };
+  return { browser, ctx, page, errors, url: `http://${host}:${WEB}/lite/` };
 }
 
 let fails = 0;
@@ -148,7 +153,7 @@ await step('pair', async () => {
   if (await page.isDisabled('#pf-go')) throw new Error(`the ETH + TAC deposit stayed disabled: ${await text(page, '#pf-status')} | ${await text(page, '#pf-rcpt')}`);
   const s0 = await stakedOf(A0), t0 = await tacOf(A0);
   await page.click('#pf-go');
-  await until(page, () => /Staked/.test(document.querySelector('#toasts')?.textContent || '') || /err/.test(document.querySelector('#pf-status')?.innerHTML || ''));
+  await until(page, () => /Staked/.test(document.querySelector('#toast-container')?.textContent || '') || /err/.test(document.querySelector('#pf-status')?.innerHTML || ''));
   ok((await stakedOf(A0)) > s0 && (await tacOf(A0)) < t0, `pair: ETH + TAC staked with a permit ${await text(page, '#pf-status')}`);
 });
 
@@ -179,11 +184,11 @@ await step('farm', async () => {
   await until(page, () => { const b = document.querySelector('#pf-claim'); return b && !b.disabled; });
   const before = await tacOf(A0);
   await page.click('#pf-claim');
-  await until(page, () => /TAC claimed/.test(document.querySelector('#toasts')?.textContent || ''));
+  await until(page, () => /TAC claimed/.test(document.querySelector('#toast-container')?.textContent || ''));
   ok((await tacOf(A0)) > before, 'farm: claim pays TAC');
   await page.waitForSelector('#pf-exit');
   await page.click('#pf-exit');
-  await until(page, () => /Withdrawn/.test(document.querySelector('#toasts')?.textContent || '') || /err/.test(document.querySelector('#pf-status')?.innerHTML || ''));
+  await until(page, () => /Withdrawn/.test(document.querySelector('#toast-container')?.textContent || '') || /err/.test(document.querySelector('#pf-status')?.innerHTML || ''));
   ok((await stakedOf(A0)) === 0n, `farm: withdraw all leaves nothing staked ${await text(page, '#pf-status')}`);
 });
 
@@ -201,8 +206,8 @@ await step('buy', async () => {
 
 await step('v1', async () => {
   await page.goto(url + '#private');
-  await page.waitForSelector('#eth-v1-go', { timeout: 60000 });
-  await page.click('#eth-v1-go');
+  await page.waitForSelector('#eth-v1 [data-in="eth"]', { timeout: 60000 });
+  await page.click('#eth-v1 [data-in="eth"]');
   await page.waitForSelector('#w-amt', { timeout: 120000 });
   await page.fill('#w-amt', '0.01');
   await until(page, () => !document.querySelector('#w-go').disabled);
@@ -214,7 +219,7 @@ await step('v1', async () => {
 
 await step('device', async () => {
   await page.goto(url + '#device');
-  if (await page.$('#eth-dev-go')) await page.click('#eth-dev-go');
+  if (await page.$('#eth-dev [data-in="eth"]')) await page.click('#eth-dev [data-in="eth"]');
   await page.waitForSelector('[data-chain="1"]', { timeout: 60000 });
   await page.click('[data-chain="1"]');
   await page.waitForSelector('#d-amt', { timeout: 60000 });
@@ -227,17 +232,136 @@ await step('device', async () => {
 
 await step('borrow', async () => {
   await page.goto(url + '#borrow');
-  await page.waitForSelector('#bw-lock, #borrow-body-go', { timeout: 60000 });
-  if (await page.$('#borrow-body-go')) { await page.click('#borrow-body-go'); await page.waitForSelector('#bw-lock', { timeout: 120000 }); }
+  await page.waitForSelector('#bw-lock, #borrow-body [data-in="eth"]', { timeout: 60000 });
+  if (await page.$('#borrow-body [data-in="eth"]')) { await page.click('#borrow-body [data-in="eth"]'); await page.waitForSelector('#bw-lock', { timeout: 120000 }); }
   ok(/^bc1q/.test(await page.$eval('[data-copy]', (b) => b.dataset.copy)), 'borrow: the Bitcoin deposit address renders');
   const pub = await page.evaluate(() => localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('tacit-eth-identity-anchor:'))));
   await page.evaluate((p) => localStorage.setItem(`tacit-lite-cbtc-v1:${p}`, JSON.stringify({ lockTxid: 'aa'.repeat(32), lockVout: 1, vBtc: '20000', anchor: { txid: 'bb'.repeat(32), vout: 0 }, at: Date.now() })), pub);
   await page.evaluate(() => { location.hash = ''; location.hash = '#borrow'; });
   await page.waitForSelector('#bw-bond', { timeout: 120000 });
   await page.click('#bw-bond');
-  await until(page, () => /Bond posted/.test(document.querySelector('#toasts')?.textContent || '') || /err/.test(document.querySelector('#bw-status')?.innerHTML || ''));
+  await until(page, () => /Bond posted/.test(document.querySelector('#toast-container')?.textContent || '') || /err/.test(document.querySelector('#bw-status')?.innerHTML || ''));
   await shot(page, 'borrow');
-  ok(/Bond posted/.test(await text(page, '#toasts')), `borrow: the bond posts through the helper ${await text(page, '#bw-status')}`);
+  ok(/Bond posted/.test(await text(page, '#toast-container')), `borrow: the bond posts through the helper ${await text(page, '#bw-status')}`);
+});
+
+// The tacit1 address of a key, derived the way tacit.finance does (BIP-352 scan key, one root).
+const { makeTacitAddress } = await import(new URL('../dapp/tacit-address.js', import.meta.url));
+const { bip352TaggedHash } = await import(new URL('../dapp/bip352.js', import.meta.url));
+function tacit1(hex) {
+  const priv = Buffer.from(hex, 'hex');
+  const scan = BigInt('0x' + Buffer.from(bip352TaggedHash('BIP0352/ScanKey', priv)).toString('hex')) % secp.CURVE.n;
+  const pub = secp.getPublicKey(priv, true);
+  return makeTacitAddress({ secp }).encodeTacitAddress({ network: 'mainnet', btcSpendPub: pub, btcScanPub: secp.getPublicKey(scan.toString(16).padStart(64, '0'), true), evmOwnerPub: pub });
+}
+const walletText = (p) => p.evaluate(() => document.querySelector('#wallet-body')?.textContent.replace(/\s+/g, ' ') || '');
+// Open the wallet sheet by changing the hash; a navigation to the same URL would reload and drop the key.
+const toWallet = (p) => p.evaluate(() => { location.hash = ''; location.hash = '#wallet'; });
+const shown = async (p) => { await toWallet(p); await p.waitForSelector('#wallet-body .who, #wallet-body [data-in]', { timeout: 60000 }); return walletText(p); };
+const lock = async (p) => { await toWallet(p); await p.waitForSelector('#w-lock', { timeout: 60000 }); await p.click('#w-lock'); await p.waitForSelector('#wallet-body [data-in]'); };
+const addrIn = (txt) => (txt.match(/tacit1[0-9a-z]{8}…[0-9a-z]{12}/) || [''])[0];
+
+await step('keys', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  await r.page.goto(r.url + '#wallet');
+  await r.page.click('#wallet-body [data-in="eth"]');
+  await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+  const txt = await shown(r.page);
+  const addr = addrIn(txt);
+  ok(/opened with Ethereum/.test(txt) && addr, `keys: an Ethereum signature opens ${addr}`);
+  await lock(r.page);
+  ok(/Continue as tacit1/.test(await walletText(r.page)), 'keys: once locked, the sheet offers to continue with the same wallet');
+  await r.page.click('#wallet-body [data-in="known"]');
+  await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+  ok((await shown(r.page)).includes(addr), 'keys: continuing reopens the same tacit1 address');
+  await lock(r.page);
+  const hex = 'c0ffee'.padEnd(64, '1');
+  await r.page.click('#wallet-body [data-in="paste"]');
+  await r.page.fill('#ws-hex', hex);
+  await r.page.click('#wallet-body [data-in="key"]');
+  await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+  const t1 = tacit1(hex);
+  ok((await shown(r.page)).includes(`${t1.slice(0, 14)}…${t1.slice(-12)}`), `keys: a pasted key opens its own tacit1 address ${t1.slice(0, 14)}…`);
+  if (r.errors.length) { fails++; console.log('FAIL keys page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  await r.browser.close();
+});
+
+await step('saved', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  await r.page.goto(r.url);
+  await r.page.waitForSelector('#toast-container', { state: 'attached' });
+  const hex = 'abcdef'.padEnd(64, '2'), pass = 'correct horse battery staple';
+  // Save a key the way tacit.finance does, through its own module and prompt.
+  const saving = r.page.evaluate(async (h) => { globalThis.__TACIT_NO_INIT__ = true; const T = await import('/tacit.js'); await T.wallet.setPriv(h); return !!localStorage.getItem('tacit-wallet-v1:mainnet'); }, hex);
+  await r.page.waitForSelector('#pass-dialog[open] #pass-input-1', { timeout: 120000 });
+  await r.page.fill('#pass-input-1', pass); await r.page.fill('#pass-input-2', pass); await r.page.click('#pass-submit');
+  ok(await saving, 'saved: a passphrase-locked key is saved in this browser');
+  await r.page.evaluate(() => { localStorage.setItem('tacit-active-mode-v1', 'local'); localStorage.removeItem('tacit-lite-id-v1'); });
+  await r.page.goto(r.url + '#wallet'); await r.page.reload();
+  await r.page.waitForSelector('#wallet-body [data-in="known"]', { timeout: 60000 });
+  ok(/saved in this browser/.test(await walletText(r.page)), 'saved: the sheet offers the saved key');
+  await r.page.click('#wallet-body [data-in="known"]');
+  await r.page.waitForSelector('#pass-dialog[open] #pass-input-1', { timeout: 120000 });
+  await r.page.fill('#pass-input-1', pass); await r.page.click('#pass-submit');
+  await until(r.page, () => !!document.querySelector('#wallet-dot.on'), null, 120000);
+  const t1 = tacit1(hex);
+  ok((await shown(r.page)).includes(`${t1.slice(0, 14)}…${t1.slice(-12)}`), 'saved: the passphrase opens the same key tacit.finance saved');
+  ok(await r.page.evaluate(() => localStorage.getItem('tacit-active-mode-v1') === 'local'), 'saved: tacit.finance\'s own wallet choice is left as it was');
+  if (r.errors.length) { fails++; console.log('FAIL saved page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  await r.browser.close();
+});
+
+await step('bitcoin', async () => {
+  // A UniSat stand-in with a real key: deterministic ECDSA, so enrolment's two signatures agree.
+  const bk = '11'.repeat(32);
+  const r = await openPage({ account: A0, key: K0, init: { arg: { bk }, fn: ({ bk }) => {
+    const sent = [];
+    window.__sent = sent;
+    window.unisat = {
+      requestAccounts: async () => ['bc1qtestaddress0000000000000000000000000000'], getAccounts: async () => ['bc1qtestaddress0000000000000000000000000000'],
+      getPublicKey: async () => '02' + bk.slice(0, 64 - 2).padEnd(64, '0'), getNetwork: async () => 'livenet', on() {}, removeListener() {},
+      signMessage: async (msg, type) => { const d = new TextEncoder().encode(bk + '|' + type + '|' + msg); const h = await crypto.subtle.digest('SHA-256', d); return btoa(String.fromCharCode(...new Uint8Array(h), ...new Uint8Array(h), 1)); },
+      sendBitcoin: async (to, sats) => { sent.push([to, sats]); return 'ab'.repeat(32); },
+    };
+  } } });
+  await r.page.goto(r.url + '#wallet');
+  await r.page.click('#wallet-body [data-in="btc"]');
+  await until(r.page, () => !!document.querySelector('#wallet-dot.on'), null, 120000);
+  const txt = await shown(r.page);
+  ok(/opened with Bitcoin bc1qte/.test(txt), `bitcoin: a Bitcoin wallet's signature opens a key (${addrIn(txt)})`);
+  await lock(r.page);
+  await r.page.click('#wallet-body [data-in="known"]');
+  await until(r.page, () => !!document.querySelector('#wallet-dot.on'), null, 120000);
+  ok((await shown(r.page)).includes(addrIn(txt) || '?'), 'bitcoin: signing in again opens the same key');
+  await r.page.evaluate(() => { location.hash = '#borrow'; });
+  await r.page.waitForSelector('#bw-amt', { timeout: 120000 });
+  await r.page.fill('#bw-amt', '0.0002');
+  await r.page.click('#bw-fund');
+  await until(r.page, () => (window.__sent || []).length > 0 || /err/.test(document.querySelector('#bw-status')?.innerHTML || ''), null, 60000);
+  const sent = await r.page.evaluate(() => window.__sent);
+  const deposit = await r.page.$eval('[data-copy]', (b) => b.dataset.copy);
+  ok(sent.length === 1 && sent[0][0] === deposit && sent[0][1] >= 23000, `bitcoin: one popup funds the deposit address with ${sent[0]?.[1]} sats`);
+  if (r.errors.length) { fails++; console.log('FAIL bitcoin page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  await r.browser.close();
+});
+
+await step('passkey', async () => {
+  const r = await openPage({ account: A0, key: K0, host: 'localhost' });
+  const cdp = await r.ctx.newCDPSession(r.page);
+  await cdp.send('WebAuthn.enable');
+  await cdp.send('WebAuthn.addVirtualAuthenticator', { options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true, hasPrf: true } });
+  await r.page.goto(r.url + '#wallet');
+  await r.page.click('#wallet-body [data-in="new"]');
+  await until(r.page, () => !!document.querySelector('#wallet-dot.on'), null, 60000);
+  const txt = await shown(r.page), addr = addrIn(txt);
+  ok(/opened with passkey/.test(txt) && addr, `passkey: a new passkey wallet opens ${addr}`);
+  ok(await r.page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('tacit-prf-v1') || '{}')).length === 1), 'passkey: tacit.finance\'s passkey list gains the wallet');
+  await lock(r.page);
+  await r.page.click('#wallet-body [data-in="passkey"]');
+  await until(r.page, () => !!document.querySelector('#wallet-dot.on'), null, 60000);
+  ok((await shown(r.page)).includes(addr), 'passkey: signing in with it opens the same key');
+  if (r.errors.length) { fails++; console.log('FAIL passkey page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  await r.browser.close();
 });
 
 if (main.errors.length) { fails++; console.log('FAIL page errors:\n  ' + main.errors.slice(0, 8).join('\n  ')); }
