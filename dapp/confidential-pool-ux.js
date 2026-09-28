@@ -1274,6 +1274,17 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     return { to: cfg.router, value: value.toString(), calldata, gasLimit: gasLimit.toString(), jobId, depositCommit };
   }
 
+  // Broadcasts a {to, value, calldata, gasLimit} payload this wallet's own key can sign for — what
+  // resumeWrapAndSend (and anything else that hands back unsigned calldata instead of self-broadcasting,
+  // like wrapAndSend's own external-wallet path) returns. wrapAndSend signs+sends internally because it always
+  // sends from its own derived account; resumeWrapAndSend doesn't, since the caller may want to resume from a
+  // different sender than whoever originally built the job. This is that missing last step for the common case
+  // of resuming with the same wallet.
+  async function sendPreparedTx({ walletPriv, to, value = 0n, calldata, gasLimit }) {
+    const acct = account(walletPriv);
+    return _sendEvmTx({ acct, to, value: BigInt(value), data: calldata, gasLimit: BigInt(gasLimit) });
+  }
+
   // ── 1-click farm entry (OP_LP_BOND, op 29) ──
   // Add liquidity AND bond the resulting shares into a farm in ONE settle — OP_LP_ADD fused with
   // OP_FARM_BOND. Spends a whole A note + a whole B note (each opening-sigma bound), derives d_shares =
@@ -3324,7 +3335,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   });
 
   return { cfg, assets: _poolAssets, assetByTicker, account, identity, rpc, ethCall, fetchEvents, balance, poolStatsFromEvents, tickerOf,
-    deriveOutput, buildWrap, nextWrapIndex, wrap, submitWrapSettle, buildRouterWrap, routerWrap, routerConfigured, buildWrapTransferOp, wrapAndSend, resumeWrapAndSend, buildTransferOp, transfer, stealthSend, scanStealthLocks, stealthClaim, stealthRefund, stealthLockPosition, crossOut, payInvoice, quoteUnwrapFee, holderFeeBps, setPublicTacHeld, quoteTransferFee, quoteOpFee: gasAwareMinFee, feeUsdFor, relayFeeEligible, buildUnwrap, unwrap, sendUnwrap, buildAttestMeta, chainBindingHex,
+    deriveOutput, buildWrap, nextWrapIndex, wrap, submitWrapSettle, buildRouterWrap, routerWrap, routerConfigured, buildWrapTransferOp, wrapAndSend, resumeWrapAndSend, sendPreparedTx, buildTransferOp, transfer, stealthSend, scanStealthLocks, stealthClaim, stealthRefund, stealthLockPosition, crossOut, payInvoice, quoteUnwrapFee, holderFeeBps, setPublicTacHeld, quoteTransferFee, quoteOpFee: gasAwareMinFee, feeUsdFor, relayFeeEligible, buildUnwrap, unwrap, sendUnwrap, buildAttestMeta, chainBindingHex,
     erc2612Nonce: _erc2612Nonce, waitReceipt: _waitReceipt, poolReserves, poolCurrentRoot, routePoolId, quoteRoute, route, swapBatched, swapBatchPending, swapBatchFlush, lpBondPosition, buildLpBondOp, lpBond, farmProgram, farmBond, farmPositions, importFarmPosition, recover, recoverCdpPositions, scanSentLocks, farmHarvest, farmUnbond, farmRedeem, buildFastlaneExitOp, fastlaneExit, lpAdd, lpRemove, quoteLpAdd, wrapLp, wrapSwap, ensureExactNote, mintCbtc, defiActions, cdp: _cdp, cdpPositionTree, submitSettle,
     cbtcLockState, syncCbtcLockReservations,
     relay, indexer, evmLog, evmTx, pool, memo, router: _router, stealth: _stealth, bridgeMint: _bridgeMint, bridgeBurn: _bridgeBurn, bridgeBurnToPool, airdrop: _airdrop, tacAirdrop: _tacAirdrop, lockScan: _lockScan };

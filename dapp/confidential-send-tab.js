@@ -383,10 +383,20 @@ function wireSend(wallet, ux, notes, helpers) {
       }
       // No (usable) shielded balance → wrap from the wallet and send in one transaction.
       if (statusEl) statusEl.textContent = `No shielded balance yet — wrapping + sending ${fmtUnits(amount, dec)} ${ticker} from your wallet in one transaction…`;
+      // Accumulated locally, not merged via localStorage, so a stale record from an earlier stuck attempt
+      // can never leak into this one — each save is a full replace of whatever this attempt has built so far.
+      const thisAttempt = {};
       const r = await ux.wrapAndSend({
         walletPriv: wallet.priv, amountWei, ticker, recipientPubHex: recipient, amount,
-        waitOpts: { onUpdate: proveUpdater(statusEl, 'Wrap-and-send') },
+        // Captured BEFORE proving/broadcasting can fail — see wireResumeWrapSend above for why this can't
+        // just be rebuilt on retry. onJob fires the instant the job is queued, ahead of the long prove wait.
+        onBuilt: (b) => { if (b.native) { Object.assign(thisAttempt, b); _saveWrapSendResume(ux, wallet, thisAttempt); } },
+        waitOpts: {
+          onUpdate: proveUpdater(statusEl, 'Wrap-and-send'),
+          onJob: (jobId) => { if (thisAttempt.native) { thisAttempt.jobId = jobId; _saveWrapSendResume(ux, wallet, thisAttempt); } },
+        },
       });
+      _clearWrapSendResume(ux, wallet);
       if (statusEl) statusEl.innerHTML = `Wrapped + sent ${fmtUnits(amount, dec)} ${esc(ticker)} in one tx`
         + (r && r.txHash ? ` (<code class="addr">${esc(r.txHash)}</code>)` : '')
         + ' — recoverable from your own key as a fresh note.';
@@ -394,7 +404,11 @@ function wireSend(wallet, ux, notes, helpers) {
       setTimeout(() => renderSendTab(wallet, helpers), 1500);
     } catch (e) {
       const m = formatSpecErr(e, 'Send');
-      if (statusEl) statusEl.textContent = m; notify(m, 'error');
+      const resumable = _loadWrapSendResume(ux, wallet);
+      if (statusEl) statusEl.textContent = resumable && resumable.jobId
+        ? `${m} — the prove job may have already finished server-side; do not send again. Reload this tab — it will offer Resume.`
+        : m;
+      notify(m, 'error');
       btn.disabled = false;
       reviewBtn.disabled = false;
     }
@@ -437,6 +451,70 @@ function wireResumeWraps(wallet, ux, diag, onDone) {
       }
     };
   }
+}
+
+// wrapAndSend (OP_WRAP_TRANSFER, "no shielded balance yet" path below) proves a random-blinded output, so
+// unlike a plain wrap it can NOT be safely rebuilt from (walletPriv, index) if something fails after the job
+// is queued — a rebuild would carry different memos and settle would reject it (MemoLeafMismatch). The only
+// way back is resumeWrapAndSend, which needs the EXACT jobId + memos + depositCommit + wrapAmount the original
+// attempt was building — confidential-pool-ux.js's wrapAndSend hands these out via onBuilt (before proving)
+// and waitOpts.onJob (the moment the job is queued, before the long wait), specifically so a caller can persist
+// them before either step can fail. Native ETH only (resumeWrapAndSend's own limit) — an ERC20 wrap-and-send
+// that fails this way has no resume path today; that gap is real and not fixed here, only not silently ignored.
+const WRAP_SEND_RESUME_PREFIX = 'tacit:wrapsend-resume-v1:';
+function _wrapSendResumeKey(ux, wallet) {
+  try { return WRAP_SEND_RESUME_PREFIX + ux.account(wallet.priv).address.toLowerCase(); } catch { return null; }
+}
+// Always a full replace, never a merge onto whatever is already stored: a stale record from an earlier
+// stuck attempt must never survive into a new one. onBuilt and onJob fire in sequence for the SAME attempt
+// (nothing else can interleave between them within one wrapAndSend call), so the call site passes the
+// whole record it's accumulating each time, not a fragment to be merged against unrelated old data.
+function _saveWrapSendResume(ux, wallet, record) {
+  const k = _wrapSendResumeKey(ux, wallet);
+  if (!k) return;
+  try { localStorage.setItem(k, JSON.stringify({ ...record, at: Date.now() })); }
+  catch { /* best effort — a lost record just means no resume UI, not lost funds (the tx may not exist yet) */ }
+}
+function _loadWrapSendResume(ux, wallet) {
+  const k = _wrapSendResumeKey(ux, wallet);
+  if (!k) return null;
+  try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; }
+}
+function _clearWrapSendResume(ux, wallet) {
+  const k = _wrapSendResumeKey(ux, wallet);
+  if (k) try { localStorage.removeItem(k); } catch {}
+}
+
+function pendingWrapSendHtml(record) {
+  if (!record || !record.jobId || !record.native) return '';
+  return `<div class="warn" style="margin:8px 0;padding:8px 10px;">`
+    + `<div style="font-weight:600;margin-bottom:4px;">A wrap + send did not finish</div>`
+    + `<div class="list-row" style="padding:6px 0;">`
+    + `<span class="muted">Job ${esc(String(record.jobId).slice(0, 10))}… — your ETH may already be spent server-side; resume to find out and complete it, do not send again.</span>`
+    + `<button id="csend-resume-wrapsend" style="padding:4px 10px;font-size:10px;flex:0 0 auto;">Resume</button></div></div>`;
+}
+
+function wireResumeWrapSend(wallet, ux, record, onDone) {
+  const btn = el('csend-resume-wrapsend');
+  if (!btn || !record) return;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    const prevText = btn.textContent;
+    btn.textContent = 'Resuming…';
+    try {
+      const resumed = await ux.resumeWrapAndSend({
+        jobId: record.jobId, memos: record.memos, depositCommit: record.depositCommit, wrapAmount: record.wrapAmount,
+      });
+      const sent = await ux.sendPreparedTx({ walletPriv: wallet.priv, to: resumed.to, value: resumed.value, calldata: resumed.calldata, gasLimit: resumed.gasLimit });
+      _clearWrapSendResume(ux, wallet);
+      notify(`Resumed — wrap + send settled${sent && sent.txHash ? ` (${sent.txHash})` : ''}`, 'ok');
+      setTimeout(onDone, 1500);
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = prevText;
+      notify(formatSpecErr(e, 'Resume wrap+send'), 'error');
+    }
+  };
 }
 
 // "Just hold it privately": wrap public ETH/token into a confidential note the user owns — no recipient,
@@ -945,9 +1023,11 @@ export async function renderSendTab(wallet, helpers = {}) {
     // A figure from a scan that lost a channel is shown with what it could not reach named above it. The
     // cBTC and bridge channels have no memo to fall back on, so an endpoint outage there reads as zero.
     notifyPendingWrapsOnce(diag, notify);
+    const wrapSendResume = _loadWrapSendResume(ux, wallet);
     if (balEl) {
       balEl.innerHTML = scanHealthHtml(diag, { style: 'margin:0 0 8px;' })
         + pendingWrapRowsHtml(diag, ux)
+        + pendingWrapSendHtml(wrapSendResume)
         + (assets.length
         ? '<div style="font-weight:600;color:var(--ink);margin-bottom:4px;">Shielded balance</div>'
           + assets.map((a) => {
@@ -964,6 +1044,7 @@ export async function renderSendTab(wallet, helpers = {}) {
     wireSend(wallet, ux, notes || [], helpers);
     wirePayout({ ux, wallet, scan: { notes: notes || [], poolStats, diag }, own: myTacit || id.pubHex, keccak256: keccak_256 });
     wireResumeWraps(wallet, ux, diag, () => renderSendTab(wallet, helpers));
+    wireResumeWrapSend(wallet, ux, wrapSendResume, () => renderSendTab(wallet, helpers));
   } catch (e) {
     const balEl = el('csend-balance');
     if (balEl) balEl.textContent = 'Could not scan existing notes. Fresh ETH wrap-and-send is still available.';
