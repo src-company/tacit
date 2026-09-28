@@ -243,6 +243,32 @@ leaves are terminal) was two raw, uncached esplora calls on every request. `reso
 the live tracer's return value, so this lookup goes through the same permanent cache as every other hop — a
 repeat trace for the same asset no longer re-fetches its etch tx from esplora at all.
 
+## Update: a per-txid status endpoint — the third piece alongside trace + register
+
+Auditing what's actually left for a permissionless, reliable BTC→ETH bridge (TAC specifically) surfaced a real
+gap: nothing answered "what happened to my specific burn-deposit" after broadcasting it. `/reflection/status`
+is a global aggregate; `/reflection/burndep-list` is operator-gated and only flags missing block data, not fold
+state. A holder (or a future dapp UI) had no way to tell "not broadcast yet" from "confirmed but reflection
+hasn't reached it" from "confirmed and folded" from "confirmed but stuck waiting on a bundle."
+
+`GET /reflection/burndep/status?network=&txid=<reveal txid>` closes this. Given only the broadcast reveal
+transaction's own txid (everything else — the burned note's outpoint, the asset, the nullifier/dest/target —
+is derived from the tx itself via the same `classifyConfidentialTx` the guest's own fold uses), it reports one
+of: `not-found`, `unconfirmed`, `not-a-burn-deposit`, `awaiting-scan`, `pending`, `folded`, or `unknown` (no
+reflection state to compare against yet). The state model mirrors `dapp/confidential-pool.js`'s actual
+lifecycle exactly: a burn either folds directly on first scan (never touches `pendingDepositRecords`) or falls
+into the pending-retry set (`completed: false`) until a valid bundle lets a later batch complete it
+(`completed: true`) — there is no other terminal state, so those three cases plus "not reached yet" and "not
+a real burn-deposit" are exhaustive. Verified against a real, already-registered, already-folded burn
+(`b49f4016…`, the same 100-TAC burn used throughout this file): classifies correctly as `type: 'burn'`, its
+`vin[0]` resolves to the exact same note outpoint (`a5fc1671…:0`) this whole file's other tests use, and the
+computed `outpointKey` matches the format `pendingDepositRecords` stores by construction (traced through
+`confidential-pool.js`'s own `hx(b32(...))` normalization to confirm it's a no-op on an already-canonical
+`outpointKey` output, not assumed).
+
+Cheap by design — one esplora tx fetch plus one KV read, cached 10s (same TTL as `/reflection/status`'s own
+cache) — unlike `/reflection/burndep/trace`, which does a real multi-hop DAG crawl.
+
 ## What NOT to do
 
 - Do not skip the byte-for-byte diff against real historical burns and ship on "it looks right."

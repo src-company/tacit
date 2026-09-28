@@ -1808,6 +1808,102 @@ async function handleBurnDepositTrace(req, env, url, cors) {
   };
   return jsonResponse({ ok: true, network, hops: tracedCxfers.length, bundle }, 200, { ...cors, 'Cache-Control': 'no-store' });
 }
+
+// Small cache for the parts of the reflection snapshot handleBurnDepositStatus needs (attestedHeight +
+// pendingDepositRecords) — same 10s TTL as handleReflectionStatus's own cache, kept separate because that one
+// only retains the already-summarized counts, not the full pendingDepositRecords array a per-txid lookup needs.
+const _burndepStatusSnapCache = new Map(); // network -> { at, snap }
+async function getReflectionSnapshotForStatus(env, network) {
+  const hit = _burndepStatusSnapCache.get(network);
+  if (hit && Date.now() - hit.at < REFLECTION_STATUS_TTL_MS) return hit.snap;
+  const raw = await env.REGISTRY_KV.get(`reflection:scan:${network}`);
+  if (!raw) return null;
+  let s;
+  try { s = JSON.parse(raw); } catch { return null; }
+  const snapshot = s.snapshot && typeof s.snapshot === 'object' ? s.snapshot : s;
+  const snap = {
+    attestedHeight: Number.isInteger(s.attestedHeight) ? s.attestedHeight : null,
+    pendingDepositRecords: Array.isArray(snapshot.pendingDepositRecords) ? snapshot.pendingDepositRecords : [],
+  };
+  _burndepStatusSnapCache.set(network, { at: Date.now(), snap });
+  return snap;
+}
+// GET /reflection/burndep/status?network=&txid=<reveal txid> — the missing third piece alongside
+// /reflection/burndep/trace (build a bundle) and /reflection/burndep (register it): what actually happened
+// after a holder broadcast their reveal transaction. A holder or a UI polling this needs to tell apart "not
+// broadcast yet", "confirmed but reflection hasn't reached it", "confirmed and reflection folded it directly",
+// and "confirmed but stuck waiting on a registered bundle" — today nothing answers that per-txid; /reflection/
+// status is a global aggregate and /reflection/burndep-list is operator-gated and only reports missing block
+// data, not fold state. Permissionless and cheap (one esplora tx fetch + one cached KV read), unlike
+// /reflection/burndep/trace which does a real DAG crawl.
+async function handleBurnDepositStatus(req, env, url, cors) {
+  if (!env.REGISTRY_KV) return jsonResponse({ error: 'no kv' }, 500, cors);
+  const ip = req.headers.get('CF-Connecting-IP') || 'anon';
+  const rl = await proveRateLimit(env, ip, 'burndep-status', Number(env.BURNDEP_STATUS_RL_BURST || 20), Number(env.BURNDEP_STATUS_RL_REFILL_MS || 60000));
+  if (!rl.ok) return jsonResponse({ ok: false, error: `too many status requests — retry in ~${rl.retryAfter}s`, retryAfter: rl.retryAfter }, 429, { ...cors, 'Cache-Control': 'no-store', 'Retry-After': String(rl.retryAfter) });
+  const network = url.searchParams.get('network') === 'signet' ? 'signet' : 'mainnet';
+  const revealTxid = String(url.searchParams.get('txid') || '').replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(revealTxid)) {
+    return jsonResponse({ ok: false, error: 'txid required (32-byte display-hex, the broadcast reveal transaction)' }, 400, cors);
+  }
+
+  let txJson;
+  try {
+    txJson = JSON.parse(await apiText(env, `/tx/${revealTxid}`, {}, network));
+  } catch (e) {
+    return jsonResponse({ ok: true, network, txid: revealTxid, status: 'not-found', detail: `not found on ${network} — not broadcast yet, or not yet relayed to public esplora indexers: ${e && e.message || e}` }, 200, { ...cors, 'Cache-Control': 'no-store' });
+  }
+  if (!txJson.status || !txJson.status.confirmed) {
+    return jsonResponse({ ok: true, network, txid: revealTxid, status: 'unconfirmed', detail: 'seen but not yet confirmed on Bitcoin' }, 200, { ...cors, 'Cache-Control': 'no-store' });
+  }
+  const burnBlockHeight = txJson.status.block_height;
+
+  let txHex;
+  try { txHex = (await apiText(env, `/tx/${revealTxid}/hex`, {}, network)).trim(); }
+  catch (e) { return jsonResponse({ ok: false, error: `could not fetch tx hex: ${e && e.message || e}` }, 502, { ...cors, 'Cache-Control': 'no-store' }); }
+  const decode = classifyConfidentialTx(txHex.startsWith('0x') ? txHex : '0x' + txHex);
+  if (!decode || decode.type !== 'burn') {
+    return jsonResponse({
+      ok: true, network, txid: revealTxid, status: 'not-a-burn-deposit', burnBlockHeight,
+      detail: `confirmed, but does not carry a burn-deposit envelope (classified as '${decode ? decode.type : 'none'}')`,
+    }, 200, { ...cors, 'Cache-Control': 'public, max-age=60' });
+  }
+  const vin0 = (txJson.vin || [])[0];
+  if (!vin0) return jsonResponse({ ok: false, error: 'burn-deposit reveal tx has no inputs (malformed)' }, 502, { ...cors, 'Cache-Control': 'no-store' });
+  const noteTxid = vin0.txid, noteVout = vin0.vout;
+
+  const registered = !!(await env.REGISTRY_KV.get(`reflection:burndep:${network}:${revealTxid}`));
+  const snap = await getReflectionSnapshotForStatus(env, network);
+  const pool = makeConfidentialPool({ secp, keccak256: keccak_256, sha256 });
+  const noteOutpoint = pool.outpointKey(noteTxid, noteVout).toLowerCase();
+  const pendingRec = snap && snap.pendingDepositRecords.find((r) => String((r && r.key) || '').toLowerCase() === noteOutpoint);
+
+  let status, detail;
+  if (pendingRec) {
+    status = pendingRec.completed ? 'folded' : 'pending';
+    detail = pendingRec.completed
+      ? 'confirmed on Bitcoin and folded into the pool (an earlier attempt needed a registered bundle first)'
+      : registered
+        ? 'confirmed on Bitcoin, a bundle is registered, waiting for the next reflection batch to retry it'
+        : 'confirmed on Bitcoin but not yet foldable — register its provenance bundle via POST /reflection/burndep (build one with POST /reflection/burndep/trace)';
+  } else if (snap && Number.isInteger(snap.attestedHeight) && Number.isInteger(burnBlockHeight) && burnBlockHeight > snap.attestedHeight) {
+    status = 'awaiting-scan';
+    detail = `confirmed at height ${burnBlockHeight}, reflection has only attested up to ${snap.attestedHeight} — not reached yet`;
+  } else if (snap && Number.isInteger(snap.attestedHeight)) {
+    status = 'folded';
+    detail = 'confirmed on Bitcoin, reflection has passed its block, and it is not in the pending-retry set — it folded directly on first scan';
+  } else {
+    status = 'unknown';
+    detail = 'confirmed on Bitcoin, but no reflection state is available yet to compare against';
+  }
+
+  return jsonResponse({
+    ok: true, network, txid: revealTxid, status, burnBlockHeight,
+    attestedHeight: snap ? snap.attestedHeight : null,
+    registered, note: { txid: noteTxid, vout: noteVout }, assetId: decode.assetId, detail,
+  }, 200, { ...cors, 'Cache-Control': 'public, max-age=10' });
+}
+
 async function handleReflectionAck(req, env, cors) {
   if (!checkConfidentialAuth(req, env)) return jsonResponse({ error: 'not found' }, 404, cors);
   let body;
@@ -25694,6 +25790,7 @@ async function _routeFetch(req, env, ctx) {
     if (url.pathname === '/reflection/consumed-source' && req.method === 'POST') return handleReflectionConsumedSource(req, env, url, cors);
     if (url.pathname === '/reflection/burndep-list' && req.method === 'GET') return handleReflectionBurndepList(req, env, url, cors);
     if (url.pathname === '/reflection/burndep/trace' && req.method === 'POST') return handleBurnDepositTrace(req, env, url, cors);
+    if (url.pathname === '/reflection/burndep/status' && req.method === 'GET') return handleBurnDepositStatus(req, env, url, cors);
     if (url.pathname === '/crossout/minted' && req.method === 'GET') return handleCrossoutMinted(url, env, cors);
     // Mode-B eth-side state: the eth-state sidecar POSTs eth_prove's output here.
     if (url.pathname === '/reflection/eth-state' && req.method === 'GET') return handleReflectionEthStateGet(req, env, url, cors);
