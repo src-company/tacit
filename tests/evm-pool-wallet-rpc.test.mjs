@@ -35,6 +35,16 @@ const SPEC = {
   base: { limit: 2000, err: (l) => ({ code: -32614, message: `eth_getLogs is limited to a ${l.toLocaleString('en-US')} range` }) },
 };
 
+await check('a node that never answers is given up on after the timeout, and the next one serves', async () => {
+  const calls = [];
+  const hang = (url, init) => new Promise((res, rej) => { calls.push(url); init.signal?.addEventListener('abort', () => rej(init.signal.reason)); });
+  const rpc = jsonRpc(['silent', 'drpc'], (url, init) => (url === 'silent' ? hang(url, init) : nodes(SPEC, calls)(url, init)), { timeoutMs: 50 });
+  const t0 = Date.now(), alive = setInterval(() => {}, 1000);   // Node's AbortSignal.timeout timer does not hold the process open
+  try { assert.equal(await rpc('eth_blockNumber'), '0x' + TIP.toString(16)); } finally { clearInterval(alive); }
+  assert.ok(Date.now() - t0 < 2000, 'failed over within the timeout');
+  assert.deepEqual(calls.map((c) => (Array.isArray(c) ? c[0] : c)), ['silent', 'drpc']);
+});
+
 await check('any failing node is skipped: a down node, then a range refusal, then one that serves', async () => {
   const calls = [];
   const rpc = jsonRpc(['down', 'tenderly', 'drpc'], nodes({ down: { down: true }, ...SPEC }, calls));

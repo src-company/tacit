@@ -117,15 +117,16 @@ const TRANSACT_TOPIC = hex(keccak_256(te.encode('Transact(bytes32,bytes32,bytes3
 const RECEIVED_TOPIC = hex(keccak_256(te.encode('Received(address,uint256,uint256,uint256,uint256,uint256)')));
 
 // A JSON-RPC reader over one or more URLs: each call tries them in turn and fails only when all do (a revert is
-// final at the first). The error thrown carries every node's error as `all`.
-export function jsonRpc(urls, fetchImpl = globalThis.fetch.bind(globalThis)) {
+// final at the first). The error thrown carries every node's error as `all`. A node gets `timeoutMs` to answer
+// before the next is tried, so one that stops responding cannot stall every read behind it.
+export function jsonRpc(urls, fetchImpl = globalThis.fetch.bind(globalThis), { timeoutMs = 25_000 } = {}) {
   const list = Array.isArray(urls) ? urls : [urls];
   let id = 0;
   return async (method, params = []) => {
     const all = [];
     for (const url of list) {
       try {
-        const r = await fetchImpl(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }) });
+        const r = await fetchImpl(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }), signal: AbortSignal.timeout?.(timeoutMs) });
         const j = await r.json();
         if (j.error) throw Object.assign(new Error(j.error.message || 'rpc error'), { rpc: j.error });
         return j.result;
