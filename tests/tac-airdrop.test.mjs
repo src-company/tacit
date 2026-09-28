@@ -478,8 +478,8 @@ test('the default proof host is the dapp origin, and a trailing slash does not m
   assert.equal((await slashed.status(BIG.address)).eligible, true);
   assert.equal(log[1], '/p/1c.json');
   assert.deepEqual(PUBLIC_PROOF_HOSTS, [PROOF_HOSTS.cdn, PROOF_HOSTS.mirror]);
-  assert.match(PROOF_HOSTS.cdn, /^https:\/\/cdn\.jsdelivr\.net\/gh\/z0r0z\/tacit@[0-9a-f]{40}\/dapp\/airdrop\/v1\/proofs$/);
-  assert.match(PROOF_HOSTS.mirror, /^https:\/\/raw\.githubusercontent\.com\/z0r0z\/tacit\/[0-9a-f]{40}\/dapp\/airdrop\/v1\/proofs$/);
+  assert.match(PROOF_HOSTS.cdn, /^https:\/\/cdn\.jsdelivr\.net\/gh\/src-company\/tacit@[0-9a-f]{40}\/dapp\/airdrop\/v1\/proofs$/);
+  assert.match(PROOF_HOSTS.mirror, /^https:\/\/raw\.githubusercontent\.com\/src-company\/tacit\/[0-9a-f]{40}\/dapp\/airdrop\/v1\/proofs$/);
 });
 
 test('hosts are tried in order: a failing, missing or lying host hands over to the next', async () => {
