@@ -42,7 +42,11 @@ export function makeConfidentialDefiActions({ pool, cdp, farm, relay, id, chainB
   // note's nullifier (deriveOutputKeys, role 'cdpDebt'), so a restored wallet re-derives them; a caller that
   // passes its own values must retain debtNk to spend the note later.
   const ZERO32 = '0x' + '00'.repeat(32);
-  async function openCdp({ controller, debtValue, rateSnapshot, fee = 0n, collateral, spendRoot, debtBlinding, positionOwner, debtNk, acknowledgeFeeShortfall = false, waitOpts }) {
+  // selfSettle: optional async ({ publicValues, proof, memos }) → { txHash } that sends the pool's settle() itself.
+  // The relay then only proves, and the borrower's own account is the settle's sender (which the points program
+  // credits for the mint, and which links that account to this loan). The memos passed are the ones the proof
+  // commits to, sealed once here; settling any other sealing fails MemoLeafMismatch.
+  async function openCdp({ controller, debtValue, rateSnapshot, fee = 0n, collateral, spendRoot, debtBlinding, positionOwner, debtNk, acknowledgeFeeShortfall = false, selfSettle = null, waitOpts }) {
     // nonce is pinned to 0, so the fresh per-position owner is the sole source of leaf uniqueness: reusing the
     // account owner here would link every position and risk two same-parameter positions colliding to one leaf
     // (the second becomes un-closeable). Require an explicit fresh owner — never fall back to id.owner.
@@ -59,7 +63,12 @@ export function makeConfidentialDefiActions({ pool, cdp, farm, relay, id, chainB
       // pubkey (recovery), and carries debtNk as `secret` so the borrower can later spend the note.
       outputs = [owned({ value: BigInt(debtValue) - BigInt(fee), blinding: debtBlinding, asset: debtAsset, cx: op.debt.cx, cy: op.debt.cy, owner: debtOwner, secret: debtNk })];
     }
-    return relay.settle({ type: 'cdpmint', op, leaves, outputs, ephRand }, waitOpts);
+    const spec = { type: 'cdpmint', op, leaves, outputs, ephRand };
+    if (!selfSettle) return relay.settle(spec, waitOpts);
+    const job = await relay.submitOp({ ...spec, mode: 'prove' });
+    const proven = job.status === 'proven' || job.status === 'settled' ? await relay.status(job.jobId) : await relay.waitForProof(job.jobId, waitOpts);
+    if (proven.status === 'settled') return { ...proven, jobId: job.jobId };
+    return { jobId: job.jobId, ...(await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos: job.sealedMemos })) };
   }
 
   // CDP close — burn the debt notes + release the basket (first leg net of fee). Each released leg is a minted

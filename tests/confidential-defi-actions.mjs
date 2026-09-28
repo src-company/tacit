@@ -60,6 +60,26 @@ const freshPositionOwner = () => freshPositionKey().owner;
   assert.equal(s.type, 'cdpmint'); assert.equal(s.leaves, 1); assert.equal(s.outputs, 1);
   ok('openCdp: debt note leaf has a recoverable memo descriptor (tripwire passes)');
 }
+// openCdp with selfSettle — the relay only proves; the borrower's settle carries exactly the memos the proof committed to
+{
+  const proveRelay = {
+    ...relay,
+    settle: async () => { throw new Error('a self-settled open must not be relay-settled'); },
+    submitOp: async ({ mode, outputs, leaves, ephRand }) => {
+      const sealedMemos = guard.sealMemosForOutputs({ outputs, ephRand });
+      guard.assertOutputsRecoverable({ leaves, outputs, memos: sealedMemos });
+      return { jobId: 'p1', status: mode === 'prove' ? 'queued' : 'bad-mode', sealedMemos };
+    },
+    waitForProof: async (jobId) => ({ jobId, status: 'proven', publicValues: '0x01', proof: '0x02' }),
+  };
+  const mine = makeConfidentialDefiActions({ pool, cdp, farm, relay: proveRelay, id, chainBindingHex, secp });
+  let sent = null;
+  const r = await mine.openCdp({ controller, debtValue: 1000n, nonce, rateSnapshot, fee: 0n, collateral: [coll(assetA, 600n, 2)], spendRoot: '0x' + '22'.repeat(32), debtBlinding: randomScalar(), positionOwner: freshPositionOwner(), debtNk: randomScalar(),
+    selfSettle: async (x) => { sent = x; return { txHash: '0x' + 'ab'.repeat(32) }; } });
+  assert.equal(sent.publicValues, '0x01'); assert.equal(sent.proof, '0x02'); assert.equal(sent.memos.length, 1);
+  assert.equal(r.txHash, '0x' + 'ab'.repeat(32)); assert.equal(r.jobId, 'p1');
+  ok('openCdp selfSettle: prove-only, then the borrower settles the proof with its own sealed memos');
+}
 // openCdp — debtNk required whenever debtValue > 0 (else the leaf the assembler computes locally would
 // diverge from the guest's actual debt_owner-keyed leaf — the exact bug this test guards against)
 {

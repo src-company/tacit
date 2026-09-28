@@ -265,9 +265,11 @@ function wireOpen(wallet, ux, notes) {
     btn.disabled = true;
     if (statusEl) statusEl.textContent = 'Building + settling your position via the relayer…';
     try {
+      // Settled from the wallet's own Ethereum account, the mint is credited to it by the points program.
+      const selfSettle = el('cdp-self-settle')?.checked ? (x) => ux.submitSettle({ settlerPriv: wallet.priv, ...x }) : null;
       const r = await defi.openCdp({
         controller, debtValue, rateSnapshot, fee: 0n, collateral,
-        spendRoot: root, debtBlinding, positionOwner, debtNk,
+        spendRoot: root, debtBlinding, positionOwner, debtNk, selfSettle,
         waitOpts: { onUpdate: proveUpdater(statusEl, 'Opening CDP') },
       });
       // Locators only: `keyNonce` re-derives positionOwnerPriv, `debtAnchor` re-derives the debt note's
@@ -465,6 +467,7 @@ export async function renderCdpTab(wallet, helpers = {}) {
         <button id="cdp-open-btn" class="primary">Open</button>
       </div>
       <div id="cdp-ratio-readout" class="muted field-status"></div>
+      <label class="muted" style="display:flex;gap:6px;align-items:flex-start;font-size:11px;margin-top:6px;cursor:pointer;"><input id="cdp-self-settle" type="checkbox" style="margin:1px 0 0;"> Earn points: send the loan from this wallet's Ethereum account, which pays its gas and is linked to it. Relayed, it earns none.</label>
       <div id="cdp-open-status" class="muted field-status"></div>
     </div>
 
