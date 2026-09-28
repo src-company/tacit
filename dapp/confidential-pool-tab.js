@@ -8,7 +8,7 @@ import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
 import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater, evmAccountHint } from './confidential-deployments.js';
 import { formatUnits as fmtUnits } from './confidential-payout.js';
 import { classifyFinality, finalityBadgeHtml, listProvisional } from './confidential-finality.js';
-import { scanHealthHtml, inboundBadgeHtml, inboundSummaryHtml, pendingWrapsText, recoveryCoverageHtml, recoveryCoverage } from './confidential-scan-health.js';
+import { scanHealthHtml, inboundBadgeHtml, inboundSummaryHtml, recoveryCoverageHtml, recoveryCoverage } from './confidential-scan-health.js';
 import { renderLanePanel } from './cross-chain-lane.js';
 
 let _ux = null;
@@ -60,13 +60,62 @@ function wireWrap(wallet, ux) {
       // connection after broadcast, a settle timeout) — never imply otherwise, since the fix here is to
       // resubmit the SAME index's settle, not to re-wrap and double-deposit.
       if (st) st.textContent = r && r.txHash
-        ? `${m} — the deposit (${r.txHash}) may still be on-chain; do not re-wrap the same amount before checking, or it will revert as a duplicate.`
+        ? `${m} — the deposit (${r.txHash}) is on-chain; do not re-wrap the same amount. Reload this tab — the pending deposit will show below with a Resume button.`
         : m;
       notify(m, 'error');
     } finally {
       btn.disabled = false;
     }
   };
+}
+
+// Deposits already on-chain (pool.wrap()/routerWrap() broadcast and confirmed) whose settle proof never
+// landed — a dropped connection or relay hiccup after wireWrap's broadcast step, before its submitWrapSettle
+// step. The escrow is safe and the note is deterministically recoverable from this wallet's own key
+// (buildWrap re-derives the exact same commitment for a given index — see confidential-pool-ux.js), so
+// resuming never re-broadcasts the deposit: it only rebuilds the OP_WRAP witness and resubmits it for settle.
+function pendingWrapRowsHtml(diag, ux) {
+  const pending = (diag && diag.wrap && diag.wrap.pending) || [];
+  if (!pending.length) return '';
+  return pending.map((p) => {
+    const ticker = ux.tickerOf(p.asset) || 'cETH';
+    const meta = ux.assets.find((x) => x.assetId.toLowerCase() === String(p.asset).toLowerCase());
+    const dec = meta ? (meta.tacitDecimals ?? meta.decimals) : 8;
+    return `<div class="list-row" data-pending-asset="${esc(p.asset)}" data-pending-index="${p.index}">`
+      + `<span>${fmtUnits(p.value, dec)} ${esc(ticker)} <span class="muted">deposited, not yet settled</span></span>`
+      + `<button class="cpool-resume-wrap" style="padding:4px 10px;font-size:10px;flex:0 0 auto;">Resume</button></div>`;
+  }).join('');
+}
+
+function wireResumeWraps(wallet, ux, diag) {
+  const pending = (diag && diag.wrap && diag.wrap.pending) || [];
+  if (!pending.length) return;
+  const byKey = new Map(pending.map((p) => [`${String(p.asset).toLowerCase()}:${p.index}`, p]));
+  for (const row of document.querySelectorAll('[data-pending-asset]')) {
+    const btn = row.querySelector('.cpool-resume-wrap');
+    if (!btn) continue;
+    const key = `${row.getAttribute('data-pending-asset').toLowerCase()}:${row.getAttribute('data-pending-index')}`;
+    const p = byKey.get(key);
+    if (!p) continue;
+    btn.onclick = async () => {
+      btn.disabled = true;
+      const prevText = btn.textContent;
+      btn.textContent = 'Settling…';
+      try {
+        const ticker = ux.tickerOf(p.asset) || 'cETH';
+        const meta = ux.assets.find((x) => x.assetId.toLowerCase() === String(p.asset).toLowerCase());
+        const unitScale = BigInt((meta && meta.unitScale) || '1');
+        const built = ux.buildWrap({ walletPriv: wallet.priv, amountWei: (BigInt(p.value) * unitScale).toString(), ticker, index: p.index });
+        await ux.submitWrapSettle({ built });
+        notify(`Settled — ${fmtUnits(p.value, meta ? (meta.tacitDecimals ?? meta.decimals) : 8)} ${ticker} note ready`, 'ok');
+        setTimeout(() => renderConfidentialPoolTab(wallet), 1500); // refresh balance + pending list
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = prevText;
+        notify(formatSpecErr(e, 'Resume wrap'), 'error');
+      }
+    };
+  }
 }
 
 // Gasless exit: render each recovered note as a whole-note exit row with a live fee preview, then submit
@@ -281,9 +330,8 @@ export async function renderConfidentialPoolTab(wallet) {
       // A channel that failed is said so above the figure, not swallowed: an unreachable cBTC or bridge
       // endpoint makes a real holding read as zero, and "no notes yet" is the wrong thing to tell someone
       // in that case.
-      const pending = pendingWrapsText(diag);
       balEl.innerHTML = scanHealthHtml(diag)
-        + (pending ? `<div class="muted" style="margin-bottom:4px;">${esc(pending)}</div>` : '')
+        + pendingWrapRowsHtml(diag, ux)
         + assets.map((a) => {
           const meta = ux.assets.find((x) => x.assetId.toLowerCase() === a.asset);
           const dec = meta ? (meta.tacitDecimals ?? meta.decimals) : 8; // note values are in-system units
@@ -292,6 +340,7 @@ export async function renderConfidentialPoolTab(wallet) {
         }).join('');
     }
     wireExit(wallet, ux, notes);
+    wireResumeWraps(wallet, ux, diag);
     renderFinality();
   } catch (e) {
     if (statusEl) statusEl.textContent = 'Could not scan the pool: ' + formatErr(e);
