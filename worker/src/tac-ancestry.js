@@ -145,12 +145,23 @@ export function makeTacAncestry({
     return sha256(concatBytes(MINT_MSG_DOMAIN, assetId, commitAnchor, commitment, encryptedAmount));
   }
 
-  const DEFAULT_MAX_DEPTH = 64; // real circulation is far shallower; bounds worst-case work per attestation
+  // Bounds worst-case work per attestation. Real TAC lineages can run into the hundreds of hops (long chains
+  // of small transfers/consolidations over months of circulation are common) — 64 was too tight and rejected
+  // genuine holdings as "too deep to verify"; 512 comfortably covers observed real chains while still capping
+  // a single attestation's cost (each hop is a small, bounded number of chain reads, not exponential).
+  const DEFAULT_MAX_DEPTH = 512;
 
-  // Verify every vout of a just-checked CXFER-family tx at once (its kernel sig covers the whole tx), so a
-  // sibling vout cited elsewhere in the same attestation hits the memo instead of re-verifying.
-  function memoAll(memo, txidHex, n, result) {
-    for (let j = 0; j < Math.max(n, 1); j++) memo.set(`${txidHex}:${j}`, result);
+  // Record a verdict for every vout of a just-checked CXFER-family tx at once (its kernel sig covers the
+  // whole tx), so a sibling vout cited elsewhere in the same attestation hits the memo instead of
+  // re-verifying. On failure every vout shares the one `result` object (the failure applies tx-wide). On
+  // success `result.commitment` is PER-VOUT — output j's real commitment, never output `vout`'s borrowed
+  // into every other vout's cache entry, which would silently swap in the wrong commitment for any j != vout
+  // and break that vout's own callers (a caller's E' computation, comparing kernel signatures, would use a
+  // materially different point than the one actually on-chain at that vout).
+  function memoAll(memo, txidHex, n, result, perVoutCommitment = null) {
+    for (let j = 0; j < Math.max(n, 1); j++) {
+      memo.set(`${txidHex}:${j}`, perVoutCommitment ? { ...result, commitment: perVoutCommitment(j) } : result);
+    }
     return result;
   }
 
@@ -290,7 +301,8 @@ export function makeTacAncestry({
       if (!verifySchnorr(dec.kernelSig, msg, exBytes)) {
         return memoAll(memo, txidHex, N, { ok: false, reason: 'kernel signature invalid' });
       }
-      return memoAll(memo, txidHex, N, { ok: true, assetIdHex: ourAssetIdHex, commitment: dec.outputs[vout].commitment });
+      memoAll(memo, txidHex, N, { ok: true, assetIdHex: ourAssetIdHex }, (j) => dec.outputs[j].commitment);
+      return memo.get(key);
     }
 
     const r = { ok: false, reason: `opcode 0x${envelope.opcode.toString(16)} is not covered by ancestry verification yet` };
