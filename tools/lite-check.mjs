@@ -80,9 +80,9 @@ const withdrawToV1Data = (t, i) => calldata(`withdrawToV1(${TX_SIG},${WRAP_SIG})
   [i.assetId, B(i.amount), B(i.tip), i.tipTo, i.commit, i.refund, B(i.deadline), B(i.nonce)]]);
 const json = (route, body) => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
 
-async function openPage({ account, key = null, host = '127.0.0.1', init = null }) {
+async function openPage({ account, key = null, host = '127.0.0.1', init = null, viewport = { width: 1280, height: 900 }, colorScheme = 'light' }) {
   const browser = await chromium.launch();
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const ctx = await browser.newContext({ viewport, colorScheme });
   for (const h of RPC_HOSTS) await ctx.route(`https://${h}/**`, async (route) => {
     const r = await fetch(ANVIL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: route.request().postData() });
     await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: await r.text() });
@@ -593,6 +593,43 @@ await step('pts', async () => {
   ok(owner.slice(-40) === acct.slice(2) && rec === tacit1(hex), `pts: ${label}.wei registers to the Tacit account through zRouter and carries its tacit1 (${await text(w.page, '#pts-status')})`);
   if (w.errors.length) { fails++; console.log('FAIL pts page errors: ' + w.errors.slice(0, 3).join(' | ')); }
   await w.browser.close();
+});
+// A walk through every sheet and its main states for design review: one screenshot each, at phone and desktop widths
+// and in the dark scheme too. Opt-in (`tour`), and it writes to SHOTS.
+await step('tour', async () => {
+  if (!SHOTS) throw new Error('the tour needs SHOTS=<dir>');
+  const other = tacit1('b0b'.padEnd(64, '5'));
+  const loaded = (p, sel, ms = 180000) => p.waitForFunction((s) => { const e = document.querySelector(s); return !!e && !/reading…|Reading|Finding|Checking/.test(e.textContent); }, sel, { timeout: ms }).catch(() => {});
+  const shown = (p, sel, ms = 60000) => p.waitForSelector(sel, { timeout: ms }).catch(() => {});
+  for (const [tag, viewport, colorScheme] of [['phone', { width: 390, height: 1400 }, 'light'], ['desk', { width: 1280, height: 1200 }, 'light'], ['phone-dark', { width: 390, height: 1400 }, 'dark']]) {
+    const r = await openPage({ account: A0, key: K0, viewport, colorScheme });
+    const p = r.page, snap = async (name) => { await p.waitForTimeout(1500); await p.screenshot({ path: join(SHOTS, `${tag}-${name}.png`), fullPage: true }); };
+    await p.goto(r.url);
+    await p.waitForSelector('.tile'); await snap('home');
+    await go(p, '#wallet'); await p.waitForSelector('#wallet-body [data-in]'); await snap('wallet-signin');
+    await p.click('#wallet-body [data-in="eth"]'); await until(p, () => !!document.querySelector('#wallet-dot.on'), null, 120000);
+    await go(p, '#wallet'); await p.waitForSelector('#wallet-body .who'); await snap('wallet');
+    await p.click('[data-wal="out"]'); await snap('wallet-send-out');
+    await go(p, '#private'); await p.waitForSelector('#w-amt', { timeout: 120000 }); await p.fill('#w-amt', '0.05'); await loaded(p, '#eth-v1 .bal'); await shown(p, '#w-rcpt:not([hidden])'); await snap('eth-wrap');
+    await p.click('[data-v1="send"]'); await p.fill('#s-to', other); await p.fill('#s-amt', '0.01'); await shown(p, '#s-rcpt:not([hidden])'); await snap('eth-send');
+    await p.click('[data-v1="out"]'); await p.fill('#o-to', A0); await p.fill('#o-amt', '0.01'); await shown(p, '#o-rcpt:not([hidden])'); await snap('eth-withdraw');
+    await p.click('[data-eth-mode="dev"]'); await shown(p, '[data-dev]'); await loaded(p, '#eth-dev .bal'); await snap('device-deposit');
+    for (const m of ['send', 'out', 'receive']) { await p.click(`[data-dev="${m}"]`); await snap(`device-${m}`); }
+    await go(p, '#btc'); await shown(p, '#bt-to', 120000); await loaded(p, '#btc-body .bal'); await p.fill('#bt-to', other).catch(() => {}); await p.fill('#bt-amt', '0.001').catch(() => {}); await shown(p, '#bt-rcpt:not([hidden])'); await snap('btc-send');
+    await p.click('[data-btcm="receive"]'); await snap('btc-receive');
+    await go(p, '#airdrop'); await shown(p, '#air-body .gate'); await snap('tac-airdrop');
+    await p.click('[data-tac-mode="buy"]'); await p.fill('#b-amt', '0.01'); await shown(p, '#b-rcpt:not([hidden])'); await snap('tac-buy');
+    await go(p, '#pts'); await shown(p, '#wei-name'); await shown(p, '#pts-body .pt', 120000); await p.fill('#wei-name', 'tacitlite'); await shown(p, '#wei-rcpt:not([hidden])'); await snap('points');
+    await go(p, '#farm'); await shown(p, '#pf-amt', 120000); await p.fill('#pf-amt', '0.05'); await shown(p, '#pf-rcpt:not([hidden])'); await snap('farm-precision');
+    const pid = await p.$('[data-farm^="pid"] > button');
+    if (pid) { await pid.click(); await snap('farm-shielded'); }
+    await go(p, '#borrow'); await shown(p, '#borrow-body .steps', 180000); await snap('borrow');
+    await p.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    for (const a of ['tac', 'cbtc']) { await p.click(`.shelf [data-asset="${a}"]`); await shown(p, '#asset-card[open] .links'); await snap(`card-${a}`); await p.keyboard.press('Escape'); }
+    if (r.errors.length) console.log(`   ${tag} page errors: ${r.errors.slice(0, 3).join(' | ')}`);
+    await r.browser.close();
+  }
+  ok(true, `tour: screenshots in ${SHOTS}`);
 });
 if (ACCT) await ACCT.r.browser.close();
 
