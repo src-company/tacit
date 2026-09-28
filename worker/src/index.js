@@ -27846,10 +27846,17 @@ async function _routeFetch(req, env, ctx) {
     // Response shape unchanged from before: { txids, next_cursor, done }.
     // Older callers see the same fields; new callers benefit from
     // recency ordering at the head of the result.
+    //
+    // A first page the rolling list fills on its own still pages on: it
+    // returns XFER_LEX_START, a cursor that starts the lex walk from the
+    // top, so a caller reaches the older entries past the rolling window.
+    // Later pages are not deduplicated against the rolling list; callers
+    // already skip txids they have seen.
     const mxt = url.pathname.match(/^\/assets\/([0-9a-f]{64})\/recent-xfer-txids$/);
     if (mxt && req.method === 'GET') {
       const aidHex = mxt[1];
       const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10) || 50));
+      const XFER_LEX_START = 'lex-start';
       const cursor = url.searchParams.get('cursor') || undefined;
       // Layer 1: rolling recency-sorted list. Only consulted on the first
       // page (no cursor); subsequent pages drop through to the lex walk
@@ -27874,15 +27881,17 @@ async function _routeFetch(req, env, ctx) {
       }
       // Layer 2: lex-sorted KV.list over xferseen prefix. Dedup against
       // the rolling layer so the response doesn't repeat entries. Returns
-      // up to (limit - rollingTxids.length) extra entries.
+      // up to (limit - rollingTxids.length) extra entries, and reads no
+      // more keys than that: the cursor moves past every key read, so a
+      // key read but not returned would never be returned.
       const remaining = Math.max(0, limit - rollingTxids.length);
       let nextCursor = null;
       let done = true;
       let lexTxids = [];
       if (remaining > 0 || cursor) {
         const prefix = network === 'signet' ? `xferseen:${aidHex}:` : `xferseen:${network}:${aidHex}:`;
-        const listOpts = { prefix, limit: remaining > 0 ? remaining + rollingTxids.length : limit };
-        if (cursor) listOpts.cursor = cursor;
+        const listOpts = { prefix, limit: remaining };
+        if (cursor && cursor !== XFER_LEX_START) listOpts.cursor = cursor;
         const list = await env.REGISTRY_KV.list(listOpts);
         lexTxids = list.keys
           .map(k => (k.name.match(/([0-9a-f]{64})$/i) || [])[1])
@@ -27891,6 +27900,9 @@ async function _routeFetch(req, env, ctx) {
           .filter(t => !rollingSet.has(t));
         nextCursor = list.list_complete ? null : (list.cursor || null);
         done = !!list.list_complete;
+      } else {
+        nextCursor = XFER_LEX_START;
+        done = false;
       }
       const txids = [...rollingTxids, ...lexTxids].slice(0, limit);
       return jsonResponse({
