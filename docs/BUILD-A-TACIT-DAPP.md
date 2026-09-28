@@ -188,6 +188,13 @@ await provider.request({ method: 'eth_sendTransaction', params: [{
 
 Only `commit = keccak(Cx ‖ Cy ‖ owner)` goes on-chain. Keep `w.note` and `w.memo` — that is the note.
 
+To pay the relay for step 2 in the same transaction, send the deposit through `WrapTipForwarder`
+(`0x000000D218B03db5837943b0b05DeA2965AE956e`, cETH) instead of the pool: `wrapWithTip(bytes32 commit,
+uint256 amount, address tipRecipient)` (`0xfc24c435`) with `value = amount + tip`. It makes the same `pool.wrap`
+call with the same commit and forwards the tip in that call. Take `tip` and `tipRecipient` from
+`GET /confidential/quote?asset=cETH&amountWei=<amount>` (`recommendedWrapTipWei`, `recommendedTipRecipient`);
+step 2 is unchanged.
+
 `index` selects which deterministic note the wrap creates: `(nk, blinding)` are derived from your key, the
 asset and `index`. The same asset, value and index produce the same deposit id, which the pool rejects
 (`DepositExists`); reusing an index with a different value reuses the note's `nk` and blinding, which makes
@@ -1273,6 +1280,13 @@ Two conventions to keep:
 - **Keep the op builders and the renderer apart.** Every builder returns a plain `{ op, leaves, outputs,
   memos }`; the UI only ever renders that. It is what lets `tacit.js` be a thin renderer over the same
   modules, and it is why a redesign never risks the crypto.
+
+[`dapp/lite/index.html`](../dapp/lite/index.html), served at `https://tacit.finance/lite/`, is the same idea
+carried through the launch features in one file: the tipped wrap above, stealth sends and exits on the
+confidential pool, deposits, sends and withdrawals proved in the browser on the EVM pool (§5h), the airdrop
+(§5a), the TAC/ETH Precision farm and the shielded farms, and the cBTC lock, bond, mint and cUSD loan. Its one
+inline module is pinned by hash in its own CSP, and `npm run build` refreshes that pin with its `?cb=` tokens,
+so it runs on the dapp's origin without `'unsafe-inline'`.
 
 ## 8. When something breaks
 

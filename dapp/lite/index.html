@@ -1,0 +1,1773 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
+     the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-+pLxFtanFZzfbCvviFdqnJOGTW+Jh2Z+pD0/yNSxNuk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="color-scheme" content="light dark">
+<title>tacit lite</title>
+<meta name="description" content="Private ETH, the TAC airdrop, TAC farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="tacit">
+<meta property="og:url" content="https://tacit.finance/lite/">
+<meta property="og:title" content="tacit lite">
+<meta property="og:description" content="Private ETH, the TAC airdrop, TAC farms and dollars borrowed against Bitcoin.">
+<meta property="og:image" content="https://tacit.finance/tacit-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#E8E0CC" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15130E" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 400; font-display: swap; src: url('/fonts/ibm-plex-mono-400-latin.woff2') format('woff2'); }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 500; font-display: swap; src: url('/fonts/ibm-plex-mono-500-latin.woff2') format('woff2'); }
+@font-face { font-family: 'Instrument Serif'; font-weight: 400; font-display: swap; src: url('/fonts/instrument-serif-400-latin.woff2') format('woff2'); }
+@font-face { font-family: 'Instrument Serif'; font-weight: 400; font-style: italic; font-display: swap; src: url('/fonts/instrument-serif-400i-latin.woff2') format('woff2'); }
+
+:root {
+  --paper: #E8E0CC;
+  --card: #F2EBD4;
+  --field: #FAF6EA;
+  --ink: #1A1A1A;
+  --mute: #6B6557;
+  --hair: rgba(26,26,26,.12);
+  --hair-2: rgba(26,26,26,.28);
+  --orange: #f7931a;
+  --ok: #0a7d3a;
+  --err: #b8341d;
+  --scrim: rgba(26,26,26,.36);
+  --lift: 0 22px 44px -28px rgba(26,26,26,.45);
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --serif: 'Instrument Serif', Georgia, serif;
+  --tap: 44px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #15130E;
+    --card: #1F1C15;
+    --field: #191711;
+    --ink: #EDE5CF;
+    --mute: #A39B85;
+    --hair: rgba(237,229,207,.12);
+    --hair-2: rgba(237,229,207,.28);
+    --ok: #8fcf9a;
+    --err: #f08a6c;
+    --scrim: rgba(0,0,0,.6);
+    --lift: 0 22px 44px -28px rgba(0,0,0,.9);
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+html, body { margin: 0; background: var(--paper); color: var(--ink); }
+body {
+  font: 14px/1.6 var(--mono); letter-spacing: -.01em; overflow-x: hidden;
+  background-image: radial-gradient(var(--hair) 1px, transparent 1px); background-size: 24px 24px;
+  padding: 0 max(16px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(16px, env(safe-area-inset-left));
+}
+a { color: inherit; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { text-decoration-thickness: 2px; }
+button { font: inherit; color: inherit; letter-spacing: inherit; }
+:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.num { font-variant-numeric: tabular-nums; }
+.mute { color: var(--mute); }
+.err { color: var(--err); }
+.ok { color: var(--ok); }
+
+.shell { max-width: 780px; margin: 0 auto; padding-bottom: 56px; }
+
+/* ── logos: the on-chain token.list.wei art, solid ring = public ERC-20, dashed ring = shielded note ── */
+.tk { width: 64px; height: 64px; display: block; flex: none; border-radius: 50%; }
+.tk.sm { width: 22px; height: 22px; }
+.tk.md { width: 40px; height: 40px; }
+.tk.lg { width: 48px; height: 48px; }
+.pair { display: flex; align-items: center; }
+.pair .tk + .tk { margin-left: -16px; box-shadow: 0 0 0 3px var(--card); }
+.pair .tk.sm + .tk.sm { margin-left: -7px; box-shadow: 0 0 0 2px var(--card); }
+.pair .tk.md + .tk.md { margin-left: -12px; }
+
+/* ── header ── */
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 0; }
+.brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
+.brand .tk { width: 30px; height: 30px; }
+.brand b { font: italic 400 30px/1 var(--serif); letter-spacing: -.01em; }
+.brand i { font: 500 10px/1 var(--mono); font-style: normal; letter-spacing: .16em; text-transform: uppercase; color: var(--mute);
+  border: 1px solid var(--hair-2); padding: 4px 6px 3px; margin-left: 2px; }
+.chip { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px; background: var(--card);
+  border: 1px solid var(--hair-2); cursor: pointer; white-space: nowrap; }
+.chip:hover { border-color: var(--ink); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hair-2); flex: none; }
+.dot.on { background: var(--ok); }
+.dot.live { background: var(--orange); }
+
+/* ── hero ── */
+.hero { padding: 64px 0 44px; }
+.hero h1 { font: 400 clamp(42px, 8vw, 72px)/.96 var(--serif); letter-spacing: -.02em; margin: 0 0 22px; }
+.hero h1 em { font-style: italic; }
+.hero p { color: var(--mute); margin: 0; max-width: 44ch; }
+.shelf { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 30px; }
+.shelf span { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mute); }
+.shelf .tk { width: 24px; height: 24px; }
+
+/* ── tiles ── */
+.tiles { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.tile { display: flex; flex-direction: column; gap: 8px; min-height: 250px; padding: 24px; color: inherit; text-decoration: none;
+  background: var(--card); border: 1px solid var(--hair); transition: border-color .18s, transform .18s, box-shadow .18s; }
+.tile:hover { border-color: var(--ink); transform: translateY(-2px); box-shadow: var(--lift); }
+.tile .pair { margin-bottom: 18px; }
+.tile h2 { font: 400 32px/1.02 var(--serif); letter-spacing: -.01em; margin: 0; }
+.tile p { color: var(--mute); font-size: 13px; line-height: 1.55; margin: 0; }
+.tile-foot { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--hair); font-size: 12.5px; min-width: 0; }
+.tile-foot span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-foot .go { margin-left: auto; transition: transform .18s; }
+.tile:hover .go { transform: translateX(3px); }
+
+footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; margin-top: 44px; padding-top: 18px;
+  border-top: 1px solid var(--hair-2); color: var(--mute); font-size: 12px; }
+footer nav { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+footer a { color: var(--mute); }
+footer a:hover { color: var(--ink); }
+
+/* ── sheets ── */
+dialog.sheet { width: min(560px, calc(100vw - 32px)); max-height: min(90vh, 900px); padding: 0; overflow: auto;
+  color: var(--ink); background: var(--card); border: 1px solid var(--ink); box-shadow: 0 40px 90px -40px rgba(0,0,0,.6); }
+dialog.sheet[open] { animation: rise .22s cubic-bezier(.2,.8,.2,1); }
+dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } }
+.sheet-in { padding: 24px 24px 28px; }
+.sheet-head { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+.sheet-head h2 { font: 400 32px/1 var(--serif); letter-spacing: -.01em; margin: 0; }
+.sheet-head h2:focus { outline: none; }
+.x { margin-left: auto; width: var(--tap); height: var(--tap); display: grid; place-items: center; font-size: 22px; line-height: 1;
+  background: none; border: 1px solid transparent; cursor: pointer; color: var(--mute); }
+.x:hover { color: var(--ink); border-color: var(--hair-2); }
+
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--hair-2); margin: 0 0 18px; }
+.seg button { min-height: var(--tap); padding: 8px 10px; background: none; border: 0; cursor: pointer; color: var(--mute); line-height: 1.25; }
+.seg button + button { border-left: 1px solid var(--hair-2); }
+.seg button small { display: block; font-size: 11px; opacity: .8; }
+.seg button[aria-selected="true"] { background: var(--ink); color: var(--card); }
+.seg.sub { border-color: var(--hair); margin-bottom: 16px; }
+.seg.sub button { min-height: 36px; font-size: 12.5px; }
+.seg.sub button + button { border-color: var(--hair); }
+
+.bal { display: flex; align-items: center; gap: 14px; padding: 14px 0; margin-bottom: 16px; border-top: 1px solid var(--hair); border-bottom: 1px solid var(--hair); }
+.bal .v { font: 500 26px/1.1 var(--mono); letter-spacing: -.02em; }
+.bal .u { color: var(--mute); font-size: 13px; }
+.bal .side { margin-left: auto; text-align: right; font-size: 12px; color: var(--mute); }
+
+.lbl { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--mute); margin: 14px 0 6px; }
+.lbl button { background: none; border: 0; padding: 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; }
+.lbl button:hover { color: var(--ink); }
+.amt { display: flex; align-items: center; background: var(--field); border: 1px solid var(--hair); border-bottom-color: var(--ink); }
+.amt:focus-within { border-color: var(--ink); }
+.amt input { flex: 1; min-width: 0; font: 500 24px/1.2 var(--mono); letter-spacing: -.02em; color: var(--ink); background: none; border: 0; padding: 12px 14px; outline: none; }
+.amt .u { display: inline-flex; align-items: center; gap: 8px; padding: 0 14px 0 4px; color: var(--mute); white-space: nowrap; }
+.amt.text input { font: 400 14px/1.4 var(--mono); padding: 14px; }
+input::placeholder { color: var(--mute); opacity: .7; }
+
+.kv { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--mute); padding: 5px 0; }
+.kv b { font-weight: 400; color: var(--ink); text-align: right; overflow-wrap: anywhere; }
+.kv b.err { color: var(--err); }
+.kv b.warn { color: var(--orange); }
+.rcpt { margin-top: 14px; padding-top: 8px; border-top: 1px dashed var(--hair-2); }
+
+.btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 52px; margin-top: 18px; padding: 10px 16px;
+  font-weight: 500; color: var(--card); background: var(--ink); border: 1px solid var(--ink); cursor: pointer; transition: background .15s, color .15s; }
+.btn:hover:not(:disabled) { background: transparent; color: var(--ink); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn.ghost { color: var(--ink); background: transparent; border-color: var(--hair-2); }
+.btn.ghost:hover:not(:disabled) { border-color: var(--ink); }
+.btn[aria-busy="true"] { cursor: progress; }
+.btn[aria-busy="true"]::after { content: ''; width: 12px; height: 12px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.row2 .btn { margin-top: 10px; }
+.link { background: none; border: 0; padding: 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; font-size: 12.5px; }
+.link:hover { color: var(--ink); }
+
+.status { font-size: 12.5px; min-height: 20px; margin-top: 12px; overflow-wrap: anywhere; }
+.status:empty { display: none; }
+.status a { color: var(--ink); }
+.note { font-size: 12.5px; color: var(--mute); margin: 12px 0 0; }
+.gate { text-align: center; padding: 26px 8px 8px; }
+.gate p { color: var(--mute); margin: 0 auto 4px; max-width: 38ch; font-size: 13px; }
+.big { font: 400 56px/1 var(--serif); letter-spacing: -.02em; margin: 10px 0 6px; }
+.big small { font: 500 14px var(--mono); color: var(--mute); letter-spacing: 0; margin-left: 6px; }
+
+/* farm rows */
+.farms { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hair); }
+.farm { border-bottom: 1px solid var(--hair); }
+.farm > button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; width: 100%; padding: 16px 0;
+  background: none; border: 0; cursor: pointer; text-align: left; }
+.farm .name { font: 400 22px/1.1 var(--serif); }
+.farm .kind { display: block; font-size: 11.5px; color: var(--mute); margin-top: 3px; }
+.farm .rate { text-align: right; font-size: 12.5px; }
+.farm .rate b { display: block; font-weight: 500; font-size: 14px; }
+.farm .rate span { color: var(--mute); }
+.farm .body { padding: 0 0 20px; }
+.farm[aria-expanded="false"] .body { display: none; }
+.tag { display: inline-block; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); border: 1px solid var(--hair-2); padding: 1px 6px; margin-left: 6px; vertical-align: 2px; }
+
+/* steps */
+.steps { list-style: none; margin: 0; padding: 0; }
+.step { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 0 14px; position: relative; padding-bottom: 20px; }
+.step:not(:last-child)::before { content: ''; position: absolute; left: 14.5px; top: 32px; bottom: 4px; width: 1px; background: var(--hair-2); }
+.step .n { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--hair-2); display: grid; place-items: center; font-size: 12px; color: var(--mute); background: var(--card); }
+.step h3 { font: 400 21px/1.2 var(--serif); margin: 2px 0 2px; color: var(--mute); }
+.step .d { font-size: 12.5px; color: var(--mute); }
+.step .act { margin-top: 10px; }
+.step.done .n { background: var(--ink); border-color: var(--ink); color: var(--card); }
+.step.done h3 { color: var(--ink); }
+.step.now .n { border: 2px solid var(--orange); color: var(--ink); }
+.step.now h3, .step.now .d { color: var(--ink); }
+
+.callout { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; margin: 0 0 16px;
+  font-size: 12.5px; background: var(--field); border-left: 2px solid var(--orange); }
+.callout .btn { width: auto; min-height: 36px; margin: 0; padding: 6px 14px; }
+.ack { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 12.5px; color: var(--err); cursor: pointer; }
+.ack input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--err); flex: none; }
+.ack input:not([type]) { width: 72px; flex: none; font: 500 16px var(--mono); color: var(--ink); background: var(--field); border: 1px solid var(--err); padding: 6px 8px; }
+.kv .link { flex: none; }
+.kv .mono { margin-left: auto; }
+.warn { color: var(--orange); }
+.amt.act { margin-top: 12px; }
+.steps .btn { margin-top: 12px; }
+.steps .kv { padding: 3px 0; }
+.picker { display: grid; gap: 8px; }
+.picker button { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 14px; background: var(--field); border: 1px solid var(--hair-2); cursor: pointer; text-align: left; }
+.picker button:hover { border-color: var(--ink); }
+.picker img { width: 28px; height: 28px; }
+
+.toasts { position: fixed; left: 16px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); display: grid; gap: 8px; justify-items: center; z-index: 50; pointer-events: none; }
+.toast { max-width: 520px; padding: 10px 16px; font-size: 12.5px; color: var(--card); background: var(--ink); pointer-events: auto; box-shadow: var(--lift); animation: rise .2s ease-out; }
+.toast.bad { background: var(--err); color: #fff; }
+
+@media (max-width: 640px) {
+  .hero { padding: 40px 0 32px; }
+  .tiles { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .tile { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "logo title" "logo text" "foot foot"; gap: 4px 16px; min-height: 0; padding: 18px; }
+  .tile .pair { grid-area: logo; margin: 2px 0 0; align-self: start; }
+  .tile .tk { width: 44px; height: 44px; }
+  .tile .pair .tk + .tk { margin-left: -12px; box-shadow: 0 0 0 2px var(--card); }
+  .tile h2 { grid-area: title; font-size: 26px; }
+  .tile p { grid-area: text; }
+  .tile-foot { grid-area: foot; margin-top: 10px; padding-top: 12px; }
+  dialog.sheet { width: 100vw; max-width: 100vw; margin: auto 0 0; max-height: 92vh; border-width: 1px 0 0; }
+  .sheet-in { padding: 20px 16px calc(24px + env(safe-area-inset-bottom)); }
+  .big { font-size: 46px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="tk-tac" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#0a0a0a"/><circle cx="16" cy="16" r="13" fill="none" stroke="#f4efe6" stroke-width="2.5"/><path d="M17.5 7L13 22.5Q13 25 18 24" fill="none" stroke="#f7931a" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11L21 11" stroke="#f7931a" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    <symbol id="tk-teth" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#0a0a0a"/><circle cx="16" cy="16" r="13" fill="none" stroke="#f4efe6" stroke-width="2.5"/><path d="M17.5 7L13 22.5Q13 25 18 24" fill="none" stroke="#627eea" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11L21 11" stroke="#627eea" stroke-width="2.4" stroke-linecap="round"/><path d="M14.8 17L19 17" stroke="#627eea" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="tk-cbtc" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#0a0a0a"/><circle cx="16" cy="16" r="13" fill="none" stroke="#f4efe6" stroke-width="2.5" stroke-dasharray="2.4 1.4"/><g fill="none" stroke="#f7931a" stroke-linecap="round" stroke-linejoin="round"><path d="M16.4 8 L12.9 23 C 18.6 24 21 21.5 21 18.7 C 21 16 17.6 15.2 14.7 15.6" stroke-width="2.8"/><path d="M11.9 13.2 L18.4 11.5" stroke-width="2.4"/></g></symbol>
+    <symbol id="tk-tacbtc" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#0a0a0a"/><circle cx="16" cy="16" r="13" fill="none" stroke="#f4efe6" stroke-width="2.5"/><g fill="none" stroke="#f7931a" stroke-linecap="round" stroke-linejoin="round"><path d="M16.4 8 L12.9 23 C 18.6 24 21 21.5 21 18.7 C 21 16 17.6 15.2 14.7 15.6" stroke-width="2.8"/><path d="M11.9 13.2 L18.4 11.5" stroke-width="2.4"/></g></symbol>
+    <symbol id="tk-cusd" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#0a0a0a"/><circle cx="16" cy="16" r="13" fill="none" stroke="#f4efe6" stroke-width="2.5" stroke-dasharray="2.4 1.4"/><path d="M16.5 7 L15.5 25" stroke="#16a34a" stroke-width="2.7" stroke-linecap="round"/><path d="M18.9 13 C 18.9 10.3 13.1 10.3 13.1 13.2 C 13.1 15.5 18.9 16.4 18.9 19.4 C 18.9 22.3 13.1 22.3 13.1 19.6" fill="none" stroke="#16a34a" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="tk-tacusd" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#0a0a0a"/><circle cx="16" cy="16" r="13" fill="none" stroke="#f4efe6" stroke-width="2.5"/><g fill="none" stroke="#16a34a" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 7 L15.5 25" stroke-width="2.7"/><path d="M18.9 13 C 18.9 10.3 13.1 10.3 13.1 13.2 C 13.1 15.5 18.9 16.4 18.9 19.4 C 18.9 22.3 13.1 22.3 13.1 19.6" stroke-width="2.6"/></g></symbol>
+    <symbol id="tk-eth" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#627EEA"/><g fill="#FFF"><path fill-opacity=".602" d="M16.498 4v8.87l7.497 3.35z"/><path d="M16.498 4L9 16.22l7.498-3.35z"/><path fill-opacity=".602" d="M16.498 21.968v6.027L24 17.616z"/><path d="M16.498 27.995v-6.028L9 17.616z"/><path fill-opacity=".2" d="M16.498 20.573l7.497-4.353-7.497-3.348z"/><path fill-opacity=".602" d="M9 16.22l7.498 4.353v-7.701z"/></g></symbol>
+  </defs>
+</svg>
+
+<div class="shell">
+  <header class="top">
+    <a class="brand" href="/lite/" aria-label="tacit lite"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><b>tacit</b><i>lite</i></a>
+    <button class="chip" id="wallet" type="button"><span class="dot" id="wallet-dot"></span><span id="wallet-label">Connect wallet</span></button>
+  </header>
+
+  <section class="hero">
+    <h1>Confidential money<br>across <em>Bitcoin</em> and <em>Ethereum</em>.</h1>
+    <p>Amounts and owners stay hidden. Every balance recovers from one key.</p>
+    <div class="shelf" aria-label="Assets">
+      <span><svg class="tk" aria-hidden="true"><use href="#tk-teth"/></svg>tETH</span>
+      <span><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</span>
+      <span><svg class="tk" aria-hidden="true"><use href="#tk-cbtc"/></svg>cBTC</span>
+      <span><svg class="tk" aria-hidden="true"><use href="#tk-cusd"/></svg>cUSD</span>
+      <span><svg class="tk" aria-hidden="true"><use href="#tk-tacbtc"/></svg>tacBTC</span>
+      <span><svg class="tk" aria-hidden="true"><use href="#tk-tacusd"/></svg>tacUSD</span>
+    </div>
+  </section>
+
+  <main class="tiles">
+    <a class="tile" href="#eth" data-open="eth" aria-haspopup="dialog">
+      <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-eth"/></svg><svg class="tk" aria-hidden="true"><use href="#tk-teth"/></svg></span>
+      <h2>Private ETH</h2>
+      <p>Wrap ETH into a private note, one asset on Ethereum and Bitcoin. Send it to anyone or use it in DeFi.</p>
+      <span class="tile-foot"><span class="dot" data-dot="eth"></span><span data-foot="eth">Proved for you, or on this device</span><span class="go" aria-hidden="true">→</span></span>
+    </a>
+    <a class="tile" href="#tac" data-open="tac" aria-haspopup="dialog">
+      <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg></span>
+      <h2>TAC</h2>
+      <p>Claim your share of the one-million-TAC airdrop, or buy TAC with ETH.</p>
+      <span class="tile-foot"><span class="dot" data-dot="tac"></span><span data-foot="tac">Claim or buy</span><span class="go" aria-hidden="true">→</span></span>
+    </a>
+    <a class="tile" href="#farm" data-open="farm" aria-haspopup="dialog">
+      <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><svg class="tk" aria-hidden="true"><use href="#tk-eth"/></svg></span>
+      <h2>Farm TAC</h2>
+      <p>Provide liquidity and earn TAC every second, in public or shielded pools.</p>
+      <span class="tile-foot"><span class="dot live" data-dot="farm"></span><span data-foot="farm">Reading farms…</span><span class="go" aria-hidden="true">→</span></span>
+    </a>
+    <a class="tile" href="#borrow" data-open="borrow" aria-haspopup="dialog">
+      <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-cbtc"/></svg><svg class="tk" aria-hidden="true"><use href="#tk-cusd"/></svg></span>
+      <h2>Borrow on Bitcoin</h2>
+      <p>Lock BTC in your own output, mint cBTC one to one, and borrow cUSD against it.</p>
+      <span class="tile-foot"><span class="dot" data-dot="borrow"></span><span data-foot="borrow">No custodian, no bridge signers</span><span class="go" aria-hidden="true">→</span></span>
+    </a>
+  </main>
+
+  <footer>
+    <span>tacit lite · Ethereum mainnet</span>
+    <nav aria-label="More">
+      <a href="/">Full app</a>
+      <a href="/tacit-v1">Whitepaper</a>
+      <a href="https://github.com/z0r0z/tacit/blob/main/docs/BUILD-A-TACIT-DAPP.md" rel="noopener">Build on Tacit</a>
+      <a href="https://etherscan.io/address/0x000000000Ed1eabD231Be41d93b719056F7febFC" rel="noopener">Pool contract</a>
+    </nav>
+  </footer>
+</div>
+
+<!-- ── wallet ── -->
+<dialog class="sheet" id="sheet-wallet" aria-labelledby="wallet-h">
+  <div class="sheet-in">
+    <div class="sheet-head"><h2 id="wallet-h" tabindex="-1" autofocus>Wallet</h2><button class="x" type="button" data-close aria-label="Close">×</button></div>
+    <div id="wallet-body"></div>
+  </div>
+</dialog>
+
+<!-- ── private ETH ── -->
+<dialog class="sheet" id="sheet-eth" aria-labelledby="eth-h">
+  <div class="sheet-in">
+    <div class="sheet-head">
+      <span class="pair"><svg class="tk lg" aria-hidden="true"><use href="#tk-eth"/></svg><svg class="tk lg" aria-hidden="true"><use href="#tk-teth"/></svg></span>
+      <h2 id="eth-h" tabindex="-1" autofocus>Private ETH</h2>
+      <button class="x" type="button" data-close aria-label="Close">×</button>
+    </div>
+    <div class="seg" role="tablist" aria-label="Pool">
+      <button type="button" role="tab" aria-selected="true" data-eth-mode="v1">Tacit pool<small>tETH · DeFi and Bitcoin</small></button>
+      <button type="button" role="tab" aria-selected="false" data-eth-mode="dev">On this device<small>ETH · proved in your browser</small></button>
+    </div>
+    <div id="eth-v1" role="tabpanel"></div>
+    <div id="eth-dev" role="tabpanel" hidden></div>
+  </div>
+</dialog>
+
+<!-- ── TAC ── -->
+<dialog class="sheet" id="sheet-tac" aria-labelledby="tac-h">
+  <div class="sheet-in">
+    <div class="sheet-head">
+      <svg class="tk lg" aria-hidden="true"><use href="#tk-tac"/></svg>
+      <h2 id="tac-h" tabindex="-1" autofocus>TAC</h2>
+      <button class="x" type="button" data-close aria-label="Close">×</button>
+    </div>
+    <div class="seg" role="tablist" aria-label="TAC">
+      <button type="button" role="tab" aria-selected="true" data-tac-mode="air">Airdrop</button>
+      <button type="button" role="tab" aria-selected="false" data-tac-mode="buy">Buy with ETH</button>
+    </div>
+    <div id="air-body" role="tabpanel"></div>
+    <div id="buy-body" role="tabpanel" hidden></div>
+  </div>
+</dialog>
+
+<!-- ── farms ── -->
+<dialog class="sheet" id="sheet-farm" aria-labelledby="farm-h">
+  <div class="sheet-in">
+    <div class="sheet-head">
+      <span class="pair"><svg class="tk lg" aria-hidden="true"><use href="#tk-tac"/></svg><svg class="tk lg" aria-hidden="true"><use href="#tk-eth"/></svg></span>
+      <h2 id="farm-h" tabindex="-1" autofocus>Farm TAC</h2>
+      <button class="x" type="button" data-close aria-label="Close">×</button>
+    </div>
+    <ul class="farms" id="farm-list"></ul>
+  </div>
+</dialog>
+
+<!-- ── borrow ── -->
+<dialog class="sheet" id="sheet-borrow" aria-labelledby="borrow-h">
+  <div class="sheet-in">
+    <div class="sheet-head">
+      <span class="pair"><svg class="tk lg" aria-hidden="true"><use href="#tk-cbtc"/></svg><svg class="tk lg" aria-hidden="true"><use href="#tk-cusd"/></svg></span>
+      <h2 id="borrow-h" tabindex="-1" autofocus>Borrow on Bitcoin</h2>
+      <button class="x" type="button" data-close aria-label="Close">×</button>
+    </div>
+    <div id="borrow-body"></div>
+  </div>
+</dialog>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<script type="module">
+import { secp, keccak_256, sha256, hmac, bytesToHex, hexToBytes, concatBytes } from '/vendor/tacit-deps.min.js';
+import { prfBytesToScalar } from '/prf-wallet.js';
+import { makeEvmWallet } from '/evm-wallet.js?cb=0b99ec4f';
+import { makeTacAirdrop, makeRpcCall } from '/tac-airdrop.js?cb=4cc48934';
+import { makeEvmTradeVenues } from '/evm-trade-venues.js?cb=b8e0c106';
+
+if (!secp.etc.hmacSha256Sync) secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, concatBytes(...m));
+
+// ── config ───────────────────────────────────────────────────────────────────────────────────────────────
+const RPCS = ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org', 'https://1rpc.io/eth', 'https://mainnet.gateway.tenderly.co'];
+const API = 'https://api.tacit.finance';
+const SCAN = 'https://etherscan.io';
+const MEMPOOL = 'https://mempool.space';
+const ESPLORA = ['https://mempool.space/api', 'https://blockstream.info/api', 'https://mempool.emzy.de/api'];
+const ADDR = {
+  pool: '0x000000000Ed1eabD231Be41d93b719056F7febFC',                // Tacit V1 confidential pool
+  wrapTip: '0x000000D218B03db5837943b0b05DeA2965AE956e',             // wrap + relay tip in one tx
+  engine: '0x000000003f608BDdF0ca45934003ffb9DbDF70DB',              // CollateralEngine (cUSD)
+  escrow: '0x000000008eCD09f922C9FbbDD9ACA5aE8F0beBfA',              // CbtcEscrowHelper: ETH → wstETH bond
+  wsteth: '0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0',
+  tac: '0xA1313eb9f3A445606D9583bcAc3ebeB56a858279',
+  multicall: '0xcA11bde05977b3631167028862bE2a173976CA11',
+  precisionPool: '0x0155358241411dB868BA714aE7c83A27087e3D6E',       // TAC/ETH 0.30%, LP is the pool's own ERC-20
+  precisionFarm: '0x0000003bF4BA0B21f5e0d35119b337F4d4CF82E0',       // stakes that LP, streams TAC
+  precisionLens: '0x000000956bf20A41C54BaE4a4b6F5C8A166DAB4E',       // previewZap / previewAdd
+};
+const SEL = {
+  reserve0: '443cb4bc', reserve1: '5a76f25e', totalSupply: '18160ddd', sqrtPrice: '2af1f249', balanceOf: '70a08231', allowance: 'dd62ed3e',
+  totalStaked: '817b1cd2', rewardRate: '7b0a47ee', periodFinish: 'ebe2b12b', staked: '98807d84', earned: '008cc262',
+  previewZap: 'e7cddab0', previewAdd: 'e03ec807', zapETH: '8703a0d8', addAndStake: '6d15c09b', addAndStakeWithPermit: 'ddd9f3fb',
+  claim: '4e71d92d', exitAndRemove: 'bccbe38a', aggregate3: '82ad56cb', timestamp: '0f28c97d',
+  wrapWithTip: 'fc24c435', postEscrowWithETH: 'c0e2d9a1', requiredEscrow: '034448ed', stEthPerWst: 'bb2952fc',
+  escrowSufficient: '058e18b0', cbtcLockVBtc: '7cea1c1a', btcToUsd: 'd5901347', cdpRatioBps: '4827ecb3', rate: '2c4e722e',
+};
+const ZERO = '0x0000000000000000000000000000000000000000';
+const DEVICE_CHAINS = [
+  { chainId: 1, name: 'Ethereum', rpc: ['https://ethereum-rpc.publicnode.com', 'https://rpc.flashbots.net'], explorer: 'https://etherscan.io', keeper: 'https://tacit-evm-pool-keeper.onrender.com/evm-pool/keeper', deployBlock: 26069245, confirmations: 3 },
+  { chainId: 8453, name: 'Base', rpc: ['https://mainnet.base.org', 'https://base.drpc.org'], explorer: 'https://basescan.org', keeper: 'https://tacit-evm-pool-keeper-base.onrender.com/evm-pool/keeper', deployBlock: 51864014, confirmations: 10 },
+  { chainId: 4663, name: 'Robinhood', rpc: ['https://rpc.mainnet.chain.robinhood.com'], explorer: 'https://robinhoodchain.blockscout.com', keeper: 'https://tacit-evm-pool-keeper-robinhood.onrender.com/evm-pool/keeper', deployBlock: 73991661, confirmations: 10 },
+];
+const EVM_POOL = '0x000000c2A20657CE25f2Ba99737933D031AFBEE9', EVM_ROUTER = '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5';
+
+// ── small helpers ────────────────────────────────────────────────────────────────────────────────────────
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const strip = (h) => String(h).replace(/^0x/, '');
+const word = (v) => BigInt(v).toString(16).padStart(64, '0');
+const addrWord = (a) => strip(a).toLowerCase().padStart(64, '0');
+const wordAt = (hex, i) => BigInt('0x' + (strip(hex).slice(i * 64, i * 64 + 64) || '0'));
+const short = (a, n = 4) => a ? `${a.slice(0, n + 2)}…${a.slice(-n)}` : '';
+const now = () => Math.floor(Date.now() / 1000);
+// Deadlines follow the chain's clock, not this device's: a slow local clock must not send an already-expired order.
+const CLOCK = { skew: 0 };
+const deadline = (s = 1800) => BigInt(now() + Math.max(0, CLOCK.skew) + s);
+const E18 = 10n ** 18n, E10 = 10n ** 10n;
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+const escMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+class Raw { constructor(s) { this.s = s; } }
+const part = (v) => v instanceof Raw ? v.s : Array.isArray(v) ? v.map(part).join('') : v == null || v === false ? '' : String(v).replace(/[&<>"']/g, (c) => escMap[c]);
+const html = (strs, ...vals) => new Raw(strs.reduce((a, s, i) => a + part(vals[i - 1]) + s));
+const mount = (el, view) => { el.innerHTML = view.s; };
+
+// Decimal formatting of a base-unit bigint: `dec` decimals, at most `max` shown, thousands grouped.
+function fmt(v, dec = 18, max = 4) {
+  v = BigInt(v);
+  const neg = v < 0n; if (neg) v = -v;
+  const base = 10n ** BigInt(dec);
+  let whole = v / base;
+  const frac = (v % base).toString().padStart(dec, '0');
+  let f = frac.slice(0, max);
+  if (max < dec && frac[max] >= '5') {
+    const bumped = (BigInt(f || '0') + 1n).toString().padStart(max, '0');
+    if (bumped.length > max) { whole += 1n; f = '0'.repeat(max); } else f = bumped;
+  }
+  f = f.replace(/0+$/, '');
+  return (neg ? '-' : '') + whole.toLocaleString('en-US') + (f ? '.' + f : '');
+}
+function parseUnits(s, dec = 18) {
+  const t = String(s || '').trim().replace(/,/g, '');
+  if (!/^\d*\.?\d*$/.test(t) || t === '' || t === '.') return null;
+  const [w, f = ''] = t.split('.');
+  if (f.length > dec) return null;
+  return BigInt(w || '0') * 10n ** BigInt(dec) + BigInt((f + '0'.repeat(dec)).slice(0, dec) || '0');
+}
+const plain = (v, dec) => fmt(v, dec, dec).replace(/,/g, '');
+const dayFmt = (sec) => new Date(sec * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+const pctFmt = (x) => `${x >= 10 ? Math.round(x) : x.toFixed(1)}%`;
+
+function toast(msg, bad = false) {
+  const t = document.createElement('div');
+  t.className = 'toast' + (bad ? ' bad' : '');
+  t.textContent = msg;
+  $('#toasts').append(t);
+  setTimeout(() => t.remove(), bad ? 7000 : 4200);
+}
+const errText = (e) => {
+  const m = String(e?.shortMessage || e?.message || e || 'Something went wrong');
+  if (e?.code === 4001 || /user (rejected|denied)|rejected the request|denied transaction/i.test(m)) return 'Cancelled in your wallet.';
+  return m.replace(/^Error:\s*/, '').slice(0, 240);
+};
+// A status line is state: it survives re-renders of its pane and clears when the sheet closes.
+const FLASH = {};
+const say = (el, view) => { if (!el) return; const v = view instanceof Raw ? view : html`${view}`; if (el.id) FLASH[el.id] = v; mount(el, v); };
+const sayErr = (el, e) => say(el, html`<span class="err">${errText(e)}</span>`);
+
+// While an action runs, its sheet is not re-rendered underneath it (its status line would be detached).
+// Re-renders asked for meanwhile are queued and run when it ends.
+let inflight = 0;
+const deferred = new Set();
+async function busy(btn, fn) {
+  if (btn.getAttribute('aria-busy') === 'true') return;
+  btn.setAttribute('aria-busy', 'true'); btn.disabled = true; inflight++;
+  try { return await fn(); } finally {
+    btn.removeAttribute('aria-busy'); btn.disabled = false;
+    if (--inflight === 0 && deferred.size) { const names = [...deferred]; deferred.clear(); for (const n of names) rerender(n); }
+  }
+}
+// Re-render a subtree without losing what the user typed or where the caret was.
+function keep(root, fn) {
+  const vals = new Map(); let focus = null;
+  for (const i of root.querySelectorAll('input[id]')) {
+    if (i.type === 'checkbox') continue;
+    if (i.value) vals.set(i.id, i.value);
+    if (i === document.activeElement) focus = { id: i.id, s: i.selectionStart, e: i.selectionEnd };
+  }
+  fn();
+  for (const s of root.querySelectorAll('.status[id]')) if (FLASH[s.id] && !s.innerHTML) mount(s, FLASH[s.id]);
+  for (const [id, v] of vals) {
+    const i = root.querySelector('#' + CSS.escape(id));
+    if (i && !i.value) { i.value = v; i.closest('[hidden]')?.removeAttribute('hidden'); i.dispatchEvent(new Event('input')); }
+  }
+  if (focus) { const i = root.querySelector('#' + CSS.escape(focus.id)); if (i) { i.focus(); try { i.setSelectionRange(focus.s, focus.e); } catch {} } }
+}
+const lazy = (f) => { let p = null; return () => (p ||= f().catch((e) => { p = null; throw e; })); };
+const debounce = (f, ms = 250) => { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => f(...a), ms); }; };
+
+// Loss gates, as zSwap draws them: shown from 0.5%, confirmed by a tick from 15%, typed from 30%.
+// An acceptance survives re-renders and requotes for as long as the rounded loss it accepted stays the same.
+const acked = {};
+function lossGate(id, pct, what) {
+  if (!(pct >= 15)) return html``;
+  const n = Math.round(pct), prior = acked[id] === n;
+  return pct >= 30
+    ? html`<label class="ack"><span>Type <b>${n}</b> to accept losing about ${n}% of this ${what} to the pool's price move.</span><input id="${id}" inputmode="numeric" autocomplete="off" aria-label="Type ${n} to accept" value="${prior ? n : ''}"></label>`
+    : html`<label class="ack"><input type="checkbox" id="${id}" ${prior ? 'checked' : ''}><span>I accept losing about ${n}% of this ${what} to the pool's price move.</span></label>`;
+}
+function wireAck(id, pct, then) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const n = Math.round(pct);
+  const on = () => { acked[id] = (el.type === 'checkbox' ? el.checked : el.value.trim() === String(n)) ? n : null; then(); };
+  el.addEventListener('input', on); el.addEventListener('change', on);
+}
+function lossOk(id, pct) {
+  if (!(pct >= 15)) return true;
+  const el = document.getElementById(id);
+  if (!el) return false;
+  return pct >= 30 ? el.value.trim() === String(Math.round(pct)) : el.checked;
+}
+const lossLine = (pct) => !(pct >= 0.5) ? html`` : html`<div class="kv"><span>Price impact</span><b class="${pct >= 5 ? 'err' : ''}">${pctFmt(pct)}</b></div>`;
+
+// ── chain access ─────────────────────────────────────────────────────────────────────────────────────────
+async function rpc(method, params) {
+  let last;
+  for (const url of RPCS) {
+    try {
+      const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+      const j = await r.json();
+      if (j.error) {
+        if (j.error.code === 3 || /revert/i.test(j.error.message || '')) throw Object.assign(new Error(j.error.message), { revert: true, data: j.error.data });
+        last = new Error(j.error.message); continue;
+      }
+      return j.result;
+    } catch (e) { if (e.revert) throw e; last = e; }
+  }
+  throw last || new Error('Ethereum is unreachable');
+}
+const ethCall = (to, data, extra = {}) => rpc('eth_call', [{ to, data: '0x' + strip(data), ...extra }, 'latest']);
+
+// Multicall3.aggregate3 with allowFailure, one request for a whole card's reads.
+async function multicall(calls) {
+  const bodies = calls.map(({ to, data }) => { const d = strip(data); return addrWord(to) + word(1) + word(0x60) + word(d.length / 2) + d.padEnd(Math.ceil(d.length / 64) * 64, '0'); });
+  let off = calls.length * 32;
+  const heads = bodies.map((b) => { const o = word(off); off += b.length / 2; return o; });
+  const out = strip(await ethCall(ADDR.multicall, SEL.aggregate3 + word(0x20) + word(calls.length) + heads.join('') + bodies.join('')));
+  const arr = Number(wordAt(out, 0)) / 32;
+  return calls.map((_, i) => {
+    const e = arr + 1 + Number(wordAt(out, arr + 1 + i)) / 32;
+    if (wordAt(out, e) !== 1n) return null;
+    const b = e + Number(wordAt(out, e + 1)) / 32;
+    const len = Number(wordAt(out, b));
+    return '0x' + out.slice(64 * (b + 1), 64 * (b + 1) + len * 2);
+  });
+}
+async function esplora(path) {
+  let last;
+  for (const base of ESPLORA) {
+    try { const r = await fetch(base + path); if (r.ok) return await r.json(); last = new Error(`${r.status}`); } catch (e) { last = e; }
+  }
+  throw new Error(`Bitcoin explorers are unreachable (${last?.message || 'network'})`);
+}
+
+// ── wallet ───────────────────────────────────────────────────────────────────────────────────────────────
+const evm = makeEvmWallet({ secp, sha256, keccak256: keccak_256, bytesToHex, hexToBytes, prfBytesToScalar, netName: 'mainnet' });
+const S = { address: null, provider: null, key: null };
+const walletPriv = () => hexToBytes(S.key.priv);
+
+function pickWallet(list) {
+  return new Promise((resolve) => {
+    const d = $('#sheet-wallet');
+    mount($('#wallet-body'), html`<div class="picker">${list.map((w) => html`
+      <button type="button" data-uuid="${w.uuid}">${/^data:image\//.test(w.icon || '') ? html`<img src="${w.icon}" alt="">` : ''}<span>${w.name}</span></button>`)}</div>`);
+    const onClose = () => resolve(null);
+    d.addEventListener('close', onClose, { once: true });
+    $$('[data-uuid]', d).forEach((b) => b.onclick = () => { d.removeEventListener('close', onClose); d.close(); resolve(b.dataset.uuid); });
+    if (!d.open) d.showModal();
+  });
+}
+async function connect() {
+  const { provider, address } = await evm.connect({ pick: pickWallet });
+  S.provider = provider; S.address = '0x' + address; S.key = null;
+  paintWallet(); refreshAll();
+}
+window.addEventListener('tacit:evm-accounts', (e) => {
+  const a = (e.detail?.accounts || [])[0];
+  S.key = null;                                   // another account never inherits the previous identity
+  S.address = a ? String(a).toLowerCase() : null;
+  resetPrivate(); paintWallet(); refreshAll();
+});
+// The key is one signature of the shared Tacit identity message: the same wallet opens the same private balance
+// here and on tacit.finance. It lives in this tab only.
+async function unlock() {
+  const id = await evm.deriveIdentity({ pick: pickWallet });
+  S.provider = id.provider; S.address = '0x' + id.address;
+  S.key = { priv: id.priv, pubHex: id.pubHex };
+  paintWallet();
+  return S.key;
+}
+const CHAIN_META = {
+  1: { chainName: 'Ethereum', rpcUrls: ['https://ethereum-rpc.publicnode.com'], blockExplorerUrls: ['https://etherscan.io'] },
+  8453: { chainName: 'Base', rpcUrls: ['https://mainnet.base.org'], blockExplorerUrls: ['https://basescan.org'] },
+  4663: { chainName: 'Robinhood Chain', rpcUrls: ['https://rpc.mainnet.chain.robinhood.com'], blockExplorerUrls: ['https://robinhoodchain.blockscout.com'] },
+};
+async function ensureChain(id) {
+  const want = '0x' + id.toString(16);
+  if (parseInt(await S.provider.request({ method: 'eth_chainId' }), 16) === id) return;
+  try { await S.provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: want }] }); }
+  catch (e) {
+    if (e?.code !== 4902 && !/unrecognized|not been added|unknown chain/i.test(e?.message || '')) throw e;
+    const m = CHAIN_META[id];
+    await S.provider.request({ method: 'wallet_addEthereumChain', params: [{ chainId: want, chainName: m.chainName, nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: m.rpcUrls, blockExplorerUrls: m.blockExplorerUrls }] });
+  }
+}
+async function sendTx({ to, data, value = 0n, chainId = 1 }) {
+  if (!S.provider || !S.address) throw new Error('Connect a wallet first.');
+  await ensureChain(chainId);
+  const tx = { from: S.address, to, data: '0x' + strip(data) };
+  if (BigInt(value) > 0n) tx.value = '0x' + BigInt(value).toString(16);
+  return S.provider.request({ method: 'eth_sendTransaction', params: [tx] });
+}
+async function waitTx(hash, { timeoutMs = 10 * 60e3 } = {}) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    const r = await rpc('eth_getTransactionReceipt', [hash]).catch(() => null);
+    if (r) { if (r.status !== '0x1') throw new Error('The transaction reverted.'); return r; }
+    await new Promise((res) => setTimeout(res, 3000));
+  }
+  throw new Error('Still pending. Check the transaction on Etherscan.');
+}
+const txLink = (hash, base = SCAN) => html`<a href="${base}/tx/${hash}" target="_blank" rel="noopener">${short(hash, 6)} ↗</a>`;
+async function ethBalance() { return S.address ? BigInt(await rpc('eth_getBalance', [S.address, 'latest']).catch(() => '0x0')) : 0n; }
+
+function paintWallet() {
+  $('#wallet-dot').className = 'dot' + (S.address ? ' on' : '');
+  $('#wallet-label').textContent = S.address ? short(S.address) : 'Connect wallet';
+}
+$('#wallet').onclick = async () => {
+  if (!S.address) { try { await connect(); } catch (e) { toast(errText(e), true); } return; }
+  const d = $('#sheet-wallet');
+  mount($('#wallet-body'), html`
+    <div class="kv"><span>Account</span><b>${S.address}</b></div>
+    <div class="kv"><span>Tacit key</span><b>${S.key ? 'unlocked in this tab' : 'locked'}</b></div>
+    <div class="row2">
+      <button class="btn ghost" type="button" id="w-copy">Copy address</button>
+      ${S.key ? html`<button class="btn ghost" type="button" id="w-lock">Lock key</button>` : html`<button class="btn ghost" type="button" id="w-unlock">Unlock key</button>`}
+    </div>
+    <button class="btn ghost" type="button" id="w-out">Disconnect</button>
+    <p class="note">One signature of the Tacit identity message opens the same private balance here and on tacit.finance. It never leaves this tab.</p>`);
+  $('#w-copy').onclick = () => navigator.clipboard?.writeText(S.address).then(() => toast('Address copied'));
+  const u = $('#w-unlock'); if (u) u.onclick = () => busy(u, async () => { try { await unlock(); d.close(); refreshAll(); } catch (e) { toast(errText(e), true); } });
+  const l = $('#w-lock'); if (l) l.onclick = () => { S.key = null; resetPrivate(); d.close(); paintWallet(); refreshAll(); };
+  $('#w-out').onclick = () => { S.address = null; S.provider = null; S.key = null; resetPrivate(); d.close(); paintWallet(); refreshAll(); };
+  if (!d.open) d.showModal();
+};
+
+// ── sheets + deep links ──────────────────────────────────────────────────────────────────────────────────
+const SHEETS = ['eth', 'tac', 'farm', 'borrow'];
+const ALIAS = { airdrop: ['tac', 'air'], buy: ['tac', 'buy'], private: ['eth', 'v1'], device: ['eth', 'dev'] };
+const render = {}, load = {};
+function openSheet(name) {
+  const [sheet, tab] = ALIAS[name] || [name];
+  const d = $(`#sheet-${sheet}`);
+  if (!d) return;
+  for (const o of $$('dialog.sheet[open]')) if (o !== d) o.close();
+  if (tab) selectTab(sheet, tab);
+  if (render[sheet]) keep(d, render[sheet]);
+  if (!d.open) d.showModal();
+  if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
+  load[sheet]?.().then(() => rerender(sheet)).catch(() => {});
+}
+function rerender(name) {
+  const d = $(`#sheet-${name}`);
+  if (!d?.open || !render[name]) return;
+  if (inflight) { deferred.add(name); return; }
+  keep(d, render[name]);
+}
+for (const d of $$('dialog.sheet')) {
+  d.addEventListener('click', (e) => { if (e.target === d) d.close(); });
+  d.addEventListener('close', () => {
+    for (const s of d.querySelectorAll('.status[id]')) delete FLASH[s.id];
+    if (location.hash.length > 1) history.replaceState(null, '', location.pathname);
+  });
+  $$('[data-close]', d).forEach((b) => b.onclick = () => d.close());
+}
+$$('[data-open]').forEach((t) => t.onclick = (e) => { e.preventDefault(); openSheet(t.dataset.open); });
+const TABS = { eth: 'eth-mode', tac: 'tac-mode' };
+const TAB = { eth: 'v1', tac: 'air' };
+function selectTab(sheet, tab) {
+  TAB[sheet] = tab;
+  $$(`[data-${TABS[sheet]}]`).forEach((b) => b.setAttribute('aria-selected', String(b.dataset[TABS[sheet].replace(/-(\w)/, (_, c) => c.toUpperCase())] === tab)));
+}
+for (const [sheet, attr] of Object.entries(TABS)) {
+  $$(`[data-${attr}]`).forEach((b) => b.onclick = () => {
+    selectTab(sheet, b.dataset[attr.replace(/-(\w)/, (_, c) => c.toUpperCase())]);
+    keep($(`#sheet-${sheet}`), render[sheet]);
+    load[sheet]?.().then(() => rerender(sheet)).catch(() => {});
+  });
+}
+const setFoot = (name, text, dot = '') => { $(`[data-foot="${name}"]`).textContent = text; $(`[data-dot="${name}"]`).className = 'dot' + (dot ? ' ' + dot : ''); };
+const gate = (text, label, id) => html`<div class="gate"><p>${text}</p><button class="btn" type="button" id="${id}">${label}</button></div>`;
+function wireConnect(id, after) {
+  const b = document.getElementById(id);
+  if (b) b.onclick = () => busy(b, async () => { try { await connect(); after?.(); } catch (e) { toast(errText(e), true); } });
+}
+function wireUnlock(id, after) {
+  const b = document.getElementById(id);
+  if (b) b.onclick = () => busy(b, async () => {
+    try { if (!S.address) await connect(); await unlock(); refreshAll(); after?.(); } catch (e) { toast(errText(e), true); }
+  });
+}
+// Connected and unlocked, or the gate that gets there.
+function needKey(el, why, after) {
+  if (!S.address) { mount(el, gate(why, 'Connect wallet', el.id + '-go')); wireConnect(el.id + '-go', after); return false; }
+  if (!S.key) {
+    mount(el, gate(`${why} Sign once to open your Tacit key; the same wallet opens the same balance on tacit.finance.`, 'Unlock with wallet', el.id + '-go'));
+    wireUnlock(el.id + '-go', after);
+    return false;
+  }
+  return true;
+}
+const segSub = (name, cur, items) => html`<div class="seg sub" role="tablist">${items.map(([k, label]) => html`<button type="button" role="tab" data-${name}="${k}" aria-selected="${k === cur}">${label}</button>`)}</div>`;
+function wireSub(el, name, set) { $$(`[data-${name}]`, el).forEach((b) => b.onclick = () => set(b.getAttribute(`data-${name}`))); }
+
+// ── Tacit V1 pool: shared module, loaded on first use ────────────────────────────────────────────────────
+const getUx = lazy(async () => {
+  const [{ makeConfidentialPoolUx }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=c6495b04'), import('/confidential-deployments.js')]);
+  dep.setActiveNetwork('mainnet');
+  return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
+});
+const P = { scan: null, scanning: null, err: null };           // this identity's shielded notes, from ux.balance
+function resetPrivate() { P.scan = null; P.scanning = null; P.err = null; DEV.W = null; DEV.bal = null; DEV.key = null; LOCK.rec = null; LOCK.state = null; LOCK.lm = null; }
+async function scanPrivate(force = false) {
+  if (!S.key) return null;
+  if (P.scan && !force) return P.scan;
+  if (P.scanning) return P.scanning;
+  const pub = S.key.pubHex;
+  P.scanning = (async () => {
+    const t = await getUx();
+    const hint = LOCK.rec ? { anchors: [LOCK.rec.anchor], lockOutputs: [{ txid: LOCK.rec.lockTxid, vout: LOCK.rec.lockVout, value: Number(LOCK.rec.vBtc) }] } : null;
+    const r = await t.balance(walletPriv(), { cbtc: !!hint, btcHistory: hint });
+    if (S.key?.pubHex !== pub) return null;
+    const of = (tk) => { const id = String(t.assetByTicker[tk]?.assetId || '').toLowerCase(); const g = r.byAsset[id]; return { id, value: g ? g.value : 0n, notes: g ? g.notes : [] }; };
+    P.scan = { at: Date.now(), eth: of('cETH'), cusd: of('cUSD'), cbtc: { id: String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase(), notes: r.notes.filter((n) => String(n.asset).toLowerCase() === String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase()) },
+      pending: (r.diag?.wrap?.pending || []).filter((p) => String(p.asset).toLowerCase() === of('cETH').id), partial: Object.keys(r.diag?.errors || {}).length > 0 };
+    P.err = null;
+    return P.scan;
+  })().catch((e) => { P.err = e; throw e; }).finally(() => { P.scanning = null; });
+  return P.scanning;
+}
+
+// ── private ETH · Tacit pool (tETH) ──────────────────────────────────────────────────────────────────────
+const V1 = { mode: 'wrap' };
+render.eth = () => {
+  $('#eth-v1').hidden = TAB.eth !== 'v1';
+  $('#eth-dev').hidden = TAB.eth !== 'dev';
+  if (TAB.eth === 'v1') renderV1($('#eth-v1')); else renderDevice($('#eth-dev'));
+};
+load.eth = async () => {
+  if (TAB.eth === 'v1') { if (S.key) await scanPrivate(Date.now() - (P.scan?.at || 0) > 60e3); }
+  else if (S.key) await deviceSync();
+};
+
+function renderV1(el) {
+  if (!needKey(el, 'Wrap ETH into tETH, a private note in the Tacit pool and the same asset on Bitcoin. Send it to anyone or use it in DeFi.', () => openSheet('eth'))) return;
+  const s = P.scan;
+  const bal = s ? html`${fmt(s.eth.value, 8, 6)}` : P.err ? html`<span class="err">—</span>` : html`<span class="mute">reading…</span>`;
+  mount(el, html`
+    <div class="bal">
+      <svg class="tk md" aria-hidden="true"><use href="#tk-teth"/></svg>
+      <div><div class="v num">${bal}</div><div class="u">tETH, private</div></div>
+      <div class="side">${s?.partial ? html`<span class="err">partial scan</span>` : P.err ? html`<button class="link" type="button" id="v1-rescan">retry</button>` : s ? html`<button class="link" type="button" id="v1-rescan">refresh</button>` : ''}</div>
+    </div>
+    ${s?.pending?.length ? html`<div class="callout"><span>${s.pending.length === 1 ? 'A deposit is' : `${s.pending.length} deposits are`} waiting to become private notes.</span><button class="btn ghost" type="button" id="v1-finish">Finish</button></div>` : ''}
+    ${segSub('v1', V1.mode, [['wrap', 'Wrap'], ['send', 'Send'], ['out', 'Withdraw']])}
+    <div id="v1-form"></div>
+    <div class="status" id="v1-status"></div>`);
+  wireSub(el, 'v1', (m) => { V1.mode = m; keep($('#sheet-eth'), render.eth); });
+  const re = $('#v1-rescan'); if (re) re.onclick = () => busy(re, async () => { try { await scanPrivate(true); } catch (e) { sayErr($('#v1-status'), e); } rerender('eth'); });
+  const fin = $('#v1-finish'); if (fin) fin.onclick = () => busy(fin, () => finishWraps($('#v1-status')));
+  if (!s && !P.scanning && !P.err) scanPrivate().then(() => rerender('eth')).catch((e) => { sayErr($('#v1-status'), e); });
+  ({ wrap: v1Wrap, send: v1Send, out: v1Out })[V1.mode]($('#v1-form'), $('#v1-status'));
+}
+
+// Wrap: one wallet transaction pays the deposit plus a relay tip; the relay then proves and settles the note.
+function v1Wrap(el, status) {
+  mount(el, html`
+    <div class="lbl"><span>Amount</span><button type="button" id="w-max">Wallet <span id="w-bal">…</span> ETH</button></div>
+    <div class="amt"><input id="w-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="ETH to wrap"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>
+    <div class="rcpt" id="w-rcpt" hidden></div>
+    <button class="btn" type="button" id="w-go" disabled>Wrap to tETH</button>
+    <p class="note">One transaction. A relay tip in the same transaction pays for the proof, so nothing is proved on this device and no second transaction is needed.</p>`);
+  const input = $('#w-amt'), go = $('#w-go'), rc = $('#w-rcpt');
+  let bal = null, q = null, seq = 0;
+  ethBalance().then((b) => { bal = b; $('#w-bal').textContent = fmt(b, 18, 4); });
+  $('#w-max').onclick = () => { if (bal != null) { const gas = 2n * 10n ** 15n; const v = bal > gas ? ((bal - gas) / E10) * E10 : 0n; input.value = v ? plain(v, 18) : ''; input.dispatchEvent(new Event('input')); } };
+  input.oninput = debounce(async () => {
+    const wei = parseUnits(input.value);
+    q = null; go.disabled = true; say(status, '');
+    if (!wei) { rc.hidden = true; return; }
+    if (wei % E10 !== 0n) { rc.hidden = true; say(status, html`<span class="err">Up to 8 decimals.</span>`); return; }
+    const my = ++seq;
+    try {
+      const j = await (await fetch(`${API}/confidential/quote?asset=cETH&amountWei=${wei}`)).json();
+      if (my !== seq) return;
+      const tip = BigInt(j.recommendedWrapTipWei || 0), to = j.recommendedTipRecipient;
+      if (!/^0x[0-9a-fA-F]{40}$/.test(to || '')) throw new Error('The relay did not name a tip recipient. Try again in a moment.');
+      q = { wei, tip, to };
+      mount(rc, html`
+        <div class="kv"><span>You get</span><b>${fmt(wei, 18, 8)} tETH</b></div>
+        <div class="kv"><span>Relay tip</span><b>${fmt(tip, 18, 6)} ETH</b></div>
+        <div class="kv"><span>Wallet sends</span><b>${fmt(wei + tip, 18, 6)} ETH</b></div>`);
+      rc.hidden = false;
+      const over = bal != null && wei + tip > bal;
+      go.disabled = over;
+      if (over) say(status, html`<span class="err">More than your wallet holds.</span>`);
+    } catch (e) { if (my === seq) sayErr(status, e); }
+  });
+  go.onclick = () => busy(go, async () => {
+    if (!q) return;
+    try {
+      const t = await getUx(), priv = walletPriv();
+      say(status, 'Picking a fresh note slot, a few seconds…');
+      const index = await t.nextWrapIndex({ walletPriv: priv, ticker: 'cETH' });
+      const w = t.buildWrap({ walletPriv: priv, amountWei: q.wei, ticker: 'cETH', index });
+      const hash = await sendTx({ to: ADDR.wrapTip, data: SEL.wrapWithTip + strip(w.commit) + word(q.wei) + addrWord(q.to), value: q.wei + q.tip });
+      say(status, html`Deposit sent ${txLink(hash)}. Waiting for it to land…`);
+      await waitTx(hash);
+      // The deposit is in escrow from here on; if this step fails, Finish rebuilds the same note at the same index.
+      say(status, html`Deposited ${txLink(hash)}. The relay is proving your note, about a minute…`);
+      await t.submitWrapSettle({ built: w, waitOpts: { timeoutMs: 15 * 60e3 } });
+      input.value = ''; rc.hidden = true;
+      toast(`${fmt(q.wei, 18, 8)} tETH is private`);
+      await scanPrivate(true).catch(() => {});
+      rerender('eth'); say($('#v1-status'), html`<span class="ok">Wrapped.</span> ${txLink(hash)}`);
+    } catch (e) {
+      sayErr(status, e);
+      P.scan = null; scanPrivate().then(() => rerender('eth')).catch(() => {});
+    }
+  });
+}
+async function finishWraps(status) {
+  try {
+    const t = await getUx(), priv = walletPriv();
+    for (const p of P.scan?.pending || []) {
+      say(status, 'Settling a waiting deposit…');
+      await t.submitWrapSettle({ built: t.buildWrap({ walletPriv: priv, amountWei: (BigInt(p.value) * E10).toString(), ticker: 'cETH', index: p.index }), waitOpts: { timeoutMs: 15 * 60e3 } });
+    }
+    await scanPrivate(true);
+    rerender('eth'); toast('Deposits settled');
+  } catch (e) { sayErr(status, e); }
+}
+
+// Send: a stealth lock to the recipient's Tacit address; only they can claim it. Relayed end to end.
+const getNames = lazy(async () => {
+  const { makeConfidentialNames, makeMainnetCall } = await import('/confidential-names.js?cb=4debeb2e');
+  return makeConfidentialNames({ call: makeMainnetCall(), secp, keccak256: keccak_256 });
+});
+async function resolveTo(raw) {
+  const names = await getNames();
+  const local = (s) => { try { return { pubHex: names.decodeTacitAddress(s).key }; } catch (e) { return /^0x0[23][0-9a-fA-F]{64}$/.test(s) ? { pubHex: s } : { error: e.message }; } };
+  return names.resolveRecipient(raw, { local });
+}
+function v1Send(el, status) {
+  const held = P.scan?.eth.value ?? 0n;
+  mount(el, html`
+    <div class="lbl"><span>To</span></div>
+    <div class="amt text"><input id="s-to" placeholder="tacit1… or name.wei" autocomplete="off" spellcheck="false" aria-label="Recipient"></div>
+    <div class="lbl"><span>Amount</span><button type="button" id="s-max">Private ${fmt(held, 8, 6)} tETH</button></div>
+    <div class="amt"><input id="s-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="tETH to send"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-teth"/></svg>tETH</span></div>
+    <div class="rcpt" id="s-rcpt" hidden></div>
+    <button class="btn" type="button" id="s-go" disabled>Send privately</button>
+    <p class="note">The recipient claims it in their Tacit wallet within 90 days; until then you can take it back.</p>`);
+  const to = $('#s-to'), amt = $('#s-amt'), go = $('#s-go'), rc = $('#s-rcpt');
+  let who = null, seq = 0;
+  $('#s-max').onclick = () => { amt.value = held ? plain(held, 8) : ''; amt.dispatchEvent(new Event('input')); };
+  const check = async () => {
+    const units = parseUnits(amt.value, 8);
+    go.disabled = true; who = null; say(status, '');
+    const raw = to.value.trim();
+    if (!raw) { rc.hidden = true; return; }
+    const my = ++seq;
+    try {
+      const r = await resolveTo(raw);
+      if (my !== seq) return;
+      who = r;
+      const t = await getUx();
+      const exact = (P.scan?.eth.notes || []).some((n) => BigInt(n.value) === units);
+      const split = units && !exact ? await t.quoteOpFee('cETH', 'transfer') : 0n;
+      mount(rc, html`
+        ${r.name ? html`<div class="kv"><span>${r.name}</span><b>${short(r.address || '', 10)}</b></div>` : html`<div class="kv"><span>Recipient</span><b>${short(raw, 10)}</b></div>`}
+        ${split ? html`<div class="kv"><span>Sizing fee</span><b>${fmt(split, 8, 8)} tETH</b></div>` : ''}`);
+      rc.hidden = false;
+      go.disabled = !units || units + BigInt(split) > held;
+      if (units && units + BigInt(split) > held) say(status, html`<span class="err">More than your private balance.</span>`);
+    } catch (e) { if (my === seq) { rc.hidden = true; sayErr(status, e); } }
+  };
+  to.oninput = amt.oninput = debounce(check);
+  go.onclick = () => busy(go, async () => {
+    if (!who) return;
+    try {
+      const t = await getUx(), priv = walletPriv();
+      const units = parseUnits(amt.value, 8);
+      const notes = P.scan.eth.notes;
+      const { makeStealthSendStore } = await import('/confidential-secret-store.js');
+      let built = null;
+      say(status, 'Locking it to a one-time address only they can open…');
+      const r = await t.stealthSend({ walletPriv: priv, recipientPubHex: who.pubHex, notes, amount: units, onBuilt: (b) => { built = b; }, waitOpts: { timeoutMs: 15 * 60e3 } });
+      if (built) {
+        await makeStealthSendStore({ sha256 }).add(priv, {
+          lockLeaf: built.lockLeaf, asset: built.asset, ticker: 'cETH', dec: 8, amount: built.amount, deadline: built.deadline,
+          lCx: built.lCx, lCy: built.lCy, ownerPub: built.ownerPub, lBlinding: built.lBlinding,
+          refundPriv: built.refundPriv, refundPub: built.refundPub, recipientPubHex: built.recipientPubHex,
+          txHash: r?.txHash, createdAt: Date.now(), recipientName: who.name || undefined,
+        }).catch(() => {});
+      }
+      to.value = ''; amt.value = ''; rc.hidden = true;
+      toast('Sent privately');
+      await scanPrivate(true).catch(() => {});
+      rerender('eth'); say($('#v1-status'), html`<span class="ok">Sent.</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
+    } catch (e) { sayErr(status, e); }
+  });
+}
+
+// Withdraw: pays an exact amount to a public address; any remainder stays a private note. Relayed.
+function v1Out(el, status) {
+  const held = P.scan?.eth.value ?? 0n;
+  mount(el, html`
+    <div class="lbl"><span>To</span><button type="button" id="o-me">Use my wallet</button></div>
+    <div class="amt text"><input id="o-to" placeholder="0x… (a fresh address keeps it unlinked)" autocomplete="off" spellcheck="false" aria-label="Recipient address"></div>
+    <div class="lbl"><span>Amount</span><button type="button" id="o-max">Private ${fmt(held, 8, 6)} tETH</button></div>
+    <div class="amt"><input id="o-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="tETH to withdraw"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-teth"/></svg>tETH</span></div>
+    <div class="rcpt" id="o-rcpt" hidden></div>
+    <button class="btn" type="button" id="o-go" disabled>Withdraw ETH</button>`);
+  const to = $('#o-to'), amt = $('#o-amt'), go = $('#o-go'), rc = $('#o-rcpt');
+  let q = null, seq = 0;
+  $('#o-me').onclick = () => { to.value = S.address; to.dispatchEvent(new Event('input')); };
+  $('#o-max').onclick = () => { amt.value = held ? plain(held, 8) : ''; amt.dispatchEvent(new Event('input')); };
+  const check = async () => {
+    const units = parseUnits(amt.value, 8);
+    q = null; go.disabled = true; say(status, '');
+    if (!units) { rc.hidden = true; return; }
+    const my = ++seq;
+    try {
+      const t = await getUx();
+      const minFee = await t.quoteOpFee('cETH', 'sendunwrap');
+      const { fee } = t.quoteUnwrapFee(units, 'cETH', { minFee });
+      if (my !== seq) return;
+      q = { units, fee };
+      mount(rc, html`<div class="kv"><span>Relay fee</span><b>${fmt(fee, 8, 8)} ETH</b></div><div class="kv"><span>Arrives</span><b>${fmt(units - fee > 0n ? units - fee : 0n, 8, 8)} ETH</b></div>`);
+      rc.hidden = false;
+      go.disabled = units > held || units <= fee || !/^0x[0-9a-fA-F]{40}$/.test(to.value.trim());
+      if (units > held) say(status, html`<span class="err">More than your private balance.</span>`);
+    } catch (e) { if (my === seq) sayErr(status, e); }
+  };
+  to.oninput = amt.oninput = debounce(check);
+  go.onclick = () => busy(go, async () => {
+    if (!q) return;
+    try {
+      const t = await getUx(), priv = walletPriv();
+      const recipient = to.value.trim();
+      let notes = P.scan.eth.notes.slice().sort((a, b) => (BigInt(a.value) > BigInt(b.value) ? 1 : -1));
+      let note = notes.find((n) => BigInt(n.value) >= q.units);
+      if (!note) {
+        // Spread across several notes: merge them into one first (a relayed self-send), then withdraw from it.
+        say(status, 'Combining your notes first…');
+        const fee = await t.quoteOpFee('cETH', 'transfer');
+        const total = notes.reduce((s, n) => s + BigInt(n.value), 0n);
+        await t.transfer({ walletPriv: priv, notes, recipientPubHex: t.identity(priv).pubHex, amount: total - BigInt(fee), fee: BigInt(fee), waitOpts: { timeoutMs: 15 * 60e3 } });
+        await scanPrivate(true);
+        note = P.scan.eth.notes.find((n) => BigInt(n.value) >= q.units);
+        if (!note) throw new Error('Your balance no longer covers this amount after the merge fee.');
+      }
+      say(status, 'The relay is proving your withdrawal…');
+      const r = await t.sendUnwrap({ note, walletPriv: priv, recipient, amount: q.units, waitOpts: { timeoutMs: 15 * 60e3 } });
+      amt.value = ''; rc.hidden = true;
+      toast('Withdrawn');
+      await scanPrivate(true).catch(() => {});
+      rerender('eth'); say($('#v1-status'), html`<span class="ok">Withdrawn.</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
+    } catch (e) { sayErr(status, e); }
+  });
+}
+
+// ── private ETH · on this device (TacitEvmPool, Groth16 proved in the browser) ──────────────────────────
+const DEV = { chain: DEVICE_CHAINS.find((c) => c.chainId === store.get('tacit-lite-device-chain')) || DEVICE_CHAINS[1], mode: 'deposit', W: null, bal: null, key: null, quote: null };
+const getDeviceMods = lazy(async () => {
+  const [zkm, wm, pm, pos] = await Promise.all([
+    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=db858ada'), import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
+  ]);
+  const PO = { 2: pos.poseidon2, 3: pos.poseidon3, 4: pos.poseidon4, 5: pos.poseidon5, 7: pos.poseidon7 };
+  return { zk: zkm.makeEvmPoolZk({ poseidon: (xs) => PO[xs.length](xs) }), ...wm, vkHash: pm.vkHash };
+});
+// Proving files: named and hashed by /evm-pool/pin.json, fetched once, checked, and cached (shared with /sats).
+const hexOf = (b) => Array.from(new Uint8Array(b), (x) => x.toString(16).padStart(2, '0')).join('');
+async function artifact(name, sha, onProgress) {
+  const url = '/evm-pool/' + name, key = `${url}?sha256=${sha}`;
+  let cache = null; try { cache = await caches.open('tacit-evm-pool-artifacts-v1'); } catch {}
+  const hit = cache ? await cache.match(key).catch(() => null) : null;
+  let bytes;
+  if (hit) bytes = new Uint8Array(await hit.arrayBuffer());
+  else {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
+    const total = Number(r.headers.get('content-length')) || 0, reader = r.body.getReader(), parts = [];
+    let got = 0;
+    for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); got += value.length; onProgress?.(name, got, total); }
+    bytes = new Uint8Array(got); let o = 0; for (const c of parts) { bytes.set(c, o); o += c.length; }
+  }
+  if (hexOf(await crypto.subtle.digest('SHA-256', bytes)) !== strip(sha).toLowerCase()) {
+    if (hit) await cache.delete(key).catch(() => {});
+    throw new Error(`${name} does not match the ceremony's pinned hash`);
+  }
+  if (!hit && cache) await cache.put(key, new Response(bytes)).catch(() => {});
+  return bytes;
+}
+let proverP = null;
+function prover(onProgress) {
+  return (proverP ||= (async () => {
+    const { vkHash } = await getDeviceMods();
+    const p = await (await fetch('/evm-pool/pin.json', { cache: 'no-store' })).json();
+    const [vkBytes, wasm, zkey] = await Promise.all([artifact(p.vk, p.vk_sha256, onProgress), artifact(p.wasm, p.wasm_sha256, onProgress), artifact(p.zkey, p.zkey_sha256, onProgress)]);
+    const vk = JSON.parse(new TextDecoder().decode(vkBytes));
+    if (vkHash(vk) !== strip(p.vk_hash).toLowerCase()) throw new Error('verification key does not match the ceremony pin');
+    const worker = new Worker('/evm-pool-prove-worker.js?cb=7f41e5e0', { type: 'module' });
+    let id = 0; const waiting = new Map();
+    worker.onmessage = ({ data }) => { const w = waiting.get(data.id); if (!w) return; waiting.delete(data.id); data.ok ? w.resolve(data) : w.reject(new Error(data.error)); };
+    const call = (msg) => new Promise((resolve, reject) => { const i = ++id; waiting.set(i, { resolve, reject }); worker.postMessage({ ...msg, id: i }); });
+    await call({ op: 'init', wasm, zkey, vk });
+    return async (input) => { const r = await call({ op: 'prove', input }); return { proof: r.proof, publicSignals: r.publicSignals }; };
+  })().catch((e) => { proverP = null; throw e; }));
+}
+const provingNote = (name, got, total) => say($('#d-status'), `Getting the proving key once (about 33 MB): ${name} ${total ? Math.floor((got / total) * 100) + '%' : ''}`);
+async function deviceWallet() {
+  if (DEV.W && DEV.key === S.key.pubHex + DEV.chain.chainId) return DEV.W;
+  const m = await getDeviceMods(), c = DEV.chain;
+  const keys = m.evmPoolKeys(m.zk, walletPriv());
+  const kv = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+  DEV.W = m.makeEvmPoolWallet({
+    zk: m.zk, keys, keeper: c.keeper, store: kv,
+    chain: { chainId: c.chainId, pool: EVM_POOL, router: EVM_ROUTER, rpc: m.jsonRpc(c.rpc), deployBlock: c.deployBlock, confirmations: c.confirmations },
+    prove: async (input) => (await prover(provingNote))(input),
+  });
+  DEV.key = S.key.pubHex + c.chainId; DEV.bal = null;
+  DEV.W.watchReceive().catch(() => {});
+  return DEV.W;
+}
+function deviceSync() {
+  return (DEV.syncing ||= (async () => {
+    const W = await deviceWallet();
+    const [s, q] = await Promise.all([W.sync(), W.quote().catch(() => null)]);
+    DEV.bal = s.balance; DEV.quote = q;
+  })().finally(() => { DEV.syncing = null; }));
+}
+function renderDevice(el) {
+  if (!needKey(el, 'Private ETH on Ethereum, Base and Robinhood Chain, proved here in your browser. A relayer sends your spends, so they need no gas.', () => openSheet('device'))) return;
+  const c = DEV.chain, W = DEV.W && DEV.key === S.key.pubHex + c.chainId ? DEV.W : null;
+  mount(el, html`
+    ${segSub('chain', String(c.chainId), DEVICE_CHAINS.map((x) => [String(x.chainId), x.name]))}
+    <div class="bal">
+      <svg class="tk md" aria-hidden="true"><use href="#tk-eth"/></svg>
+      <div><div class="v num">${DEV.bal == null ? html`<span class="mute">reading…</span>` : fmt(DEV.bal, 18, 6)}</div><div class="u">ETH, private on ${c.name}</div></div>
+    </div>
+    ${segSub('dev', DEV.mode, [['deposit', 'Deposit'], ['send', 'Send'], ['out', 'Withdraw'], ['receive', 'Receive']])}
+    <div id="d-form"></div>
+    <div class="status" id="d-status"></div>`);
+  wireSub(el, 'chain', (id) => { DEV.chain = DEVICE_CHAINS.find((x) => String(x.chainId) === id); store.set('tacit-lite-device-chain', DEV.chain.chainId); DEV.W = null; DEV.bal = null; keep($('#sheet-eth'), render.eth); deviceSync().then(() => rerender('eth')).catch((e) => sayErr($('#d-status'), e)); });
+  wireSub(el, 'dev', (m) => { DEV.mode = m; keep($('#sheet-eth'), render.eth); });
+  if (!W || DEV.bal == null) deviceSync().then(() => rerender('eth')).catch((e) => sayErr($('#d-status'), e));
+  const f = $('#d-form'), status = $('#d-status');
+  const step = (m) => say(status, m[0].toUpperCase() + m.slice(1) + '…');
+  const explorer = (h) => txLink(h, c.explorer);
+  const warm = () => prover(provingNote).then(() => say(status, '')).catch(() => {});
+  const amountField = (id, label, extra = '') => html`
+    <div class="lbl"><span>${label}</span>${extra}</div>
+    <div class="amt"><input id="${id}" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="${label}"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>`;
+  const fee = DEV.quote?.fee ? html`<p class="note">Relayer fee now ${fmt(BigInt(DEV.quote.fee), 18, 6)} ETH, taken from your private balance.</p>` : '';
+  if (DEV.mode === 'deposit') {
+    mount(f, html`${amountField('d-amt', 'Amount', html`<button type="button" id="d-max">Wallet <span id="d-wb">…</span> ETH</button>`)}
+      <button class="btn" type="button" id="d-go">Deposit privately</button>
+      <p class="note">Proved on this device, then sent from your wallet: you pay the gas, no fee.</p>`);
+    let wb = null;
+    const rpcOf = async () => (await getDeviceMods()).jsonRpc(c.rpc);
+    rpcOf().then((r) => r('eth_getBalance', [S.address, 'latest'])).then((b) => { wb = BigInt(b); $('#d-wb').textContent = fmt(wb, 18, 4); }).catch(() => {});
+    $('#d-max').onclick = () => { if (wb != null) { const v = wb > 3n * 10n ** 15n ? wb - 3n * 10n ** 15n : 0n; $('#d-amt').value = v ? plain(v, 18) : ''; } };
+    $('#d-amt').addEventListener('focus', warm, { once: true });
+    const go = $('#d-go');
+    go.onclick = () => busy(go, async () => {
+      try {
+        const amount = parseUnits($('#d-amt').value);
+        if (!amount) throw new Error('Enter an amount.');
+        const W2 = await deviceWallet();
+        W2.connect({ address: S.address, send: ({ to, data, value }) => sendTx({ to, data, value: BigInt(value || 0), chainId: c.chainId }) });
+        const h = await W2.deposit({ amount, onStep: step });
+        $('#d-amt').value = '';
+        await deviceSync(); rerender('eth'); say($('#d-status'), html`<span class="ok">Deposited.</span> ${explorer(h)}`);
+      } catch (e) { sayErr(status, e); }
+    });
+  } else if (DEV.mode === 'send') {
+    mount(f, html`<div class="lbl"><span>To</span></div>
+      <div class="amt text"><input id="d-to" placeholder="bp1… Secret Sats address" autocomplete="off" spellcheck="false" aria-label="Recipient"></div>
+      ${amountField('d-amt', 'Amount')}
+      <button class="btn" type="button" id="d-go">Send privately</button>${fee}`);
+    for (const id of ['d-to', 'd-amt']) $('#' + id).addEventListener('focus', warm, { once: true });
+    const go = $('#d-go');
+    go.onclick = () => busy(go, async () => {
+      try {
+        const amount = parseUnits($('#d-amt').value);
+        if (!amount) throw new Error('Enter an amount.');
+        const h = await (await deviceWallet()).send({ to: $('#d-to').value.trim(), amount, onStep: step });
+        $('#d-amt').value = '';
+        await deviceSync(); rerender('eth'); say($('#d-status'), html`<span class="ok">Sent privately.</span> ${explorer(h)}`);
+      } catch (e) { sayErr(status, e); }
+    });
+  } else if (DEV.mode === 'out') {
+    mount(f, html`<div class="lbl"><span>To</span><button type="button" id="d-me">Use my wallet</button></div>
+      <div class="amt text"><input id="d-to" placeholder="0x… (a fresh address keeps it unlinked)" autocomplete="off" spellcheck="false" aria-label="Recipient address"></div>
+      ${amountField('d-amt', 'Amount')}
+      <button class="btn" type="button" id="d-go">Withdraw</button>${fee}`);
+    $('#d-me').onclick = () => { $('#d-to').value = S.address; };
+    for (const id of ['d-to', 'd-amt']) $('#' + id).addEventListener('focus', warm, { once: true });
+    const go = $('#d-go');
+    go.onclick = () => busy(go, async () => {
+      try {
+        const amount = parseUnits($('#d-amt').value);
+        if (!amount) throw new Error('Enter an amount.');
+        const h = await (await deviceWallet()).withdraw({ to: $('#d-to').value.trim(), amount, onStep: step });
+        $('#d-amt').value = '';
+        await deviceSync(); rerender('eth'); say($('#d-status'), html`<span class="ok">Withdrawn.</span> ${explorer(h)}`);
+      } catch (e) { sayErr(status, e); }
+    });
+  } else {
+    const min = DEV.quote?.receiveMin ? BigInt(DEV.quote.receiveMin) : null;
+    mount(f, W ? html`
+      <div class="kv"><span>Private address</span><b class="mono">${short(W.address, 10)}</b><button class="link" type="button" data-copy="${W.address}">copy</button></div>
+      <p class="note">For private payments from other Tacit users. Nothing on chain links a payment to it.</p>
+      <div class="kv"><span>Private ETH address</span><b class="mono">${short(W.receiveBox, 8)}</b><button class="link" type="button" data-copy="${W.receiveBox}">copy</button></div>
+      <p class="note">Send ETH here from any wallet or exchange on ${c.name}. It moves into your private balance within minutes, less at most 0.25%${min ? html`; send at least ${fmt(min, 18, 4)} ETH at a time` : ''}.</p>` : html`<p class="note">Reading your addresses…</p>`);
+    $$('[data-copy]', f).forEach((b) => b.onclick = () => navigator.clipboard?.writeText(b.dataset.copy).then(() => toast('Copied')));
+  }
+}
+
+// ── TAC: airdrop + buy ───────────────────────────────────────────────────────────────────────────────────
+const air = makeTacAirdrop({ call: makeRpcCall({ rpcs: RPCS }), keccak256: keccak_256 });
+let AIR = null;
+const AIR_CLOSE = `Airdrop claims close ${dayFmt(air.config.deadline)}`;
+async function loadAirdrop() {
+  if (!S.address) { AIR = null; setFoot('tac', AIR_CLOSE); return; }
+  const who = S.address, s = await air.status(who);
+  if (who !== S.address) return;
+  AIR = s;
+  if (s.error) setFoot('tac', 'Could not read the airdrop');
+  else if (s.claimable) setFoot('tac', `${fmt(BigInt(s.amountWei), 18, 2)} TAC to claim`, 'live');
+  else if (s.claimed) setFoot('tac', `Airdrop claimed · ${fmt(BigInt(s.amountWei), 18, 2)} TAC`, 'on');
+  else setFoot('tac', s.reason === 'not-listed' ? 'No airdrop for this wallet · buy with ETH' : s.message || 'Not claimable');
+}
+render.tac = () => {
+  $('#air-body').hidden = TAB.tac !== 'air';
+  $('#buy-body').hidden = TAB.tac !== 'buy';
+  if (TAB.tac === 'air') renderAirdrop($('#air-body')); else renderBuy($('#buy-body'));
+};
+load.tac = () => (TAB.tac === 'air' ? loadAirdrop() : loadPrecision());
+const send = ({ to, data, value }) => sendTx({ to, data, value: BigInt(value || 0) });
+function renderAirdrop(el) {
+  if (!S.address) { mount(el, gate('Connect the wallet that held the snapshot tokens.', 'Connect wallet', 'air-connect')); return wireConnect('air-connect', () => rerender('tac')); }
+  if (!AIR) { mount(el, html`<div class="gate"><p>Checking ${short(S.address)}…</p></div>`); return; }
+  const s = AIR;
+  if (s.error) { mount(el, gate(`Could not read the airdrop: ${s.error.message}`, 'Try again', 'air-retry')); $('#air-retry').onclick = () => { AIR = null; loadAirdrop().then(() => rerender('tac')); render.tac(); }; return; }
+  const amount = s.amountWei ? fmt(BigInt(s.amountWei), 18, 4) : '0';
+  if (s.reason === 'not-listed') {
+    mount(el, html`<div class="gate"><div class="big">0 <small>TAC</small></div><p>${short(S.address)} has no allocation. Try the wallet that held the snapshot tokens, or buy TAC with ETH.</p></div>`);
+    return;
+  }
+  const left = Math.max(0, Math.round((s.secondsLeft || 0) / 86400));
+  mount(el, html`
+    <div class="gate">
+      <div class="big num">${amount} <small>TAC</small></div>
+      <p>${s.claimed ? 'Claimed.' : s.claimable ? `Claim by ${dayFmt(s.deadline)} · ${left} days left` : s.message}</p>
+    </div>
+    ${s.claimable ? html`
+      <button class="btn" type="button" id="air-claim">Claim ${amount} TAC</button>
+      <div class="lbl" style="justify-content:center"><button type="button" id="air-to-show">Send it to another address</button></div>
+      <div id="air-to" hidden>
+        <div class="amt text"><input id="air-to-addr" placeholder="0x… recipient" autocomplete="off" spellcheck="false" aria-label="Recipient address"></div>
+        <button class="btn ghost" type="button" id="air-claim-to">Claim to this address</button>
+      </div>` : ''}
+    ${s.claimed ? html`<div class="row2"><button class="btn ghost" type="button" id="air-watch">Add TAC to wallet</button><button class="btn ghost" type="button" id="air-farm">Farm it</button></div>` : ''}
+    <div class="status" id="air-status"></div>`);
+  const status = $('#air-status');
+  const finish = async (r) => {
+    say(status, html`Claiming… ${txLink(r.txHash)}`);
+    const w = await air.waitClaimed(S.address);
+    if (w.claimed) { await loadAirdrop(); render.tac(); toast('TAC claimed'); }
+    else say(status, html`Still pending. ${txLink(r.txHash)}`);
+  };
+  const c = $('#air-claim');
+  if (c) c.onclick = () => busy(c, async () => { try { await finish(await air.claim(S.address, { send, from: S.address })); } catch (e) { sayErr(status, e); } });
+  const show = $('#air-to-show'); if (show) show.onclick = () => { $('#air-to').hidden = false; show.parentElement.hidden = true; $('#air-to-addr').focus(); };
+  const ct = $('#air-claim-to');
+  if (ct) ct.onclick = () => busy(ct, async () => { try { await finish(await air.claimTo(S.address, $('#air-to-addr').value.trim(), { send })); } catch (e) { sayErr(status, e); } });
+  const wa = $('#air-watch');
+  if (wa) wa.onclick = () => S.provider.request({ method: 'wallet_watchAsset', params: { type: 'ERC20', options: { address: ADDR.tac, symbol: 'TAC', decimals: 18, image: 'https://tacit.finance/tac-logo.png' } } }).catch(() => {});
+  const fm = $('#air-farm'); if (fm) fm.onclick = () => { $('#sheet-tac').close(); FARM.open = 'precision'; FARM.mode = 'pair'; openSheet('farm'); };
+}
+
+// Buy: the same venue search Tacit's market page runs (Precision band and Tacit's public AMM), sent through
+// zRouter. minOut is the winning venue's own quote less 0.5%.
+const venues = makeEvmTradeVenues({ ethCall: (to, data, block = 'latest', o = {}) => rpc('eth_call', [{ to, data, ...(o.gas ? { gas: o.gas } : {}) }, block]), keccak256: keccak_256 });
+function renderBuy(el) {
+  if (!S.address) { mount(el, gate('Buy public TAC with ETH, routed to the deepest pool.', 'Connect wallet', 'buy-connect')); return wireConnect('buy-connect', () => rerender('tac')); }
+  mount(el, html`
+    <div class="lbl"><span>Pay</span><button type="button" id="b-max">Wallet <span id="b-bal">…</span> ETH</button></div>
+    <div class="amt"><input id="b-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="ETH to spend"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>
+    <div class="rcpt" id="b-rcpt" hidden></div>
+    <div id="b-ack"></div>
+    <button class="btn" type="button" id="b-go" disabled>Buy TAC</button>
+    <div class="status" id="b-status"></div>`);
+  const input = $('#b-amt'), go = $('#b-go'), rc = $('#b-rcpt'), status = $('#b-status');
+  let bal = null, q = null, seq = 0;
+  ethBalance().then((b) => { bal = b; $('#b-bal').textContent = fmt(b, 18, 4); });
+  $('#b-max').onclick = () => { if (bal != null) { const v = bal > 3n * 10n ** 15n ? bal - 3n * 10n ** 15n : 0n; input.value = v ? plain(v, 18) : ''; input.dispatchEvent(new Event('input')); } };
+  const gateOk = () => { go.disabled = !q || (bal != null && q.paid > bal) || !lossOk('b-ackv', q.impact); };
+  input.oninput = debounce(async () => {
+    const wei = parseUnits(input.value);
+    q = null; go.disabled = true; say(status, ''); mount($('#b-ack'), html``);
+    if (!wei) { rc.hidden = true; return; }
+    const my = ++seq;
+    try {
+      const [r, sp] = await Promise.all([venues.quoteAll({ dir: 'ETH_TO_TAC', amountIn: wei, account: S.address, includeZQuoter: false }), ethCall(ADDR.precisionPool, SEL.sqrtPrice)]);
+      if (my !== seq) return;
+      if (!r.best) throw new Error('No pool can fill this right now.');
+      const s = Number(BigInt(sp)) / 1e18, mid = Number(wei) * s * s;          // TAC wei at the band's mid price
+      const impact = mid > 0 ? Math.max(0, (1 - Number(r.best.amountOut) / mid) * 100) : 0;
+      q = { ...r.best, impact, paid: wei };
+      mount(rc, html`
+        <div class="kv"><span>You get about</span><b>${fmt(r.best.amountOut, 18, 2)} TAC</b></div>
+        ${lossLine(impact)}
+        <div class="kv"><span>Route</span><b>${r.best.venue === 'precision' ? 'Precision pool' : 'Tacit public pool'} · zRouter</b></div>`);
+      rc.hidden = false;
+      mount($('#b-ack'), lossGate('b-ackv', impact, 'trade'));
+      wireAck('b-ackv', impact, gateOk);
+      if (bal != null && wei > bal) say(status, html`<span class="err">More than your wallet holds.</span>`);
+      else if (impact >= 5) say(status, html`<span class="err">This pool is thin: smaller amounts move the price less.</span>`);
+      gateOk();
+    } catch (e) { if (my === seq) { rc.hidden = true; sayErr(status, e); } }
+  });
+  go.onclick = () => busy(go, async () => {
+    if (!q || !lossOk('b-ackv', q.impact)) return;
+    try {
+      const tx = venues.build({ quote: q, dir: 'ETH_TO_TAC', account: S.address, slippageBps: 50, deadline: deadline() });
+      const hash = await sendTx({ to: tx.to, data: tx.data, value: tx.value });
+      say(status, html`Buying… ${txLink(hash)}`);
+      await waitTx(hash);
+      input.value = ''; rc.hidden = true; mount($('#b-ack'), html``);
+      toast('TAC bought'); say(status, html`<span class="ok">Bought.</span> ${txLink(hash)}`);
+      loadPrecision().catch(() => {});
+    } catch (e) { sayErr(status, e); }
+  });
+}
+
+// ── farms ────────────────────────────────────────────────────────────────────────────────────────────────
+const FARM = { precision: null, program: null, open: 'precision', mode: 'zap', positions: null };
+async function loadPrecision() {
+  const p = ADDR.precisionPool, f = ADDR.precisionFarm;
+  const calls = [
+    { to: p, data: SEL.reserve0 }, { to: p, data: SEL.reserve1 }, { to: p, data: SEL.totalSupply }, { to: p, data: SEL.sqrtPrice },
+    { to: f, data: SEL.totalStaked }, { to: f, data: SEL.rewardRate }, { to: f, data: SEL.periodFinish }, { to: ADDR.multicall, data: SEL.timestamp },
+  ];
+  if (S.address) calls.push({ to: f, data: SEL.staked + addrWord(S.address) }, { to: f, data: SEL.earned + addrWord(S.address) },
+    { to: ADDR.tac, data: SEL.balanceOf + addrWord(S.address) }, { to: ADDR.tac, data: SEL.allowance + addrWord(S.address) + addrWord(f) });
+  const r = await multicall(calls);
+  const w = (i) => r[i] ? wordAt(r[i], 0) : 0n;
+  const x = { r0: w(0), r1: w(1), supply: w(2), sp: w(3), totalStaked: w(4), rate: w(5), finish: Number(w(6)), t: Number(w(7)) || now(), staked: w(8), earned: w(9), tac: w(10), allowance: w(11) };
+  x.live = x.t < x.finish;
+  CLOCK.skew = x.t - now();
+  x.perDay = x.live ? x.rate * 86400n : 0n;
+  x.mine = x.supply ? { eth: x.staked * x.r0 / x.supply, tac: x.staked * x.r1 / x.supply } : { eth: 0n, tac: 0n };
+  const s = Number(x.sp) / 1e18;
+  x.value = Number(x.r0) + (s > 0 ? Number(x.r1) / (s * s) : 0);                 // pool value in ETH wei at mid
+  x.tacEth = s > 0 ? 1 / (s * s) : 0;                                              // ETH per TAC
+  if (S.address) x.bal = await ethBalance();
+  FARM.precision = x;
+  return x;
+}
+async function loadProgram() {
+  const r = await fetch(`${API}/farm/program?network=mainnet`);
+  if (!r.ok) throw new Error(`farm program ${r.status}`);
+  FARM.program = await r.json();
+  return FARM.program;
+}
+async function loadPositions() {
+  if (!S.key) { FARM.positions = null; return; }
+  const t = await getUx();
+  FARM.positions = await t.farmPositions({ walletPriv: walletPriv() });
+}
+async function loadFarms() {
+  await Promise.allSettled([loadPrecision(), loadProgram(), S.key ? loadPositions() : null]);
+  const x = FARM.precision, prog = FARM.program;
+  const shielded = prog?.epoch?.active ? Number(prog.epoch.ratePerDayTac) : 0;
+  const pub = x ? Number(x.perDay / 10n ** 14n) / 1e4 : 0;
+  const total = Math.round(shielded + pub);
+  const mine = (FARM.positions || []).length;
+  if (x && (x.staked > 0n || x.earned > 0n)) setFoot('farm', `Farming · ${fmt(x.earned, 18, 2)} TAC earned`, 'on');
+  else if (mine) setFoot('farm', `${mine} shielded position${mine === 1 ? '' : 's'} earning`, 'on');
+  else if (total) setFoot('farm', `${total.toLocaleString('en-US')} TAC a day across ${1 + (prog?.pools?.length || 0)} farms`, 'live');
+  else setFoot('farm', 'Farms are between reward periods');
+}
+load.farm = () => loadFarms();
+
+const LOGO = { TAC: 'tk-tac', cETH: 'tk-teth', cUSD: 'tk-cusd', cBTC: 'tk-cbtc', ETH: 'tk-eth' };
+const logoPair = (a, b, cls = 'md') => html`<span class="pair"><svg class="tk ${cls}" aria-hidden="true"><use href="#${LOGO[a]}"/></svg><svg class="tk ${cls}" aria-hidden="true"><use href="#${LOGO[b]}"/></svg></span>`;
+const pairName = (pair) => pair.replace('cETH', 'tETH').replace('/', ' / ');
+render.farm = () => {
+  const x = FARM.precision, prog = FARM.program, list = $('#farm-list');
+  const mine = (pid) => (FARM.positions || []).filter((p) => Number(p.pid) === pid);
+  const rows = [html`
+    <li class="farm" data-farm="precision" aria-expanded="${FARM.open === 'precision'}">
+      <button type="button" aria-controls="farm-precision">
+        ${logoPair('TAC', 'ETH')}
+        <span><span class="name">TAC / ETH</span><span class="kind">Precision pool · public${x?.staked > 0n ? html`<span class="tag">yours</span>` : ''}</span></span>
+        <span class="rate">${x ? html`<b>${fmt(x.perDay, 18, 0)} TAC</b><span>a day</span>` : html`<span>…</span>`}</span>
+      </button>
+      <div class="body" id="farm-precision"></div>
+    </li>`];
+  for (const p of prog?.pools || []) {
+    const [a, b] = p.pair.split('/');
+    rows.push(html`
+      <li class="farm" data-farm="pid${p.pid}" aria-expanded="${FARM.open === 'pid' + p.pid}">
+        <button type="button" aria-controls="farm-pid${p.pid}">
+          ${logoPair(a === 'cETH' ? b : a, 'cETH')}
+          <span><span class="name">${pairName(p.pair)}</span><span class="kind">Tacit pool · shielded${mine(p.pid).length ? html`<span class="tag">yours</span>` : ''}</span></span>
+          <span class="rate"><b>${Math.round(Number(p.tacPerDayForPool)).toLocaleString('en-US')} TAC</b><span>a day</span></span>
+        </button>
+        <div class="body" id="farm-pid${p.pid}"></div>
+      </li>`);
+  }
+  mount(list, html`${rows}`);
+  $$('.farm > button', list).forEach((b) => b.onclick = () => {
+    const key = b.parentElement.dataset.farm;
+    FARM.open = FARM.open === key ? null : key;
+    keep($('#sheet-farm'), render.farm);
+  });
+  if (FARM.open === 'precision') renderPrecision($('#farm-precision'));
+  else if (FARM.open?.startsWith('pid')) renderShielded($(`#farm-${FARM.open}`), (prog?.pools || []).find((p) => 'pid' + p.pid === FARM.open));
+};
+
+function renderPrecision(el) {
+  const x = FARM.precision;
+  if (!x) { mount(el, html`<p class="note">Reading the farm…</p>`); return; }
+  if (!S.address) { mount(el, gate('Deposit ETH, or ETH with TAC, and the farm stakes it for you. TAC streams to you every second.', 'Connect wallet', 'pf-connect')); return wireConnect('pf-connect', () => rerender('farm')); }
+  const has = x.staked > 0n;
+  mount(el, html`
+    ${has ? html`
+      <div class="kv"><span>Your stake</span><b>${fmt(x.mine.eth, 18, 4)} ETH + ${fmt(x.mine.tac, 18, 2)} TAC</b></div>
+      <div class="kv"><span>Earned</span><b>${fmt(x.earned, 18, 4)} TAC</b></div>
+      <div class="row2">
+        <button class="btn ghost" type="button" id="pf-claim" ${x.earned === 0n ? 'disabled' : ''}>Claim TAC</button>
+        <button class="btn ghost" type="button" id="pf-exit">Withdraw all</button>
+      </div>` : ''}
+    ${segSub('pfm', FARM.mode, [['zap', 'ETH only'], ['pair', 'ETH + TAC']])}
+    <div class="lbl"><span>ETH</span><button type="button" id="pf-max">Wallet ${fmt(x.bal || 0n, 18, 4)}</button></div>
+    <div class="amt"><input id="pf-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="ETH to deposit"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>
+    <div class="rcpt" id="pf-rcpt" hidden></div>
+    <div id="pf-ack"></div>
+    <button class="btn" type="button" id="pf-go" disabled>${FARM.mode === 'zap' ? 'Farm with ETH' : 'Farm with ETH + TAC'}</button>
+    <div class="status" id="pf-status"></div>`);
+  wireSub(el, 'pfm', (m) => { FARM.mode = m; keep($('#sheet-farm'), render.farm); });
+  const input = $('#pf-amt'), go = $('#pf-go'), rc = $('#pf-rcpt'), status = $('#pf-status');
+  let q = null, seq = 0;
+  const gateOk = () => { go.disabled = !q || q.over || !lossOk('pf-ackv', q.loss); };
+  const requote = async () => {
+    const wei = parseUnits(input.value);
+    q = null; go.disabled = true; mount($('#pf-ack'), html``); say(status, '');
+    if (!wei || wei <= 0n) { rc.hidden = true; return; }
+    const my = ++seq;
+    try {
+      let lp, tac = 0n, loss = 0;
+      if (FARM.mode === 'zap') {
+        const r = strip(await ethCall(ADDR.precisionLens, SEL.previewZap + addrWord(ADDR.precisionPool) + addrWord(ZERO) + word(wei)));
+        if (wordAt(r, 0) !== 1n || wordAt(r, 2) === 0n) throw new Error('The pool would refuse this deposit.');
+        lp = wordAt(r, 2);
+        const ideal = Number(x.supply) * Number(wei) / x.value;                       // shares a balanced deposit of the same value gets
+        loss = ideal > 0 ? Math.max(0, (1 - Number(lp) / ideal) * 100) : 0;
+      } else {
+        tac = x.r0 > 0n ? (wei * x.r1 + x.r0 - 1n) / x.r0 : 0n;                        // TAC at the pool's own ratio
+        const r = strip(await ethCall(ADDR.precisionLens, SEL.previewAdd + addrWord(ADDR.precisionPool) + word(wei) + word(tac)));
+        if (wordAt(r, 0) !== 1n || wordAt(r, 1) === 0n) throw new Error('The pool would refuse this deposit.');
+        lp = wordAt(r, 1);
+      }
+      if (my !== seq) return;
+      const share = lp * 10000n / (x.totalStaked + lp);
+      q = { wei, lp, tac, loss, over: (x.bal != null && wei > x.bal) || (tac > 0n && tac > x.tac) };
+      mount(rc, html`
+        ${tac ? html`<div class="kv"><span>With TAC</span><b>${fmt(tac, 18, 4)} TAC <span class="mute">of ${fmt(x.tac, 18, 2)}</span></b></div>` : ''}
+        ${lossLine(loss)}
+        <div class="kv"><span>Share of the farm</span><b>${(Number(share) / 100).toFixed(2)}%</b></div>
+        <div class="kv"><span>Earns about</span><b>${fmt(x.perDay * lp / (x.totalStaked + lp), 18, 2)} TAC a day</b></div>`);
+      rc.hidden = false;
+      mount($('#pf-ack'), lossGate('pf-ackv', loss, 'deposit'));
+      wireAck('pf-ackv', loss, gateOk);
+      if (q.over) say(status, html`<span class="err">${wei > (x.bal ?? wei) ? 'More ETH than your wallet holds.' : html`Not enough TAC. <button class="link" type="button" id="pf-buy">Buy TAC</button> or claim the airdrop.`}</span>`);
+      else if (loss >= 0.5) say(status, html`<span class="err">Depositing ETH alone swaps half through this thin pool.</span> ${x.tac > 0n ? html`<button class="link" type="button" id="pf-pair">Add TAC too</button>` : ''}`);
+      $('#pf-buy')?.addEventListener('click', () => { $('#sheet-farm').close(); openSheet('buy'); });
+      $('#pf-pair')?.addEventListener('click', () => { FARM.mode = 'pair'; keep($('#sheet-farm'), render.farm); });
+      gateOk();
+    } catch (e) { if (my === seq) { rc.hidden = true; sayErr(status, e); } }
+  };
+  input.oninput = debounce(requote);
+  $('#pf-max').onclick = () => { if (x.bal) { const v = x.bal > 3n * 10n ** 15n ? x.bal - 3n * 10n ** 15n : 0n; input.value = v ? plain(v, 18) : ''; requote(); } };
+  go.onclick = () => busy(go, async () => {
+    if (!q || !lossOk('pf-ackv', q.loss)) return;
+    try {
+      const minShares = q.lp * 995n / 1000n, dl = deadline();
+      let hash;
+      if (FARM.mode === 'zap') hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.zapETH + word(0) + word(minShares) + word(dl), value: q.wei });
+      else if (x.allowance >= q.tac) hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.addAndStake + word(q.tac) + word(minShares) + word(dl), value: q.wei });
+      else {
+        const nonce = wordAt(await ethCall(ADDR.tac, '7ecebe00' + addrWord(S.address)), 0);
+        say(status, 'Sign the TAC approval in your wallet…');
+        await ensureChain(1);
+        const sig = await evm.signErc2612({ token: ADDR.tac, name: 'Tacit Token', version: '1', owner: S.address, spender: ADDR.precisionFarm, value: q.tac, nonce, deadline: dl });
+        hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.addAndStakeWithPermit + word(q.tac) + word(minShares) + word(dl) + word(sig.v) + strip(sig.r) + strip(sig.s), value: q.wei });
+      }
+      say(status, html`Staking… ${txLink(hash)}`);
+      await waitTx(hash);
+      toast('Staked. TAC is streaming to you.');
+      input.value = '';
+      await loadFarms(); render.farm(); say($('#pf-status'), html`<span class="ok">Staked.</span> ${txLink(hash)}`);
+    } catch (e) { sayErr(status, e); }
+  });
+  const c = $('#pf-claim');
+  if (c) c.onclick = () => busy(c, async () => {
+    try { const hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.claim }); say(status, html`Claiming… ${txLink(hash)}`); await waitTx(hash); toast('TAC claimed'); await loadFarms(); render.farm(); }
+    catch (e) { sayErr(status, e); }
+  });
+  const ex = $('#pf-exit');
+  if (ex) ex.onclick = () => busy(ex, async () => {
+    try {
+      // Simulate the exit for its exact outputs, then hold each to 0.5% below.
+      const dl = deadline();
+      const sim = strip(await ethCall(ADDR.precisionFarm, SEL.exitAndRemove + word(0) + word(0) + word(dl), { from: S.address }));
+      const min0 = wordAt(sim, 0) * 995n / 1000n, min1 = wordAt(sim, 1) * 995n / 1000n;
+      const hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.exitAndRemove + word(min0) + word(min1) + word(dl) });
+      say(status, html`Withdrawing ETH, TAC and rewards… ${txLink(hash)}`);
+      await waitTx(hash); toast('Withdrawn to your wallet'); await loadFarms(); render.farm();
+    } catch (e) { sayErr(status, e); }
+  });
+}
+
+// Shielded farms: positions are found from the key alone; harvest and unbond are relayed at no fee.
+function renderShielded(el, p) {
+  if (!p) return;
+  const r = p.reserves || {};
+  const mine = (FARM.positions || []).filter((x) => Number(x.pid) === Number(p.pid));
+  mount(el, html`
+    <div class="kv"><span>Bonded</span><b>${Math.round(Number(p.totalShares) * 100 / Math.max(1, Number(r.lpTotalShares || 1)))}% of the pool's shares</b></div>
+    <div class="kv"><span>Stream ends</span><b>${dayFmt(FARM.program.epoch.periodFinish)}</b></div>
+    <div id="sf-${p.pid}"></div>
+    <div class="status" id="sf-status-${p.pid}"></div>`);
+  const box = $(`#sf-${p.pid}`), status = $(`#sf-status-${p.pid}`);
+  if (!S.key) {
+    mount(box, gate('Unlock to see your shielded positions and harvest them.', S.address ? 'Unlock with wallet' : 'Connect wallet', `sf-go-${p.pid}`));
+    return S.address ? wireUnlock(`sf-go-${p.pid}`, () => loadFarms().then(() => rerender('farm'))) : wireConnect(`sf-go-${p.pid}`, () => rerender('farm'));
+  }
+  if (FARM.positions == null) { mount(box, html`<p class="note">Finding your positions…</p>`); loadPositions().then(() => rerender('farm')).catch((e) => sayErr(status, e)); return; }
+  mount(box, html`
+    ${mine.map((pos, i) => html`
+      <div class="kv"><span>${Number(pos.shares).toLocaleString('en-US')} shares</span><b>${pos.pendingTac} TAC earned</b></div>
+      <div class="row2"><button class="btn ghost" type="button" data-harvest="${i}">Harvest</button><button class="btn ghost" type="button" data-unbond="${i}">Unbond</button></div>`)}
+    ${mine.length ? '' : html`<p class="note">No position here yet. Add liquidity and bond it from the <a href="/#tab=earn">Earn tab</a> of the full app; it shows up here from your key alone.</p>`}`);
+  const t = getUx();
+  $$('[data-harvest]', box).forEach((b) => b.onclick = () => busy(b, async () => {
+    try { say(status, 'The relay is proving your harvest…'); await (await t).farmHarvest({ walletPriv: walletPriv(), position: mine[Number(b.dataset.harvest)] }); toast('Harvested to a wTAC note'); await loadPositions(); rerender('farm'); }
+    catch (e) { sayErr(status, e); }
+  }));
+  $$('[data-unbond]', box).forEach((b) => b.onclick = () => busy(b, async () => {
+    try { say(status, 'The relay is proving your unbond…'); await (await t).farmUnbond({ walletPriv: walletPriv(), position: mine[Number(b.dataset.unbond)] }); toast('Unbonded'); await loadPositions(); rerender('farm'); }
+    catch (e) { sayErr(status, /forfeit/i.test(e?.message || '') ? new Error('Harvest first; unbonding now would forfeit the TAC it has earned.') : e); }
+  }));
+}
+
+// ── borrow on Bitcoin: lock → bond → mint cBTC → borrow cUSD ─────────────────────────────────────────────
+// The lock record holds no secret: the cBTC note's blinding re-derives from the key and the lock's funding anchor.
+const LOCK = { rec: null, state: null, lm: null };
+const lockKey = () => `tacit-lite-cbtc-v1:${S.key.pubHex}`;
+const outpointOf = (t, rec) => t.pool.outpointKey('0x' + rec.lockTxid.match(/../g).reverse().join(''), rec.lockVout);
+const getLockMod = lazy(async () => {
+  const [lm, dep, rec] = await Promise.all([import('/cbtc-lock-mint.js?cb=3ed1389b'), import('/confidential-deployments.js'), import('/cbtc-note-recovery.js')]);
+  return { ...lm, ...dep, ...rec };
+});
+async function lockMint() {
+  const t = await getUx(), m = await getLockMod();
+  return m.makeCbtcLockMint({ priv: walletPriv(), pool: t.pool, cbtcAsset: t.pool.CBTC_ZK_ASSET_ID, hrp: 'bc', excludeOutpoints: m.listProtectedOutpoints() });
+}
+async function loadBorrow() {
+  if (!S.key) return;
+  LOCK.rec = store.get(lockKey());
+  const t = await getUx();
+  if (!LOCK.lm) LOCK.lm = await lockMint();
+  const addr = LOCK.lm.wallet.address();
+  const [utxos, tip, refl] = await Promise.all([
+    esplora(`/address/${addr}/utxo`).catch(() => null), esplora('/blocks/tip/height').catch(() => null),
+    fetch(`${API}/reflection/status?network=mainnet`).then((r) => r.json()).catch(() => null),
+  ]);
+  const st = { addr, sats: utxos ? utxos.reduce((s, u) => s + BigInt(u.value), 0n) : null, pendingSats: utxos ? utxos.filter((u) => !u.status?.confirmed).reduce((s, u) => s + BigInt(u.value), 0n) : 0n, tip, refl };
+  const rec = LOCK.rec;
+  if (rec) {
+    const op = outpointOf(t, rec);
+    const [lockStatus, calls] = await Promise.all([
+      esplora(`/tx/${rec.lockTxid}/status`).catch(() => null),
+      multicall([
+        { to: ADDR.pool, data: SEL.cbtcLockVBtc + strip(op) },
+        { to: ADDR.engine, data: SEL.escrowSufficient + strip(op) + word(rec.vBtc) },
+        { to: ADDR.engine, data: SEL.requiredEscrow + word(rec.vBtc) },
+        { to: ADDR.engine, data: SEL.btcToUsd + word(rec.vBtc) },
+        { to: ADDR.engine, data: SEL.cdpRatioBps },
+      ]),
+    ]);
+    const w = (i) => calls[i] ? wordAt(calls[i], 0) : 0n;
+    st.height = lockStatus?.confirmed ? lockStatus.block_height : null;
+    st.confs = st.height && tip ? tip - st.height + 1 : 0;
+    st.reflected = w(0) === BigInt(rec.vBtc);
+    st.bonded = w(1) === 1n;
+    st.needWst = w(2);
+    st.usd = w(3);
+    st.ratio = w(4) || 15000n;
+    st.needEth = st.needWst ? wordAt(await ethCall(ADDR.wsteth, SEL.stEthPerWst + word(st.needWst)), 0) : 0n;
+    if (rec.minted) {
+      await scanPrivate(true).catch(() => {});
+      st.cbtc = (P.scan?.cbtc.notes || []).find((n) => BigInt(n.value) === BigInt(rec.vBtc)) || null;
+      st.cusd = P.scan?.cusd || null;
+    }
+  }
+  LOCK.state = st;
+}
+load.borrow = () => loadBorrow();
+render.borrow = () => {
+  const el = $('#borrow-body');
+  if (!needKey(el, 'Lock BTC in an output only your key can spend, mint cBTC one to one, and borrow cUSD against it.', () => openSheet('borrow'))) return;
+  const st = LOCK.state, rec = LOCK.rec;
+  if (!st) { mount(el, html`<p class="note">Reading your Bitcoin…</p><div class="status" id="bw-status"></div>`); loadBorrow().then(() => rerender('borrow')).catch((e) => sayErr($('#bw-status'), e)); return; }
+  const stepCls = (done, now2) => done ? 'step done' : now2 ? 'step now' : 'step';
+  const s1 = !!rec, s2 = !!st.bonded, s3 = !!rec?.minted, s4 = !!rec?.borrowed;
+  const confs = Math.max(0, Math.min(24, st.confs || 0));
+  const attested = st.refl?.attestedHeight;
+  mount(el, html`
+    <ol class="steps">
+      <li class="${stepCls(s1, !s1)}">
+        <span class="n">${s1 ? '✓' : '1'}</span>
+        <div>
+          <h3>Lock BTC</h3>
+          ${s1 ? html`<div class="d">${fmt(BigInt(rec.vBtc), 8, 8)} BTC in your own output · <a href="${MEMPOOL}/tx/${rec.lockTxid}" target="_blank" rel="noopener">${short(rec.lockTxid, 6)} ↗</a></div>` : html`
+            <div class="d">Send BTC to your Tacit Bitcoin address, then lock it. The lock is signed here with your Tacit key.</div>
+            <div class="kv"><span>Deposit address</span><b class="mono">${short(st.addr, 10)}</b><button class="link" type="button" data-copy="${st.addr}">copy</button></div>
+            <div class="kv"><span>Balance</span><b>${st.sats == null ? '—' : html`${fmt(st.sats, 8, 8)} BTC${st.pendingSats ? html` <span class="mute">(${fmt(st.pendingSats, 8, 8)} unconfirmed)</span>` : ''}`}</b></div>
+            <div class="amt act"><input id="bw-amt" inputmode="decimal" placeholder="0.001" autocomplete="off" aria-label="BTC to lock"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-cbtc"/></svg>BTC</span></div>
+            <button class="btn" type="button" id="bw-lock">Lock BTC</button>`}
+        </div>
+      </li>
+      <li class="${stepCls(s2, s1 && !s2)}">
+        <span class="n">${s2 ? '✓' : '2'}</span>
+        <div>
+          <h3>Post the ETH bond</h3>
+          <div class="d">${s1 ? html`${fmt(st.needEth * 11n / 10n, 18, 5)} ETH, staked as wstETH and earning while it bonds the lock. Spending the BTC without redeeming forfeits it.` : 'An ETH bond worth 1.5× the BTC, posted in one transaction.'}</div>
+          ${s1 && !s2 ? (st.needEth ? html`<button class="btn" type="button" id="bw-bond">Post bond</button>` : html`<div class="d err">The BTC price feed is updating; the bond can be sized again in a few minutes.</div>`) : ''}
+        </div>
+      </li>
+      <li class="${stepCls(s3, s2 && !s3)}">
+        <span class="n">${s3 ? '✓' : '3'}</span>
+        <div>
+          <h3>Mint cBTC</h3>
+          <div class="d">${s3 ? html`${fmt(BigInt(rec.vBtc), 8, 8)} cBTC, shielded.` : !s1 ? 'One to one against the lock, once Bitcoin confirms it.' : st.reflected ? 'Your lock is proven on Ethereum. Mint is free.' : confs < 24 ? `Bitcoin confirmations ${confs} of 24.` : `Confirmed. Waiting for the proof to reach block ${st.height}${attested ? ` (at ${attested} now)` : ''}.`}</div>
+          ${s2 && !s3 ? html`<button class="btn" type="button" id="bw-mint" ${st.reflected ? '' : 'disabled'}>Mint cBTC</button>` : ''}
+        </div>
+      </li>
+      <li class="${stepCls(s4, s3 && !s4)}">
+        <span class="n">${s4 ? '✓' : '4'}</span>
+        <div>
+          <h3>Borrow cUSD</h3>
+          <div class="d">${s4 ? html`Borrowed ${fmt(BigInt(rec.borrowed), 8, 2)} cUSD.` : html`Up to ${st.usd ? fmt(st.usd * 10000n / st.ratio, 8, 2) : '—'} cUSD at the ${Number(st.ratio) / 100}% floor; liquidation starts at 130%.`}</div>
+          ${s3 && !s4 ? html`
+            <div class="amt act"><input id="bw-debt" inputmode="decimal" placeholder="${st.usd ? plain(st.usd / 2n / 10n ** 6n * 10n ** 6n, 8) : '0'}" autocomplete="off" aria-label="cUSD to borrow"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-cusd"/></svg>cUSD</span></div>
+            <div class="rcpt" id="bw-rcpt" hidden></div>
+            <button class="btn" type="button" id="bw-borrow">Borrow cUSD</button>` : ''}
+          ${s4 && st.cusd?.value ? html`<div class="kv"><span>Private cUSD</span><b>${fmt(st.cusd.value, 8, 2)}</b></div><button class="btn ghost" type="button" id="bw-out">Withdraw as tacUSD</button>` : ''}
+        </div>
+      </li>
+    </ol>
+    <div class="status" id="bw-status"></div>`);
+  const status = $('#bw-status');
+  $$('[data-copy]', el).forEach((b) => b.onclick = () => navigator.clipboard?.writeText(b.dataset.copy).then(() => toast('Copied')));
+  const lockBtn = $('#bw-lock');
+  if (lockBtn) lockBtn.onclick = () => busy(lockBtn, async () => {
+    try {
+      const sats = parseUnits($('#bw-amt').value, 8);
+      if (!sats || sats < 10000n) throw new Error('Lock at least 0.0001 BTC.');
+      if (st.sats != null && sats + 3000n > st.sats) throw new Error('Not enough BTC at the deposit address for this lock and its fees.');
+      const t = await getUx(), m = await getLockMod();
+      say(status, 'Checking which of your outputs are already locks…');
+      await t.syncCbtcLockReservations(walletPriv());
+      const lm = await lockMint();
+      say(status, 'Signing and broadcasting your lock…');
+      const res = await lm.lock({ amountSats: sats });
+      m.protectOutpoint(res.lockTxid, res.lockVout, res.vBtc);                       // never spent as ordinary change
+      store.set(lockKey(), { lockTxid: res.lockTxid, lockVout: res.lockVout, vBtc: String(res.vBtc), anchor: { txid: res.anchor.txid, vout: res.anchor.vout }, at: Date.now() });
+      toast('BTC locked');
+      await loadBorrow(); rerender('borrow');
+    } catch (e) { sayErr(status, e); }
+  });
+  const bond = $('#bw-bond');
+  if (bond) bond.onclick = () => busy(bond, async () => {
+    try {
+      const t = await getUx();
+      if (!st.needEth) throw new Error('The bond size could not be read. Try again in a few minutes.');
+      const hash = await sendTx({ to: ADDR.escrow, data: SEL.postEscrowWithETH + strip(outpointOf(t, rec)), value: st.needEth * 11n / 10n });
+      say(status, html`Posting the bond… ${txLink(hash)}`);
+      await waitTx(hash);
+      toast('Bond posted');
+      await loadBorrow(); rerender('borrow');
+    } catch (e) { sayErr(status, e); }
+  });
+  const mint = $('#bw-mint');
+  if (mint) mint.onclick = () => busy(mint, async () => {
+    try {
+      const t = await getUx(), m = await getLockMod();
+      const r = m.makeCbtcNoteRecovery({ hmac, sha256, curveOrder: secp.CURVE.n });
+      const b = r.deriveCbtcNoteBlinding({ privkey: walletPriv(), anchorOutpoint: r.anchorBytes(rec.anchor.txid, rec.anchor.vout), outputIndex: 0 });
+      say(status, 'The relay is proving your mint…');
+      const out = await t.mintCbtc({ walletPriv: walletPriv(), outpoint: outpointOf(t, rec), vBtc: BigInt(rec.vBtc), blinding: '0x' + b.toString(16).padStart(64, '0'), waitOpts: { timeoutMs: 20 * 60e3 } });
+      store.set(lockKey(), { ...rec, minted: out?.txHash || true });
+      toast('cBTC minted');
+      await loadBorrow(); rerender('borrow');
+    } catch (e) { sayErr(status, /CbtcLockMismatch|afff2f20/i.test(e?.message || '') ? new Error('Not ready yet: the lock is still being proven, or the bond fell short at today\'s price. Try again in a few minutes.') : e); }
+  });
+  const debt = $('#bw-debt'), rcb = $('#bw-rcpt');
+  if (debt) debt.oninput = () => {
+    const v = parseUnits(debt.value, 8);
+    if (!v || !st.usd) { rcb.hidden = true; return; }
+    const ratio = Number(st.usd * 10000n / v) / 100;
+    mount(rcb, html`<div class="kv"><span>Collateral ratio</span><b class="${ratio < Number(st.ratio) / 100 ? 'err' : ratio < 175 ? 'warn' : ''}">${Math.round(ratio)}%</b></div>`);
+    rcb.hidden = false;
+  };
+  const borrow = $('#bw-borrow');
+  if (borrow) borrow.onclick = () => busy(borrow, async () => {
+    try {
+      const debtValue = parseUnits(debt.value || debt.placeholder, 8);
+      if (!debtValue) throw new Error('Enter how much cUSD to borrow.');
+      if (debtValue * st.ratio > st.usd * 10000n) throw new Error(`That is below the ${Number(st.ratio) / 100}% floor. Borrow less.`);
+      const n = st.cbtc;
+      if (!n) throw new Error('Your cBTC note is not visible yet. Refresh in a moment.');
+      const t = await getUx(), priv = walletPriv(), c = t.cfg.collateralEngine;
+      const { derivePositionOwnerPriv } = await import('/confidential-recovery.js');
+      const { makeCdpPositionStore } = await import('/confidential-secret-store.js');
+      const ps = makeCdpPositionStore({ sha256, hmac, secp, curveOrder: secp.CURVE.n });
+      say(status, 'Finding your next position key…');
+      const keyNonce = await nextKeyNonce(t, priv, c, ps);
+      const ownerPriv = derivePositionOwnerPriv({ hmac, sha256, curveOrder: secp.CURVE.n }, priv, c, keyNonce);
+      const positionOwner = '0x' + bytesToHex(secp.getPublicKey(hexToBytes(strip(ownerPriv)), true).slice(1));
+      const leg = { asset: n.asset, cx: n.cx, cy: n.cy, value: n.value, blinding: n.blinding, leafIndex: n.leafIndex, path: n.path, owner: n.owner, nk: n.secret };
+      const anchor = t.pool.nativeNu(leg.owner, leg.nk, t.pool.leaf(leg.asset, leg.cx, leg.cy, leg.owner));
+      const d = t.deriveOutput(priv, anchor, 'cdpDebt', 0);
+      const rate = String(await t.ethCall(c, '0x' + SEL.rate)).toLowerCase();
+      say(status, 'The relay is proving your loan…');
+      const r = await t.defiActions(priv).openCdp({ controller: c, debtValue, rateSnapshot: rate, fee: 0n, collateral: [leg], spendRoot: n.root, debtBlinding: d.blindingHex, positionOwner, debtNk: d.nk, waitOpts: { timeoutMs: 20 * 60e3 } });
+      await ps.add(priv, { controller: c, debtValue: debtValue.toString(), nonce: '0x' + '0'.repeat(64), keyNonce, positionOwner, rateSnapshot: rate, debtAnchor: anchor, basket: [{ asset: leg.asset, value: String(BigInt(leg.value)) }], openedAt: r?.txHash || null }).catch(() => {});
+      store.set(lockKey(), { ...rec, borrowed: debtValue.toString() });
+      toast(`Borrowed ${fmt(debtValue, 8, 2)} cUSD`);
+      await loadBorrow(); rerender('borrow');
+    } catch (e) { sayErr(status, e); }
+  });
+  const out = $('#bw-out');
+  if (out) out.onclick = () => busy(out, async () => {
+    try {
+      const t = await getUx();
+      const note = st.cusd.notes.slice().sort((a, b) => (BigInt(b.value) > BigInt(a.value) ? 1 : -1))[0];
+      say(status, 'The relay is proving your withdrawal…');
+      const r = await t.unwrap({ note, walletPriv: walletPriv(), recipient: S.address, waitOpts: { timeoutMs: 15 * 60e3 } });
+      toast('tacUSD sent to your wallet');
+      await loadBorrow(); rerender('borrow'); say($('#bw-status'), html`<span class="ok">Withdrawn.</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
+    } catch (e) { sayErr(status, e); }
+  });
+};
+// The Nth position key against this engine: the chain walk is the authority, local storage only a floor, and
+// never a silent 0 (that would hand a new position the key of a still-open one).
+async function nextKeyNonce(t, priv, controller, ps) {
+  const c = String(controller).toLowerCase(), K = 'tacit-cdp-next-key-nonce:' + c;
+  let local = 0;
+  try { local = Math.max(0, parseInt(localStorage.getItem(K), 10) || 0); } catch {}
+  for (const p of ps.list()) if (String(p.controller).toLowerCase() === c && Number.isInteger(p.keyNonce)) local = Math.max(local, p.keyNonce + 1);
+  let chain = null;
+  try { const r = await t.recoverCdpPositions({ walletPriv: priv }); if (Number.isInteger(r?.nextKeyNonce)) chain = r.nextKeyNonce; } catch {}
+  if (chain == null && local === 0) throw new Error('Could not read your existing positions to pick a fresh key. Try again in a moment.');
+  const n = Math.max(local, chain ?? 0);
+  try { localStorage.setItem(K, String(n + 1)); } catch {}
+  return n;
+}
+
+// ── tile footers for the private panes ───────────────────────────────────────────────────────────────────
+async function paintPrivateFeet() {
+  if (!S.key) { setFoot('eth', 'Proved for you, or on this device'); setFoot('borrow', 'No custodian, no bridge signers'); return; }
+  scanPrivate().then((s) => { if (s) setFoot('eth', `${fmt(s.eth.value, 8, 4)} tETH private${s.pending.length ? ' · 1 to finish' : ''}`, s.eth.value > 0n ? 'on' : ''); }).catch(() => {});
+  const rec = store.get(lockKey());
+  if (rec) setFoot('borrow', rec.borrowed ? `${fmt(BigInt(rec.borrowed), 8, 2)} cUSD borrowed` : rec.minted ? 'cBTC minted · borrow next' : `${fmt(BigInt(rec.vBtc), 8, 6)} BTC locked`, rec.borrowed ? 'on' : 'live');
+}
+
+// ── boot ─────────────────────────────────────────────────────────────────────────────────────────────────
+function refreshAll() {
+  AIR = null; FARM.positions = null;
+  loadAirdrop().then(() => rerender('tac')).catch(() => setFoot('tac', 'Could not read the airdrop'));
+  loadFarms().then(() => rerender('farm')).catch(() => {});
+  paintPrivateFeet();
+  for (const n of SHEETS) rerender(n);
+}
+refreshAll();
+setInterval(() => {
+  if (document.hidden || inflight) return;
+  for (const n of SHEETS) if ($(`#sheet-${n}`).open) load[n]?.().then(() => rerender(n)).catch(() => {});
+}, 60e3);
+const route = () => { const h = location.hash.slice(1); if (SHEETS.includes(h) || ALIAS[h]) openSheet(h); };
+route();
+window.addEventListener('hashchange', route);
+</script>
+</body>
+</html>
