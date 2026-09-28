@@ -16,6 +16,10 @@
 //            stakes ETH + TAC with a permit it signs, sends ETH out; a connected wallet then tops it up
 //   devmove  (after acct) the Tacit account deposits into the EVM pool, sweeps a small arrival in, moves pool ETH into
 //            V1 through a keeper-relayed withdrawToV1 whose note settle is then submitted, and asks to bridge to Base
+//   pts      a listed address claims its points reward; a pasted key's Tacit account registers a .wei name through
+//            zRouter's commit and reveal and publishes its tacit1 address on it
+//   btc      a pasted key's Bitcoin sheet: balances read, BTC routes (tacit1 and sp1 as silent payments, bc1 plain), TAC
+//            routes refuse plain addresses, a tacit1's silent-payment keys are the ones this wallet scans, a payment link checks
 //   PLAYWRIGHT=<path to playwright-core> node tools/lite-check.mjs [scenario,…] [fork rpc]   (SHOTS=<dir> saves screenshots)
 
 import { spawn } from 'node:child_process';
@@ -32,7 +36,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,pair,farm,buy,v1,device,borrow,keys,saved,bitcoin,passkey,acct,devmove').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,pair,farm,buy,v1,device,borrow,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -199,7 +203,9 @@ await step('farm', async () => {
   }
   ok(await page.isDisabled('#pf-go'), 'farm: a zap this size waits for its loss to be accepted');
   for (let i = 0; i < 5 && await page.isDisabled('#pf-go'); i++) {              // a requote can move the loss by a point
-    await page.fill('#pf-ackv', await page.$eval('.ack b', (b) => b.textContent));
+    // The pool's depth on the fork decides the gate: a tick box from 15% loss, a typed percent from 30%.
+    if (await page.$eval('#pf-ackv', (x) => x.type === 'checkbox')) await page.check('#pf-ackv');
+    else await page.fill('#pf-ackv', await page.$eval('.ack b', (b) => b.textContent));
     await sleep(1500);
     if (process.env.DEBUG) console.log('   ', JSON.stringify(await page.evaluate(() => ({ go: document.querySelector('#pf-go')?.disabled, ack: document.querySelector('#pf-ackv')?.value, b: document.querySelector('.ack b')?.textContent, mode: document.querySelector('[data-pfm][aria-selected="true"]')?.dataset.pfm, status: document.querySelector('#pf-status')?.textContent, rcpt: document.querySelector('#pf-rcpt')?.textContent }))));
   }
@@ -504,6 +510,89 @@ await step('devmove', async () => {
   await until(r.page, () => /On its way|stubbed|err/i.test(document.querySelector('#d-status')?.innerHTML || ''), null, 600000);
   ok(relays.slice(k1).some((b) => b.call), `devmove: a move to Base asks the relayer for its bridge call ${(await st()).slice(0, 60)}`);
   if (r.errors.length) { fails++; console.log('FAIL devmove page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+});
+await step('btc', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  const hex = 'b17c'.padEnd(64, '5');
+  await r.page.goto(r.url + '#wallet');
+  await r.page.click('#wallet-body [data-in="paste"]');
+  await r.page.fill('#ws-hex', hex);
+  await r.page.click('#wallet-body [data-in="key"]');
+  await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+  await go(r.page, '#btc');
+  await until(r.page, () => /^\d/.test(document.querySelector('#btc-body .bal .v')?.textContent || '') || /err/.test(document.querySelector('#btc-body')?.innerHTML || ''), null, 180000);
+  ok(/^0(\.0+)?$/.test((await text(r.page, '#btc-body .bal .v')).trim()), `btc: an empty key reads 0 BTC through tacit.js (${(await text(r.page, '#btc-body .bal .v')).trim()})`);
+  const route = async (to, want) => {
+    await r.page.fill('#bt-to', to); await r.page.fill('#bt-amt', '0.0001');
+    await until(r.page, () => !document.querySelector('#bt-rcpt').hidden, null, 60000);
+    await sleep(400);
+    return (await text(r.page, '#bt-rcpt')).replace(/\s+/g, ' ');
+  };
+  const t1 = tacit1(hex);
+  ok(/Silent payment/.test(await route(t1, 'sp')), 'btc: BTC to a tacit1 address goes as a silent payment');
+  ok(/Plain payment/.test(await route('bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', 'addr')), 'btc: BTC to a bc1 address is a plain payment');
+  ok(/Ethereum address/.test(await route(A0, 'err')), 'btc: an Ethereum address is refused with a reason');
+  ok(/More than you hold/.test(await text(r.page, '#bt-rcpt')) || await r.page.isDisabled('#bt-go'), 'btc: an unfunded key cannot send');
+  // BTC to a tacit1 is a silent payment to its Bitcoin lane: the wallet's version-0 silent-payment keys, which tacit.js
+  // still scans (SP_KEY_VERSIONS) beside the version-1 address it shows.
+  await r.page.click('[data-btcm="receive"]');
+  await until(r.page, () => [...document.querySelectorAll('#btc-form [data-copy]')].some((b) => /^sp1/.test(b.dataset.copy)), null, 60000);
+  const shown = await r.page.$$eval('#btc-form [data-copy]', (bs) => bs.map((b) => b.dataset.copy).find((v) => /^sp1/.test(v)));
+  const [fromT1, v0, scanned] = await r.page.evaluate(async ([a, h]) => {
+    const T = await import([...document.scripts].map((x) => x.textContent).join('').match(/\/tacit\.js\?cb=[0-9a-f]+/)[0]);   // the instance the page loaded
+    const d = await import('/vendor/tacit-deps.min.js'), { makeTacitAddress } = await import('/tacit-address.js');
+    const { lanes } = makeTacitAddress({ secp: d.secp }).decodeTacitAddress(a);
+    const enc = (k) => T.encodeSilentPaymentAddress({ scanPub: k.scanPub, spendPub: k.spendPub, network: 'mainnet' });
+    return [enc(lanes.btc), enc(T.deriveWalletSilentPaymentKeys(d.hexToBytes(h), 0)), T.SP_KEY_VERSIONS];
+  }, [t1, hex]);
+  ok(fromT1 === v0 && scanned.includes(0) && /^sp1/.test(shown || ''), `btc: BTC to a tacit1 lands on silent-payment keys this wallet scans (${fromT1.slice(0, 12)}…, versions ${scanned})`);
+  await r.page.fill('#bt-chk', '4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b');
+  await r.page.click('#bt-chk-go');
+  await until(r.page, () => /not addressed|not found|not indexed/.test(document.querySelector('#btc-status')?.textContent || ''), null, 120000);
+  ok(true, `btc: a payment link is checked against this key (${(await text(r.page, '#btc-status')).trim().slice(0, 50)})`);
+  if (r.errors.length) { fails++; console.log('FAIL btc page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  await r.browser.close();
+});
+const WNS = '0x0000000000696760E15f265e828DB644A0c242EB';
+const namehash = (n) => n.split('.').reverse().reduce((node, l) => Buffer.from(keccak_256(Buffer.concat([node, Buffer.from(keccak_256(Buffer.from(l)))]))), Buffer.alloc(32)).toString('hex');
+const abiStr = (x) => { const b = Buffer.from(x).toString('hex'); return word(b.length / 2) + b.padEnd(Math.ceil(b.length / 64) * 64, '0'); };
+const readStr = (h) => { const d = h.replace(/^0x/, ''); const len = parseInt(d.slice(64, 128), 16); return Buffer.from(d.slice(128, 128 + len * 2), 'hex').toString(); };
+await step('pts', async () => {
+  await rpc('anvil_impersonateAccount', [RECIPIENT]);
+  await rpc('anvil_setBalance', [RECIPIENT, '0x' + (10n ** 18n).toString(16)]);
+  const r = await openPage({ account: RECIPIENT });
+  await r.page.goto(r.url + '#pts');
+  await r.page.click('#pts-connect');
+  await until(r.page, () => !!document.querySelector('#pts-body .pt'), null, 120000);
+  if (await r.page.$('[data-claim]')) {
+    const t0 = await tacOf(RECIPIENT);
+    await r.page.click('[data-claim]');
+    await until(r.page, () => /Claimed|err/.test(document.querySelector('#pts-status')?.innerHTML || ''), null, 120000);
+    ok((await tacOf(RECIPIENT)) > t0, `pts: a points reward claims to its own address ${await text(r.page, '#pts-status')}`);
+  } else ok(true, 'pts: nothing is waiting for this address on the fork');
+  if (r.errors.length) { fails++; console.log('FAIL pts page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  await r.browser.close();
+  const w = await openPage({ account: A0, key: K0 });
+  const hex = 'a11ce'.padEnd(64, '7'), acct = makeEvmAccount({ secp, keccak256: keccak_256, sha256 }).deriveEvmAccount(Buffer.from(hex, 'hex'), 'mainnet').address;
+  await rpc('anvil_setBalance', [acct, '0x' + (10n ** 17n).toString(16)]);
+  await w.page.goto(w.url + '#wallet');
+  await w.page.click('#wallet-body [data-in="paste"]');
+  await w.page.fill('#ws-hex', hex);
+  await w.page.click('#wallet-body [data-in="key"]');
+  await until(w.page, () => !!document.querySelector('#wallet-dot.on'));
+  await go(w.page, '#pts');
+  await w.page.waitForSelector('#wei-name', { timeout: 60000 });
+  const label = 'tacitlite' + Date.now().toString(36);
+  await w.page.fill('#wei-name', label);
+  await until(w.page, () => !document.querySelector('#wei-go').disabled, null, 60000);
+  await w.page.click('#wei-go');
+  await until(w.page, () => /pays you privately|err/.test(document.querySelector('#pts-status')?.innerHTML || ''), null, 300000);
+  const node = namehash(label + '.wei');
+  const owner = await rpc('eth_call', [{ to: WNS, data: '0x6352211e' + node }, 'latest']).catch(() => '0x');
+  const rec = readStr(await rpc('eth_call', [{ to: WNS, data: '0x59d1d43c' + node + word(64) + abiStr('finance.tacit') }, 'latest']).catch(() => '0x'));
+  ok(owner.slice(-40) === acct.slice(2) && rec === tacit1(hex), `pts: ${label}.wei registers to the Tacit account through zRouter and carries its tacit1 (${await text(w.page, '#pts-status')})`);
+  if (w.errors.length) { fails++; console.log('FAIL pts page errors: ' + w.errors.slice(0, 3).join(' | ')); }
+  await w.browser.close();
 });
 if (ACCT) await ACCT.r.browser.close();
 

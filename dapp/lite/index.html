@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-yMcbmE3d9jWeNFb6VC1A+p+ijgasyR6ic+bMLrTJp3k=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ho91sUPrDuZpAJmTI28eat5dxwkPVlM02tlXYEt/6Rw=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit lite</title>
 <meta name="description" content="Private ETH, the TAC airdrop, TAC farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -110,7 +110,8 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .hero h1 em { font-style: italic; }
 .hero p { color: var(--mute); margin: 0; max-width: 44ch; }
 .shelf { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 30px; }
-.shelf span { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mute); }
+.shelf button { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mute); background: none; border: 0; padding: 4px 0; cursor: pointer; }
+.shelf button:hover { color: var(--ink); }
 .shelf .tk { width: 24px; height: 24px; }
 
 /* ── tiles ── */
@@ -250,6 +251,13 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .opt-m { font-size: 12px; color: var(--mute); padding-left: 32px; }
 .opt-t .w-bal { margin-left: auto; font-weight: 400; font-size: 12.5px; color: var(--mute); }
 .opts + .seg { margin-top: 14px; }
+.parts { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: -8px 0 16px; font-size: 12px; color: var(--mute); }
+.parts b { font-weight: 400; color: var(--ink); }
+.links { list-style: none; margin: 16px 0 0; padding: 12px 0 0; border-top: 1px solid var(--hair); display: grid; gap: 8px; font-size: 13px; }
+.links a { color: var(--ink); text-underline-offset: 3px; }
+.pt { border-bottom: 1px solid var(--hair); margin-bottom: 14px; padding-bottom: 6px; }
+.pt .bal { border: 0; margin: 0; padding: 6px 0; }
+a.opt { color: inherit; text-decoration: none; }
 .kv.sep { border-top: 1px solid var(--hair); margin-top: 18px; padding-top: 12px; }
 .opt[aria-busy="true"] .opt-t::after { content: ''; width: 11px; height: 11px; margin-left: auto; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
 .more { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 18px; margin: 6px 0 0; }
@@ -316,12 +324,12 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <h1>Confidential money<br>across <em>Bitcoin</em> and <em>Ethereum</em>.</h1>
     <p>Amounts and owners stay hidden. Every balance recovers from one key.</p>
     <div class="shelf" aria-label="Assets">
-      <span><svg class="tk" aria-hidden="true"><use href="#tk-teth"/></svg>tETH</span>
-      <span><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</span>
-      <span><svg class="tk" aria-hidden="true"><use href="#tk-cbtc"/></svg>cBTC</span>
-      <span><svg class="tk" aria-hidden="true"><use href="#tk-cusd"/></svg>cUSD</span>
-      <span><svg class="tk" aria-hidden="true"><use href="#tk-tacbtc"/></svg>tacBTC</span>
-      <span><svg class="tk" aria-hidden="true"><use href="#tk-tacusd"/></svg>tacUSD</span>
+      <button type="button" data-asset="teth"><svg class="tk" aria-hidden="true"><use href="#tk-teth"/></svg>tETH</button>
+      <button type="button" data-asset="tac"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</button>
+      <button type="button" data-asset="cbtc"><svg class="tk" aria-hidden="true"><use href="#tk-cbtc"/></svg>cBTC</button>
+      <button type="button" data-asset="cusd"><svg class="tk" aria-hidden="true"><use href="#tk-cusd"/></svg>cUSD</button>
+      <button type="button" data-asset="tacbtc"><svg class="tk" aria-hidden="true"><use href="#tk-tacbtc"/></svg>tacBTC</button>
+      <button type="button" data-asset="tacusd"><svg class="tk" aria-hidden="true"><use href="#tk-tacusd"/></svg>tacUSD</button>
     </div>
   </section>
 
@@ -332,11 +340,23 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
       <p>Wrap ETH into a private note, one asset on Ethereum and Bitcoin. Send it to anyone or use it in DeFi.</p>
       <span class="tile-foot"><span class="dot" data-dot="eth"></span><span data-foot="eth">Proved for you, or on this device</span><span class="go" aria-hidden="true">→</span></span>
     </a>
+    <a class="tile" href="#btc" data-open="btc" aria-haspopup="dialog">
+      <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-btc"/></svg><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg></span>
+      <h2>Bitcoin</h2>
+      <p>Send bitcoin as a silent payment and TAC with the recipient hidden, from the same key.</p>
+      <span class="tile-foot"><span class="dot" data-dot="btc"></span><span data-foot="btc">Silent payments and shielded sends</span><span class="go" aria-hidden="true">→</span></span>
+    </a>
     <a class="tile" href="#tac" data-open="tac" aria-haspopup="dialog">
       <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg></span>
       <h2>TAC</h2>
       <p>Claim your share of the one-million-TAC airdrop, or buy TAC with ETH.</p>
       <span class="tile-foot"><span class="dot" data-dot="tac"></span><span data-foot="tac">Claim or buy</span><span class="go" aria-hidden="true">→</span></span>
+    </a>
+    <a class="tile" href="#pts" data-open="pts" aria-haspopup="dialog">
+      <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg></span>
+      <h2>Points</h2>
+      <p>Earn TAC for wrapping, depositing, swapping and naming. Each day’s 1,111 TAC is split by points.</p>
+      <span class="tile-foot"><span class="dot" data-dot="pts"></span><span data-foot="pts">100,000 TAC over 90 days</span><span class="go" aria-hidden="true">→</span></span>
     </a>
     <a class="tile" href="#farm" data-open="farm" aria-haspopup="dialog">
       <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><svg class="tk" aria-hidden="true"><use href="#tk-eth"/></svg></span>
@@ -356,7 +376,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <span>tacit lite · Ethereum mainnet</span>
     <nav aria-label="More">
       <a href="/">Full app</a>
-      <a href="/tacit-v1">Whitepaper</a>
+      <a href="/tacit-v1.pdf">Whitepaper</a>
       <a href="https://github.com/z0r0z/tacit/blob/main/docs/BUILD-A-TACIT-DAPP.md" rel="noopener">Build on Tacit</a>
       <a href="https://etherscan.io/address/0x000000000Ed1eabD231Be41d93b719056F7febFC" rel="noopener">Pool contract</a>
     </nav>
@@ -388,6 +408,18 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
   </div>
 </dialog>
 
+<!-- ── Bitcoin ── -->
+<dialog class="sheet" id="sheet-btc" aria-labelledby="btc-h">
+  <div class="sheet-in">
+    <div class="sheet-head">
+      <span class="pair"><svg class="tk lg" aria-hidden="true"><use href="#tk-btc"/></svg><svg class="tk lg" aria-hidden="true"><use href="#tk-tac"/></svg></span>
+      <h2 id="btc-h" tabindex="-1" autofocus>Bitcoin</h2>
+      <button class="x" type="button" data-close aria-label="Close">×</button>
+    </div>
+    <div id="btc-body"></div>
+  </div>
+</dialog>
+
 <!-- ── TAC ── -->
 <dialog class="sheet" id="sheet-tac" aria-labelledby="tac-h">
   <div class="sheet-in">
@@ -396,12 +428,25 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
       <h2 id="tac-h" tabindex="-1" autofocus>TAC</h2>
       <button class="x" type="button" data-close aria-label="Close">×</button>
     </div>
+    <div id="tac-bal"></div>
     <div class="seg" role="tablist" aria-label="TAC">
       <button type="button" role="tab" aria-selected="true" data-tac-mode="air">Airdrop</button>
       <button type="button" role="tab" aria-selected="false" data-tac-mode="buy">Buy with ETH</button>
     </div>
     <div id="air-body" role="tabpanel"></div>
     <div id="buy-body" role="tabpanel" hidden></div>
+  </div>
+</dialog>
+
+<!-- ── points ── -->
+<dialog class="sheet" id="sheet-pts" aria-labelledby="pts-h">
+  <div class="sheet-in">
+    <div class="sheet-head">
+      <svg class="tk lg" aria-hidden="true"><use href="#tk-tac"/></svg>
+      <h2 id="pts-h" tabindex="-1" autofocus>Points</h2>
+      <button class="x" type="button" data-close aria-label="Close">×</button>
+    </div>
+    <div id="pts-body"></div>
   </div>
 </dialog>
 
@@ -430,6 +475,16 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
 </dialog>
 
 <!-- ── layers above a sheet: wallet picker and passphrase prompt (the prompt's ids are tacit.js's contract) ── -->
+<dialog class="sheet layer" id="asset-card" aria-labelledby="asset-h">
+  <div class="sheet-in">
+    <div class="sheet-head">
+      <svg class="tk lg" aria-hidden="true"><use id="asset-ic" href="#tk-tac"/></svg>
+      <h2 id="asset-h" tabindex="-1" autofocus>TAC</h2>
+      <button class="x" type="button" data-close aria-label="Close">×</button>
+    </div>
+    <div id="asset-body"></div>
+  </div>
+</dialog>
 <dialog class="sheet layer" id="sheet-pick" aria-label="Choose a wallet">
   <div class="sheet-in">
     <div class="sheet-head"><h2 tabindex="-1" autofocus>Choose a wallet</h2><button class="x" type="button" data-close aria-label="Close">×</button></div>
@@ -490,7 +545,7 @@ const SEL = {
   previewZap: 'e7cddab0', previewAdd: 'e03ec807', zapETH: '8703a0d8', addAndStake: '6d15c09b', addAndStakeWithPermit: 'ddd9f3fb',
   claim: '4e71d92d', exitAndRemove: 'bccbe38a', aggregate3: '82ad56cb', timestamp: '0f28c97d',
   wrapWithTip: 'fc24c435', postEscrowWithETH: 'c0e2d9a1', requiredEscrow: '034448ed', stEthPerWst: 'bb2952fc',
-  escrowSufficient: '058e18b0', cbtcLockVBtc: '7cea1c1a', btcToUsd: 'd5901347', cdpRatioBps: '4827ecb3', rate: '2c4e722e',
+  escrowSufficient: '058e18b0', cbtcLockVBtc: '7cea1c1a', cbtcMinted: 'e2c2a40c', btcToUsd: 'd5901347', cdpRatioBps: '4827ecb3', rate: '2c4e722e',
 };
 const ZERO = '0x0000000000000000000000000000000000000000';
 const DEVICE_CHAINS = [
@@ -576,6 +631,7 @@ passDialog.addEventListener('cancel', (e) => { e.preventDefault(); $('#pass-canc
 // Reverts this page can hit, by selector, checked against contracts/src.
 const REVERTS = {
   '203d82d8': 'Its deadline passed before it landed. Try again.',                // Expired()
+  '797dba54': 'There is nothing to claim yet.',                                  // NothingOwed()
   '646cf558': 'That airdrop has already been claimed.',                          // AlreadyClaimed()
   'f0f25a33': 'The airdrop claim window has closed.',                            // ClaimWindowClosed()
   '9e87fac8': 'Paused right now. Try again later.',                              // Paused()
@@ -737,7 +793,7 @@ function setPayer(p) {
   const m = store.get(PAY) || {}; m[S.key.pubHex] = p; store.set(PAY, m);
   syncAccount(); paintWallet(); refreshAll();
 }
-const { encodeTacitAddress } = makeTacitAddress({ secp });
+const { encodeTacitAddress, decodeTacitAddress } = makeTacitAddress({ secp });
 const LITE_ID = 'tacit-lite-id-v1';                  // how this page last opened a key: public data only
 const readJson = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
 const isPub = (h) => /^(0x)?0[23][0-9a-f]{64}$/i.test(String(h || ''));
@@ -1102,8 +1158,54 @@ const lowEth = () => (payer() === 'tacit' ? html`More than your Tacit account ho
 const mine = () => (payer() === 'tacit' ? 'My Tacit account' : 'My wallet');
 const your = () => (payer() === 'tacit' ? 'your Tacit account' : 'your wallet');
 
+// ── asset cards: what each Tacit asset is, and where to check it ──────────────────────────────────────────
+// Opened from any [data-asset] (the hero shelf, balance headers). A layer, so it stacks above an open sheet.
+const GH = 'https://github.com/z0r0z/tacit/blob/main/', ETHERSCAN = (a, kind = 'address') => `${SCAN}/${kind}/${a}`;
+const ASSETS = {
+  teth: { name: 'tETH', icon: 'teth',
+    lede: ['tETH is ETH held as a private note in the Tacit pool, one for one: wrap ETH to enter, unwrap to any address to leave.',
+      'It is one asset on Ethereum and Bitcoin, and it trades and farms in the pool. Every balance recovers from your key and public chain data.'],
+    links: [['The Tacit pool', ETHERSCAN(ADDR.pool)], ['Assets and units in the spec', GH + 'SPEC.md#42-assets-and-units'], ['Whitepaper', '/tacit-v1.pdf'], ['How recovery works', GH + 'docs/RECOVERY.md']] },
+  tac: { name: 'TAC', icon: 'tac',
+    lede: ['TAC is Tacit’s native token: 21,000,000 issued once on Bitcoin with no mint key, so no more can ever exist. On Ethereum it is a private note in the Tacit pool or the TAC ERC-20, which only the pool can mint, from TAC that has left Bitcoin.',
+      'Holding it boosts your points and lowers the private exit fee. TAC paid as relay fees is never sold, and holders vote on proposals that the ops multisig carries out.'],
+    facts: [['Supply', '21,000,000, fixed'], ['Issued', 'on Bitcoin, block 948,242'], ['On Ethereum', 'ERC-20, minted only by the pool']],
+    links: [['Verify the fixed supply', '/verify.html'], ['Its genesis on Bitcoin', MEMPOOL + '/tx/e2d10be19c2b73b86e14be99dc237a3d999ba3dfbe6f3e3714590acee2ca481e'],
+      ['Its supply record on IPFS', 'https://ipfs.filebase.io/ipfs/bafkreig7m5j66zlaewjvo6bipk723udgdhnyl7ve5k2suofuvhi2mmb3ai'],
+      ['Bridged: a burn on Bitcoin', MEMPOOL + '/tx/d5d5bb73c7214acee52032fadf169a8cfb5714764e11b720db75e9ed328c5008'], ['…and its mint in the Tacit pool', ETHERSCAN('0xe49e6ccaaf8969f1951321b128b047d1517bf40555e297de5b9161bc56daca0a', 'tx')],
+      ['The ERC-20 on Etherscan', ETHERSCAN(ADDR.tac, 'token')], ['What holding TAC does', GH + 'docs/TAC.md#holding-tac'], ['TacBuyback', ETHERSCAN('0x6919cbEf0e70AFFA02Ae02c86c532A137154f250')]] },
+  cbtc: { name: 'cBTC', icon: 'cbtc',
+    lede: ['cBTC is bitcoin locked in an output only your key can spend, minted once, one for one, as a private note in the Tacit pool.',
+      'A wstETH bond worth at least 1.5 times the lock backs it, and spending the bitcoin without redeeming forfeits the bond. Hold it privately or borrow cUSD against it.'],
+    links: [['Borrow on Bitcoin', '#borrow'], ['cBTC and cUSD in the spec', GH + 'SPEC.md#57-cdp-cusd-and-cbtc'], ['The bond helper', ETHERSCAN(ADDR.escrow)], ['A mint in the Tacit pool', ETHERSCAN('0xc6cf22b2a423e807ec8a4a93f635b47e68f5858a0cdce47c734e541770c30a6f', 'tx')]] },
+  cusd: { name: 'cUSD', icon: 'cusd',
+    lede: ['cUSD is a dollar borrowed against cBTC: a loan needs 150% collateral and can be liquidated below 130%.',
+      'The borrower stays unlinkable, while loan amounts are public so they can be priced. A stability fee and a savings rate are built in and set to zero today. Withdrawn to a public address, cUSD becomes tacUSD.'],
+    links: [['Borrow on Bitcoin', '#borrow'], ['cBTC and cUSD in the spec', GH + 'SPEC.md#57-cdp-cusd-and-cbtc'], ['The collateral engine', ETHERSCAN(ADDR.engine)], ['A loan opened', ETHERSCAN('0x6da330c161f236030ef83ce5c9c77268c735a52e7f9789c7ebceaccb479b3229', 'tx')]] },
+  tacbtc: { name: 'tacBTC', icon: 'tacbtc',
+    lede: ['tacBTC is cBTC in public: the ERC-20 minted when a cBTC note is withdrawn to an Ethereum address, and burned when it is wrapped back into a note, one for one. Only the Tacit pool can mint it.'],
+    links: [['tacBTC on Etherscan', ETHERSCAN('0xdf1d99148bEb7a9AFf1d95C49B3d22b7ed90D696', 'token')], ['The token list', 'https://token.list.wei.limo'], ['cBTC and cUSD in the spec', GH + 'SPEC.md#57-cdp-cusd-and-cbtc']] },
+  tacusd: { name: 'tacUSD', icon: 'tacusd',
+    lede: ['tacUSD is cUSD in public: the ERC-20 minted when a cUSD note is withdrawn to an Ethereum address, and burned when it is wrapped back into a note, one for one. Only the Tacit pool can mint it.'],
+    links: [['tacUSD on Etherscan', ETHERSCAN('0x23cACFFAc2674514A6d4F6cD420B4cc2aC921564', 'token')], ['The token list', 'https://token.list.wei.limo'], ['Borrow on Bitcoin', '#borrow']] },
+};
+function openAsset(key) {
+  const a = ASSETS[key];
+  if (!a) return;
+  $('#asset-ic').setAttribute('href', `#tk-${a.icon}`);
+  $('#asset-h').textContent = a.name;
+  mount($('#asset-body'), html`
+    ${a.lede.map((p) => html`<p class="lede-s">${p}</p>`)}
+    ${(a.facts || []).map(([k, v]) => html`<div class="kv"><span>${k}</span><b>${v}</b></div>`)}
+    ${a.links?.length ? html`<ul class="links">${a.links.map(([label, href]) => href.startsWith('#') ? html`<li><a href="${href}" data-open="${href.slice(1)}">${label} →</a></li>` : html`<li><a href="${href}" target="_blank" rel="noopener">${label} ↗</a></li>`)}</ul>` : ''}`);
+  $$('[data-open]', $('#asset-body')).forEach((l) => l.onclick = (e) => { e.preventDefault(); $('#asset-card').close(); openSheet(l.dataset.open); });
+  const d = $('#asset-card');
+  if (!d.open) d.showModal();
+}
+document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-asset]'); if (b) { e.preventDefault(); openAsset(b.dataset.asset); } });
+
 // ── sheets + deep links ──────────────────────────────────────────────────────────────────────────────────
-const SHEETS = ['eth', 'tac', 'farm', 'borrow', 'wallet'];
+const SHEETS = ['eth', 'btc', 'tac', 'pts', 'farm', 'borrow', 'wallet'];
 const ALIAS = { airdrop: ['tac', 'air'], buy: ['tac', 'buy'], private: ['eth', 'v1'], device: ['eth', 'dev'] };
 function openSheet(name) {
   const [sheet, tab] = ALIAS[name] || [name];
@@ -1168,7 +1270,7 @@ const getUx = lazy(async () => {
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
 });
 const P = { scan: null, scanning: null, err: null };           // this identity's shielded notes, from ux.balance
-function resetPrivate() { P.scan = null; P.scanning = null; P.err = null; DEV.W = null; DEV.bal = null; DEV.key = null; LOCK.rec = null; LOCK.state = null; LOCK.lm = null; }
+function resetPrivate() { P.scan = null; P.scanning = null; P.err = null; DEV.W = null; DEV.bal = null; DEV.key = null; LOCK.rec = null; LOCK.state = null; LOCK.lm = null; Object.assign(LK, { at: 0, pub: null, mine: [], sent: [] }); Object.assign(BTC, { pub: null, at: 0, err: null, share: null, sp: null, held: [] }); dropTacitKey(); }
 async function scanPrivate(force = false) {
   if (!S.key) return null;
   if (P.scan && !force) return P.scan;
@@ -1176,11 +1278,11 @@ async function scanPrivate(force = false) {
   const pub = S.key.pubHex;
   P.scanning = (async () => {
     const t = await getUx();
-    const hint = LOCK.rec ? { anchors: [LOCK.rec.anchor], lockOutputs: [{ txid: LOCK.rec.lockTxid, vout: LOCK.rec.lockVout, value: Number(LOCK.rec.vBtc) }] } : null;
-    const r = await t.balance(walletPriv(), { cbtc: !!hint, btcHistory: hint });
+    // cBTC notes carry no memo: pool-ux finds them from the key's own Bitcoin history, so no local record is needed.
+    const r = await t.balance(walletPriv());
     if (S.key?.pubHex !== pub) return null;
     const of = (tk) => { const id = String(t.assetByTicker[tk]?.assetId || '').toLowerCase(); const g = r.byAsset[id]; return { id, value: g ? g.value : 0n, notes: g ? g.notes : [] }; };
-    P.scan = { at: Date.now(), eth: of('cETH'), cusd: of('cUSD'), cbtc: { id: String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase(), notes: r.notes.filter((n) => String(n.asset).toLowerCase() === String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase()) },
+    P.scan = { at: Date.now(), eth: of('cETH'), cusd: of('cUSD'), tac: of('cTAC'), cbtc: { id: String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase(), notes: r.notes.filter((n) => String(n.asset).toLowerCase() === String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase()) },
       pending: (r.diag?.wrap?.pending || []).filter((p) => String(p.asset).toLowerCase() === of('cETH').id), partial: Object.keys(r.diag?.errors || {}).length > 0 };
     P.err = null;
     return P.scan;
@@ -1196,9 +1298,43 @@ render.eth = () => {
   if (TAB.eth === 'v1') renderV1($('#eth-v1')); else renderDevice($('#eth-dev'));
 };
 load.eth = async () => {
-  if (TAB.eth === 'v1') { if (S.key) await scanPrivate(Date.now() - (P.scan?.at || 0) > 60e3); }
+  if (TAB.eth === 'v1') { if (S.key) await Promise.all([scanPrivate(Date.now() - (P.scan?.at || 0) > 60e3), loadLocks()]); }
   else if (S.key) await deviceSync();
 };
+
+// Private payments this key sent or received, found from the key alone. A payment sent here waits as a lock until
+// claimed; a send nobody claimed comes back to its sender after the deadline. Both are relayed, the fee taken from the payment.
+const LK = { at: 0, pub: null, mine: [], sent: [], root: null, sentRoot: null, scanning: null };
+function loadLocks(force = false) {
+  if (!S.key) return Promise.resolve(null);
+  if (LK.scanning) return LK.scanning;
+  if (!force && LK.pub === S.key.pubHex && Date.now() - LK.at < 60e3) return Promise.resolve(LK);
+  const pub = S.key.pubHex;
+  return (LK.scanning = (async () => {
+    const t = await getUx(), priv = walletPriv();
+    const [r, s] = await Promise.all([t.scanStealthLocks({ walletPriv: priv }), t.scanSentLocks({ walletPriv: priv })]);
+    if (S.key?.pubHex !== pub) return null;
+    return Object.assign(LK, { at: Date.now(), pub, mine: r.mine.filter((l) => l.spent !== true), sent: s.sent.filter((l) => l.spent !== true), root: r.lockSetRoot, sentRoot: s.lockSetRoot });
+  })().finally(() => { LK.scanning = null; }));
+}
+const tickerOf = (t, asset) => Object.keys(t.assetByTicker).find((k) => String(t.assetByTicker[k].assetId).toLowerCase() === String(asset).toLowerCase()) || null;
+const shownAs = (tk) => ({ cETH: 'tETH', cTAC: 'TAC' }[tk] || tk || 'units');
+// Claims every payment waiting for this key, or takes back every expired send, one relayed settle each.
+async function settleLocks(kind, status) {
+  const t = await getUx(), priv = walletPriv();
+  for (;;) {
+    await loadLocks(true);
+    const due = kind === 'claim' ? LK.mine[0] : LK.sent.find((l) => BigInt(l.deadline) < BigInt(now() + Math.max(0, CLOCK.skew)));
+    if (!due) break;
+    const tk = tickerOf(t, due.asset), fee = BigInt(await t.quoteOpFee(tk, 'stealthclaim'));
+    if (fee >= BigInt(due.amount)) throw new Error(`A ${fmt(BigInt(due.amount), 8, 8)} ${shownAs(tk)} payment is smaller than the relay fee to ${kind === 'claim' ? 'claim' : 'take back'} it.`);
+    say(status, `${kind === 'claim' ? 'Claiming' : 'Taking back'} ${fmt(BigInt(due.amount), 8, 6)} ${shownAs(tk)}: the relay is proving it…`);
+    const w = { timeoutMs: 15 * 60e3 };
+    if (kind === 'claim') await t.stealthClaim({ walletPriv: priv, lockRecord: due, lockSetRoot: LK.root, fee, waitOpts: w });
+    else await t.stealthRefund({ walletPriv: priv, lockRecord: due, refundPriv: due.refundPriv, lockSetRoot: LK.sentRoot, fee, waitOpts: w });
+  }
+  await scanPrivate(true).catch(() => {});
+}
 
 function renderV1(el) {
   if (!needKey(el, 'Wrap ETH into tETH, a private note in the Tacit pool and the same asset on Bitcoin. Open your Tacit wallet to start.')) return;
@@ -1211,13 +1347,20 @@ function renderV1(el) {
       <div class="side">${s?.partial ? html`<span class="err">partial scan</span>` : P.err ? html`<button class="link" type="button" id="v1-rescan">retry</button>` : s ? html`<button class="link" type="button" id="v1-rescan">refresh</button>` : ''}</div>
     </div>
     ${s?.pending?.length ? html`<div class="callout"><span>${s.pending.length === 1 ? 'A deposit is' : `${s.pending.length} deposits are`} waiting to become private notes.</span><button class="btn ghost" type="button" id="v1-finish">Finish</button></div>` : ''}
+    ${LK.pub === S.key.pubHex && LK.mine.length ? html`<div class="callout"><span>${LK.mine.length === 1 ? 'A private payment was' : `${LK.mine.length} private payments were`} sent to you.</span><button class="btn ghost" type="button" id="v1-claim">Claim</button></div>` : ''}
+    ${LK.pub === S.key.pubHex && LK.sent.some((l) => BigInt(l.deadline) < BigInt(now() + Math.max(0, CLOCK.skew))) ? html`<div class="callout"><span>A private send was never claimed. It can come back to you.</span><button class="btn ghost" type="button" id="v1-back">Take back</button></div>` : ''}
     ${segSub('v1', V1.mode, [['wrap', 'Wrap'], ['send', 'Send'], ['out', 'Withdraw']])}
     <div id="v1-form"></div>
     <div class="status" id="v1-status"></div>`);
   wireSub(el, 'v1', (m) => { V1.mode = m; keep($('#sheet-eth'), render.eth); });
   const re = $('#v1-rescan'); if (re) re.onclick = () => busy(re, async () => { try { await scanPrivate(true); } catch (e) { sayErr($('#v1-status'), e); } rerender('eth'); });
   const fin = $('#v1-finish'); if (fin) fin.onclick = () => busy(fin, () => finishWraps($('#v1-status')));
+  for (const [id, kind, done] of [['v1-claim', 'claim', 'Claimed'], ['v1-back', 'refund', 'Taken back']]) {
+    const b = $('#' + id);
+    if (b) b.onclick = () => busy(b, async () => { try { await settleLocks(kind, $('#v1-status')); toast(done); rerender('eth'); } catch (e) { sayErr($('#v1-status'), e); } });
+  }
   if (!s && !P.scanning && !P.err) scanPrivate().then(() => rerender('eth')).catch((e) => { sayErr($('#v1-status'), e); });
+  if (LK.pub !== S.key.pubHex && !LK.scanning) loadLocks().then(() => rerender('eth')).catch(() => {});
   ({ wrap: v1Wrap, send: v1Send, out: v1Out })[V1.mode]($('#v1-form'), $('#v1-status'));
 }
 
@@ -1309,7 +1452,7 @@ function v1Send(el, status) {
     <div class="amt"><input id="s-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="tETH to send"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-teth"/></svg>tETH</span></div>
     <div class="rcpt" id="s-rcpt" hidden></div>
     <button class="btn" type="button" id="s-go" disabled>Send privately</button>
-    <p class="note">The recipient claims it in their Tacit wallet within 90 days; until then you can take it back.</p>`);
+    <p class="note">The recipient claims it in their Tacit wallet. If nobody claims it within 90 days, it comes back to you.</p>`);
   const to = $('#s-to'), amt = $('#s-amt'), go = $('#s-go'), rc = $('#s-rcpt');
   let who = null, seq = 0;
   $('#s-max').onclick = () => { amt.value = held ? plain(held, 8) : ''; amt.dispatchEvent(new Event('input')); };
@@ -1636,6 +1779,219 @@ function renderDevice(el) {
   }
 }
 
+// ── Bitcoin: BTC and Tacit assets at the key's own Bitcoin address ───────────────────────────────────────
+// tacit.js does the work, as Secret Sats uses it: coin selection that never spends an asset note or a live cBTC lock,
+// BIP-352 silent payments, and shielded asset sends. A tacit1 address carries its owner's silent-payment keys, so BTC sent
+// to it is a silent payment and TAC sent to it is shielded; neither leaves an address on chain that points at them.
+const BTC = { mode: 'send', asset: 'btc', pub: null, at: 0, loading: null, err: null, share: null, check: null, sp: null, held: [] };
+const SATS_DUST = 546n, ASSET_SEND_SATS = 3000n, TAC_BTC_ID = 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
+// tacit.js holding this page's key for its Bitcoin reads and sends; dropped whenever the key changes or locks.
+async function tacitKey() {
+  await loadTacit();
+  if (!T.wallet.priv || bytesToHex(T.wallet.pub || new Uint8Array()) !== S.key.pubHex) {
+    const priv = hexToBytes(S.key.priv);
+    T.wallet.priv = priv; T.wallet.pub = secp.getPublicKey(priv, true);
+  }
+  return T;
+}
+function dropTacitKey() { if (T?.wallet?.priv) { T.wallet.priv.fill(0); T.wallet.priv = null; T.wallet.pub = null; } }
+function loadBtc(force = false) {
+  if (!S.key) return Promise.resolve();
+  if (BTC.loading) return BTC.loading;
+  if (!force && BTC.pub === S.key.pubHex && Date.now() - BTC.at < 60e3) return Promise.resolve();
+  const pub = S.key.pubHex;
+  return (BTC.loading = keepShared(async () => {
+    const t = await tacitKey(), addr = t.wallet.address();
+    const [utxos, h] = await Promise.all([t.getUtxos(addr), t.scanHoldings(force)]);
+    let sats = 0n, pending = 0n, silent = 0n;
+    // At or below dust an output is a Tacit asset note: it counts with the assets, never as BTC.
+    for (const u of utxos || []) { const v = BigInt(u.value || 0); if (v <= SATS_DUST) continue; if (u.status?.confirmed) sats += v; else pending += v; }
+    for (const [k, c] of Object.entries(t.loadSpCredits() || {})) {               // silent payments found for this key, unspent
+      if (c.coinClass) continue;
+      const [txid, vout] = k.split(':');
+      if (!(await esplora(`/tx/${txid}/outspend/${vout}`).catch(() => null))?.spent) silent += BigInt(c.sats || 0);
+    }
+    const held = [...(h instanceof Map ? h.entries() : [])].map(([id, x]) => ({ id: String(x.assetIdHex || id).toLowerCase(), ticker: x.ticker && x.ticker !== '???' ? x.ticker : short(x.assetIdHex || id, 4), decimals: Number.isInteger(x.decimals) ? x.decimals : 0, balance: typeof x.balance === 'bigint' ? x.balance : 0n })).filter((a) => a.balance > 0n);
+    if (S.key?.pubHex !== pub) return;
+    Object.assign(BTC, { pub, at: Date.now(), addr, sats, pending, silent, held, err: null });
+    paintBtcFoot();
+  }).catch((e) => { if (S.key?.pubHex === pub) BTC.err = e; }).finally(() => { BTC.loading = null; }));
+}
+load.btc = () => loadBtc();
+function paintBtcFoot() {
+  if (!S.key || BTC.pub !== S.key.pubHex) { setFoot('btc', 'Silent payments and shielded sends'); return; }
+  const tac = BTC.held.find((a) => a.id === TAC_BTC_ID), sats = BTC.sats + BTC.silent;
+  setFoot('btc', `${fmt(sats, 8, 6)} BTC${tac ? ` · ${fmt(tac.balance, tac.decimals, 2)} TAC` : ''}`, sats > 0n || tac ? 'on' : '');
+}
+// Shielded payments land at one-time outputs, not at this address; each asset's transfer index finds the ones for this key.
+async function scanShielded(status) {
+  const t = await tacitKey(), ids = [...new Set([TAC_BTC_ID, ...BTC.held.map((a) => a.id)])];
+  let found = 0;
+  for (const id of ids) {
+    const r = await keepShared(() => t.scanAssetForStealthReceipts(id, { onProgress: (p) => say(status, `Looking for shielded payments: ${(p.txsScanned + p.txsSkipped).toLocaleString('en-US')} transfers checked…`) }));
+    found += r.discovered.length;
+  }
+  if (found) { try { t.invalidateHoldingsCache?.(); } catch {} await loadBtc(true); }
+  return found;
+}
+render.btc = () => {
+  const el = $('#btc-body');
+  if (!needKey(el, 'BTC and Tacit assets at your key’s own Bitcoin address. BTC goes out as a silent payment and TAC goes out shielded. Open your Tacit wallet to start.')) return;
+  const b = BTC.pub === S.key.pubHex ? BTC : null;
+  if (!b && !BTC.loading && !BTC.err) loadBtc().then(() => rerender('btc')).catch(() => {});
+  mount(el, html`
+    <div class="bal">
+      <svg class="tk md" aria-hidden="true"><use href="#tk-btc"/></svg>
+      <div><div class="v num">${b ? fmt(b.sats + b.silent, 8, 8) : BTC.err ? html`<span class="err">—</span>` : html`<span class="mute">reading…</span>`}</div>
+        <div class="u">BTC${b?.pending ? ` · ${fmt(b.pending, 8, 8)} arriving` : ''}</div></div>
+      <div class="side">${b || BTC.err ? html`<button class="link" type="button" id="btc-re">${b ? 'refresh' : 'retry'}</button>` : ''}</div>
+    </div>
+    ${(b?.held || []).map((a) => html`<div class="kv"><span>${a.ticker} on Bitcoin</span><b class="num">${fmt(a.balance, a.decimals, 4)}</b></div>`)}
+    ${segSub('btcm', BTC.mode, [['send', 'Send'], ['receive', 'Receive']])}
+    <div id="btc-form"></div>
+    <div class="status" id="btc-status"></div>`);
+  const status = $('#btc-status');
+  if (BTC.err && !b) sayErr(status, BTC.err);
+  wireSub(el, 'btcm', (m) => { BTC.mode = m; keep($('#sheet-btc'), render.btc); });
+  const re = $('#btc-re');
+  if (re) re.onclick = () => busy(re, async () => { BTC.err = null; await loadBtc(true); rerender('btc'); });
+  (BTC.mode === 'send' ? btcSendForm : btcReceive)($('#btc-form'), status, b);
+};
+// Where a Bitcoin payment goes. A tacit1 address, or a name publishing one: BTC as a silent payment to its keys, an asset
+// shielded to its spend key. sp1: a silent payment. bc1: a plain payment. tcs1: shielded. A bare key: the asset, in the open.
+async function btcRoute(raw, token) {
+  let s = String(raw || '').trim().replace(/\s/g, ''), name = null;
+  if (/\.(g?wei|eth)$/i.test(s)) { const r = await (await getNames()).resolveName(s.toLowerCase()); name = r.name; s = r.address; }
+  const lo = s.toLowerCase(), t = await tacitKey(), shown = short(lo, 10);
+  if (/^0x[0-9a-f]{40}$/.test(lo)) throw new Error('That is an Ethereum address. Send to a Tacit address, or to a Bitcoin address for BTC.');
+  if (/^tacit1/.test(lo)) {
+    const d = decodeTacitAddress(lo);
+    if (d.network !== 'mainnet') throw new Error('That Tacit address is for a test network.');
+    const { spendPub, scanPub } = d.lanes.btc;
+    return token
+      ? { kind: 'stealth', stealthAddress: t.encodeStealthAddress({ network: 'mainnet', recipientPub: spendPub }), name, shown }
+      : { kind: 'sp', to: t.encodeSilentPaymentAddress({ scanPub, spendPub, network: 'mainnet' }), name, shown };
+  }
+  if (token) {
+    if (t.decodeSilentPaymentAddress(lo) || t.decodeP2wpkhAddress(lo) || t.decodeP2trAddress(lo)) throw new Error('TAC goes to a Tacit address (tacit1…) or a shielded tcs1… address. Silent and plain addresses take BTC.');
+    const r = t.parseRecipientInput(lo);
+    if (r.kind === 'error') throw new Error(r.message.charAt(0).toUpperCase() + r.message.slice(1) + '.');
+    if (r.kind === 'stealth') return { kind: 'stealth', stealthAddress: r.stealthAddress, name, shown };
+    if (r.kind === 'pubkey') return { kind: 'pubkey', pubHex: r.pubHex, name, shown };
+    throw new Error('Enter a Tacit address, a shielded address or a public key.');
+  }
+  const sp = t.decodeSilentPaymentAddress(lo);
+  if (sp) { if (sp.network !== 'mainnet') throw new Error('That silent-payment address is for a test network.'); return { kind: 'sp', to: lo, name, shown }; }
+  const a = t.decodeP2wpkhAddress(lo) || t.decodeP2trAddress(lo);
+  if (a) { if (a.hrp !== 'bc') throw new Error('That address is for a test network.'); return { kind: 'addr', to: lo, name, shown }; }
+  if (/^tcs1/.test(lo)) throw new Error('A shielded address takes Tacit assets. Send BTC to a tacit1…, sp1… or bc1… address.');
+  throw new Error('Enter a tacit1…, sp1… or bc1… address, or a name.');
+}
+function btcSendForm(f, status, b) {
+  const held = b?.held || [];
+  if (BTC.asset !== 'btc' && !held.some((a) => a.id === BTC.asset)) BTC.asset = 'btc';
+  const token = held.find((a) => a.id === BTC.asset) || null, dec = token ? token.decimals : 8, unit = token ? token.ticker : 'BTC';
+  mount(f, html`
+    ${held.length ? segSub('btca', BTC.asset, [['btc', 'BTC'], ...held.map((a) => [a.id, a.ticker])]) : ''}
+    <div class="lbl"><span>To</span></div>
+    <div class="amt text"><input id="bt-to" placeholder="${token ? 'tacit1…, tcs1… or a name' : 'tacit1…, sp1…, bc1… or a name'}" autocomplete="off" spellcheck="false" aria-label="Recipient"></div>
+    <div class="lbl"><span>Amount</span>${token ? html`<button type="button" id="bt-max">${fmt(token.balance, dec, 8)} ${unit}</button>` : b ? html`<span>${fmt(b.sats + b.silent, 8, 8)} BTC</span>` : ''}</div>
+    <div class="amt"><input id="bt-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="Amount"><span class="u">${token ? unit : html`<svg class="tk sm" aria-hidden="true"><use href="#tk-btc"/></svg>BTC`}</span></div>
+    <div class="rcpt" id="bt-rcpt" hidden></div>
+    <button class="btn" type="button" id="bt-go" disabled>Send ${unit}</button>
+    ${BTC.share ? html`<div class="callout"><span>${BTC.share.kind === 'st' ? 'A shielded payment hides who received it.' : 'A silent payment leaves no reusable address on chain.'} Send them this link so their wallet finds it.</span><button class="btn ghost" type="button" data-copy="${BTC.share.url}">Copy link</button></div>` : ''}`);
+  wireSub(f, 'btca', (a) => { BTC.asset = a; keep($('#sheet-btc'), render.btc); });
+  $$('[data-copy]', f).forEach((x) => x.onclick = () => navigator.clipboard?.writeText(x.dataset.copy).then(() => toast('Link copied')));
+  const to = $('#bt-to'), amt = $('#bt-amt'), go = $('#bt-go'), rc = $('#bt-rcpt');
+  $('#bt-max')?.addEventListener('click', () => { amt.value = plain(token.balance, dec); amt.dispatchEvent(new Event('input')); });
+  let route = null, seq = 0;
+  to.oninput = amt.oninput = debounce(async (e) => {
+    route = null; go.disabled = true; if (e?.isTrusted) say(status, '');
+    const raw = to.value.trim(), v = parseUnits(amt.value, dec);
+    if (!raw) { rc.hidden = true; return; }
+    const my = ++seq;
+    try {
+      const r = await btcRoute(raw, token);
+      if (my !== seq || !to.isConnected) return;
+      route = r;
+      const how = { sp: 'Silent payment · a fresh output only they can find', addr: 'Plain payment · public on chain', stealth: 'Shielded · the recipient stays hidden', pubkey: 'Private amount · their key is visible' }[r.kind];
+      mount(rc, html`<div class="kv"><span>${r.name || 'To'}</span><b>${r.shown}</b></div><div class="kv"><span>How</span><b>${how}</b></div>`);
+      rc.hidden = false;
+      const avail = token ? token.balance : b ? b.sats + b.silent : null;
+      go.disabled = !v || (avail != null && v > avail) || (!token && v <= SATS_DUST);
+      if (avail != null && v > avail) warn(rc, 'More than you hold.');
+      else if (!token && v && v <= SATS_DUST) warn(rc, 'Send more than 546 sats.');
+      else if (token && b && b.sats < ASSET_SEND_SATS) warn(rc, 'A TAC send needs about 3,000 sats at your Bitcoin address for its fees. Add some from Receive.');
+    } catch (err) { if (my === seq) quoteErr(rc, err); }
+  });
+  go.onclick = () => busy(go, async () => {
+    if (!route) return;
+    try {
+      const v = parseUnits(amt.value, dec), t = await tacitKey();
+      say(status, 'Checking which of your outputs are cBTC locks…');
+      await (await getUx()).syncCbtcLockReservations(walletPriv());                  // a live lock is never spent as change
+      let txid;
+      if (!token) {
+        say(status, 'Sending…');
+        txid = (await keepShared(() => t.buildAndBroadcastSatsSend({ recipientAddr: route.to, amountSats: Number(v) }))).txid;
+      } else {
+        const stage = { 'commit-start': 'Sending the fee transaction…', 'reveal-start': 'Sending the transfer…' };
+        say(status, 'Building the transfer…');
+        txid = (await keepShared(() => t.buildAndBroadcastCXfer({ assetIdHex: token.id, amount: v, ...(route.kind === 'stealth' ? { stealthAddress: route.stealthAddress } : { recipientPubHex: route.pubHex }), onProgress: (x) => { if (stage[x]) say(status, stage[x]); } }))).revealTxid;
+        try { t.invalidateHoldingsCache?.(); } catch {}
+      }
+      const kind = route.kind === 'sp' ? 'sp' : route.kind === 'stealth' ? 'st' : null;
+      BTC.share = kind ? { kind, url: `${location.origin}/lite/#${kind}=${txid}` } : null;
+      clearField(amt);
+      toast(`Sent ${fmt(v, dec, 8)} ${unit}`);
+      await loadBtc(true).catch(() => {});
+      rerender('btc'); say($('#btc-status'), html`<span class="ok">Sent.</span> <a href="${MEMPOOL}/tx/${txid}" target="_blank" rel="noopener">${short(txid, 6)} ↗</a>`);
+    } catch (e) { sayErr(status, /insufficient sats|no plain-sats/i.test(e?.message || '') ? new Error('Not enough BTC for this and its network fee.') : e); }
+  });
+}
+function btcReceive(f, status, b) {
+  const row = (label, v, note) => html`<div class="kv"><span>${label}</span><b class="mono">${v ? short(v, 10) : '…'}</b>${v ? html`<button class="link" type="button" data-copy="${v}">copy</button>` : ''}</div><p class="note">${note}</p>`;
+  mount(f, html`
+    ${row('Tacit address', S.key.tacit, 'From any Tacit wallet: BTC arrives as a silent payment, TAC arrives shielded.')}
+    ${row('Silent payments', BTC.sp, 'From any wallet that sends silent payments (BIP-352).')}
+    ${row('Bitcoin address', b?.addr, 'From any wallet or exchange. What arrives here is public.')}
+    <div class="lbl"><span>Got a payment link?</span></div>
+    <div class="amt text"><input id="bt-chk" placeholder="Payment link or transaction id" autocomplete="off" spellcheck="false" aria-label="Payment link"><button class="link" type="button" id="bt-chk-go">Check</button></div>
+    <p class="note">Silent and shielded payments are found from the link their sender shares. Shielded TAC is also found by a scan. <button class="link" type="button" id="bt-scan">Scan now</button></p>`);
+  $$('[data-copy]', f).forEach((x) => x.onclick = () => navigator.clipboard?.writeText(x.dataset.copy).then(() => toast('Copied')));
+  if (!BTC.sp) tacitKey().then((t) => { BTC.sp = t.walletSilentPaymentAddress(); if (f.isConnected) rerender('btc'); }).catch(() => {});
+  const go = $('#bt-chk-go'), scan = $('#bt-scan');
+  const run = (raw) => busy(go, async () => { try { await checkBtcPayment(raw, status); rerender('btc'); } catch (e) { sayErr(status, e); } });
+  go.onclick = () => run($('#bt-chk').value);
+  scan.onclick = () => busy(scan, async () => {
+    try { const n = await scanShielded(status); say(status, n ? html`<span class="ok">Found ${n} shielded payment${n === 1 ? '' : 's'}.</span>` : 'No shielded payments for you.'); rerender('btc'); }
+    catch (e) { sayErr(status, e); }
+  });
+  if (BTC.check) { const c = BTC.check; BTC.check = null; run(`#${c.kind}=${c.txid}`); }
+}
+// A payment link (…#sp=<txid> for silent BTC, #st=<txid> for shielded assets) or a bare txid: credit what it holds for this key.
+async function checkBtcPayment(raw, status) {
+  const s = String(raw || '').trim(), m = s.match(/[#&?](sp|st)=([0-9a-fA-F]{64})/) || s.match(/^()([0-9a-fA-F]{64})$/);
+  if (!m) throw new Error('Paste a payment link or a 64-character transaction id.');
+  const txid = m[2].toLowerCase(), kind = m[1] || null, t = await tacitKey();
+  say(status, `Checking ${short(txid, 8)}…`);
+  let sats = 0n, tokens = [];
+  if (kind !== 'st') {
+    try { for (const x of await keepShared(() => t.discoverSilentPaymentFromTxid(txid))) sats += BigInt(x.sats || 0); }
+    catch (e) {
+      if (/missing or malformed/.test(e?.message || '')) throw new Error('That transaction was not found on Bitcoin.');
+      if (/not fully indexed/.test(e?.message || '')) throw new Error('That transaction is not indexed yet. Try again in a minute.');
+      if (kind === 'sp') throw e;
+    }
+  }
+  if (!sats && kind !== 'sp') tokens = await keepShared(() => t.discoverStealthFromTxid(txid, { merge: true })).catch((e) => { if (/missing or malformed/.test(e?.message || '')) return []; throw e; });
+  try { t.invalidateHoldingsCache?.(); } catch {}
+  await loadBtc(true).catch(() => {});
+  if (sats) say(status, html`<span class="ok">Found ${fmt(sats, 8, 8)} BTC for you.</span>`);
+  else if (tokens.length) say(status, html`<span class="ok">Found ${tokens.map((x) => { const a = BTC.held.find((h) => h.id === String(x.assetIdHex).toLowerCase()); return `${fmt(BigInt(x.amount), a?.decimals ?? 0, 4)} ${a?.ticker || 'units'}`; }).join(' + ')} for you.</span>`);
+  else say(status, 'That payment is not addressed to this wallet.');
+}
+
 // ── TAC: airdrop + buy ───────────────────────────────────────────────────────────────────────────────────
 const air = makeTacAirdrop({ call: makeRpcCall({ rpcs: RPCS }), keccak256: keccak_256 });
 let AIR = null;
@@ -1651,11 +2007,39 @@ async function loadAirdrop() {
   else setFoot('tac', s.reason === 'not-listed' ? 'No airdrop for this wallet · buy with ETH' : s.message || 'Not claimable');
 }
 render.tac = () => {
+  renderTacBal($('#tac-bal'));
   $('#air-body').hidden = TAB.tac !== 'air';
   $('#buy-body').hidden = TAB.tac !== 'buy';
   if (TAB.tac === 'air') renderAirdrop($('#air-body')); else renderBuy($('#buy-body'));
 };
-load.tac = () => (TAB.tac === 'air' ? loadAirdrop() : loadPrecision());
+load.tac = () => Promise.all([TAB.tac === 'air' ? loadAirdrop() : loadPrecision(), loadTacHoldings()]);
+// One TAC balance across its three homes: canonical TAC on Bitcoin (this key's own address and the shielded payments it
+// found), the public ERC20 on Ethereum (the connected wallet and the Tacit account) and private TAC notes in the Tacit pool.
+const TACB = { who: null, erc: null };
+async function loadTacHoldings() {
+  const who = [...new Set([S.wallet, S.acct?.address].filter(Boolean).map((a) => a.toLowerCase()))];
+  const out = who.length ? await multicall(who.map((a) => ({ to: ADDR.tac, data: SEL.balanceOf + addrWord(a) }))) : [];
+  Object.assign(TACB, { who: who.join(), erc: out.reduce((sum, r) => sum + (r ? wordAt(r, 0) : 0n), 0n) });
+  if (S.key) Promise.allSettled([scanPrivate(), loadBtc()]).then(() => rerender('tac'));
+}
+function renderTacBal(el) {
+  const who = [...new Set([S.wallet, S.acct?.address].filter(Boolean).map((a) => a.toLowerCase()))].join();
+  if (!who) { mount(el, html``); return; }
+  const k = S.key?.pubHex, btcTac = k && BTC.pub === k ? BTC.held.find((a) => a.id === TAC_BTC_ID) : null;
+  const parts = [
+    ...(k ? [['On Bitcoin', BTC.pub === k ? (btcTac ? btcTac.balance * 10n ** BigInt(18 - btcTac.decimals) : 0n) : null]] : []),
+    ['On Ethereum', TACB.who === who ? TACB.erc : null],
+    ...(k ? [['Private', P.scan?.tac ? P.scan.tac.value * E10 : null]] : []),
+  ];
+  const total = parts.reduce((sum, [, v]) => sum + (v || 0n), 0n), known = parts.every(([, v]) => v != null);
+  mount(el, html`
+    <div class="bal">
+      <svg class="tk md" aria-hidden="true"><use href="#tk-tac"/></svg>
+      <div><div class="v num">${known || total ? fmt(total, 18, 2) : html`<span class="mute">reading…</span>`}</div><div class="u">TAC${known ? '' : ', still reading'}</div></div>
+      <div class="side"><button class="link" type="button" data-asset="tac">About TAC</button></div>
+    </div>
+    <div class="parts">${parts.map(([label, v]) => html`<span>${label} <b class="num">${v == null ? '…' : fmt(v, 18, 2)}</b></span>`)}</div>`);
+}
 const sendWallet = ({ to, data, value }) => sendTx({ to, data, value: BigInt(value || 0), via: 'wallet' });   // the snapshot wallet itself
 function renderAirdrop(el) {
   if (!S.wallet) { mount(el, gate('Connect the wallet that held the snapshot tokens.', 'Connect wallet', 'air-connect')); return wireConnect('air-connect', () => rerender('tac')); }
@@ -1728,13 +2112,16 @@ function renderBuy(el) {
       const [r, sp] = await Promise.all([venues.quoteAll({ dir: 'ETH_TO_TAC', amountIn: wei, account: S.address, includeZQuoter: false }), ethCall(ADDR.precisionPool, SEL.sqrtPrice)]);
       if (my !== seq || !input.isConnected) return;
       if (!r.best) throw new Error('No pool can fill this right now.');
+      // Only the Precision route earns points: take it unless another pays more than 1% better.
+      const prec = (r.ranked || []).find((x) => x.venue === 'precision');
+      const pick = prec && BigInt(prec.amountOut) * 100n >= BigInt(r.best.amountOut) * 99n ? prec : r.best;
       const s = Number(BigInt(sp)) / 1e18, mid = Number(wei) * s * s;          // TAC wei at the band's mid price
-      const impact = mid > 0 ? Math.max(0, (1 - Number(r.best.amountOut) / mid) * 100) : 0;
-      q = { ...r.best, impact, paid: wei };
+      const impact = mid > 0 ? Math.max(0, (1 - Number(pick.amountOut) / mid) * 100) : 0;
+      q = { ...pick, impact, paid: wei };
       mount(rc, html`
-        <div class="kv"><span>You get about</span><b>${fmt(r.best.amountOut, 18, 2)} TAC</b></div>
+        <div class="kv"><span>You get about</span><b>${fmt(pick.amountOut, 18, 2)} TAC</b></div>
         ${lossLine(impact)}
-        <div class="kv"><span>Route</span><b>${r.best.venue === 'precision' ? 'Precision pool' : 'Tacit public pool'} · zRouter</b></div>`);
+        <div class="kv"><span>Route</span><b>${pick.venue === 'precision' ? 'Precision pool · earns points' : 'Tacit public pool · no points'}</b></div>`);
       rc.hidden = false;
       mount(ackBox, lossGate('b-ackv', impact, 'trade'));
       wireAck(ackBox, 'b-ackv', impact, gateOk);
@@ -1753,6 +2140,167 @@ function renderBuy(el) {
       clearField(input); rc.hidden = true; mount(ackBox, html``);
       toast('TAC bought'); say(status, html`<span class="ok">Bought.</span> ${txLink(hash)}`);
       loadPrecision().catch(() => {});
+    } catch (e) { sayErr(status, e); }
+  });
+}
+
+// ── Points: the live TAC rewards program ─────────────────────────────────────────────────────────────────
+// 100,000 TAC over 90 days; each UTC day's 1,111 TAC is split by that day's points. Points and TAC belong to the address
+// that sent each transaction, so the connected wallet and the Tacit account are read, and claimed, on their own.
+const DISTRIBUTOR = '0x000000C918e44A3a443937fA7594eA4f7C95D6b9', ZROUTER = '0x000000000000FB114709235f1ccBFfb925F600e4';
+const WNS = '0x0000000000696760E15f265e828DB644A0c242EB', ZSWAP = 'https://zswap.wei.limo';
+const PTS = { at: 0, key: '', rows: null };
+const pointsWho = () => [...new Map([[S.acct?.address, 'Tacit account'], [S.wallet, 'Wallet']].filter(([a]) => a).map(([a, l]) => [a.toLowerCase(), l]))];
+const ptsFmt = (n) => Math.round(Number(n) || 0).toLocaleString('en-US');
+async function loadPoints(force = false) {
+  const who = pointsWho(), key = who.map(([a]) => a).join();
+  if (!force && PTS.key === key && PTS.rows && Date.now() - PTS.at < 60e3) return;
+  const rows = await Promise.all(who.map(async ([addr, label]) => {
+    const [p, c] = await Promise.all([fetch(`${API}/points/${addr}`).then((r) => r.json()).catch(() => null), fetch(`${API}/claim/${addr}`).then((r) => r.json()).catch(() => null)]);
+    // What is claimable comes from the distributor itself, not the service's copy of it.
+    const owed = c?.proof && c.cumulativeAmount ? wordAt(await ethCall(DISTRIBUTOR, '787eef2e' + addrWord(addr) + word(BigInt(c.cumulativeAmount))).catch(() => '0x'), 0) : 0n;
+    const t = p?.today, today = t && Number(t.totalPoints) > 0 ? BigInt(t.dayBudgetWei) * BigInt(Math.round(Number(t.points) * 1e6)) / BigInt(Math.round(Number(t.totalPoints) * 1e6)) : 0n;
+    return { addr, label, points: Number(p?.points || 0), todayPts: Number(t?.points || 0), today, owed, claim: c?.proof ? c : null, boost: Number((p?.deposits || [])[0]?.tac_boost || 1), read: !!p };
+  }));
+  if (key !== pointsWho().map(([a]) => a).join()) return;
+  Object.assign(PTS, { at: Date.now(), key, rows });
+  paintPointsFoot();
+}
+load.pts = () => loadPoints();
+function paintPointsFoot() {
+  const rows = PTS.key && PTS.key === pointsWho().map(([a]) => a).join() ? PTS.rows : null;
+  if (!rows) { setFoot('pts', '100,000 TAC over 90 days'); return; }
+  const pts = rows.reduce((s, r) => s + r.points, 0), owed = rows.reduce((s, r) => s + r.owed, 0n);
+  setFoot('pts', owed > 0n ? `${fmt(owed, 18, 2)} TAC to claim` : `${ptsFmt(pts)} points`, owed > 0n ? 'live' : pts ? 'on' : '');
+}
+// claim(uint256 cumulativeAmount, bytes32[] proof): the running total less what the address already claimed, to itself.
+async function claimPoints(r) {
+  const p = r.claim.proof, data = '2f52ebb7' + word(BigInt(r.claim.cumulativeAmount)) + word(64) + word(p.length) + p.map((h) => strip(h).padStart(64, '0')).join('');
+  return sendTx({ to: DISTRIBUTOR, data, via: r.addr === S.acct?.address.toLowerCase() ? 'tacit' : 'wallet' });
+}
+const EARN = [
+  ['private', 'Wrap ETH into the Tacit pool', '1,000 points per ETH'],
+  ['device', 'Deposit ETH on this device', '1,000 per ETH, on Ethereum, Base or Robinhood'],
+  ['buy', 'Buy TAC with ETH', '1,000 per ETH, through the Precision pool'],
+  ['borrow', 'Post a bond toward cBTC', '1,000 per wstETH'],
+];
+render.pts = () => {
+  const el = $('#pts-body');
+  if (!S.wallet && !S.key) { mount(el, gate('Points belong to the address that sent each transaction. Connect it to see yours, or open your Tacit wallet.', 'Connect wallet', 'pts-connect')); return wireConnect('pts-connect', () => rerender('pts')); }
+  const rows = PTS.key === pointsWho().map(([a]) => a).join() ? PTS.rows : null;
+  if (!rows) loadPoints().then(() => rerender('pts')).catch(() => {});
+  mount(el, html`
+    ${rows ? rows.map((r, i) => html`
+      <div class="pt">
+        <div class="bal"><div><div class="v num">${ptsFmt(r.points)}</div><div class="u">points · ${r.label} ${short(r.addr)}</div></div>
+          <div class="side">${r.read ? html`today ${ptsFmt(r.todayPts)}<br>about ${fmt(r.today, 18, 2)} TAC` : html`<span class="err">unavailable</span>`}</div></div>
+        ${r.boost > 1 ? html`<div class="kv"><span>Holder boost</span><b>${r.boost}×</b></div>` : ''}
+        ${r.owed > 0n ? html`<button class="btn" type="button" data-claim="${i}">Claim ${fmt(r.owed, 18, 2)} TAC</button>` : ''}
+      </div>`) : html`<p class="note">Reading your points…</p>`}
+    <div class="lbl"><span>Earn more</span></div>
+    <div class="opts">${EARN.map(([go, t, m]) => html`<button class="opt" type="button" data-earn="${go}"><span class="opt-t">${t}</span><span class="opt-m">${m}</span></button>`)}
+      <a class="opt" href="${ZSWAP}" target="_blank" rel="noopener"><span class="opt-t">Swap or bet with ETH on zSwap ↗</span><span class="opt-m">1,000 per ETH</span></a></div>
+    <div class="lbl"><span>Get a .wei name</span></div>
+    <div id="wei-form"></div>
+    <p class="note">Early activity counts up to five times over, and holding 100, 1,000 or 10,000 TAC at the same address multiplies it by 1.25, 1.5 or 2. Each day’s 1,111 TAC is split by that day’s points until Dec 21; claim any time. <a href="https://github.com/z0r0z/tacit#points-and-farms" target="_blank" rel="noopener">The program ↗</a></p>
+    <div class="status" id="pts-status"></div>`);
+  const status = $('#pts-status');
+  $$('[data-earn]', el).forEach((b) => b.onclick = () => openSheet(b.dataset.earn));
+  $$('[data-claim]', el).forEach((b) => b.onclick = () => busy(b, async () => {
+    try {
+      const hash = await claimPoints(rows[Number(b.dataset.claim)]);
+      say(status, html`Claiming… ${txLink(hash)}`);
+      await waitTx(hash);
+      await loadPoints(true); rerender('pts'); say($('#pts-status'), html`<span class="ok">Claimed.</span> ${txLink(hash)}`); toast('TAC claimed');
+    } catch (e) { sayErr(status, e); }
+  }));
+  weiForm($('#wei-form'), status);
+};
+
+// ── .wei names: commit, a minute's wait, then reveal through zRouter, so the fee counts toward points ────────────
+// The commit's secret is derived from the Tacit key, the name and the new owner, so a registration interrupted between its
+// two steps picks up again from the key alone. The name goes to the paying account, which then publishes this key's tacit1
+// address on it (the finance.tacit record), so anyone can pay it privately by typing the name.
+const WEI = { label: '' };
+const utf8 = (s) => new TextEncoder().encode(s);
+const kec = (hex) => bytesToHex(keccak_256(hexToBytes(hex)));
+const abiStr = (s) => { const b = bytesToHex(utf8(s)); return word(b.length / 2) + b.padEnd(Math.ceil(b.length / 64) * 64, '0'); };
+const weiNode = (label) => ['wei', label].reduce((n, l) => kec(n + bytesToHex(keccak_256(utf8(l)))), '0'.repeat(64));
+const weiOk = (l) => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(l);
+function weiCommit(label, to) {
+  const secret = bytesToHex(hmac(sha256, walletPriv(), concatBytes(utf8('tacit-lite-wei-commit-v1'), utf8(label), hexToBytes(strip(to)))));
+  const inner = kec(secret + addrWord(to));
+  return { secret, commitment: kec(word(96) + addrWord(ZROUTER) + inner + abiStr(label)) };
+}
+async function weiPrice(label) {
+  const id = weiNode(label);
+  const [avail, fee, prem, owner] = await multicall([
+    { to: WNS, data: '8f8dc386' + word(64) + word(0) + abiStr(label) },
+    { to: WNS, data: 'fcee45f4' + word(utf8(label).length) },
+    { to: WNS, data: '1bf1fffb' + id },
+    { to: WNS, data: '6352211e' + id },
+  ]);
+  return { id, available: !!avail && wordAt(avail, 0) === 1n, price: (fee ? wordAt(fee, 0) : 0n) + (prem ? wordAt(prem, 0) : 0n), owner: owner ? '0x' + strip(owner).slice(24, 64) : null };
+}
+function weiForm(f, status) {
+  if (!S.key) { mount(f, html`<p class="note">Open your Tacit wallet to register a name people can pay privately.</p>`); return; }
+  mount(f, html`
+    <div class="amt text"><input id="wei-name" placeholder="yourname" autocomplete="off" spellcheck="false" aria-label="Name" value="${WEI.label}"><span class="u">.wei</span></div>
+    <div class="rcpt" id="wei-rcpt" hidden></div>
+    <button class="btn" type="button" id="wei-go" disabled>Register</button>`);
+  const input = $('#wei-name'), go = $('#wei-go'), rc = $('#wei-rcpt');
+  let q = null, seq = 0;
+  const check = async (e) => {
+    q = null; go.disabled = true; if (e?.isTrusted) say(status, '');
+    const label = input.value.trim().toLowerCase(); WEI.label = label;
+    if (!label) { rc.hidden = true; return; }
+    if (!weiOk(label)) { mount(rc, html``); warn(rc, 'Letters, digits and inner hyphens only.'); return; }
+    const my = ++seq;
+    try {
+      const p = await weiPrice(label);
+      if (my !== seq || !input.isConnected) return;
+      const mine = p.owner && S.address && p.owner.toLowerCase() === S.address.toLowerCase();
+      q = { label, ...p, mine };
+      mount(rc, html`<div class="kv"><span>${label}.wei</span><b>${p.available ? `${fmt(p.price, 18, 4)} ETH for a year` : mine ? 'yours' : 'taken'}</b></div>
+        ${p.available || mine ? html`<div class="kv"><span>Then</span><b>anyone can pay you privately by typing ${label}.wei</b></div>` : ''}`);
+      rc.hidden = false;
+      go.textContent = mine ? `Publish your Tacit address on ${label}.wei` : `Register ${label}.wei`;
+      go.disabled = !(p.available || mine);
+    } catch (err) { if (my === seq) quoteErr(rc, err); }
+  };
+  input.oninput = debounce(check);
+  if (WEI.label) check();
+  go.onclick = () => busy(go, async () => {
+    if (!q) return;
+    try {
+      const to = S.address, { label } = q;
+      if (!q.mine) {
+        const { secret, commitment } = weiCommit(label, to);
+        let at = wordAt(await ethCall(WNS, '839df945' + commitment), 0);
+        if (!at) {
+          say(status, 'Step 1 of 2: reserving the name…');
+          await waitTx(await sendTx({ to: WNS, data: 'f14fcbc8' + commitment }));
+          at = wordAt(await ethCall(WNS, '839df945' + commitment), 0);
+        }
+        for (;;) {                                                   // a minute between the two steps, by chain time
+          const left = Number(at) + 61 - (now() + CLOCK.skew);
+          if (left <= 0) break;
+          say(status, `Step 2 of 2 in ${left} seconds: the wait keeps anyone from taking the name in between.`);
+          await new Promise((r) => setTimeout(r, Math.min(left, 5) * 1000));
+        }
+        const { price } = await weiPrice(label);
+        say(status, 'Step 2 of 2: registering…');
+        const calls = ['2cb9f974' + word(96) + secret + addrWord(to) + abiStr(label), 'cb019b84' + addrWord('0x' + '0'.repeat(40)) + word(0) + word(0) + addrWord(to)];
+        let off = calls.length * 32, heads = '', tails = '';
+        for (const c of calls) { heads += word(off); const t = word(c.length / 2) + c.padEnd(Math.ceil(c.length / 64) * 64, '0'); tails += t; off += t.length / 2; }
+        await waitTx(await sendTx({ to: ZROUTER, data: 'ac9650d8' + word(32) + word(calls.length) + heads + tails, value: price }));
+        toast(`${label}.wei is yours`);
+      }
+      say(status, `Publishing your Tacit address on ${label}.wei…`);
+      const key = 'finance.tacit', rec = abiStr(key);
+      await waitTx(await sendTx({ to: WNS, data: '3fb24782' + weiNode(label) + word(96) + word(96 + rec.length / 2) + rec + abiStr(S.key.tacit) }));
+      say(status, html`<span class="ok">${label}.wei now pays you privately.</span>`);
+      WEI.label = ''; loadPoints(true).then(() => rerender('pts')).catch(() => {});
     } catch (e) { sayErr(status, e); }
   });
 }
@@ -1995,10 +2543,26 @@ async function lockMint(skip = []) {
   const t = await getUx(), m = await getLockMod();
   return m.makeCbtcLockMint({ priv: walletPriv(), pool: t.pool, cbtcAsset: t.pool.CBTC_ZK_ASSET_ID, hrp: 'bc', excludeOutpoints: [...m.listProtectedOutpoints(), ...skip] });
 }
+// The newest lock this key made that the pool has not retired, from the key's own Bitcoin history alone: the output paying
+// the key's lock script, and its note's blinding anchor, the first input of the commit that the lock's reveal spends.
+async function findLock(t) {
+  const { makeBtcHistoryProvider } = await import('/confidential-recovery-btc.js');
+  const h = makeBtcHistoryProvider({ sha256, hrp: 'bc' }), spk = h.walletScripts(walletPriv()).lock, want = bytesToHex(spk);
+  for (const tx of await h.txsOf(spk)) {
+    const vout = (tx.vout || []).findIndex((o) => String(o.scriptpubkey).toLowerCase() === want);
+    if (vout < 0 || !tx.vin?.[0]) continue;
+    const s = await t.cbtcLockState(tx.txid, vout);
+    if (s.spent || s.redeemed) continue;
+    const commit = await esplora(`/tx/${tx.vin[0].txid}`);
+    return { lockTxid: tx.txid, lockVout: vout, vBtc: String(tx.vout[vout].value), anchor: { txid: commit.vin[0].txid, vout: commit.vin[0].vout }, at: (tx.status?.block_time || Date.now() / 1000) * 1000 };
+  }
+  return null;
+}
 async function loadBorrow() {
   if (!S.key) return;
-  LOCK.rec = store.get(lockKey());
   const t = await getUx();
+  // The record is a cache. Without it (another device, cleared storage) the lock is found again from the key.
+  LOCK.rec = store.get(lockKey()) || await findLock(t).then((r) => { if (r) store.set(lockKey(), r); return r; }).catch(() => null);
   if (!LOCK.lm) LOCK.lm = await lockMint();
   const addr = LOCK.lm.wallet.address();
   const [utxos, tip, refl] = await Promise.all([
@@ -2019,6 +2583,7 @@ async function loadBorrow() {
         { to: ADDR.engine, data: SEL.requiredEscrow + word(rec.vBtc) },
         { to: ADDR.engine, data: SEL.btcToUsd + word(rec.vBtc) },
         { to: ADDR.engine, data: SEL.cdpRatioBps },
+        { to: ADDR.pool, data: SEL.cbtcMinted + strip(op) },
       ]),
     ]);
     const w = (i) => calls[i] ? wordAt(calls[i], 0) : 0n;
@@ -2029,11 +2594,18 @@ async function loadBorrow() {
     st.needWst = w(2);
     st.usd = w(3);
     st.ratio = w(4) || 15000n;
+    st.minted = w(5) === 1n || !!rec.minted;
     st.needEth = st.needWst ? wordAt(await ethCall(ADDR.wsteth, SEL.stEthPerWst + word(st.needWst)), 0) : 0n;
-    if (rec.minted) {
-      await scanPrivate(true).catch(() => {});
+    if (st.minted) {
+      // The loan comes from the key too: a live position this key opened with this lock's cBTC as collateral.
+      const [, cdp] = await Promise.all([scanPrivate(true).catch(() => {}), t.recoverCdpPositions({ walletPriv: walletPriv() }).catch(() => null)]);
       st.cbtc = (P.scan?.cbtc.notes || []).find((n) => BigInt(n.value) === BigInt(rec.vBtc)) || null;
       st.cusd = P.scan?.cusd || null;
+      const cbtcId = String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase();
+      const pos = (cdp?.positions || []).find((p) => p.live !== false && (p.basket || []).some((l) => String(l.asset).toLowerCase() === cbtcId && BigInt(l.value) === BigInt(rec.vBtc)));
+      st.borrowed = pos ? BigInt(pos.debtValue) : rec.borrowed ? BigInt(rec.borrowed) : 0n;
+      const cached = { ...rec, minted: rec.minted || true, ...(st.borrowed ? { borrowed: st.borrowed.toString() } : {}) };
+      if (cached.minted !== rec.minted || cached.borrowed !== rec.borrowed) { store.set(lockKey(), cached); st.rec = LOCK.rec = cached; }
     }
   }
   LOCK.state = st;
@@ -2045,7 +2617,7 @@ render.borrow = () => {
   const st = LOCK.state, rec = st?.rec;
   if (!st) { mount(el, html`<p class="note">Reading your Bitcoin…</p><div class="status" id="bw-status"></div>`); loadBorrow().then(() => rerender('borrow')).catch((e) => sayErr($('#bw-status'), e)); return; }
   const stepCls = (done, now2) => done ? 'step done' : now2 ? 'step now' : 'step';
-  const s1 = !!rec, s2 = !!st.bonded, s3 = !!rec?.minted, s4 = !!rec?.borrowed;
+  const s1 = !!rec, s2 = !!st.bonded, s3 = !!st.minted, s4 = !!st.borrowed;
   const confs = Math.max(0, Math.min(24, st.confs || 0));
   const attested = st.refl?.attestedHeight;
   mount(el, html`
@@ -2083,7 +2655,7 @@ render.borrow = () => {
         <span class="n">${s4 ? '✓' : '4'}</span>
         <div>
           <h3>Borrow cUSD</h3>
-          <div class="d">${s4 ? html`Borrowed ${fmt(BigInt(rec.borrowed), 8, 2)} cUSD.` : html`Up to ${st.usd ? fmt(st.usd * 10000n / st.ratio, 8, 2) : '—'} cUSD at the ${Number(st.ratio) / 100}% floor; liquidation starts at 130%.`}</div>
+          <div class="d">${s4 ? html`Borrowed ${fmt(st.borrowed, 8, 2)} cUSD.` : html`Up to ${st.usd ? fmt(st.usd * 10000n / st.ratio, 8, 2) : '—'} cUSD at the ${Number(st.ratio) / 100}% floor; liquidation starts at 130%.`}</div>
           ${s3 && !s4 ? html`
             <div class="amt act"><input id="bw-debt" inputmode="decimal" placeholder="${st.usd ? plain(st.usd / 2n / 10n ** 6n * 10n ** 6n, 8) : '0'}" autocomplete="off" aria-label="cUSD to borrow"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-cusd"/></svg>cUSD</span></div>
             <div class="rcpt" id="bw-rcpt" hidden></div>
@@ -2216,9 +2788,12 @@ async function nextKeyNonce(t, priv, controller, ps) {
 // ── tile footers for the private panes ───────────────────────────────────────────────────────────────────
 async function paintPrivateFeet() {
   if (!S.key) { setFoot('eth', 'Proved for you, or on this device'); setFoot('borrow', 'No custodian, no bridge signers'); return; }
-  scanPrivate().then((s) => { if (s) setFoot('eth', `${fmt(s.eth.value, 8, 4)} tETH private${s.pending.length ? ' · 1 to finish' : ''}`, s.eth.value > 0n ? 'on' : ''); }).catch(() => {});
-  const rec = store.get(lockKey());
-  if (rec) setFoot('borrow', rec.borrowed ? `${fmt(BigInt(rec.borrowed), 8, 2)} cUSD borrowed` : rec.minted ? 'cBTC minted · borrow next' : `${fmt(BigInt(rec.vBtc), 8, 6)} BTC locked`, rec.borrowed ? 'on' : 'live');
+  const foot = (s) => setFoot('eth', `${fmt(s.eth.value, 8, 4)} tETH private${s.pending.length ? ' · 1 to finish' : ''}${LK.pub === S.key?.pubHex && LK.mine.length ? ` · ${LK.mine.length} to claim` : ''}`, s.eth.value > 0n || LK.mine.length ? 'on' : '');
+  scanPrivate().then((s) => { if (!s) return; foot(s); return loadLocks().then(() => foot(s)); }).catch(() => {});
+  const lockFoot = (rec) => setFoot('borrow', rec.borrowed ? `${fmt(BigInt(rec.borrowed), 8, 2)} cUSD borrowed` : rec.minted ? 'cBTC minted · borrow next' : `${fmt(BigInt(rec.vBtc), 8, 6)} BTC locked`, rec.borrowed ? 'on' : 'live');
+  const rec = store.get(lockKey()), key = lockKey();
+  if (rec) lockFoot(rec);
+  else getUx().then(findLock).then((r) => { if (r && key === (S.key && lockKey())) { store.set(key, r); lockFoot(r); } }).catch(() => {});
 }
 
 // ── boot ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -2226,7 +2801,9 @@ function refreshAll() {
   AIR = null; FARM.positions = null;
   loadAirdrop().then(() => rerender('tac')).catch(() => setFoot('tac', 'Could not read the airdrop'));
   loadFarms().then(() => rerender('farm')).catch(() => {});
-  paintPrivateFeet();
+  paintPrivateFeet(); paintBtcFoot(); paintPointsFoot();
+  if (S.wallet || S.key) loadPoints(true).then(() => rerender('pts')).catch(() => {});
+  if (T && S.key) loadBtc().then(() => rerender('btc')).catch(() => {});
   for (const n of SHEETS) rerender(n);
 }
 refreshAll();
@@ -2234,7 +2811,11 @@ setInterval(() => {
   if (document.hidden || inflight) return;
   for (const n of SHEETS) if ($(`#sheet-${n}`).open) load[n]?.().then(() => rerender(n)).catch(() => {});
 }, 60e3);
-const route = () => { const h = location.hash.slice(1); if (SHEETS.includes(h) || ALIAS[h]) openSheet(h); };
+const route = () => {
+  const h = location.hash.slice(1), pay = h.match(/^(sp|st)=([0-9a-fA-F]{64})/);
+  if (pay) { BTC.mode = 'receive'; BTC.check = { kind: pay[1], txid: pay[2].toLowerCase() }; openSheet('btc'); }
+  else if (SHEETS.includes(h) || ALIAS[h]) openSheet(h);
+};
 route();
 window.addEventListener('hashchange', route);
 </script>
