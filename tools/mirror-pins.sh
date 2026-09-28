@@ -64,7 +64,9 @@ IPFS_API="${IPFS_API:-http://127.0.0.1:5001}"
 # (dapp/tacit.js CANONICAL_*, dapp/circuits/ceremony-genesis-amm/*_cid.txt,
 # TETH_ASSET / TETH_DEPLOYMENTS image URIs) plus the TAC etch's on-chain
 # image_uri chain (metadata JSON carrying the tacit_attest supply opening,
-# and the image it points to), and every ceremony artifact in docs/CEREMONY.md.
+# and the image it points to), the TAC ERC-20's contractURI metadata
+# (contracts/tac-metadata.json), every ceremony artifact in docs/CEREMONY.md, and
+# the EVM pool ceremony's genesis and sealed bundle (docs/EVM-POOL.md, dapp/evm-pool/pin.json).
 CANONICAL_PINS="
 bafybeidq2ahzte4sfiqjsmhqta62ufenpppzpch5ppry55tzxzlvltxy2u tacit-mixer-ceremony-bundle
 bafkreidwbautgstcnl54oszez7yqlc7mr5lrj6ac65h3p5sjw2rgz2jtv4 tacit-mixer-verification-key
@@ -82,6 +84,7 @@ bafybeidjhs2eapagz2g57ckx5hlbclzkfnvnzxwrckghvuzrlvwlbyjmru tacit-amm-lp-add-r1c
 bafybeiagfba7dwmlnylqoep6cqffvtobvxlwpbiiudcpmtshaz6hptvcii tacit-amm-lp-remove-r1cs
 bafkreig7m5j66zlaewjvo6bipk723udgdhnyl7ve5k2suofuvhi2mmb3ai tacit-tac-metadata
 bafkreibwpxssdmoczx75vsqmk5vpdyztwwz3qmykpucn5xow64ku5ht46m tacit-tac-image
+bafkreibzzaeyokynl77ua4wdk6x6hh7enupa5xdi4osxrr7jjxqtrwasge tacit-tac-erc20-metadata
 bafkreid55b3c2w6swyjl3lec66a23subiolwwsd6tof2wticoj6d7vnv4i tacit-teth-image
 bafkreihmbs7c6hg2q5zu3kl65f65irwmleuxdw6jfop44lwtzc4ijta53q tacit-teth-signet-metadata
 bafkreihdfl7hi2loonoavvl3y43qfyakwx3mvt6tuafybspfmvvmcc2ua4 tacit-teth-mainnet-metadata
@@ -89,6 +92,10 @@ bafkreifqbhoqbnho2d22bpy5s2qfsnc5ta3uxktvg4q4xn2zumxsweserq tacit-cbtc-tac-image
 bafkreicp3l6dej4hl4exg6amycvgvimgzdfqbicwj67nrppr6dh2c2ygzq tacit-cbtc-tac-metadata
 bafkreiahxxhdpchvhvv7eempousqgoqqurizzgc6xaicuamvi6iyr7hgnq tacit-cusd-tac-image
 bafkreiesofcaqgyqhcmzn4yozhrbqkxfybgds7lz6sl6eokhsjvfcikkwa tacit-cusd-tac-metadata
+bafybeie73kd3suqjeshnitj6pmr3qxf6ckjbwxxuqyaaixk77ezeoohtau evm-pool-pot16-ptau
+bafybeifupei4h5itr27v5nif4mpqzipsgmqipukj7xeruf5o4l5hcbkneu evm-pool-transact-r1cs
+bafybeihfblvhywfdoi5f2c74stayd4z5ejcngkdc2iavppzqtt7fwtq4iu evm-pool-transact-zkey0
+bafybeia4yvn2zoggvgpjwg5vpwpt6aivjbcm6tgzxoxsukao2nm5yyypfy evm-pool-transact-final-bafybeia4yvn2zoggvgpjwg5vpwpt6aivjbcm6tgzxoxsukao2nm5yyypfy
 "
 
 for cmd in curl python3 mktemp; do
