@@ -168,6 +168,22 @@ footer a:hover { color: var(--ink); }
     The Bitcoin tx comes from a public explorer but isn&rsquo;t trusted: the asset id is recomputed locally and the IPFS blob is checked against its own content hash (the CID).
   </p>
 
+  <div class="section">
+    <h2>Beyond supply: conservation in circulation</h2>
+    <p>
+      A fixed supply at genesis is one property. A separate one is that every transfer since then actually
+      conserves value &mdash; that a spend can&rsquo;t create TAC out of nothing as it moves. Tacit&rsquo;s
+      indexer checks this by walking a Bitcoin output&rsquo;s ancestry backward, hop by hop, through the
+      protocol&rsquo;s transfer opcodes, re-verifying each hop&rsquo;s Pedersen-commitment conservation and
+      kernel signature until it reaches this same etch.
+    </p>
+    <p>
+      That code is <a href="https://github.com/z0r0z/tacit/blob/main/worker/src/tac-ancestry.js" rel="noopener">worker/src/tac-ancestry.js</a>
+      &mdash; open-source, runs against the same public Bitcoin data this page uses, and takes no shortcuts
+      through an index. Point it at any TAC-carrying outpoint yourself; it needs only a txid and vout to start walking.
+    </p>
+  </div>
+
   <footer>
     <span>tacit verify</span>
     <nav aria-label="More">
