@@ -334,11 +334,12 @@ export function openStore(dbPath) {
   // than the rows that actually exist — and since re-scanning a chunk is deliberately idempotent (a duplicate
   // insert returns false and does not re-bump), the gap never closes. That count is the early-adopter bonus
   // divisor, so every later depositor would be scored as if they were earlier than they are. Counting the
-  // rows is exact, cheap, and runs once at startup.
+  // rows is exact, cheap, and runs once at startup. Only V1 wraps count: every other activity keeps its own
+  // divisor (countByActivity), and rows from before the activity column existed were all wraps.
   function loadCursor() {
     const row = loadCursorStmt.get();
     if (!row) return null;
-    const actual = db.prepare('SELECT COUNT(*) AS n FROM deposits').get().n;
+    const actual = db.prepare("SELECT COUNT(*) AS n FROM deposits WHERE activity = 'wrap'").get().n;
     return { lastScannedBlock: BigInt(row.last_scanned_block), ethDepositCount: actual };
   }
 

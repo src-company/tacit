@@ -6,7 +6,7 @@
 // only for now — this serves a leaderboard/lookup API; it does not mint or gate anything on-chain.
 
 import { createServer } from 'node:http';
-import { createWalletClient, http, decodeEventLog } from 'viem';
+import { createWalletClient, http, decodeEventLog, keccak256, toBytes } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { CFG, ADDR } from './lib/config.js';
 import { publicClient, clientForChain } from './lib/chain.js';
@@ -253,6 +253,8 @@ function pointsForCusdMint(debtValueRaw, priorCount) {
 // first (so "prior count" only ever counts what genuinely came before it) — so this collects candidates
 // across all pages first and scores them in a second, ascending-order pass, seeded from how many of each
 // activity already exist in the store.
+// keccak256("HelperEscrowPosted(bytes32,address,uint256)") — CbtcEscrowHelper.sol; outpoint and depositor are indexed.
+const HELPER_ESCROW_POSTED_TOPIC = keccak256(toBytes('HelperEscrowPosted(bytes32,address,uint256)'));
 async function scanCollateralEngineCycle(store) {
   const priorCursor = store.loadCeCursor();
   const deployBlock = BigInt(CFG.collateralEngineDeployBlock);
@@ -274,6 +276,11 @@ async function scanCollateralEngineCycle(store) {
       if (item.decoded && item.decoded.method_call.startsWith('HelperEscrowPosted(')) {
         const p = Object.fromEntries(item.decoded.parameters.map((x) => [x.name, x.value]));
         if (p.depositor) return p.depositor;
+      }
+      // Undecoded (a helper the explorer has no ABI for yet): the depositor is the event's second indexed topic.
+      const tp = item.topics || [];
+      if (!item.decoded && String(tp[0]).toLowerCase() === HELPER_ESCROW_POSTED_TOPIC && cbtcEscrowHelperSet.has(String(item.address?.hash || item.address || '').toLowerCase()) && tp[2]) {
+        return '0x' + String(tp[2]).slice(-40).toLowerCase();
       }
     }
     return rawFrom;
