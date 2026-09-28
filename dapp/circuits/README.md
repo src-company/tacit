@@ -63,7 +63,7 @@ In order, as the dapp's `verifyMixerProof` passes them. All values are reduced i
 
 Groth16 needs at least one honest contributor to have discarded their entropy. Anyone can walk the
 bundle's `attestations.json` via `prev_cid` from the beacon back to genesis and check that each
-contribution's CID content-addresses the previous zkey. The bundle is in `ceremony-bundle/`.
+contribution's CID content-addresses the previous zkey. Git keeps only the bundle's verifying key, in `ceremony-bundle/`.
 
 ## Mixer soundness: the r_leaf binding
 

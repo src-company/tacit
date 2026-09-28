@@ -194,7 +194,7 @@ Hermez `pot18` powers of tau, with keys derived deterministically from those par
 Artifacts are content-addressed. [`docs/CEREMONY.md`](./docs/CEREMONY.md) lists every zkey, verifying key,
 r1cs and witness generator with its CID and hash, including the finalized `amm_swap_batch` zkey
 (`bafybeieb5haf…xefwqm`) used in production. Circuit sources are in [`dapp/circuits/`](./dapp/circuits/). The mixer
-ceremony's attestations are in [`dapp/circuits/ceremony-bundle/`](./dapp/circuits/ceremony-bundle/).
+ceremony's attestations are in its bundle, `bafybeidq2ahz…ltxy2u`.
 
 ### 2.9 SP1 programs
 

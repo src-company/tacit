@@ -26,7 +26,7 @@ A proof is valid only under the finalized zkey below.
 | Artifact | Identifier |
 |---|---|
 | Circuit hash (r1cs SHA-256) | `2d9db81d741e59d65e1b52ac3d37c5da521ef8c3728e9cd715c9a8a45bd495f4` |
-| r1cs | `bafybeico2tziscjb2k3pknvyo5tqx652xcby2mcibnmgivav25fnsv72w4` · [`dapp/circuits/amm/build/amm_swap_batch.r1cs`](../dapp/circuits/amm/build/) |
+| r1cs | `bafybeico2tziscjb2k3pknvyo5tqx652xcby2mcibnmgivav25fnsv72w4`, built from [`amm_swap_batch.circom`](../dapp/circuits/amm/amm_swap_batch.circom) by [`dapp/circuits/amm/build.sh`](../dapp/circuits/amm/build.sh) |
 | Phase 2 | 5,018 contributions + beacon |
 | **Final zkey** | **`bafybeieb5hafaix2xwvnmsodby4vkvcpdv4bpt4ny3etza4lpy2rxefwqm`**, 97,468,648 bytes, SHA-256 `6ed30983a1c2faf287f3d2fc95fae08cc926aa563b2df2dc752c01f46ee03031` |
 | Verifying key (JSON) | `bafkreidc35fn7w3pxa4u7phjulzgrgm3js5ifmgqil7liedkqb2bdgdtp4` · [`dapp/circuits/artifacts-amm/amm_swap_batch_vk.json`](../dapp/circuits/artifacts-amm/amm_swap_batch_vk.json) |
@@ -65,8 +65,7 @@ mixer ([SPEC §3.8](../SPEC.md#38-legacy-ops)).
 | Bundle (r1cs, ptau, final zkey, vk, attestations) | `bafybeidq2ahzte4sfiqjsmhqta62ufenpppzpch5ppry55tzxzlvltxy2u` |
 | Verifying key | `bafkreidwbautgstcnl54oszez7yqlc7mr5lrj6ac65h3p5sjw2rgz2jtv4`, SHA-256 `760829334a626afbc74b24cff1058bec8f5714f802f74fb7f649b6a26ce933af` |
 
-File hashes and a local verification recipe are in
-[`dapp/circuits/ceremony-bundle/README.md`](../dapp/circuits/ceremony-bundle/README.md).
+File hashes and a local verification recipe are in the bundle's `README.md`.
 
 ## Availability and backup
 
