@@ -94,6 +94,7 @@ import { passesFloor, feeAssetOf, floorInFeeUnits, totalFee, decodePoolState, am
 import { makeConfidentialIndex } from './confidential-index.js';
 import { buildCrossoutConsumer, crossoutMintLeaf } from './crossout-consumer.js';
 import { buildGovernance } from './governance.js';
+import { makeTacAncestry } from './tac-ancestry.js';
 import { buildOversight } from './governance-oversight.js';
 import { validateConsumedSource, deriveConsumedSource } from './consumed-source.js';
 import { makeConfidentialPool } from '../../dapp/confidential-pool.js';
@@ -8693,10 +8694,12 @@ async function verifyCeremonyEligibilityProof(env, envelopeBytes, expectedContri
   let sumCommitment = PEDERSEN_ZERO;
   const holderHash160Hex = bytesToHex(hash160(dec.holderPubkey));
   for (const op of dec.outpoints) {
-    let resolved;
-    try { resolved = await commitmentForUtxo(env, op.txid, op.vout, CER_ELIGIBILITY_NETWORK); }
-    catch (e) { return { ok: false, status: 403, reason: `eligibility_proof: ${op.txid}:${op.vout} commitment lookup failed: ${e.message || 'unknown'}` }; }
-    if (String(resolved.asset_id || '').toLowerCase() !== CANONICAL_TAC_ASSET_ID_HEX) {
+    // Full chain-of-custody proof, not just a decode of this one envelope — see tac-ancestry.js.
+    const resolved = await verifyTacAncestry(env, op.txid, op.vout, CER_ELIGIBILITY_NETWORK);
+    if (!resolved.ok) {
+      return { ok: false, status: 403, reason: `eligibility_proof: ${op.txid}:${op.vout} ${resolved.reason}` };
+    }
+    if (resolved.assetIdHex !== CANONICAL_TAC_ASSET_ID_HEX) {
       return { ok: false, status: 403, reason: `eligibility_proof: ${op.txid}:${op.vout} asset_id is not TAC` };
     }
     // P2WPKH ownership: parent-tx vout's scriptpubkey is 0x0014 || hash160(holder_pubkey).
@@ -8720,7 +8723,7 @@ async function verifyCeremonyEligibilityProof(env, envelopeBytes, expectedContri
     if (probe.spent) return { ok: false, status: 403, reason: `eligibility_proof: ${op.txid}:${op.vout} is spent` };
     // Accumulate.
     try {
-      const cPt = secp.ProjectivePoint.fromHex(String(resolved.commitment));
+      const cPt = secp.ProjectivePoint.fromHex(bytesToHex(resolved.commitment));
       sumCommitment = sumCommitment.add(cPt);
     } catch (e) {
       return { ok: false, status: 500, reason: `eligibility_proof: commitment decode for ${op.txid}:${op.vout} failed: ${e.message || 'unknown'}` };
@@ -8788,10 +8791,12 @@ async function verifyDiscordGateProof(env, envelopeBytes) {
   let sumCommitment = PEDERSEN_ZERO;
   const holderHash160Hex = bytesToHex(hash160(dec.holderPubkey));
   for (const op of dec.outpoints) {
-    let resolved;
-    try { resolved = await commitmentForUtxo(env, op.txid, op.vout, CER_ELIGIBILITY_NETWORK); }
-    catch (e) { return { ok: false, status: 403, reason: `discord_gate: ${op.txid}:${op.vout} lookup failed: ${e.message || 'unknown'}` }; }
-    if (String(resolved.asset_id || '').toLowerCase() !== CANONICAL_TAC_ASSET_ID_HEX) {
+    // Full chain-of-custody proof, not just a decode of this one envelope — see tac-ancestry.js.
+    const resolved = await verifyTacAncestry(env, op.txid, op.vout, CER_ELIGIBILITY_NETWORK);
+    if (!resolved.ok) {
+      return { ok: false, status: 403, reason: `discord_gate: ${op.txid}:${op.vout} ${resolved.reason}` };
+    }
+    if (resolved.assetIdHex !== CANONICAL_TAC_ASSET_ID_HEX) {
       return { ok: false, status: 403, reason: `discord_gate: ${op.txid}:${op.vout} asset_id is not TAC` };
     }
     let tx;
@@ -8810,7 +8815,7 @@ async function verifyDiscordGateProof(env, envelopeBytes) {
     if (!probe) return { ok: false, status: 502, reason: `discord_gate: outspend probe failed for ${op.txid}:${op.vout}` };
     if (probe.spent) return { ok: false, status: 403, reason: `discord_gate: ${op.txid}:${op.vout} is spent` };
     try {
-      const cPt = secp.ProjectivePoint.fromHex(String(resolved.commitment));
+      const cPt = secp.ProjectivePoint.fromHex(bytesToHex(resolved.commitment));
       sumCommitment = sumCommitment.add(cPt);
     } catch (e) {
       return { ok: false, status: 500, reason: `discord_gate: commitment decode for ${op.txid}:${op.vout} failed: ${e.message || 'unknown'}` };
@@ -15863,6 +15868,15 @@ async function commitmentForUtxo(env, txidHex, vout, network, opts = {}) {
   }
   throw new Error('unsupported envelope opcode');
 }
+
+// Real chain-of-custody check for a UTXO's declared TAC balance (kernel signatures + rangeproofs walked
+// back to a CETCH root) — used anywhere a UTXO's balance GRANTS something rather than just being
+// displayed. See worker/src/tac-ancestry.js for why this differs from commitmentForUtxo above.
+const { verifyTacAncestry } = makeTacAncestry({
+  apiJson, secp, sha256, hexToBytes, bytesToHex, concatBytes,
+  decodeEnvelopeScript, bpRangeAggVerify, bppRangeVerify, verifySchnorr,
+  kernelMsg: ammKernelMsgV1, H: PEDERSEN_H,
+});
 
 // T_DEPOSIT kernel sig: BIP-340 over kernel_msg under
 // (C_in − denomination·H).x_only(). Closes the Conservation invariant
@@ -25312,6 +25326,10 @@ export {
   ceremonyPubkeyBackfillCursorKey,
   ceremonyPubkeyBackfillDoneKey,
   _ceremonyPubkeyIndexBackfillStep,
+  // The shared, multi-source-failover esplora fetchers (sticky preference + cooldown on 429/5xx/timeout)
+  // reflection's own getHeaders/getBlockTxs are built on — exported so burndep-live-tracer.js can reuse the
+  // same reliability characteristics instead of a second, independently-drifting fetch implementation.
+  apiText, apiRawBytes,
 };
 
 // ============== DISCORD TOKEN-GATE HANDLERS ==============
@@ -25542,7 +25560,7 @@ function _getGovernance() {
     sha256, concatBytes, bytesToHex, hexToBytes,
     secp, PEDERSEN_H, PEDERSEN_ZERO,
     verifySchnorr, decodeCeremonyEligibilityEnvelope, bpRangeAggVerify,
-    commitmentForUtxo, apiJson, chainOutspendProbe, fetchTipHeight, hash160,
+    commitmentForUtxo, verifyTacAncestry, apiJson, chainOutspendProbe, fetchTipHeight, hash160,
     ethCall: _ethCall, ethGetStorageAt: _ethGetStorageAt, keccak256: keccak_256,
     ethCallAt: _ethCallAt, ethBlockNumber: _ethBlockNumber, ethRpc: _ethRpc,
     pinFileToIpfs: _pinFileToIpfs, filebaseConfigured: _filebaseConfigured,

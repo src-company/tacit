@@ -72,7 +72,7 @@ export function buildGovernance(deps) {
     jsonResponse, safeInt,
     secp, PEDERSEN_H, PEDERSEN_ZERO,
     verifySchnorr, decodeCeremonyEligibilityEnvelope, bpRangeAggVerify,
-    commitmentForUtxo, apiJson, chainOutspendProbe, fetchTipHeight, hash160,
+    commitmentForUtxo, verifyTacAncestry, apiJson, chainOutspendProbe, fetchTipHeight, hash160,
     ethCall, ethGetStorageAt, keccak256,
     ethCallAt, ethBlockNumber,          // snapshot reads (optional; public/cTAC snapshot voting needs them)
     ethRpc,                             // generic Ethereum JSON-RPC read, for checking an execution tx
@@ -181,10 +181,14 @@ export function buildGovernance(deps) {
     let sumC = PEDERSEN_ZERO;
     const holderHash160Hex = bytesToHex(hash160(dec.holderPubkey));
     for (const op of dec.outpoints) {
-      let resolved;
-      try { resolved = await commitmentForUtxo(env, op.txid, op.vout, network); }
-      catch (e) { return { ok: false, status: 403, reason: `weight_proof: ${op.txid}:${op.vout} lookup failed: ${e.message || 'unknown'}` }; }
-      if (String(resolved.asset_id || '').toLowerCase() !== CANONICAL_TAC_ASSET_ID_HEX) {
+      // Full chain-of-custody proof (kernel signature + rangeproof at every hop back to a CETCH root), not
+      // just a decode of this one envelope — commitmentForUtxo alone would trust a self-declared asset_id
+      // and commitment with nothing backing them (see worker/src/tac-ancestry.js for why).
+      const resolved = await verifyTacAncestry(env, op.txid, op.vout, network);
+      if (!resolved.ok) {
+        return { ok: false, status: 403, reason: `weight_proof: ${op.txid}:${op.vout} ${resolved.reason}` };
+      }
+      if (resolved.assetIdHex !== CANONICAL_TAC_ASSET_ID_HEX) {
         return { ok: false, status: 403, reason: `weight_proof: ${op.txid}:${op.vout} is not TAC` };
       }
       let tx;
@@ -213,7 +217,7 @@ export function buildGovernance(deps) {
           return { ok: false, status: 403, reason: `weight_proof: ${op.txid}:${op.vout} was spent by the snapshot` };
         }
       }
-      try { sumC = sumC.add(secp.ProjectivePoint.fromHex(String(resolved.commitment))); }
+      try { sumC = sumC.add(secp.ProjectivePoint.fromHex(bytesToHex(resolved.commitment))); }
       catch (e) { return { ok: false, status: 500, reason: `weight_proof: commitment decode failed: ${e.message || 'unknown'}` }; }
     }
 
