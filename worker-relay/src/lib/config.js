@@ -507,6 +507,11 @@ export const CFG = {
   // immediately with no gaming mitigation needed. A free .id.wei name costs 0 and so earns 0 automatically.
   pointsBasePerWeiname: num('POINTS_BASE_PER_WEINAME', 1000),
   weinameDeployBlock: num('WEINAME_DEPLOY_BLOCK', 24360416),
+  // Off by default (WEINAME_ENABLED=0) after a real incident: its own historical backfill never saved a
+  // cursor across several attempts, and a restart mid-backfill (a redeploy shipping yet another fix) meant
+  // main()'s loop never reached anything scheduled after it — zRouter and the ETH-wrap scanner both froze.
+  // Re-enable once the backfill is confirmed to actually complete and save its cursor.
+  weinameEnabled: opt('WEINAME_ENABLED', '0') === '1',
 
   // ── TAC-holder boost (src/lib/tac-holder-boost.js) ──
   // Every activity's points are multiplied by the depositor's TAC tier: "whole TAC:multiplier" pairs, judged

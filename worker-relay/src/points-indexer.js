@@ -1505,10 +1505,12 @@ async function main() {
     } catch (err) {
       log('PM scan cycle failed:', err?.message || err);
     }
-    try {
-      await scanWeinameCycle(store);
-    } catch (err) {
-      log('weiname scan cycle failed:', err?.message || err);
+    if (CFG.weinameEnabled) {
+      try {
+        await scanWeinameCycle(store);
+      } catch (err) {
+        log('weiname scan cycle failed:', err?.message || err);
+      }
     }
     for (const chain of ZROUTER_CHAINS) {
       try {
