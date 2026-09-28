@@ -294,6 +294,29 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // The assets an output of a wallet's settle can be in: every pool asset plus the assets of the notes the wallet has held.
   const _knownAssets = (notes) => [...new Set([..._poolAssets.map((a) => a.assetId), ...notes.map((n) => n.asset)].map(lc))];
 
+  // A deposit whose own wrap note never landed is either still waiting for its settle or was spent by another op in its
+  // place (a wrap-and-send, a one-click swap or LP), whose outputs the derived walk finds from the deposit id. The pool's
+  // depositStatus tells them apart: it reads 2 once a deposit is spent, and that is final, so a spent id is read once per
+  // session. A status that cannot be read leaves the deposit listed as waiting.
+  const _spentDeposits = new Set();
+  async function _stillWaiting(deposits) {
+    const waiting = [];
+    for (let i = 0; i < deposits.length; i += 8) {
+      const part = deposits.slice(i, i + 8);
+      const spent = await Promise.all(part.map(async (d) => {
+        const k = lc(d.depositId);
+        if (_spentDeposits.has(k)) return true;
+        try {
+          const r = await ethCall(cfg.pool, '0x' + _selector('depositStatus(bytes32)') + _word(d.depositId));
+          if (r && r !== '0x' && BigInt(r) === 2n) { _spentDeposits.add(k); return true; }
+        } catch { /* unread: still listed */ }
+        return false;
+      }));
+      part.forEach((d, j) => { if (!spent[j]) waiting.push(d); });
+    }
+    return waiting;
+  }
+
   async function _scanNotes({ walletPriv, events, deep = false, cbtc = true, btcHistory = null, bridge = true, bridgeAmounts = [] }) {
     const R = recovery();
     const id = identity(walletPriv);
@@ -329,17 +352,19 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     for (const n of memo.scan(_scanKeyHex(id.priv), leaves.filter(Boolean), [], nu)) all.set(lc(n.leaf), { ...n, inboundUnverified: true });
     diag.memoNotes = all.size;
 
-    // (b) wrap deposits
-    diag.wrap = { found: 0, pending: [], scanned: [], truncated: [] };
+    // (b) wrap deposits. `unsettled`: every deposit of this key whose own wrap note is not in the tree. `pending`: those of
+    // them still waiting for their settle, less the ones another op spent in their place (see _stillWaiting).
+    diag.wrap = { found: 0, pending: [], unsettled: [], scanned: [], truncated: [] };
     try {
       const w = R.walkWraps({ priv: id.priv, events, assets: _poolAssets, minIndex: (assetId) => _wrapIndexHint(id.pubHex, assetId) });
       diag.wrap.scanned = w.scanned;
       diag.wrap.truncated = w.scanned.filter((s) => s.stoppedAtMaxIndex).map((s) => s.assetId);
       for (const n of w.found) {
         if (slot.has(lc(n.leaf))) { if (addDerived(n, 'wrap', { wrapIndex: n.index })) diag.wrap.found++; }
-        else if (!all.has(lc(n.leaf))) diag.wrap.pending.push({ index: n.index, asset: n.asset, value: n.value, depositId: n.depositId });
+        else if (!all.has(lc(n.leaf))) diag.wrap.unsettled.push({ index: n.index, asset: n.asset, value: n.value, depositId: n.depositId });
       }
     } catch (e) { diag.errors.wrap = String(e && e.message || e); }
+    diag.wrap.pending = await _stillWaiting(diag.wrap.unsettled);
 
     const tx = R.txIndex(events);
     const unexplained = () => emptyLeaves.filter((l) => !all.has(lc(l.leaf)));
@@ -407,7 +432,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       diag.derived.attempted = true;
       try {
         const getTxInput = async (h) => { const t = await rpc('eth_getTransactionByHash', [h]); return t && t.input; };
-        const pendingDeposits = diag.wrap.pending.map((d) => ({ depositId: d.depositId, asset: d.asset, value: d.value }));
+        const pendingDeposits = diag.wrap.unsettled.map((d) => ({ depositId: d.depositId, asset: d.asset, value: d.value }));
         const at = pendingDeposits.length ? await R.locateDepositTx({ deposits: pendingDeposits, events, getTxInput }) : new Map();
         const deposits = pendingDeposits.map((d) => ({ ...d, txHash: at.get(lc(d.depositId)) || null })).filter((d) => d.txHash);
         diag.derived.depositsLocated = deposits.length;

@@ -252,6 +252,41 @@ test('recover: wrap-and-send outputs derive from the consumed deposit id; the se
   assert.equal(r2.notes.length, 2, 'a fused op settled later is located by reading the settles after the Wrap event');
 });
 
+test('recover: a deposit another op spent (depositStatus 2) is not pending, yet its outputs are still derived from it', async () => {
+  const ux0 = mkUx();
+  const ceth = ux0.assetByTicker.cETH;
+  const scale = BigInt(ceth.unitScale);
+  const pub = ux0.identity(walletPriv).pubHex;
+  const b = ux0.buildWrapTransferOp({ walletPriv, amountWei: (90000n * scale).toString(), ticker: 'cETH', recipientPubHex: pub, amount: 40000n, fee: 0n, index: 3 });
+  const waiting = ux0.buildWrap({ walletPriv, amountWei: (1000n * scale).toString(), ticker: 'cETH', index: 4 });
+  const T = tx(41);
+  const events = [
+    { type: 'Wrap', depositId: b.depositId, assetId: ceth.assetId, amount: 90000n * scale, txHash: T },
+    { type: 'Wrap', depositId: waiting.depositId, assetId: ceth.assetId, amount: 1000n * scale, txHash: tx(42) },
+    leavesEv(0, b.leaves, null, T),
+  ];
+  const DEPOSIT_STATUS = '0x' + Buffer.from(keccak_256(new TextEncoder().encode('depositStatus(bytes32)'))).toString('hex').slice(0, 8);
+  const chain = inputsOf({ [T]: pvBytes({ 5: staticArr(1, [w(b.depositId)]) }) });
+  const reads = [];
+  const ux = mkUx(async (method, params) => {
+    if (method === 'eth_call' && String(params[0].data).startsWith(DEPOSIT_STATUS)) {
+      const id = '0x' + String(params[0].data).slice(10);
+      reads.push(id);
+      return '0x' + w(id === b.depositId.toLowerCase() ? 2 : 1);
+    }
+    return chain(method, params);
+  });
+  const r = await ux.recover({ walletPriv, events, ...noFlags, deep: true });
+  assert.deepEqual(r.notes.map((n) => [n.role, BigInt(n.value)]), [['send', 40000n], ['change', 50000n]], 'the spent deposit still anchors its outputs');
+  assert.equal(r.diagnostics.wrap.unsettled.length, 2, 'neither deposit has its own wrap note');
+  assert.equal(r.diagnostics.notes.pendingWraps, 1, 'only the deposit still owed a settle is pending');
+  assert.equal(r.diagnostics.unresolved.pendingWraps[0].depositId.toLowerCase(), waiting.depositId.toLowerCase());
+  const again = await ux.recover({ walletPriv, events, ...noFlags });
+  assert.deepEqual(again.diagnostics.wrap.pending.map((d) => d.depositId.toLowerCase()), [waiting.depositId.toLowerCase()]);
+  assert.equal(reads.filter((x) => x === b.depositId.toLowerCase()).length, 1, 'a spent deposit is read once: spent is final');
+  assert.ok(reads.filter((x) => x === waiting.depositId.toLowerCase()).length >= 2, 'a waiting deposit is read again on each scan');
+});
+
 // Two pool assets in canonical (ascending) pair order.
 const sortedAssets = () => ['cETH', 'cUSD'].map((t) => mkUx().assetByTicker[t].assetId).sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : 1));
 

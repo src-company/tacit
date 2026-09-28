@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Jbe3/ZAnipHQ4NzUAiSwMYn3LIGG+FE7unwFj4WC2f0=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ay1RQ5g/DlPpAirXLYO9V2Os3SKuoraGZO5fkcgsAmE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit lite</title>
 <meta name="description" content="Private ETH, the TAC airdrop, TAC farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -1338,7 +1338,7 @@ function wireSub(el, name, set) { $$(`[data-${name}]`, el).forEach((b) => b.oncl
 
 // ── Tacit V1 pool: shared module, loaded on first use ────────────────────────────────────────────────────
 const getUx = lazy(async () => {
-  const [{ makeConfidentialPoolUx }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=a97c6533'), import('/confidential-deployments.js')]);
+  const [{ makeConfidentialPoolUx }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=c18eec94'), import('/confidential-deployments.js')]);
   dep.setActiveNetwork('mainnet');
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
 });
@@ -1356,13 +1356,10 @@ async function scanPrivate(force = false) {
     const r = await t.balance(walletPriv());
     if (S.key?.pubHex !== pub) return null;
     const of = (tk) => { const id = String(t.assetByTicker[tk]?.assetId || '').toLowerCase(); const g = r.byAsset[id]; return { id, value: g ? g.value : 0n, notes: g ? g.notes : [] }; };
-    // Waiting deposits are the key's wraps with no note yet, less any another flow already spent (a wrap-and-send, a
-    // one-click swap or LP): the pool's depositStatus is 1 only while one still waits.
-    const wraps = (r.diag?.wrap?.pending || []).filter((d) => String(d.asset).toLowerCase() === of('cETH').id);
-    const st = wraps.length ? await multicall(wraps.map((d) => ({ to: ADDR.pool, data: '7da9874f' + strip(d.depositId) }))).catch(() => null) : [];
-    if (S.key?.pubHex !== pub) return null;
+    // Deposits still waiting for their settle: pool-ux leaves out any another op already spent (a wrap-and-send, a
+    // one-click swap or LP).
     P.scan = { at: Date.now(), eth: of('cETH'), cusd: of('cUSD'), tac: of('cTAC'), cbtc: { id: String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase(), notes: r.notes.filter((n) => String(n.asset).toLowerCase() === String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase()) },
-      pending: st ? wraps.filter((d, i) => !st[i] || wordAt(st[i], 0) === 1n) : wraps, partial: Object.keys(r.diag?.errors || {}).length > 0 };
+      pending: (r.diag?.wrap?.pending || []).filter((d) => String(d.asset).toLowerCase() === of('cETH').id), partial: Object.keys(r.diag?.errors || {}).length > 0 };
     P.err = null;
     return P.scan;
   }).catch((e) => { if (S.key?.pubHex === pub) P.err = e; throw e; }).finally(() => { if (P.scanning === p) P.scanning = null; });
