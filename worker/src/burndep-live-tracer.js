@@ -17,7 +17,7 @@
 // do (re-deriving the guest's own checks before ever submitting) — the safer of the two valid shapes to
 // return, matching how every burn that has actually succeeded was actually built.
 
-import { classifyConfidentialTx } from '../../dapp/burn-deposit-bitcoin.js';
+import { classifyConfidentialTx, extractTaprootEnvelope, parseCetch } from '../../dapp/burn-deposit-bitcoin.js';
 import { splitBlockTxs } from './bitcoin-block-parse.js';
 
 const stripHexPrefix = (h) => String(h).replace(/^0x/, '');
@@ -75,29 +75,44 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
     return rec;
   }
 
-  // Resolve ONE input's commitment: fetch its producing tx, classify it, read back the commitment at the
-  // spent vout. A cxfer's own inputs are not always all confidential — a P2WPKH-homed note's reveal needs a
-  // separate, leading non-confidential funding input to pay for the reveal tx (the assembler's own `inputSkip`
-  // field exists for exactly this — see buildBurnDepositStatic's comment). That input classifies as `null`
-  // (no envelope, correctly, since it isn't a confidential input) and has no commitment to resolve. Telling it
-  // apart from a genuine leaf input (etch/cmint, which does need a commitment, via a different parser than
-  // cxfer's) needs inspecting the input's actual script type, which this function does not do. It throws on
-  // both cases rather than guess — safe (never resolves the wrong commitment), but a DAG containing either
-  // case cannot be traced automatically until this is extended. See ops/DESIGN-burndep-live-tracer.md.
-  // Scope: plain cxfer (opcode 0x24/0x25/…) only, not cxfer_bound (0x39, deployment-bound assets) or the
-  // AMM/farm/bid fold types classifyConfidentialTx also recognizes. TAC — the only asset burn-deposit has
-  // moved so far — folds unbound (SPEC.md §6.2), so its own lineage should never contain a bound hop; a DAG
-  // that does throws here rather than silently mis-resolving it.
-  async function resolveInputCommitment(prevTxidDisplay, prevVout) {
-    const { decode } = await fetchTx(prevTxidDisplay);
-    if (!decode || decode.type !== 'cxfer') {
-      throw new Error(`burndep-live-tracer: input ${prevTxidDisplay}:${prevVout} is not a plain cxfer output `
-        + `(got ${decode ? decode.type : 'unclassified'}) — either a non-confidential funding input (inputSkip) `
-        + `or a genuine leaf (etch/cmint); neither is implemented yet, see ops/DESIGN-burndep-live-tracer.md`);
+  // Classify ONE input: fetch its producing tx and work out what (if anything) it commits. A cxfer's own
+  // inputs are not always all confidential — a P2WPKH-homed note's reveal needs a separate, leading
+  // non-confidential funding input to pay for the reveal tx (the assembler's own `inputSkip` field exists
+  // for exactly this — see buildBurnDepositStatic's comment). That input's producing tx carries no envelope
+  // at all, which is exactly how classifyConfidentialTx reports a genuine leaf too (it only recognizes
+  // cxfer/burn/AMM fold types, not CETCH/CMINT) — so a `null` decode is checked further here rather than
+  // treated as one specific case: try CETCH (the asset's own supply note, opcode 0x21) before concluding
+  // there is no envelope at all and this is a plain funding input.
+  // Scope: plain cxfer (opcode 0x24/0x25/…) and CETCH leaves only — not CMINT (issuer-authorized top-up
+  // mints, a separate provenance branch the assembler tracks via its own `cmints[]` array, not through a
+  // cxfer's inputs) and not cxfer_bound (0x39, deployment-bound assets) or the AMM/farm/bid fold types
+  // classifyConfidentialTx also recognizes. TAC — the only asset burn-deposit has moved so far — is
+  // non-mintable (fixed supply, confirmed via its own /assets/:id record) and folds unbound (SPEC.md §6.2),
+  // so its lineage should never contain a cmint or a bound hop; a DAG that does throws rather than silently
+  // mis-resolving it.
+  async function classifyInput(prevTxidDisplay, prevVout) {
+    const { hex, decode } = await fetchTx(prevTxidDisplay);
+    if (decode && decode.type === 'cxfer') {
+      const i = decode.vouts.indexOf(prevVout);
+      if (i === -1) throw new Error(`burndep-live-tracer: ${prevTxidDisplay} has no cxfer output at vout ${prevVout}`);
+      return { kind: 'cxfer', commitment: decode.commitments[i] };
     }
-    const i = decode.vouts.indexOf(prevVout);
-    if (i === -1) throw new Error(`burndep-live-tracer: ${prevTxidDisplay} has no cxfer output at vout ${prevVout}`);
-    return decode.commitments[i];
+    if (!decode) {
+      const envHex = extractTaprootEnvelope(hex);
+      if (envHex) {
+        const cetch = parseCetch(envHex);
+        if (cetch) {
+          if (prevVout !== 0) throw new Error(`burndep-live-tracer: ${prevTxidDisplay} is a CETCH but was spent at vout ${prevVout}, not 0`);
+          return { kind: 'cetch', commitment: cetch.c0Compressed };
+        }
+        throw new Error(`burndep-live-tracer: ${prevTxidDisplay}:${prevVout} carries an envelope this module does not `
+          + `recognize as a resolvable leaf (opcode 0x${envHex.slice(2, 4)}) — likely a CMINT or bound-asset hop, `
+          + `neither implemented; see ops/DESIGN-burndep-live-tracer.md`);
+      }
+      return { kind: 'funding' }; // no envelope at all — a plain, non-confidential input paying for the reveal
+    }
+    throw new Error(`burndep-live-tracer: input ${prevTxidDisplay}:${prevVout} classified as '${decode.type}', `
+      + 'which this module does not resolve a commitment for');
   }
 
   // The dapp/burn-deposit-tracer.js dependency itself. `op` is always an outpointKey hash the caller either
@@ -119,17 +134,29 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
     if (!decode.vouts.includes(vout)) return null;
     if (!json.status || !json.status.confirmed) throw new Error(`burndep-live-tracer: ${txidDisplay} is not yet confirmed`);
     const blockHash = json.status.block_hash;
-    const [{ coinbase, blockTxids, blockWtxids }, inputs] = await Promise.all([
+    const vins = json.vin || [];
+    const [{ coinbase, blockTxids, blockWtxids }, classified] = await Promise.all([
       fetchBlockWitness(blockHash),
-      Promise.all((json.vin || []).map(async (v) => ({
-        prevTxid: withHexPrefix(v.txid),
-        prevVout: v.vout,
-        commitment: await resolveInputCommitment(v.txid, v.vout),
-      }))),
+      Promise.all(vins.map((v) => classifyInput(v.txid, v.vout))),
     ]);
-    // Seed every one of THIS tx's own inputs into `seen` so the tracer's next hop (which will call
+    // Funding inputs (assembler's `inputSkip`) are, by construction, the LEADING ones — see classifyInput's
+    // comment. A 'funding' classification after a real one is not a shape this reveal pattern produces, so
+    // it's treated as an anomaly rather than silently included or silently dropped.
+    let inputSkip = 0;
+    while (inputSkip < classified.length && classified[inputSkip].kind === 'funding') inputSkip++;
+    for (let i = inputSkip; i < classified.length; i++) {
+      if (classified[i].kind === 'funding') {
+        throw new Error(`burndep-live-tracer: ${txidDisplay} has a non-confidential input at index ${i}, `
+          + `after a confidential one at a lower index — funding inputs are expected to be leading only`);
+      }
+    }
+    const inputs = vins.slice(inputSkip).map((v, i) => ({
+      prevTxid: withHexPrefix(v.txid), prevVout: v.vout, commitment: classified[inputSkip + i].commitment,
+    }));
+    // Seed every one of THIS tx's own REAL inputs into `seen` so the tracer's next hop (which will call
     // getCxferByOutput with outpointKey(inp.prevTxid, inp.prevVout), computed inside burn-deposit-tracer.js
     // itself) resolves to a plaintext txid/vout this module already knows, without needing to invert a hash.
+    // Funding inputs are never seeded: nothing should ever ask this tracer to resolve one further.
     for (const inp of inputs) seed(inp.prevTxid, inp.prevVout);
     // This tx's position within its own block, by matching internal-order txid bytes (blockTxids is already
     // in that form, per bitcoin-block-parse.js) — needed for witnessPath's merkle-siblings index.
@@ -140,6 +167,7 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
       txid: withHexPrefix(txidDisplay),
       tx: withHexPrefix(hex),
       inputs,
+      inputSkip,
       outputs: decode.vouts.map((v, i) => ({ vout: v, commitment: decode.commitments[i] })),
       rangeProof: decode.rangeProof,
       kernelSig: decode.kernelSig,

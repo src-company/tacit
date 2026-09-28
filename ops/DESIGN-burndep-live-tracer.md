@@ -108,6 +108,21 @@ a bundle that actually registered and folded). Two things verified for real, not
 This means the module is verified correct for what it does, and safely (loudly) incomplete for what it
 doesn't — not silently wrong, which was the actual risk this whole design exercise was about.
 
+## Update: the funding-input gap above is now handled, and the fix reproduced real data exactly
+
+`classifyInput` now distinguishes three cases for a cxfer's own input: a plain cxfer output (resolved as
+before), a CETCH leaf (parsed directly — TAC's own supply note is non-mintable per its `/assets/:id` record,
+so CMINT never needs to appear in its lineage and isn't handled), or no envelope at all (a leading,
+non-confidential funding input — `inputSkip`). Funding inputs found after a real one are treated as an
+anomaly and rejected rather than guessed past.
+
+Re-ran the same real starting outpoint end to end: `inputSkip` came back `1` (one leading funding input,
+correctly separated from the one real input), and the resolved output commitment matched
+`tac-bundle-final.json`'s own recorded `burned.cx` byte-for-byte (`2c8a223b37189e29c1f4fe8de3a314f34bf16ac
+9054060de06de2e8eef042d0b`) — the same already-registered, already-folded real burn, reproduced
+independently. CMINT and cxfer_bound hops remain unimplemented (both throw explicitly rather than guess);
+neither has occurred in TAC's own lineage so far.
+
 ## What NOT to do
 
 - Do not skip the byte-for-byte diff against real historical burns and ship on "it looks right."
