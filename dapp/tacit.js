@@ -65569,9 +65569,12 @@ function renderDiscoverCard(card, a, verify, imgUrl, extras) {
   // Re-verify deep-link: for a non-mintable, attested asset, link the
   // standalone supply verifier (/verify) so anyone can re-check the fixed
   // supply from Bitcoin + IPFS — mint authority 0 + the Pedersen opening —
-  // without trusting this dapp. Gated on mintable===false + an attested
-  // etch supply so it only appears when /verify will actually pass.
-  if (supplyBadge && etchSupply !== null && a.mintable === false && a.etch_txid) {
+  // without trusting this dapp. Gated on the chain-verified verify.mintable
+  // (not the worker-reported a.mintable — a lying worker could otherwise
+  // claim mintable:false to get this "trust nothing" badge onto a mintable
+  // asset) + an attested etch supply, so it only appears when /verify will
+  // actually pass.
+  if (supplyBadge && etchSupply !== null && verified && verify.mintable === false && a.etch_txid) {
     const _vq = `?asset_id=${encodeURIComponent(a.asset_id)}&txid=${encodeURIComponent(a.etch_txid)}`;
     supplyBadge += `<div style="margin-top:4px;font-size:11px;"><a href="/verify${_vq}" target="_blank" rel="noopener" style="color:var(--green-positive);text-decoration:none;border-bottom:1px dotted currentColor;">verify supply ✓</a></div>`;
   }
@@ -72873,7 +72876,7 @@ function marketSupplyBase(asset) {
   try { return BigInt(s); } catch { return null; }
 }
 const _marketSupplyAttestInFlight = new Set();
-function marketSetVerifiedSupply(assetIdHex, attest) {
+function marketSetVerifiedSupply(assetIdHex, attest, chainVerified) {
   if (!/^[0-9a-f]{64}$/.test(String(assetIdHex || ''))) return false;
   if (!attest || !/^\d+$/.test(String(attest.supply || ''))) return false;
   let changed = false;
@@ -72882,6 +72885,11 @@ function marketSetVerifiedSupply(assetIdHex, attest) {
     a.attestation = { ...(a.attestation || {}), supply: String(attest.supply), blinding: attest.blinding || a.attestation?.blinding || '' };
     if (!a.total_supply) a.total_supply = String(attest.supply);
     a._marketSupplySource = 'ipfs-attest';
+    // The opening above only proves internal consistency with whatever commitment the worker reported.
+    // chainVerified (from _verifyDiscoverEtchOnly — the same on-chain re-derivation Discover uses) is what
+    // actually pins that commitment/mintable to the real Bitcoin envelope, so only a chain-anchored result
+    // gets to enable the "verify ✓" deep link below.
+    if (chainVerified) a._chainVerifiedMintable = chainVerified.mintable;
     changed = true;
   };
   for (const a of _marketCache?.assets || []) apply(a);
@@ -72892,12 +72900,29 @@ async function enrichMarketSupplyFromAttestation(asset) {
   const aid = String(asset?.asset_id || '').toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(aid)) return false;
   if (marketSupplyBase(asset) != null) return false;
-  const commitment = String(asset?.commitment || '').toLowerCase();
-  const imageUri = asset?.image_uri || asset?.imageUri || '';
-  if (!/^[0-9a-f]{66}$/.test(commitment) || !imageUri) return false;
-  const verify = { ok: true, _assetId: aid, imageUri, commitment, ipfsAttest: null };
+  // Chain-anchor first: reuse Discover's on-chain etch verification (and its persistent localStorage cache,
+  // so this costs nothing extra once Discover — or an earlier Market visit — has already checked the same
+  // asset) rather than trusting the worker-reported commitment field directly. Without this, a worker that
+  // reported a wrong commitment could still produce a self-consistent-looking "verified" supply for an
+  // opening that doesn't actually match the on-chain etch.
+  let chainVerified = getCachedDiscoverEtch(aid, asset.etch_txid);
+  if (!chainVerified) {
+    try { chainVerified = await _verifyDiscoverEtchOnly(asset); }
+    catch { chainVerified = { ok: false }; }
+    if (chainVerified.ok) {
+      setCachedDiscoverEtch(aid, {
+        etch_txid: asset.etch_txid, ok: true,
+        ticker: chainVerified.ticker, decimals: chainVerified.decimals,
+        commitment: chainVerified.commitment, imageUri: chainVerified.imageUri,
+        mintable: chainVerified.mintable, mintAuthorityHex: chainVerified.mintAuthorityHex,
+        etcherXonly: chainVerified.etcherXonly || null,
+      });
+    }
+  }
+  if (!chainVerified?.ok) return false;
+  const verify = { ok: true, _assetId: aid, imageUri: chainVerified.imageUri, commitment: chainVerified.commitment, ipfsAttest: null };
   const attest = await enrichDiscoverAttestation(verify);
-  return attest?.supply ? marketSetVerifiedSupply(aid, attest) : false;
+  return attest?.supply ? marketSetVerifiedSupply(aid, attest, chainVerified) : false;
 }
 // Cold-cache supply attestations are slow 5s-timeout IPFS gateway
 // fetches; firing one per qualifying asset simultaneously (dozens on a
@@ -75186,7 +75211,10 @@ function renderMarketAssetHeader(assetId, rows) {
               // Non-mintable assets with a known etch get the standalone, interactive verifier
               // (mirrors renderDiscoverCard's "verify supply ✓" link) — a reader can re-derive the
               // asset id, mint authority, and this same opening themselves, not just view raw JSON.
-              if (a.mintable === false && a.etch_txid) {
+              // Gated on the CHAIN-verified mintable flag (set by enrichMarketSupplyFromAttestation
+              // alongside this same att.supply/blinding), not the worker-reported a.mintable — this
+              // link claims the opening is chain-anchored, so it only appears once that's actually true.
+              if (a._chainVerifiedMintable === false && a.etch_txid) {
                 const _vq = `?asset_id=${encodeURIComponent(a.asset_id)}&txid=${encodeURIComponent(a.etch_txid)}`;
                 sourceTag = ` <a href="/verify${_vq}" target="_blank" rel="noopener" title="Verify this fixed supply yourself, from Bitcoin + IPFS — no server or indexer trusted" style="color:var(--ink-mid);border-bottom:0.5px dotted var(--ink-faint);text-decoration:none;font-size:9px;">verify ✓</a>`;
               } else {
