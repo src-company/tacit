@@ -23,7 +23,7 @@ program and earn **TAC** for as long as the shares stay bonded.
 - The reward asset is **wTAC**, a 1:1 ERC20 wrapper of TAC (section 10 explains why). A harvest mints a
   **wTAC note**; redeeming it to plain TAC is a few more steps (section 5).
 
-**Epoch 1:** 99,700 TAC over 90 days from 2026-09-21, about 1,108 TAC per day, ending at unix `1797712559`. No lock
+**Epoch 1:** 99,700 TAC over 90 days from 2026-09-20 (UTC), about 1,108 TAC per day, ending at unix `1797712559`. No lock
 on any pool: you can unbond at any time.
 
 ## 2. Addresses

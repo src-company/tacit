@@ -33,7 +33,7 @@ or attestor set signs a bridge message.
 - **Build on it:** [`docs/BUILD-A-TACIT-DAPP.md`](./docs/BUILD-A-TACIT-DAPP.md) for the confidential pool (DeFi,
   farms, the Bitcoin bridge); [`docs/EVM-POOL.md`](./docs/EVM-POOL.md) for private ETH on Ethereum, Base and
   Robinhood Chain
-- **Security:** [`audit/AUDITS.md`](./audit/AUDITS.md) — full review history. The v1 release's agentic audits:
+- **Security:** [`SECURITY.md`](./SECURITY.md) for reporting issues and the bug bounty; [`audit/AUDITS.md`](./audit/AUDITS.md) — full review history. The v1 release's agentic audits:
   [Fable 5.1 lock checkpoint](./audit/AUDIT-2026-09-16-17-fable51-lock-checkpoint.md) (the review that gated
   the deploy), an [external automated review](./audit/AUDIT-2026-09-21-gpt-astra-external-review.md), and the
   [Pashov `solidity-auditor` v4 round](./audit/AUDIT-2026-09-24-pashov-solidity-auditor-v4.md) (24-agent,
@@ -142,11 +142,11 @@ replace it.
   small fixed circuit. Users prove their own spends on their device in seconds, so no prover sees their
   amounts and nobody pays for proving. Indexers verify each proof locally against Bitcoin data, and
   relayers post spends for a fee paid inside the pool, so a sender needs no Bitcoin wallet.
-- **The Bitcoin pool.** It carries bitcoin-backed Tacit assets, cBTC first. Shield and exit connect to
-  ordinary Tacit notes through a cross-curve proof and a range proof. Joining is one step (buy-and-shield)
-  and so is leaving (exit-to-sats, with the maker's payout bound into the signed spend). It runs on
-  signet. Its proof system is Halo2 with KZG over the Hermez setup already pinned, so it needs no new
-  ceremony.
+- **The Bitcoin pool.** It carries Tacit assets, not BTC, and TAC is the first asset the dapp offers into it.
+  Shield and exit connect to ordinary Tacit notes through a cross-curve proof and a range proof. Joining is
+  one step (buy-and-shield) and so is leaving (exit-to-sats, with the maker's payout bound into the signed
+  spend). It is live on mainnet, flagged experimental. Its proof system is Halo2 with KZG over the Hermez
+  setup already pinned, so it needs no new ceremony.
 - **The EVM pool.** The same keys, notes and address, for ETH on Ethereum, Base and Robinhood Chain. One
   Groth16 circuit (two notes in, two out) from a public ceremony, proved in the browser; the contract never
   hashes, so a private transfer costs about 340k gas. A standing private address takes ETH from any wallet or
@@ -177,7 +177,7 @@ that mixes plain sats into equal outputs.
 `43d11e6e…5757`). Use it from the ETH tab at [tacit.finance/sats](https://tacit.finance/sats). Integration:
 [docs/EVM-POOL.md](./docs/EVM-POOL.md); deployments: [contracts/deployments/evm-pool.json](./contracts/deployments/evm-pool.json).
 
-Specification: [SPEC §3.10](./SPEC.md#310-bitcoin-native-shielded-pool-reserved-not-enabled). Design:
+Specification: [SPEC §3.10](./SPEC.md#310-bitcoin-native-shielded-pool-live-on-mainnet-experimental). Design:
 [pool](./contracts/sp1/confidential/DESIGN-btc-shielded-pool.md),
 [security](./contracts/sp1/confidential/DESIGN-btc-shielded-pool-security.md),
 [BTC boundary](./contracts/sp1/confidential/DESIGN-btc-pool-native-peg.md),
@@ -275,19 +275,25 @@ Protocol view of reserve flows and buybacks. See [`docs/TAC.md`](./docs/TAC.md).
 
 A time-limited launch program, not a protocol feature.
 
-- **Points.** Wrapping ETH, posting wstETH collateral toward a cBTC mint, minting cUSD, and swapping ETH
-  through zSwap/zRouter each earn points toward 100,000 TAC distributed over 90 days (2026-09-23 to
-  2026-12-22). Every deposit gets an early-adopter bonus that decays as more of that same activity accrues
-  — not a one-time reward for whoever is first. cUSD mints earn roughly 5x more per dollar than cBTC
-  collateral posts; wrapping ETH from an address that has ever received a Privacy Pools withdrawal earns an
-  extra 1.2x. Holding 100 / 1,000 / 10,000 TAC in the same wallet multiplies that wallet's points by 1.25x /
-  1.5x / 2x ([`docs/TAC.md`](./docs/TAC.md)). The zSwap activity counts forward from launch only, with no
-  retroactive credit. Claims run
-  through [`PointsDistributor`](https://etherscan.io/address/0x000000C918e44A3a443937fA7594eA4f7C95D6b9).
+- **Points.** 100,000 TAC is paid out over 90 days, 2026-09-23 through 2026-12-21 (UTC): each day's 1,111 TAC
+  is split by that day's points. Points go to the address that sent each transaction:
+  - wrapping ETH into the confidential pool: 1,250 per ETH;
+  - depositing ETH into the EVM pool on Ethereum, Base or Robinhood Chain: 1,000 per ETH;
+  - swapping ETH through zRouter or zSwap, and betting ETH on zSwap: 1,000 per ETH; creating a zSwap market: 50;
+  - registering a .wei name: 1,000 per ETH of the fee;
+  - posting wstETH toward a cBTC mint: 1,000 per wstETH;
+  - minting cUSD from your own account: 2 per dollar (a loan the relay sends earns nothing).
+
+  Every activity gets an early bonus of up to 5x that decays as more of that same activity accrues, not a
+  one-time reward for whoever is first. Wrapping ETH from an address that has ever received a Privacy Pools
+  withdrawal earns an extra 1.2x. Holding 100 / 1,000 / 10,000 public TAC at the sending address through the
+  previous 24 hours multiplies its points by 1.25x / 1.5x / 2x ([`docs/TAC.md`](./docs/TAC.md)). zSwap
+  activity counts from launch only, with no retroactive credit. Claims run through
+  [`PointsDistributor`](https://etherscan.io/address/0x000000C918e44A3a443937fA7594eA4f7C95D6b9).
 - **Farms.** LP positions in the confidential pool earn wTAC from
   [`FarmManager`](https://etherscan.io/address/0x000031C47Cb61faB1CE2790a69625FABB71EDE24) — 99,700 TAC over
-  90 days from 2026-09-21, split across three pools ([`docs/FARMS.md`](./docs/FARMS.md)). A public TAC/ETH
-  farm also runs on
+  90 days, 2026-09-20 to 2026-12-19 (UTC), split across three pools ([`docs/FARMS.md`](./docs/FARMS.md)). A
+  public TAC/ETH farm also runs on
   [PrecisionFarm](https://etherscan.io/address/0x0000003bF4BA0B21f5e0d35119b337F4d4CF82E0), paying
   ~554 TAC/day through 2026-12-19.
 

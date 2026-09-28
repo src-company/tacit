@@ -1,21 +1,22 @@
 # TAC
 
 TAC is Tacit's native token. It was issued once on Bitcoin with a fixed supply of 21,000,000 and no mint
-authority, and it is bridged to Ethereum as an ERC-20 minted only against a proven Bitcoin-side burn
-([SPEC §7.3](../SPEC.md#73-tac), [deployment details](./DEPLOYMENTS.md#tac)). Verify the fixed supply
+authority. On Ethereum it is an ERC-20 that only the confidential pool can mint, from TAC proven to have left
+Bitcoin ([SPEC §7.3](../SPEC.md#73-tac), [deployment details](./DEPLOYMENTS.md#tac)). Verify the fixed supply
 yourself, from Bitcoin and IPFS, at [tacit.finance/verify.html](https://tacit.finance/verify.html) — no
 server or indexer trusted, the page recomputes it in your browser.
 
 ## Holding TAC
 
-- **Boosted points.** Hold 100 / 1,000 / 10,000 TAC in the same wallet you use on Tacit and each points
-  activity earns 1.25× / 1.5× / 2× your share of that day's TAC reward pool. The tier is the lowest balance
-  the wallet held over the previous 24 hours (7,200 blocks), so buying just before an activity and selling
-  after earns nothing. It applies to every points activity (ETH wraps, cBTC collateral posts, cUSD mints and
-  zRouter ETH swaps on Ethereum, Base and Robinhood) from block 26061220 on.
+- **Boosted points.** Hold 100 / 1,000 / 10,000 public TAC at the address that sends a points activity and
+  its points are multiplied by 1.25× / 1.5× / 2×. The tier is the lowest balance the address held over the
+  previous 24 hours (7,200 blocks), so buying just before an activity and selling after earns nothing. Only
+  the public ERC-20 counts; TAC held privately or on Bitcoin does not. It applies to every points activity
+  (ETH wraps, EVM pool deposits, zRouter and zSwap ETH swaps, zSwap bets and markets, .wei names, wstETH bond
+  posts and cUSD mints, on Ethereum, Base and Robinhood Chain) from block 26061220 on.
 - **Cheaper private exits.** The dapp lowers the relayed exit fee for TAC holders from 0.30% to 0.25% /
-  0.20% / 0.15% at the same tiers, counting shielded TAC, the public TAC on the wallet's own Ethereum account
-  and TAC in a connected Ethereum wallet. The relay's cost floor still applies, so small exits pay the floor either way.
+  0.20% / 0.15% at the same tiers, counting private TAC notes, the public TAC on the wallet's own Ethereum
+  account and TAC in a connected Ethereum wallet. The relay's cost floor still applies, so small exits pay the floor either way.
 - **Governance.** Holders vote on how the protocol's governed parts are run (see [Governance](#governance)).
 
 ## Where usage flows
@@ -25,8 +26,8 @@ server or indexer trusted, the page recomputes it in your browser.
 - **A quarter of the relay's ETH surplus goes to buybacks.** Relay fees first pay for gas and proving. A
   quarter of any ETH left over is sent to TacBuyback.
 - **Buybacks.** [TacBuyback](https://etherscan.io/address/0x6919cbEf0e70AFFA02Ae02c86c532A137154f250) holds
-  ETH sent to it and buys TAC on the public TAC/ETH market, on the Tacit pool or the TAC/ETH Precision pool,
-  whichever quotes better. The TAC goes straight to the reserve; the contract never holds it.
+  ETH sent to it and buys TAC on the public TAC/ETH market, on the Tacit public pool or the TAC/ETH Precision
+  pool, whichever quotes better. The TAC goes straight to the reserve; the contract never holds it.
   - Each buy is at most 0.25 ETH, at most one every 6 hours, and at most 1% of that pool's ETH liquidity, so
     buys stay small and grow with the market.
   - The contract is immutable and has no owner. Its ETH can only become TAC for the reserve or be returned

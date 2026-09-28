@@ -55,6 +55,8 @@ Shared infrastructure outside the CreateX manifest:
 | Contract | Address |
 | --- | --- |
 | BitcoinLightRelay (header relay) | [`0x20A6ddc2C6E620c6248B5A34E85996516FDd19D0`](https://etherscan.io/address/0x20A6ddc2C6E620c6248B5A34E85996516FDd19D0) |
+| WrapTipForwarder (a wrap plus its relay tip in one transaction) | [`0x000000D218B03db5837943b0b05DeA2965AE956e`](https://etherscan.io/address/0x000000D218B03db5837943b0b05DeA2965AE956e) |
+| PointsDistributor (points program claims) | [`0x000000C918e44A3a443937fA7594eA4f7C95D6b9`](https://etherscan.io/address/0x000000C918e44A3a443937fA7594eA4f7C95D6b9) |
 
 ### Canonical bridged / pool-minted ERC20s
 
@@ -85,7 +87,7 @@ untouched since.
 | Logo | [PNG, pinned on IPFS](https://ipfs.filebase.io/ipfs/bafkreibwpxssdmoczx75vsqmk5vpdyztwwz3qmykpucn5xow64ku5ht46m) alongside the CETCH metadata (also `dapp/tac-logo.png` in this repo); the SVG mark inlined on-chain in [TAC's token.list.wei listing](https://token.list.wei.limo) is mirrored at [`assets/tac-onchain.svg`](../assets/tac-onchain.svg) |
 | Ethereum ERC-20 | [`0xA1313eb9f3A445606D9583bcAc3ebeB56a858279`](https://etherscan.io/address/0xA1313eb9f3A445606D9583bcAc3ebeB56a858279) |
 | Buyback | [`TacBuyback` `0x6919cbEf0e70AFFA02Ae02c86c532A137154f250`](https://etherscan.io/address/0x6919cbEf0e70AFFA02Ae02c86c532A137154f250): buys TAC for the reserve (the ops multisig) on the public TAC/ETH market; see [`TAC.md`](./TAC.md) |
-| Bridged supply | the ERC-20's live `totalSupply()` — currently ~2.5M TAC, all of it minted only against a proven Bitcoin-side burn |
+| Bridged supply | the ERC-20's live `totalSupply()` — currently ~2.5M TAC, all of it minted by the pool from TAC proven to have left Bitcoin |
 | Bitcoin activity | ~1,957 holders; 4,166 confidential transfers; 229 orderbook trades against real BTC since 2026-05-24 |
 
 **A full round trip, ETH → BTC → ETH**, each leg a real settled transaction: a pool crossOut
@@ -147,6 +149,9 @@ config. Integrator guide: [`FARMS.md`](./FARMS.md).
 | FarmManager (CREATE3, Etherscan-verified; 3 pools, no lock) | [`0x000031C47Cb61faB1CE2790a69625FABB71EDE24`](https://etherscan.io/address/0x000031C47Cb61faB1CE2790a69625FABB71EDE24) |
 | WrappedTac (wTAC, 1:1 wrapper of the TAC ERC20) | [`0x2018139a8FDd3666855BE3315C7683b4D6aB7AEf`](https://etherscan.io/address/0x2018139a8FDd3666855BE3315C7683b4D6aB7AEf) |
 | TacFarmFunder (wrap TAC to wTAC and escrow it in one transaction) | [`0x7fc40b13c7a99a1d2c41f8b5382978363d18525a`](https://etherscan.io/address/0x7fc40b13c7a99a1d2c41f8b5382978363d18525a) |
+| Precision TAC/ETH pool (public; its LP is the pool's own ERC-20) | [`0x0155358241411dB868BA714aE7c83A27087e3D6E`](https://etherscan.io/address/0x0155358241411dB868BA714aE7c83A27087e3D6E) |
+| PrecisionFarm (stakes that LP and streams TAC) | [`0x0000003bF4BA0B21f5e0d35119b337F4d4CF82E0`](https://etherscan.io/address/0x0000003bF4BA0B21f5e0d35119b337F4d4CF82E0) |
+| Precision lens (deposit previews) | [`0x000000956bf20A41C54BaE4a4b6F5C8A166DAB4E`](https://etherscan.io/address/0x000000956bf20A41C54BaE4a4b6F5C8A166DAB4E) |
 
 | Field | Value |
 | --- | --- |
@@ -154,7 +159,7 @@ config. Integrator guide: [`FARMS.md`](./FARMS.md).
 | Pool 0, TAC / cETH (weight 50) | LP-share id `0x17c56713…9249ef99`, pool id `0x248497bf…11dc7c00` |
 | Pool 1, cETH / cUSD (weight 30) | LP-share id `0xd608b0c3…45262571`, pool id `0x5925c0c2…4e909da7` |
 | Pool 2, cETH / cBTC (weight 20) | LP-share id `0x0a0cce17…48b68254`, pool id `0x8359cd1f…bf5cd331` |
-| Epoch 1 | 99,700 TAC over 90 days from 2026-09-21; stream end (unix) `1797712559` |
+| Epoch 1 | 99,700 TAC over 90 days from 2026-09-20 (UTC); stream end (unix) `1797712559` |
 | Governor | the ops multisig `0x006CD14F36F65eCbB29b2519cCBe63A0DC8549F2` (accepted from the deployer in `0x6074f810491dff24cf130490ac55f9994c953cf1dab852f180003b7646735f39`) |
 
 Weights are governed on-chain and can change (timelocked, bounded), so read `poolInfo(pid)` for the live values.

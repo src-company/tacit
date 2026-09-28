@@ -351,8 +351,9 @@ Lock real BTC, mint a cBTC note, borrow cUSD against it, repay, and release the 
 
 1. Lock BTC in a self-custody output: a Bitcoin transaction whose output 1 carries the lock envelope
    (`dapp/cbtc-lock.js`). Keep the funding input explicit; the dapp's sats helpers pick the largest plain coin.
-2. Post the wstETH escrow that backs it: `CbtcEscrowHelper.postEscrowWithETH(outpoint)` (about 320k gas). The
-   outpoint key is `outpointKey(reverse(txid), vout)`, and the escrow must cover the lock's value.
+2. Post the wstETH escrow for it: `CbtcEscrowHelper.postEscrowWithETH(outpoint)` (about 320k gas). The
+   outpoint key is `outpointKey(reverse(txid), vout)`. The escrow must reach the engine's `requiredEscrow(vBtc)`,
+   1.5× the lock's value today, or the mint reverts.
 3. Wait for reflection to fold the lock block. Reflection folds a block only once it is 24 blocks behind the
    header relay's tip, so allow several hours. `GET /reflection/status` shows `attestedHeight`; the mint works
    once `pool.cbtcLockVBtc(outpoint)` reads the locked amount.
@@ -438,7 +439,7 @@ sequence make each other's transactions late or stuck.
 
 ## 5a. TAC airdrop
 
-A one-shot merkle distributor on Ethereum mainnet that holds 1,000,000 TAC and pays 8,652 recipients 999,999 TAC
+A one-shot merkle distributor on Ethereum mainnet, funded with 1,000,000 TAC, that pays 8,652 recipients 999,999 TAC
 between them, one leaf each. A recipient claims public TAC, sends it to another address, or shields it into the confidential
 pool in the same transaction. Roles, the guardian's powers and the runbook are in [`AIRDROP.md`](./AIRDROP.md); this chapter is how a dapp shows an
 allocation and claims it.
@@ -1209,9 +1210,11 @@ Base `https://api.tacit.finance`. Everything below is public; nothing needs a ke
 |---|---|
 | `POST /confidential/submit` | `{ type, op, memos, mode?, feeAsset? }` → `{ jobId }`. `mode: 'prove'` returns a proof for you to submit yourself; default `'settle'` has the relay submit it. |
 | `GET /confidential/status?id=` | `pending` → `proving` → `settled` \| `failed`; a `mode: 'prove'` job ends at `proven` and carries the proof |
-| `GET /confidential/quote?asset=cETH` | `{ ticker, assetId, relayFeeEligible, staticFloorUnits, gasAwareFloorUnits }` — floors are in the asset's **in-system units**, not wei. `asset` takes a ticker or a `0x` asset id. |
+| `GET /confidential/quote?asset=cETH&amountWei=` | `{ ticker, assetId, relayFeeEligible, staticFloorUnits, gasAwareFloorUnits }` — floors are in the asset's **in-system units**, not wei. `asset` takes a ticker or a `0x` asset id. With `amountWei`, it adds `recommendedWrapTipWei` and `recommendedTipRecipient` (the tipped wrap, §5) and `recommendedProveTipWei`. |
 | `GET /confidential/index?from=&limit=` | the pool's event stream plus the stealth lock set, in chain order behind one cursor — recover a key's notes and locks without running a scanner |
 | `GET /farm/program?network=mainnet`, `GET /farm/health` | the launch farms' emission schedule and a solvency verdict, read from the manager on chain |
+| `GET /reflection/status?network=mainnet` | `{ attestedHeight, tipHeight, lagBlocks, confirmations, … }` — how far reflection has folded Bitcoin; a cBTC mint waits for its lock's block |
+| `GET /points/:address`, `GET /claim/:address`, `GET /leaderboard` | the points program: an address's points and today's share, its claim (`cumulativeAmount` and `proof` for `PointsDistributor.claim`), and the ranking |
 | `GET /health` | liveness |
 
 Submits are rate-limited per IP and the queue is bounded; a rejected submit is backpressure, not failure. Fee-less
@@ -1275,18 +1278,26 @@ The template is one file with no dependencies: the live pool and relay panels ar
 dapp-module imports are commented at the wiring point. You can replace its look without touching its logic.
 Two conventions to keep:
 
-- **Tokens on `:root`, nothing hardcoded.** The live dapp's palette is cream `#f4eee3`, ink `#171717`, orange
-  `#ff9818`, monospace, dashed dividers. Swap the token values and the whole thing re-skins.
+- **Tokens on `:root`, nothing hardcoded.** The template ships cream `#f4eee3`, ink `#171717` and orange
+  `#ff9818`, in monospace with dashed dividers. Swap the token values and the whole thing re-skins.
 - **Keep the op builders and the renderer apart.** Every builder returns a plain `{ op, leaves, outputs,
   memos }`; the UI only ever renders that. It is what lets `tacit.js` be a thin renderer over the same
   modules, and it is why a redesign never risks the crypto.
 
 [`dapp/lite/index.html`](../dapp/lite/index.html), served at `https://tacit.finance/lite/`, is the same idea
-carried through the launch features in one file: the tipped wrap above, stealth sends and exits on the
-confidential pool, deposits, sends and withdrawals proved in the browser on the EVM pool (§5h), the airdrop
-(§5a), the TAC/ETH Precision farm and the shielded farms, and the cBTC lock, bond, mint and cUSD loan. Its one
-inline module is pinned by hash in its own CSP, and `npm run build` refreshes that pin with its `?cb=` tokens,
-so it runs on the dapp's origin without `'unsafe-inline'`.
+carried through the launch features in one file:
+
+- the confidential pool: the tipped wrap above, private sends with their claims and take-backs, and exits;
+- the EVM pool (§5h), proved in the browser: deposits, sends, withdrawals, the deposit address and its sweep,
+  and moves into the confidential pool or to Base and Robinhood Chain;
+- Bitcoin: silent payments, shielded TAC sends and the payment links that let a recipient find them;
+- TAC: the airdrop (§5a), buying TAC, and one balance across Bitcoin, the ERC-20 and private notes;
+- points claims and `.wei` names, the TAC/ETH Precision farm and the shielded farms;
+- the cBTC lock, bond, mint and cUSD loan.
+
+Public transactions come from a connected wallet or from the key's own Tacit account, which signs in the page.
+Its one inline module is pinned by hash in its own CSP, and `npm run build` refreshes that pin with its `?cb=`
+tokens, so it runs on the dapp's origin without `'unsafe-inline'`.
 
 ## 8. When something breaks
 
