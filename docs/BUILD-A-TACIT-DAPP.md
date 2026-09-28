@@ -6,6 +6,11 @@ needs a build step, a framework or a backend. A starting skeleton is
 
 The protocol itself is in [`SPEC.md`](../SPEC.md); addresses are in [`DEPLOYMENTS.md`](./DEPLOYMENTS.md).
 
+**Only want private ETH payments, on Ethereum, Base and Robinhood Chain?** That is a separate, smaller pool —
+one fixed Groth16 circuit, proved on the user's own device, no SP1, no relay witness — with its own guide:
+[`EVM-POOL.md`](./EVM-POOL.md). This guide is for the confidential pool: multi-asset notes, DeFi (swap, LP,
+lend, farm, OTC, bids) and the Bitcoin bridge, all through one SP1 program.
+
 ---
 
 ## 1. The model, in six lines

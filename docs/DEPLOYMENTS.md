@@ -225,6 +225,31 @@ Bitcoin digest at the anchor height above.
 Roles, claim paths, the emergency sweep and the runbook are in [`AIRDROP.md`](./AIRDROP.md); the inputs and how to rebuild the root are in
 [`airdrop/v1/README.md`](../airdrop/v1/README.md).
 
+## EVM pool (Ethereum, Base, Robinhood Chain)
+
+A separate, smaller pool: native ETH only, one fixed Groth16 circuit, proved on the user's own device — not
+part of the `ConfidentialPool`/SP1 suite above. Same addresses on all three chains (CreateX CREATE3, salts
+locked to deployer `0x68575B073DE49a94e3E3ACf6F3A0d6E3b66267C7`).
+
+| | |
+|---|---|
+| `TacitEvmPool` | `0x000000c2A20657CE25f2Ba99737933D031AFBEE9` |
+| `TacitEvmPoolRouter` | `0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5` |
+| Groth16 verifier (`TransactVerifier`) | `0x000000b1c0e84CEc8AdF8278B90c4d6400DfB153` |
+| PoseidonT5 | `0x555333f3f677Ca3930Bf7c56ffc75144c51D9767` |
+| Ceremony | 176 contributions, sealed with Bitcoin block 968840; vk hash `43d11e6e…5757` |
+
+| Chain | Deploy block | Verified | Keeper |
+|---|---|---|---|
+| Ethereum (1) | 26069245 | Etherscan, Sourcify | `https://tacit-evm-pool-keeper.onrender.com/evm-pool/keeper` |
+| Base (8453) | 51864014 | Sourcify, Blockscout | `https://tacit-evm-pool-keeper-base.onrender.com/evm-pool/keeper` |
+| Robinhood Chain (4663) | 73991661 | Etherscan, Sourcify | `https://tacit-evm-pool-keeper-robinhood.onrender.com/evm-pool/keeper` |
+
+Integration guide: [`EVM-POOL.md`](./EVM-POOL.md). Machine-readable source of truth:
+[`contracts/deployments/evm-pool.json`](../contracts/deployments/evm-pool.json). This pool and the
+`ConfidentialPool` above keep separate notes; a hop between them is a public exit/entry
+([`EVM-POOL.md#moving-between-v1-and-this-pool`](./EVM-POOL.md#moving-between-v1-and-this-pool)).
+
 ## Lineage
 
 A `ConfidentialPool` cannot be upgraded. The protocol evolves by deploying a successor that users opt into by

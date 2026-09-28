@@ -30,7 +30,9 @@ or attestor set signs a bridge message.
 - **Contracts:** [`docs/DEPLOYMENTS.md`](./docs/DEPLOYMENTS.md), mainnet addresses and verifying keys
 - **Verify it yourself:** [`docs/VERIFY-LIVE.md`](./docs/VERIFY-LIVE.md), `node tools/verify-live.mjs` checks the
   live deployment against this repository
-- **Build on it:** [`docs/BUILD-A-TACIT-DAPP.md`](./docs/BUILD-A-TACIT-DAPP.md)
+- **Build on it:** [`docs/BUILD-A-TACIT-DAPP.md`](./docs/BUILD-A-TACIT-DAPP.md) for the confidential pool (DeFi,
+  farms, the Bitcoin bridge); [`docs/EVM-POOL.md`](./docs/EVM-POOL.md) for private ETH on Ethereum, Base and
+  Robinhood Chain
 - **Security:** [`audit/AUDITS.md`](./audit/AUDITS.md) — full review history. The v1 release's agentic audits:
   [Fable 5.1 lock checkpoint](./audit/AUDIT-2026-09-16-17-fable51-lock-checkpoint.md) (the review that gated
   the deploy), an [external automated review](./audit/AUDIT-2026-09-21-gpt-astra-external-review.md), and the

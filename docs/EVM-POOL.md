@@ -9,6 +9,12 @@ immutable: no owner, no pause, no upgrade. Design and measurements: [`DESIGN-evm
 transactions are in [`contracts/deployments/evm-pool.json`](../contracts/deployments/evm-pool.json). Scan events from
 each chain's deploy block.
 
+**Which pool.** This is the smaller of Tacit's two pools: one fixed circuit, ETH only, multichain, with no
+prover but the user's own device. For DeFi (swap, LP, lend, farm, OTC, bids), multi-asset notes, or the
+Bitcoin bridge, see [`BUILD-A-TACIT-DAPP.md`](./BUILD-A-TACIT-DAPP.md) — the confidential pool on Ethereum
+mainnet, one SP1 program for every op. The two pools share nothing on chain; a hop between them is a public
+exit/entry (["Moving between V1 and this pool"](#moving-between-v1-and-this-pool)).
+
 ## Addresses
 
 The same on Ethereum (1), Base (8453) and Robinhood Chain (4663), the chains the suite is deployed on (CreateX
