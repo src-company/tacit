@@ -12,6 +12,10 @@
 //   saved    a passphrase-locked key saved the way tacit.finance saves it opens through tacit.js's own prompt
 //   bitcoin  a (stubbed, deterministic) UniSat wallet opens a key through tacit.js, then funds a lock in one call
 //   passkey  a virtual authenticator with PRF creates a passkey wallet, and signing in again opens the same key
+//   acct     a pasted key and no wallet: its Tacit account (as pool-ux derives it), funded from outside, buys TAC,
+//            stakes ETH + TAC with a permit it signs, sends ETH out; a connected wallet then tops it up
+//   devmove  (after acct) the Tacit account deposits into the EVM pool, sweeps a small arrival in, moves pool ETH into
+//            V1 through a keeper-relayed withdrawToV1 whose note settle is then submitted, and asks to bridge to Base
 //   PLAYWRIGHT=<path to playwright-core> node tools/lite-check.mjs [scenario,…] [fork rpc]   (SHOTS=<dir> saves screenshots)
 
 import { spawn } from 'node:child_process';
@@ -28,7 +32,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,pair,farm,buy,v1,device,borrow,keys,saved,bitcoin,passkey').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,pair,farm,buy,v1,device,borrow,keys,saved,bitcoin,passkey,acct,devmove').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -57,7 +61,19 @@ const server = createServer((req, res) => {
 }).listen(WEB);
 
 const RPC_HOSTS = ['ethereum-rpc.publicnode.com', 'eth.drpc.org', '1rpc.io', 'mainnet.gateway.tenderly.co', 'cloudflare-eth.com', 'rpc.flashbots.net'];
-const submits = [];
+const submits = [], relays = [];
+
+// router.withdrawToV1(tx, intent), encoded as evm-pool-wallet.js encodes it for a self-sent move.
+const { calldata } = await import(new URL('../dapp/evm-pool-gateway.js', import.meta.url));
+const EVM_ROUTER = '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5', KEEPER = '0xa0ee7a142d267c1f36714e4a8f75612f20a79720';   // anvil account 9
+const PAIR = { tuple: ['uint256', 'uint256'] }, B = (x) => BigInt(x);
+const TX_TYPES = [PAIR, { tuple: [PAIR, PAIR] }, PAIR, { tuple: Array(11).fill('uint256') }, 'address', 'uint256', 'address', 'uint256', 'bytes', 'bytes'];
+const TX_SIG = '(uint256[2],uint256[2][2],uint256[2],uint256[11],address,int256,address,uint256,bytes,bytes)';
+const WRAP_SIG = '(bytes32,uint256,uint256,address,bytes32,address,uint64,uint256)';
+const WRAP_TYPES = ['bytes32', 'uint256', 'uint256', 'address', 'bytes32', 'address', 'uint64', 'uint256'];
+const withdrawToV1Data = (t, i) => calldata(`withdrawToV1(${TX_SIG},${WRAP_SIG})`, [{ tuple: TX_TYPES }, { tuple: WRAP_TYPES }], [
+  [t.pA.map(B), t.pB.map((r) => r.map(B)), t.pC.map(B), t.publicInputs.map(B), t.recipient, BigInt.asUintN(256, B(t.extAmount)), t.relayer, B(t.fee), t.memo0, t.memo1],
+  [i.assetId, B(i.amount), B(i.tip), i.tipTo, i.commit, i.refund, B(i.deadline), B(i.nonce)]]);
 const json = (route, body) => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
 
 async function openPage({ account, key = null, host = '127.0.0.1', init = null }) {
@@ -78,8 +94,21 @@ async function openPage({ account, key = null, host = '127.0.0.1', init = null }
   };
   await ctx.route(/^https:\/\/api\.tacit\.finance\/confidential\/(submit|status)/, relay);
   await ctx.route(new RegExp(`^http://(127\\.0\\.0\\.1|localhost):${WEB}/(confidential|farm|reflection)/`), relay);
-  await ctx.route('https://tacit-evm-pool-keeper*.onrender.com/**', (route) => json(route, /\/quote/.test(route.request().url())
-    ? { relayer: '0x0000000000000000000000000000000000000001', fee: '329000000000000', sweepFee: '439000000000000', receiveMin: '175600000000000000' } : { ok: true }));
+  // Keepers: quotes are canned and the queue is absent (wallets prove against their own tree). A move into V1 is
+  // relayed for real, router.withdrawToV1 sent as a keeper would; any other relay is recorded and refused.
+  await ctx.route('https://tacit-evm-pool-keeper*.onrender.com/**', async (route) => {
+    const p = new URL(route.request().url()).pathname;
+    if (/\/quote$/.test(p)) return json(route, { relayer: '0x0000000000000000000000000000000000000001', fee: '329000000000000', sweepFee: '439000000000000', receiveMin: '175600000000000000' });
+    if (/\/(head|reserve)$/.test(p)) return route.fulfill({ status: 404, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{}' });
+    if (/\/relay$/.test(p)) {
+      const b = JSON.parse(route.request().postData() || '{}');
+      relays.push(b);
+      if (!b.wrap) return route.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ error: 'stubbed in the fork check' }) });
+      b.txHash = await rpc('eth_sendTransaction', [{ from: KEEPER, to: EVM_ROUTER, data: withdrawToV1Data(b.tx, b.wrap), gas: '0x2dc6c0' }]);
+      return json(route, { txHash: b.txHash });
+    }
+    return json(route, { ok: true });
+  });
   await ctx.exposeFunction('__wallet', async (method, params = []) => {
     if (method === 'eth_requestAccounts' || method === 'eth_accounts') return [account];
     if (method === 'eth_chainId') return '0x1';
@@ -234,7 +263,7 @@ await step('borrow', async () => {
   await page.goto(url + '#borrow');
   await page.waitForSelector('#bw-lock, #borrow-body [data-in="eth"]', { timeout: 60000 });
   if (await page.$('#borrow-body [data-in="eth"]')) { await page.click('#borrow-body [data-in="eth"]'); await page.waitForSelector('#bw-lock', { timeout: 120000 }); }
-  ok(/^bc1q/.test(await page.$eval('[data-copy]', (b) => b.dataset.copy)), 'borrow: the Bitcoin deposit address renders');
+  ok(/^bc1q/.test(await page.$eval('#borrow-body [data-copy]', (b) => b.dataset.copy)), 'borrow: the Bitcoin deposit address renders');
   const pub = await page.evaluate(() => localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('tacit-eth-identity-anchor:'))));
   await page.evaluate((p) => localStorage.setItem(`tacit-lite-cbtc-v1:${p}`, JSON.stringify({ lockTxid: 'aa'.repeat(32), lockVout: 1, vBtc: '20000', anchor: { txid: 'bb'.repeat(32), vout: 0 }, at: Date.now() })), pub);
   await page.evaluate(() => { location.hash = ''; location.hash = '#borrow'; });
@@ -339,7 +368,7 @@ await step('bitcoin', async () => {
   await r.page.click('#bw-fund');
   await until(r.page, () => (window.__sent || []).length > 0 || /err/.test(document.querySelector('#bw-status')?.innerHTML || ''), null, 60000);
   const sent = await r.page.evaluate(() => window.__sent);
-  const deposit = await r.page.$eval('[data-copy]', (b) => b.dataset.copy);
+  const deposit = await r.page.$eval('#borrow-body [data-copy]', (b) => b.dataset.copy);
   ok(sent.length === 1 && sent[0][0] === deposit && sent[0][1] >= 23000, `bitcoin: one popup funds the deposit address with ${sent[0]?.[1]} sats`);
   if (r.errors.length) { fails++; console.log('FAIL bitcoin page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   await r.browser.close();
@@ -363,6 +392,120 @@ await step('passkey', async () => {
   if (r.errors.length) { fails++; console.log('FAIL passkey page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   await r.browser.close();
 });
+
+const { makeEvmAccount } = await import(new URL('../dapp/evm-account.js', import.meta.url));
+const balOf = async (a) => BigInt(await rpc('eth_getBalance', [a, 'latest']));
+const go = (p, h) => p.evaluate((x) => { location.hash = ''; location.hash = x; }, h);
+let ACCT = null;
+await step('acct', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  const hex = 'feed'.padEnd(64, '3');
+  const want = makeEvmAccount({ secp, keccak256: keccak_256, sha256 }).deriveEvmAccount(Buffer.from(hex, 'hex'), 'mainnet').address;
+  await r.page.goto(r.url + '#wallet');
+  await r.page.click('#wallet-body [data-in="paste"]');
+  await r.page.fill('#ws-hex', hex);
+  await r.page.click('#wallet-body [data-in="key"]');
+  await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+  // tacit.finance's pool module, loaded on its own, derives the same account from the same key.
+  const viaUx = await r.page.evaluate(async (h) => {
+    const d = await import('/vendor/tacit-deps.min.js'), dep = await import('/confidential-deployments.js');
+    dep.setActiveNetwork('mainnet');
+    const { makeConfidentialPoolUx } = await import('/confidential-pool-ux.js');
+    return makeConfidentialPoolUx({ secp: d.secp, keccak256: d.keccak_256, sha256: d.sha256, network: 'mainnet' }).account(d.hexToBytes(h)).address;
+  }, hex);
+  await toWallet(r.page);
+  await r.page.waitForSelector('#ac-form [data-copy]', { timeout: 60000 });
+  const shownAddr = await r.page.$eval('#ac-form [data-copy]', (b) => b.dataset.copy);
+  ok(shownAddr === want && viaUx === want, `acct: the Tacit account is the key's own, as tacit.finance derives it (${want.slice(0, 10)}…, pool-ux ${viaUx.slice(0, 10)}…)`);
+  ok(await r.page.$eval('[data-pay="tacit"]', (b) => b.classList.contains('main')), 'acct: with no wallet connected, the Tacit account pays');
+  await rpc('anvil_setBalance', [want, '0x' + (10n ** 17n).toString(16)]);             // funded from outside, as an exchange would
+
+  await go(r.page, '#buy');
+  await r.page.waitForSelector('#b-amt', { timeout: 60000 });
+  ok(/Tacit account/.test(await text(r.page, '#b-max')), 'acct: the pay line names the Tacit account');
+  await r.page.fill('#b-amt', '0.001');
+  await until(r.page, () => !document.querySelector('#b-go').disabled, null, 240000);
+  await r.page.click('#b-go');
+  await until(r.page, () => /Bought|err/.test(document.querySelector('#b-status')?.innerHTML || ''), null, 120000);
+  ok((await tacOf(want)) > 0n, `acct: Buy signs from the Tacit account, no wallet asked ${await text(r.page, '#b-status')}`);
+
+  await go(r.page, '#farm');
+  await r.page.waitForSelector('[data-pfm="pair"]', { timeout: 60000 });
+  await r.page.click('[data-pfm="pair"]');
+  await r.page.fill('#pf-amt', '0.0002');
+  await until(r.page, () => !document.querySelector('#pf-go').disabled || /\S/.test(document.querySelector('#pf-status')?.textContent || ''), null, 60000);
+  if (await r.page.isDisabled('#pf-go')) throw new Error(`the ETH + TAC deposit stayed disabled: ${await text(r.page, '#pf-rcpt')}`);
+  await r.page.click('#pf-go');
+  await until(r.page, () => /Staked/.test(document.querySelector('#toast-container')?.textContent || '') || /err/.test(document.querySelector('#pf-status')?.innerHTML || ''), null, 120000);
+  ok((await stakedOf(want)) > 0n, `acct: ETH + TAC staked with a permit the Tacit account signed ${await text(r.page, '#pf-status')}`);
+
+  const OUT = '0x1111111111111111111111111111111111111111', o0 = await balOf(OUT);
+  await toWallet(r.page);
+  await r.page.waitForSelector('[data-wal="out"]');
+  await r.page.click('[data-wal="out"]');
+  await r.page.fill('#ac-to', OUT); await r.page.fill('#ac-mv', '0.01');
+  await r.page.click('#ac-go');
+  await until(r.page, () => /Sent\.|err/.test(document.querySelector('#ac-status')?.innerHTML || ''), null, 120000);
+  ok((await balOf(OUT)) - o0 === 10n ** 16n, `acct: Send out pays from the Tacit account ${await text(r.page, '#ac-status')}`);
+
+  await r.page.click('[data-pay="wallet"]');                                              // connects the stub wallet
+  await until(r.page, () => document.querySelector('[data-pay="wallet"]')?.classList.contains('main'));
+  await r.page.click('[data-pay="tacit"]');
+  await until(r.page, () => document.querySelector('[data-pay="tacit"]')?.classList.contains('main'));
+  ok(true, 'acct: with a wallet connected either account can be chosen to pay');
+  await r.page.click('[data-wal="add"]');
+  await r.page.waitForSelector('#ac-go');
+  const a0 = await balOf(want);
+  await r.page.fill('#ac-mv', '0.02');
+  await r.page.click('#ac-go');
+  await until(r.page, () => /Added\.|err/.test(document.querySelector('#ac-status')?.innerHTML || ''), null, 120000);
+  ok((await balOf(want)) - a0 === 2n * 10n ** 16n, `acct: Add from wallet tops the Tacit account up ${await text(r.page, '#ac-status')}`);
+  if (r.errors.length) { fails++; console.log('FAIL acct page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  ACCT = { r, want };
+});
+
+await step('devmove', async () => {
+  if (!ACCT) throw new Error('needs the acct scenario first');
+  const { r } = ACCT, st = () => text(r.page, '#d-status');
+  await go(r.page, '#device');
+  await r.page.waitForSelector('[data-chain="1"]', { timeout: 60000 });
+  await r.page.click('[data-chain="1"]');
+  await r.page.waitForSelector('#d-amt', { timeout: 60000 });
+  await r.page.fill('#d-amt', '0.01');
+  await r.page.click('#d-go');
+  await until(r.page, () => /Deposited|err/.test(document.querySelector('#d-status')?.innerHTML || ''), null, 600000);
+  ok(/Deposited/.test(await st()), `devmove: the Tacit account deposits, proved here ${(await st()).slice(0, 60)}`);
+
+  await r.page.click('[data-dev="receive"]');
+  await r.page.waitForSelector('#d-form [data-copy]', { timeout: 60000 });
+  const box = (await r.page.$$eval('#d-form [data-copy]', (bs) => bs.map((b) => b.dataset.copy)))[1];
+  await rpc('eth_sendTransaction', [{ from: A0, to: box, value: '0x' + (10n ** 15n).toString(16) }]);   // under the keeper's minimum
+  await r.page.click('[data-dev="send"]'); await r.page.click('[data-dev="receive"]');
+  await r.page.waitForSelector('#d-sweep', { timeout: 60000 });
+  await r.page.click('#d-sweep');
+  await until(r.page, () => /Swept in|err/.test(document.querySelector('#d-status')?.innerHTML || ''), null, 600000);
+  ok(/Swept in/.test(await st()) && (await balOf(box)) === 0n, `devmove: a small arrival is swept in from this device ${(await st()).slice(0, 60)}`);
+
+  await r.page.click('[data-dev="out"]');
+  await r.page.click('[data-dest="v1"]');
+  await r.page.fill('#d-amt', '0.002');
+  const n0 = submits.length, k0 = relays.length;
+  await r.page.click('#d-go');
+  await until(r.page, () => /Moved|stubbed|failed|err/i.test(document.querySelector('#d-status')?.innerHTML || ''), null, 1200000);
+  const rel = relays.slice(k0).find((b) => b.wrap);
+  const landed = !!rel?.txHash && (await rpc('eth_getTransactionReceipt', [rel.txHash]))?.status === '0x1';
+  ok(rel && BigInt(rel.wrap.amount) === 2n * 10n ** 15n && landed && submits.slice(n0).some((s) => s.type === 'wrap'),
+    `devmove: pool ETH moves into V1 in one relayed withdrawToV1, then its note settle is submitted ${(await st()).slice(0, 60)}`);
+
+  await r.page.click('[data-dest="8453"]');
+  await r.page.fill('#d-amt', '0.001');
+  const k1 = relays.length;
+  await r.page.click('#d-go');
+  await until(r.page, () => /On its way|stubbed|err/i.test(document.querySelector('#d-status')?.innerHTML || ''), null, 600000);
+  ok(relays.slice(k1).some((b) => b.call), `devmove: a move to Base asks the relayer for its bridge call ${(await st()).slice(0, 60)}`);
+  if (r.errors.length) { fails++; console.log('FAIL devmove page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+});
+if (ACCT) await ACCT.r.browser.close();
 
 if (main.errors.length) { fails++; console.log('FAIL page errors:\n  ' + main.errors.slice(0, 8).join('\n  ')); }
 console.log(fails ? `${fails} failed` : 'all passed');
