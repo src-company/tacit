@@ -10,12 +10,14 @@
 // this module's.
 //
 // Returns the FULL shape burn-deposit-tracer.js's own doc comment specifies (tx + inputs + outputs +
-// block-level merkle data), not the minimal {tx, blockHash} shape /reflection/burndep's registration door
-// actually requires (the server fills in the rest automatically at fold time via enrichBurnDeposit/
-// blockWitness — see reflection-attest.js). Building the full shape client-side costs more esplora calls but
-// lets the caller run the SAME local verification the scratchpad scripts that built every real burn already
-// do (re-deriving the guest's own checks before ever submitting) — the safer of the two valid shapes to
-// return, matching how every burn that has actually succeeded was actually built.
+// block-level merkle data) by default — lets a caller run the SAME local verification the scratchpad scripts
+// that built every real burn already do (re-deriving the guest's own checks before ever submitting). The
+// block-level portion of that shape costs a full raw-block download+parse per hop, on top of the per-tx
+// fetches, so a caller that only needs the minimal {tx, blockHash} shape /reflection/burndep's registration
+// door actually requires (the server fills in the rest automatically at fold time via enrichBurnDeposit/
+// blockWitness — see reflection-attest.js) can skip it via `fullBlockWitness: false` — the only lever that
+// shortens total trace time, since a DAG walk is inherently sequential (each hop's inputs are unknown until
+// the hop before it resolves). traceBurnDepositProvenance, the one real caller today, defaults to skipping it.
 
 import { classifyConfidentialTx, extractTaprootEnvelope, parseCetch } from '../../dapp/burn-deposit-bitcoin.js';
 import { splitBlockTxs } from './bitcoin-block-parse.js';
@@ -28,7 +30,7 @@ const reverseBytes = (b) => Uint8Array.from(b).reverse();
 // outpointKey(txidDisplayHex-or-0x, vout) — the same function `dapp/confidential-pool.js`'s makeConfidentialPool
 // exports (keccak(txid ‖ vout_le), mirroring cxfer-core::outpoint_key). Injected so this module never has an
 // opinion about which secp/keccak/sha256 implementation the caller is already using.
-export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, outpointKey, sha256 }) {
+export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, outpointKey, sha256, fullBlockWitness = true }) {
   if (typeof apiText !== 'function' || typeof apiRawBytes !== 'function') throw new Error('burndep-live-tracer: apiText and apiRawBytes required');
   if (typeof outpointKey !== 'function') throw new Error('burndep-live-tracer: outpointKey required (from makeConfidentialPool)');
   if (!env) throw new Error('burndep-live-tracer: env required (apiText/apiRawBytes read env.MAINNET_API/SIGNET_API for upstream selection)');
@@ -135,8 +137,14 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
     if (!json.status || !json.status.confirmed) throw new Error(`burndep-live-tracer: ${txidDisplay} is not yet confirmed`);
     const blockHash = json.status.block_hash;
     const vins = json.vin || [];
-    const [{ coinbase, blockTxids, blockWtxids }, classified] = await Promise.all([
-      fetchBlockWitness(blockHash),
+    // fetchBlockWitness downloads and parses the FULL raw block (every tx in it) — real bandwidth/CPU cost per
+    // hop, needed only for the merkle-proof fields (blockTxids/blockWtxids/coinbase/index). The minimal
+    // /reflection/burndep registration shape needs none of those, only blockHash — already free on `json`
+    // above — so a caller building that shape skips this fetch entirely via `fullBlockWitness: false`. A DAG
+    // this deep is sequential by nature (each hop's inputs are unknown until the hop before it resolves), so
+    // trimming per-hop cost is the only lever that shortens the total trace time.
+    const [blockWitness, classified] = await Promise.all([
+      fullBlockWitness ? fetchBlockWitness(blockHash) : null,
       Promise.all(vins.map((v) => classifyInput(v.txid, v.vout))),
     ]);
     // Funding inputs (assembler's `inputSkip`) are, by construction, the LEADING ones — see classifyInput's
@@ -158,11 +166,14 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
     // itself) resolves to a plaintext txid/vout this module already knows, without needing to invert a hash.
     // Funding inputs are never seeded: nothing should ever ask this tracer to resolve one further.
     for (const inp of inputs) seed(inp.prevTxid, inp.prevVout);
-    // This tx's position within its own block, by matching internal-order txid bytes (blockTxids is already
-    // in that form, per bitcoin-block-parse.js) — needed for witnessPath's merkle-siblings index.
-    const txidBytes = reverseBytes(hexToBytes(txidDisplay));
-    const index = blockTxids.findIndex((t) => t.length === txidBytes.length && t.every((b, i2) => b === txidBytes[i2]));
-    if (index < 0) throw new Error(`burndep-live-tracer: ${txidDisplay} not found in its own reported block ${blockHash} — reorg mid-trace?`);
+    let index;
+    if (blockWitness) {
+      // This tx's position within its own block, by matching internal-order txid bytes (blockTxids is already
+      // in that form, per bitcoin-block-parse.js) — needed for witnessPath's merkle-siblings index.
+      const txidBytes = reverseBytes(hexToBytes(txidDisplay));
+      index = blockWitness.blockTxids.findIndex((t) => t.length === txidBytes.length && t.every((b, i2) => b === txidBytes[i2]));
+      if (index < 0) throw new Error(`burndep-live-tracer: ${txidDisplay} not found in its own reported block ${blockHash} — reorg mid-trace?`);
+    }
     return {
       txid: withHexPrefix(txidDisplay),
       tx: withHexPrefix(hex),
@@ -176,9 +187,9 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
       // rest at fold time, see reflection-attest.js's enrichBurnDeposit) doesn't need blockTxids/blockWtxids/
       // coinbase/index at all, but does need this.
       blockHash,
-      blockTxids,
-      blockWtxids,
-      coinbase,
+      blockTxids: blockWitness && blockWitness.blockTxids,
+      blockWtxids: blockWitness && blockWitness.blockWtxids,
+      coinbase: blockWitness && blockWitness.coinbase,
       index,
     };
   }
@@ -193,11 +204,11 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
 //   note        : { txid, vout } — display-hex txid, the note being bridged
 //   leaves      : [{ txid, vout }, ...] — the asset's C_0 (and any authorized cmint reveals); at least one
 //                 required, or every lineage throws as unprovable
-export async function traceBurnDepositProvenance({ env, apiText, apiRawBytes, network, outpointKey, sha256, trace, note, leaves, maxDepth = 256 } = {}) {
+export async function traceBurnDepositProvenance({ env, apiText, apiRawBytes, network, outpointKey, sha256, trace, note, leaves, maxDepth = 256, fullBlockWitness = false } = {}) {
   if (typeof trace !== 'function') throw new Error('traceBurnDepositProvenance: trace required (dapp/burn-deposit-tracer.js makeBurnDepositTracer({outpointKey}).trace)');
   if (!note || note.txid == null || note.vout == null) throw new Error('traceBurnDepositProvenance: note {txid, vout} required');
   if (!Array.isArray(leaves) || !leaves.length) throw new Error('traceBurnDepositProvenance: at least one leaf (the asset\'s C_0) required');
-  const live = makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, outpointKey, sha256 });
+  const live = makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, outpointKey, sha256, fullBlockWitness });
   const noteOutpoint = live.seed(note.txid, note.vout);
   const leafOutpoints = leaves.map((l) => live.seed(l.txid, l.vout));
   // trace()'s own contract (dapp/burn-deposit-tracer.js, unit-tested against an in-memory mock) is a

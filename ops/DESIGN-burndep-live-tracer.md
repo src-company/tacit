@@ -153,6 +153,35 @@ convention already noted above, now confirmed to apply to every `cxfers[].txid` 
 just `burnedInput.prevTxid`). The full `node --test` suite for reflection/burndep and the tracer itself
 (15 files) still passes.
 
+## Update: the endpoint timed out in production — full block-witness fetch was the cost, not the walk itself
+
+Manually deployed and hit `POST /reflection/burndep/trace` against production with the same real 100-TAC
+burn: the request was reset (HTTP 000, curl error 16) around 61 seconds in — Render's gateway killing a
+request that, per the earlier local measurement, was going to take ~316 seconds end to end. A permissionless
+endpoint that reliably exceeds a ~60s gateway timeout on real data isn't shippable as a plain synchronous
+request, so this needed a real fix, not a retry.
+
+Root cause: `getCxferByOutput` was calling `fetchBlockWitness` — a full raw-block download plus a parse of
+every transaction in it — on every hop, solely to produce `blockTxids`/`blockWtxids`/`coinbase`/`index`. The
+one real caller (`handleBurnDepositTrace`) never reads any of those fields; it only needs `blockHash`, which
+was already sitting on the per-tx JSON `fetchTx` fetches anyway (`json.status.block_hash`) — no extra request
+required. The full block-level shape is still valuable for a hypothetical future caller doing local
+verification (matching the historical scratchpad scripts), so it's now opt-in: `fullBlockWitness` on
+`makeLiveBurnDepositTracer` (default `true`, preserving the original documented contract) and on
+`traceBurnDepositProvenance` (default `false`, matching the one real caller today).
+
+Re-ran the identical 38-hop trace after the change: **39.4s, down from 316s** (~8x). This is the only lever
+available for a DAG this deep — the walk is inherently sequential (each hop's inputs are unknown until the
+hop before it resolves), so nothing here can be parallelized away; only the per-hop cost could shrink. 39s
+comfortably clears the gateway timeout that killed the pre-fix request. Full `node --test` suite unaffected
+(68 + 13 across the reflection/burndep files, all passing).
+
+**Not fully closed**: a lineage long enough could still exceed the gateway timeout even at the lower per-hop
+cost — this trims the constant factor, it doesn't change the O(depth) shape of a synchronous request stapled
+to a sequential walk. If a real note's lineage ever gets deep enough for this to matter again, the actual fix
+is an async job pattern (start the trace, return a job id, poll for the result) — the codebase already has
+this shape for reflection job assembly; this endpoint doesn't have it yet.
+
 ## What NOT to do
 
 - Do not skip the byte-for-byte diff against real historical burns and ship on "it looks right."
