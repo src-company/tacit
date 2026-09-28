@@ -64,6 +64,8 @@ first step works with nothing but an RPC; the second needs the relay.
 
 Ethereum mainnet. The source of truth is
 [`contracts/deployments/1-createx.json`](../contracts/deployments/1-createx.json); read addresses from it.
+(A second, separate Tacit pool — private ETH only, multichain on Ethereum, Base and Robinhood Chain — has its
+own addresses; see §5h.)
 
 | | |
 |---|---|
@@ -202,6 +204,22 @@ const res = await tacit.submitWrapSettle({ built: w });   // once the wrap tx is
 
 The guest checks the deposit is registered, so this fails until the wrap tx has landed.
 
+**If step 2 fails after the deposit already landed** — a dropped connection, a relay hiccup, a timeout — do
+not call `wrap()` / `routerWrap()` again: that broadcasts a second deposit and pays twice. The escrow carries
+no deadline, so a pending deposit is safe to leave exactly where it is and settle later. Recover by rebuilding
+the same witness — `tacit.buildWrap({ walletPriv, amountWei, ticker, index })` with the **same** `index` as the
+original attempt — and retrying `submitWrapSettle({ built })`. `buildWrap` is synchronous and deterministic:
+the note, its commitment and the deposit id all come from `(walletPriv, asset, index, amountWei)` alone
+(`confidential-pool-ux.js:612-668`), so rebuilding reproduces the exact deposit already sitting in escrow
+rather than a new one — only the memo's sealing ephemeral is fresh per call, and a wrap deposit's note never
+depends on its memo to be recovered (it re-derives from the key and index instead, §1). This is the other
+reason to record `index` alongside the collision-avoidance one above: it also doubles as your recovery key for
+this deposit. `dapp/confidential-pool-tab.js`'s `wireResumeWraps` is the shipped version of exactly this
+pattern — for each pending deposit it rebuilds with `buildWrap` and resubmits with `submitWrapSettle` — and the
+banner and Resume button it wires up (`pendingWrapRowsHtml`, deduplicated across tabs with
+`notifyPendingWrapsOnce`) live in `dapp/confidential-scan-health.js`, shared with the send tab so both surfaces
+show the same stuck deposit the same way.
+
 ### Wrap and split in one transaction (`wrapAndSend`)
 
 `tacit.wrapAndSend` does steps 1 and 2 together for your own wallet. The wrap and the settle land in one transaction, the
@@ -215,6 +233,43 @@ const r = await tacit.wrapAndSend({ walletPriv, amountWei: 10n ** 16n, ticker: '
 `recipientPubHex` must be your own. The call refuses any other recipient: a native note's owner is `keccak(nk ‖ dom)`, so a note owned
 by someone else's pubkey could never be spent, and the deposit would be lost. To pay another person, use the stealth path below. The name
 describes the one-transaction shape, not a way to pay a third party.
+
+**`wrapAndSend`'s recovery path is different from plain wrap's, and more restrictive.** Its outputs — the
+amount you send plus change — are sealed under fresh, random blindings each time `buildWrapTransferOp` runs,
+not the index-derived kind a plain wrap's single deposit note uses. So calling `wrapAndSend` again after a
+failure does **not** reproduce the same op the way `buildWrap` does: it seals different memos and a different
+`depositCommit`, and if the first attempt's proof was already generated (or its transaction already sent)
+before it failed, a naive retry risks a second real wrap-and-send against the same balance rather than a safe
+replay of the first. Recover instead by keeping what the first attempt already handed you, before it failed:
+
+```js
+let saved;
+const r = await tacit.wrapAndSend({
+  walletPriv, amountWei: 10n ** 16n, ticker: 'cETH', recipientPubHex: me.pubHex, amount: 500_000n,
+  onBuilt: (b) => { saved = { memos: b.memos, depositCommit: b.depositCommit, wrapAmount: b.wrapAmount }; },  // before proving
+  waitOpts: { onJob: (jobId) => { saved = { ...saved, jobId }; } },                                           // the instant the job is queued
+});
+```
+
+`onBuilt` fires before proving starts, and `waitOpts.onJob` the moment the relay queues the job — both ahead of
+the long prove wait, so persist `saved` (`localStorage`, not a JS variable) as soon as each fires. If
+`wrapAndSend` then throws, do not call it again with the same arguments:
+
+```js
+const resumed = await tacit.resumeWrapAndSend({ jobId: saved.jobId, memos: saved.memos, depositCommit: saved.depositCommit, wrapAmount: saved.wrapAmount });
+const sent = await tacit.sendPreparedTx({ walletPriv, to: resumed.to, value: resumed.value, calldata: resumed.calldata, gasLimit: resumed.gasLimit });
+```
+
+`resumeWrapAndSend` fetches the **already-proved** job by `jobId` and re-assembles the router calldata from the
+exact memos and commit the first attempt sealed — it proves nothing new, so it cannot diverge into a different
+op. It hands back the prepared call rather than sending it, so broadcast it yourself, e.g. with
+`tacit.sendPreparedTx`. Two limits worth knowing: it only ever builds the native-ETH calldata
+(`wrapAndSettleETHCalldata`), so an ERC20 `wrapAndSend` that fails after its job is queued has no resume path
+today; and all four of `jobId`, `memos`, `depositCommit` and `wrapAmount` are required, so losing any one of
+them before it's persisted leaves nothing to resume — check the wallet's plain and shielded balances before
+trying again from scratch rather than assume the first attempt never landed. `dapp/confidential-send-tab.js`'s
+`wireResumeWrapSend` (with `_saveWrapSendResume` / `_loadWrapSendResume` and the `pendingWrapSendHtml` banner)
+is the shipped version of exactly this — read it for the persistence shape.
 
 ### Spend
 
@@ -1041,6 +1096,104 @@ without a confirm-and-retry loop in front. Anything idempotent — an attestatio
 and a new deployment. That is the intended one-way door — it means no operator can redirect the channel at a
 different contract — and it is why the outbox address is not surfaced as a settable parameter.
 
+## 5h. The EVM pool: a separate, multichain private-ETH pool
+
+`TacitEvmPool` is Tacit's other pool: native ETH only, one fixed Groth16 circuit proved on the user's own
+device, no SP1, no relay witness, and no state shared with the confidential pool above. It is immutable and
+live, unchanged, at the same addresses on Ethereum mainnet, Base and Robinhood Chain:
+
+| | |
+|---|---|
+| `TacitEvmPool` | `0x000000c2A20657CE25f2Ba99737933D031AFBEE9` |
+| `TacitEvmPoolRouter` | `0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5` |
+| Chain ids | Ethereum `1`, Base `8453`, Robinhood Chain `4663` |
+| Deploy blocks, transactions | [`contracts/deployments/evm-pool.json`](../contracts/deployments/evm-pool.json) |
+
+The full guide — the ceremony, the router's deposit/wrap/receive boxes, relaying mechanics, moving to an L2 —
+is [`EVM-POOL.md`](./EVM-POOL.md). This is the smallest working loop.
+
+### The standalone wallet
+
+`dapp/evm-pool/tacit-evm-pool-wallet.js` is the whole client as one dependency-free ES module — key
+derivation, note scanning, Groth16 proving (snarkjs, in a Worker started from a Blob) and submission — built
+from `dapp/evm-pool-wallet.js` by `node build/build-evm-pool-wallet.mjs`. It is served at
+`https://tacit.finance/evm-pool/tacit-evm-pool-wallet.js`; the copy in this repo hashes to
+`sha256:f96e94b3e1e79cdc0b94deac36f2a0308660676662a84f85d0772d1140aeb732` (700,109 bytes) — recompute it
+yourself (`shasum -a 256`) rather than trust a pinned number, since it changes with the bundle or the ceremony
+artifacts.
+
+```js
+import { makeEvmPoolWallet } from './dapp/evm-pool/tacit-evm-pool-wallet.js';
+
+const w = await makeEvmPoolWallet({
+  provider,                       // EIP-1193, on chainId; signs, and reads unless `rpc` is given
+  chainId: 1,
+  identityKey,                    // the wallet's 32-byte Tacit identity key
+  artifacts: { wasm, zkey, vk },  // transact.wasm, transact_final.zkey, transact_vk.json — or an async loader
+  relay: 'https://tacit-evm-pool-keeper.onrender.com/evm-pool/keeper',  // optional; omit to prove + send from `provider` alone
+});
+
+await w.sync();                             // { balance, notes, leaves, block }
+await w.deposit(10n ** 16n);                // from the connected wallet, into a private note
+await w.send('bp1…', 5n * 10n ** 15n);      // private payment to another Secret Sats address
+await w.withdraw('0x…', 10n ** 15n);        // out to a public address
+```
+
+`identityKey` seeds the same address the Bitcoin shielded pool uses
+(`HMAC-SHA256(identityKey, "tacit-btc-pool-seed-v1")`), so one Secret Sats address (`bp1…`, `w.address`)
+receives in both pools. Pass `artifacts` as an async loader (called only the first time an action proves)
+rather than the files themselves, and opening, `sync`, `balance` and the address need no network fetch of the
+proving files; opening never asks the wallet to connect either.
+
+Full surface: `sync()`, `balance()`, `address`, `notes()`, `receive.address` / `receive.waiting()` /
+`receive.sweep()`, `deposit(wei)`, `send(bp1, wei)`, `withdraw(0x…, wei)`, `quote()`,
+`bridgeOut(toChainId, wei, { l2Rpc })`, `toV1(wei, commit, { via })`, `rescan()`,
+`setArtifacts({ wasm, zkey, vk })`, `terminate()`. `deposit`/`send`/`withdraw`/`bridgeOut`/`toV1`/
+`receive.sweep` each take a trailing `{ via: 'self' | 'relay', onStep(msg) }`; with no `relay` configured,
+every action is proved on-device and sent from `provider` (no fee beyond gas), and with one, spends go through
+it unless called with `{ via: 'self' }`.
+
+**`bridgeOut` and `toV1` change shape if you drop to the lower-level module — don't mix the two up.** As shown
+above, the standalone wallet's `bridgeOut`/`toV1` take their chain id/amount/commit positionally, with the
+extras trailing in one object. `dapp/evm-pool-wallet.js` — the module underneath, useful on its own if you
+bring your own prover — exposes the *same-named* methods with a different shape: single destructured objects,
+`bridgeOut({ toChainId, amount, l2Rpc, onStep })` and `toV1({ amount, commit, via, onStep })`. A positional call
+against the low-level module doesn't fail where you'd notice: the first argument destructures to `undefined`
+fields and the trailing options object is dropped entirely, so it fails downstream with a confusing error (or
+just the wrong chain) instead of pointing at the actual mistake. Match the call shape to the module you
+actually imported.
+
+`l2Rpc` is required only for Robinhood Chain: `bridgeOut` only reads it on the `arbitrum`-kind bridge, to price
+the L1→L2 retryable ticket from the L2's own gas price. Base's OP-stack deposit needs no L2 RPC.
+
+### Moving to V1
+
+`toV1` withdraws from the EVM pool and wraps into the confidential pool (V1) in one on-chain transaction — but
+that covers less ground than it sounds like. `TacitEvmPoolRouter.withdrawToV1` calls the pool's withdrawal and
+`_completeWrap` in the same transaction, and `_completeWrap` calls `V1.wrap(assetId, amount, commit)` — the
+same function any plain `pool.wrap()` deposit calls, which only escrows the funds and registers a pending
+deposit, exactly as §1 describes. So `toV1` is atomic over the EVM-pool withdrawal and the V1-side deposit
+registration, not over the full trip to a spendable V1 note: the V1 side still needs its own settle proof
+afterward.
+
+```js
+const built = tacit.buildWrap({ walletPriv, amountWei: 10n ** 16n, ticker: 'cETH', index: await tacit.nextWrapIndex({ walletPriv, ticker: 'cETH' }) });
+await w.toV1(10n ** 16n, built.commit);          // withdraws from the EVM pool, registers the V1 deposit — one tx
+await tacit.submitWrapSettle({ built });         // separate: turns that pending deposit into a spendable V1 note
+```
+
+`commit` must be a V1 wrap commitment you already hold the opening for — only whoever built it can settle the
+deposit `toV1` creates. If `submitWrapSettle` then fails transiently, recover it exactly as any wrap: rebuild
+`buildWrap` at the same `index` and retry (above).
+
+### Relaying
+
+A keeper runs on each chain so a user never needs gas or a funded address; its fee comes out of the shielded
+funds in the same call. The standalone wallet uses it automatically once `relay` is set. It is a
+submission-based service, not a scanner — the client posts the intent (a deposit, a wrap, a receive box to
+watch, or a proven transaction) rather than the keeper discovering one on its own. The routes are in §6, as an
+addition to the confidential pool's relay: two unrelated services for two unrelated pools.
+
 ## 6. Relay API
 
 Base `https://api.tacit.finance`. Everything below is public; nothing needs a key.
@@ -1091,6 +1244,24 @@ op's inputs and outputs, and any trade size — on your own device end to end.
 batch's coordinator produces and the guest verifies. It is enabled in the deployed guest but the relay
 does not accept it, so relayed swaps are `OP_SWAP_ROUTE` or `OP_SWAP` and the paragraph above applies ([SPEC §5.6](../SPEC.md#56-prover-blind-swaps)).
 
+**A separate keeper relays the EVM pool** (§5h), one deployment per chain — unrelated to the routes above. A
+client submits the intent; the keeper does not scan for one on its own.
+
+| endpoint | |
+|---|---|
+| `POST /evm-pool/keeper/deposit` | `{ intent, hint }` — completes a deposit box |
+| `POST /evm-pool/keeper/wrap` | `{ intent }` — completes a wrap box into a V1 note |
+| `POST /evm-pool/keeper/receive` | `{ chainId, npk, feeBps }` — registers a receive box to watch and sweep |
+| `GET /evm-pool/keeper/quote` | `{ relayer, fee, sweepFee, receiveMin, … }` |
+| `POST /evm-pool/keeper/reserve`, `POST /evm-pool/keeper/cancel` | a queue slot for a transaction about to be proven, so concurrent wallets don't race the pool's head |
+| `GET /evm-pool/keeper/head` | the pool's current root/size plus what the queue holds ahead of it |
+| `GET /evm-pool/keeper/events?from=<block>` | confirmed `Transact`/`Received` events, for syncing history without a log scanner |
+| `POST /evm-pool/keeper/relay` | `{ tx, call?, wrap? }` — submits a proven transfer, withdrawal, `withdrawAndCall` or `withdrawToV1` |
+
+Live at `https://tacit-evm-pool-keeper.onrender.com/evm-pool/keeper` (Ethereum), `…-base.onrender.com` (Base)
+and `…-robinhood.onrender.com` (Robinhood Chain) — full URLs in
+[`contracts/deployments/evm-pool.json`](../contracts/deployments/evm-pool.json).
+
 ## 7. Iterating on the design
 
 The template is one file with no dependencies: the live pool and relay panels are plain `fetch`, and the
@@ -1109,6 +1280,7 @@ Two conventions to keep:
 |---|---|
 | `AmountNotAligned` | amount not divisible by `unitScale` |
 | `DepositNotPending` | the wrap tx is not mined yet, or the deposit was already consumed |
+| `submitWrapSettle` fails after the deposit tx already confirmed | transient (dropped connection, relay hiccup, timeout) — rebuild with `buildWrap` at the same `index` and retry; the escrow has no deadline, and re-wrapping instead would double-deposit |
 | `UnknownRoot` | the `spendRoot` is not a root this pool has ever had: a witness built from another pool or network, from an incomplete log fetch, or from a block that was since reorged out — rescan |
 | `NullifierAlreadySpent` | the note was already spent |
 | `DepositExists` | this asset, amount and wrap index is already a deposit the pool holds; take the next index (`nextWrapIndex`) |
