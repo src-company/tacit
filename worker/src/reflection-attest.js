@@ -9,6 +9,7 @@ import { makeScanReflectionIndexer } from '../../dapp/confidential-reflection-sc
 import { makeBurnDepositKit } from '../../dapp/burn-deposit-bitcoin.js';
 import { SWAP_BATCH_VK } from '../../dapp/confidential-swapbatch-vk.js';
 import { splitBlockTxs } from './bitcoin-block-parse.js';
+import { makeBurndepAdmission } from './burndep-admission.js';
 
 // ── Full-scan reflection attester (the worker's Bitcoin-state relay) ──
 // The canonical state is a SNAPSHOT (the full-scan ScanReflection: live set + accumulators +
@@ -261,92 +262,12 @@ export function buildScanReflectionAttester(env, { deps, api, apiRawBytes, netwo
   // Holder-traced burn-deposit bundles, keyed by the burn tx's display txid. Returns the subset present
   // for this batch's txids. Only invoked by the attester when burnDepositKit is wired.
   const burnDepKey = (txidDisplay) => `reflection:burndep:${network}:${txidDisplay.replace(/^0x/, '')}`;
-  const hexBytes = (h) => {
-    const s = String(h).replace(/^0x/, '');
-    if (s.length % 2) throw new Error('reflection: odd hex');
-    const out = new Uint8Array(s.length / 2);
-    for (let i = 0; i < out.length; i++) out[i] = parseInt(s.slice(2 * i, 2 * i + 2), 16);
-    return out;
-  };
-  const reverse = (b) => Uint8Array.from(b).reverse();
-  const dsha = (b) => deps.sha256(deps.sha256(b));
-  const blockWitnessCache = new Map();
-  async function blockWitness(record, txHex) {
-    let hash = record.blockHash;
-    if (!hash && record.blockHeight != null) hash = (await api(env, `/block-height/${record.blockHeight}`, {}, network)).trim();
-    if (!hash) throw new Error('burn-deposit provenance record requires blockHash or blockHeight');
-    let block = blockWitnessCache.get(hash);
-    if (!block) {
-      // One cached /block/<hash>/raw fetch + local split, instead of a per-tx hex request per tx (a mainnet
-      // block is thousands of txs). wtxid = dsha of the full (witness-carrying) tx bytes.
-      const parsed = splitBlockTxs(await apiRawBytes(env, `/block/${hash}/raw`, network), dsha);
-      block = {
-        coinbase: parsed[0].rawHex,
-        blockTxids: parsed.map((t) => reverse(hexBytes(t.txidDisplay))),
-        blockWtxids: parsed.map((t) => dsha(hexBytes(t.rawHex))),
-      };
-      blockWitnessCache.set(hash, block);
-    }
-    const txid = kit.computeTxidInternal(txHex).toLowerCase();
-    const index = block.blockTxids.findIndex((id) => '0x' + [...id].map((x) => x.toString(16).padStart(2, '0')).join('') === txid);
-    if (index <= 0) throw new Error('burn-deposit protocol tx absent from block or at coinbase index');
-    return { ...block, index };
-  }
-  // Bounded-concurrency map: a deep provenance chain's hops each confirm in a DIFFERENT block, so
-  // blockWitness's cache (keyed by hash) buys nothing across them — every hop is a fresh multi-MB
-  // `/block/<hash>/raw` fetch + split. Firing them all via Promise.all spikes heap by hundreds of MB for a
-  // chain a few dozen hops deep (observed: +474MB on a 34-hop bundle, right at this worker's 512MB ceiling)
-  // and can kill the request mid-response. A small chunk keeps peak memory bounded regardless of chain depth.
-  const CONCURRENCY = 3;
-  async function mapLimit(items, fn) {
-    const out = new Array(items.length);
-    let i = 0;
-    async function worker() { while (i < items.length) { const idx = i++; out[idx] = await fn(items[idx]); } }
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, items.length) }, worker));
-    return out;
-  }
-  async function enrichBurnDeposit(bundle) {
-    // etch is OPTIONAL (see buildBurnDepositCtx / cxfer-core ProvenanceBlob): a bundle relying solely on
-    // pool-membership shortcuts carries no etch at all, so there is nothing to fetch witness data for.
-    const etch = bundle.etch ? { ...bundle.etch, ...(await blockWitness(bundle.etch, bundle.etch.tx)) } : null;
-    const cxfers = await mapLimit(bundle.cxfers || [], async (c) => ({
-      ...c, ...(await blockWitness(c, c.tx)),
-    }));
-    const cmints = await mapLimit(bundle.cmints || [], async (cm) => ({
-      ...cm, ...(await blockWitness(cm, cm.revealTx)),
-    }));
-    // The burn tx's OWN witness-commitment inclusion proof — a separate BIP141 authentication from the
-    // provenance/etch chain above (that proves the BURNED NOTE is real supply; this proves the 0x2B burn
-    // ENVELOPE itself is really confirmed in its block). Required unconditionally by write_stdin.
-    const burnTxWitness = bundle.burnTxWitness ? { ...bundle.burnTxWitness, ...(await blockWitness(bundle.burnTxWitness, bundle.burnTxWitness.tx)) } : null;
-    return { ...bundle, etch, cxfers, cmints, burnTxWitness };
-  }
-  // A bundle's provenance header chain must end at the batch's anchor block, which keeps moving: a burn left
-  // pending is completed batches later, so the chain a holder submitted is carried forward here, from its last
-  // header to `anchorHeight`, out of the same header source the batch uses. Headers are public chain data, so
-  // extending them adds nothing a holder could have got wrong.
-  //
-  // The extension is BOUNDED. The only guard used to be `lastHeight >= anchorHeight`, with no floor — and the
-  // last header is attacker-supplied (anyone can register a bundle; see handleReflectionBurndep). A genuine
-  // header from an early block therefore asked this to materialise every height from there to the tip and
-  // fetch each one, which on mainnet is hundreds of thousands of upstream requests from a 512MB worker. A
-  // real pending burn is extended over the blocks it waited out, which is small; anything claiming to span
-  // more than this is not a chain worth completing here, and the burn simply stays pending.
-  const MAX_HEADER_EXTEND = 4032; // ~4 weeks of Bitcoin blocks
-  const extendProvHeaders = async (bundle, anchorHeight) => {
-    const hs = bundle.provHeaders;
-    if (anchorHeight == null || !Array.isArray(hs) || !hs.length) return bundle;
-    const last = String(hs[hs.length - 1]).replace(/^0x/, '');
-    if (!/^[0-9a-fA-F]{160}$/.test(last)) return bundle;
-    const lastHash = _hex(_dsha(Uint8Array.from(last.match(/../g).map((x) => parseInt(x, 16)))).reverse());
-    let lastHeight;
-    try { lastHeight = Number(JSON.parse(await api(env, `/block/${lastHash}`, {}, network)).height); } catch { return bundle; }
-    if (!Number.isInteger(lastHeight) || lastHeight >= anchorHeight) return bundle;
-    if (anchorHeight - lastHeight > MAX_HEADER_EXTEND) return bundle;
-    const heights = [];
-    for (let h = lastHeight + 1; h <= anchorHeight; h++) heights.push(h);
-    return { ...bundle, provHeaders: [...hs, ...(await getHeaders(heights))] };
-  };
+  // Shared with POST /reflection/burndep/check (worker/src/index.js) so a pre-flight check and the real
+  // fold can never disagree about what "admitted" means. See burndep-admission.js's own header comment for
+  // why this also owns the persistent header-chain cache (a submitted bundle physically cannot carry a
+  // chain long enough to reach from TAC's etch to the current tip — see index.js's MAX_HEADERS).
+  const admission = makeBurndepAdmission({ env, api, apiRawBytes, network, kit, deps });
+  const { enrichBurnDeposit, buildOrExtendProvHeaders } = admission;
   // A bad bundle must never be able to stop the lane.
   //
   // This is called with EVERY txid of every block in the scan range, and a bundle is registered by an
@@ -366,7 +287,7 @@ export function buildScanReflectionAttester(env, { deps, api, apiRawBytes, netwo
       const raw = await env.REGISTRY_KV.get(burnDepKey(txid));
       if (!raw) continue;
       try {
-        map.set(txid, await extendProvHeaders(await enrichBurnDeposit(JSON.parse(raw)), anchorHeight));
+        map.set(txid, await buildOrExtendProvHeaders(await enrichBurnDeposit(JSON.parse(raw)), anchorHeight));
       } catch (e) {
         console.log(`[reflection] burn-deposit bundle for ${txid} is unusable, skipping it (stays pending): ${String(e && e.message || e).slice(0, 200)}`);
       }
@@ -431,5 +352,8 @@ export function buildScanReflectionAttester(env, { deps, api, apiRawBytes, netwo
     } while (cursor);
     return out;
   };
-  return makeScanReflectionAttester({ deps, storage, prove, submit, getBlockTxs, getHeaders, genesisHeight, batchSize, burnDepositKit: kit, getBurnDeposits, listBurnDepositTxids, ethBundleSource, streamBlocks , chainBinding: env.REFLECTION_CHAIN_BINDING || null });
+  const att = makeScanReflectionAttester({ deps, storage, prove, submit, getBlockTxs, getHeaders, genesisHeight, batchSize, burnDepositKit: kit, getBurnDeposits, listBurnDepositTxids, ethBundleSource, streamBlocks , chainBinding: env.REFLECTION_CHAIN_BINDING || null });
+  // Exposed so callers outside the fold path (the cron's header-cache warm-up, POST /reflection/burndep/check)
+  // can reuse the exact same admission logic + blockWitness cache without constructing a second kit/instance.
+  return { ...att, admission };
 }

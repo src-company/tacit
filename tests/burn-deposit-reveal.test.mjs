@@ -138,6 +138,41 @@ const mig = await rd.buildMigrationTxs({ prims, note, walletPriv: WALLET_PRIV, f
   ok('migration reveal signature + commit-output tweak independently verified via a from-scratch BIP-341 sighash');
 }
 
+// reconstructBurnHome: rebuilds mig.burnHome from the wallet key + source outpoint alone (no fundingUtxo,
+// no signing) — the recovery path for a session that lost buildMigrationTxs's own return value.
+{
+  const rebuilt = rd.reconstructBurnHome({
+    prims, walletPriv: WALLET_PRIV, source: { txid: NOTE_TXID, vout: NOTE_VOUT }, amount: NOTE_AMOUNT,
+    burnHomeTxid: mig.burnHome.txid, chainSpk: mig.revealTx.outputs[0].script,
+  });
+  assert.deepStrictEqual(rebuilt.priv, mig.burnHome.priv, 'reconstructed burn-home key matches the original');
+  assert.deepStrictEqual(rebuilt.scriptS, mig.burnHome.scriptS, 'reconstructed script S matches the original');
+  assert.deepStrictEqual(rebuilt.spk, mig.burnHome.spk, 'reconstructed output script matches the original');
+  assert.strictEqual(rebuilt.cx, mig.burnHome.cx, 'reconstructed commitment x matches (same amount, same deterministic blinding)');
+  assert.strictEqual(rebuilt.cy, mig.burnHome.cy, 'reconstructed commitment y matches');
+  assert.strictEqual(rebuilt.txid, mig.burnHome.txid, 'carries the caller-supplied burn-home txid');
+
+  assert.throws(
+    () => rd.reconstructBurnHome({
+      prims, walletPriv: WALLET_PRIV, source: { txid: NOTE_TXID, vout: NOTE_VOUT }, amount: NOTE_AMOUNT,
+      burnHomeTxid: mig.burnHome.txid, chainSpk: new Uint8Array(34).fill(0xff),
+    }),
+    /does not match/,
+    'refuses when the derived script does not match the real on-chain output',
+  );
+  // A different source vout derives a different key and blinding entirely (both are keyed by the source
+  // outpoint, not by the burn-home's own txid), so the wrong outpoint is caught by the same on-chain check.
+  assert.throws(
+    () => rd.reconstructBurnHome({
+      prims, walletPriv: WALLET_PRIV, source: { txid: NOTE_TXID, vout: 1 }, amount: NOTE_AMOUNT,
+      burnHomeTxid: mig.burnHome.txid, chainSpk: mig.revealTx.outputs[0].script,
+    }),
+    /does not match/,
+    'refuses for the wrong source outpoint (derives a different key entirely)',
+  );
+  ok('reconstructBurnHome rebuilds the exact original burn-home from the wallet key and source outpoint, and refuses on any mismatch against the real on-chain script');
+}
+
 // Phase 2: burn-deposit reveal, spending the migration's own burn-home output
 const envelope = {
   assetId: ASSET,

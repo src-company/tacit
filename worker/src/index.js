@@ -102,8 +102,9 @@ import { validateConsumedSource, deriveConsumedSource } from './consumed-source.
 import { makeConfidentialPool } from '../../dapp/confidential-pool.js';
 import { CONFIDENTIAL_DEPLOYMENTS as _CONFIDENTIAL_DEPLOYMENTS } from '../../dapp/confidential-deployments.js';
 import { decodeCrossoutMint, CONFIDENTIAL_POOL_DEPLOYMENTS as _CROSSOUT_POOL_DEPLOYMENTS } from '../../dapp/confidential-crossout-consumer.js';
-import { classifyConfidentialTx } from '../../dapp/burn-deposit-bitcoin.js';
+import { classifyConfidentialTx, makeBurnDepositKit } from '../../dapp/burn-deposit-bitcoin.js';
 import { makeScanReflectionIndexer } from '../../dapp/confidential-reflection-scan-indexer.js';
+import { makeBurndepAdmission } from './burndep-admission.js';
 import { SWAP_BATCH_VK } from '../../dapp/confidential-swapbatch-vk.js';
 import { bpRangeVerify, bpClassicProofLen } from '../../dapp/bulletproofs.js';
 import { bppRangeVerify, bytesToPoint as bppPoint } from '../../dapp/bulletproofs-plus.js';
@@ -1409,6 +1410,15 @@ async function handleReflectionSeed(req, env, url, cors) {
 function reflectionConf(env, network) {
   return parseInt(env.REFLECTION_CONFIRMATIONS || (network === 'mainnet' ? '24' : '6'), 10);
 }
+// The lowest height a burn-deposit header chain ever needs to reach back to — an asset's own etch height.
+// TAC is the only asset onboarded this way on mainnet today; 948242 is its real, fixed etch height.
+// REFLECTION_BURNDEP_FLOOR_{MAINNET,SIGNET} overrides per network; 0 (falsy) means "not configured," and the
+// cron's warm-up stage skips that network rather than guessing a floor for an asset it doesn't know about.
+function burndepChainFloor(env, network) {
+  const envVal = network === 'mainnet' ? env.REFLECTION_BURNDEP_FLOOR_MAINNET : env.REFLECTION_BURNDEP_FLOOR_SIGNET;
+  if (envVal != null) return parseInt(envVal, 10) || 0;
+  return network === 'mainnet' ? 948242 : 0;
+}
 async function advanceReflectionTip(env, network, att) {
   const conf = reflectionConf(env, network);
   try {
@@ -1814,8 +1824,19 @@ async function buildBurndepBundle({ env, network, noteTxid, noteVout, asset, max
   if (etchRec.kind !== 'cetch') {
     throw new Error(`asset ${asset.asset_id || ''}'s recorded etch_txid does not resolve to a CETCH (got '${etchRec.kind}') — indexed etch record may be wrong`);
   }
+  // The bridged note's own opening. It's the commitment at noteTxid:noteVout, which is always one of the
+  // outputs of the cxfer directly spent to produce it — the same shallow record the DAG walk already
+  // resolved (and cached) at that outpoint, so this adds no extra esplora round-trip.
+  const noteRec = await res.live.resolveShallow(noteTxid);
+  if (noteRec.kind !== 'cxfer') {
+    throw new Error(`note ${noteTxid}:${noteVout} does not resolve to a confidential transfer (got '${noteRec.kind}') — not a bridgeable note`);
+  }
+  const noteOut = noteRec.outputs.find((o) => o.vout === noteVout);
+  if (!noteOut) throw new Error(`note ${noteTxid}:${noteVout}: no cxfer output at that vout`);
+  const burned = pool.decompressCommitment(noteOut.commitment);
   const bundle = {
     etch: { tx: etchRec.tx, blockHash: etchRec.blockHash, blockHeight: asset.etched_at_height },
+    burned,
     cxfers: res.cxfers.map((c) => ({
       tx: c.tx, txid: c.txid, inputs: c.inputs, inputSkip: c.inputSkip, outputs: c.outputs,
       rangeProof: c.rangeProof, kernelSig: c.kernelSig, blockHash: c.blockHash,
@@ -1923,6 +1944,128 @@ async function handleBurnDepositStatus(req, env, url, cors) {
     registered, note: { txid: noteTxid, vout: noteVout }, assetId: decode.assetId, detail,
   }, 200, { ...cors, 'Cache-Control': 'public, max-age=10' });
 }
+const withHex = (h) => (String(h).startsWith('0x') ? String(h) : '0x' + String(h));
+const hexToBytesLocal = (h) => { const s = String(h).replace(/^0x/, ''); const out = new Uint8Array(s.length / 2); for (let i = 0; i < out.length; i++) out[i] = parseInt(s.slice(2 * i, 2 * i + 2), 16); return out; };
+const bytesToHexLocal = (b) => '0x' + Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+// A minimal, unsigned, single-input legacy tx whose first input IS the given outpoint — this is ALL
+// admitBurnDeposit's extractInputs ever reads from burnTxHex, so nothing more is needed to pre-flight-probe
+// a note that has no real burn tx yet (handleBurnDepositCheck's note mode). prevTxid is Bitcoin's own wire
+// order (internal, i.e. reversed from the display-hex txid callers use), matching every other extractInputs
+// consumer in this file (see revHex). Exported for direct byte-order testing.
+function buildProbeBurnTxHex(noteTxidDisplay, noteVout) {
+  const txidInternal = revHex(String(noteTxidDisplay).replace(/^0x/, '').toLowerCase());
+  const v = noteVout >>> 0;
+  const voutLe = [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff].map((x) => x.toString(16).padStart(2, '0')).join('');
+  return withHex('01000000' + '01' + txidInternal + voutLe + '00' + 'ffffffff' + '00' + '00000000');
+}
+// POST /reflection/burndep/check?network= — a pre-flight admission check that runs the SAME logic the scan's
+// own fold will (both call into burndep-admission.js's shared enrich/header-chain/admit — see that module's
+// header comment for why sharing it matters), so a holder or a UI can learn "would this admit" before ever
+// broadcasting a burn. Two modes:
+//   { bundle, assetId, burnTxHex }        — check a REAL, already-built burn tx. envAsset/envNu/dest/target
+//                                            are read from ITS OWN envelope via classifyConfidentialTx, never
+//                                            trusted separately — exactly how the scan itself decides them.
+//   { bundle, assetId, note:{txid,vout} } — probe a NOTE before any burn tx exists. envNu is derived the same
+//                                            way admission derives it internally (bundle.burned's opening +
+//                                            the note's own outpoint), so a caller never has to build a real
+//                                            envelope just to ask "does this note's provenance even qualify."
+// bundle.burned:{cx,cy} (the note's own opening) and bundle.etch (carrying a blockHash — the anchor a fresh
+// header chain is built from; see buildOrExtendProvHeaders) are required in both modes. Checked against the
+// CURRENT reflection tip as a stand-in anchor — the real batch that eventually folds this burn may anchor
+// slightly higher, which the same forward-extension logic closes at fold time, so this is a strong predictor,
+// not an eternal guarantee. Permissionless and side-effect-free: nothing is written, and the guest re-verifies
+// everything in-zkVM regardless of what this answers.
+async function handleBurnDepositCheck(req, env, url, cors) {
+  if (!env.REGISTRY_KV) return jsonResponse({ error: 'no kv' }, 500, cors);
+  const ip = req.headers.get('CF-Connecting-IP') || 'anon';
+  const rl = await proveRateLimit(env, ip, 'burndep-check', Number(env.BURNDEP_CHECK_RL_BURST || 10), Number(env.BURNDEP_CHECK_RL_REFILL_MS || 60000));
+  if (!rl.ok) return jsonResponse({ ok: false, error: `too many check requests — retry in ~${rl.retryAfter}s`, retryAfter: rl.retryAfter }, 429, { ...cors, 'Cache-Control': 'no-store', 'Retry-After': String(rl.retryAfter) });
+  const network = url.searchParams.get('network') === 'signet' ? 'signet' : 'mainnet';
+  let body;
+  try { body = await req.json(); } catch { return jsonResponse({ ok: false, error: 'bad json' }, 400, cors); }
+  const bundle = body && body.bundle;
+  if (!bundle || typeof bundle !== 'object') return jsonResponse({ ok: false, error: 'missing bundle object' }, 400, cors);
+  const burned = bundle.burned;
+  const HEX32 = /^(0x)?[0-9a-fA-F]{64}$/;
+  if (!burned || !HEX32.test(String(burned.cx || '')) || !HEX32.test(String(burned.cy || ''))) {
+    return jsonResponse({ ok: false, error: "bundle.burned {cx, cy} (32-byte hex) required — the note's own opening" }, 400, cors);
+  }
+  const burnedCx = withHex(burned.cx), burnedCy = withHex(burned.cy);
+  const burnTxHexIn = body.burnTxHex ? String(body.burnTxHex) : null;
+  const noteIn = body.note;
+  if (!!burnTxHexIn === !!noteIn) {
+    return jsonResponse({ ok: false, error: 'pass exactly one of burnTxHex (a real burn tx) or note {txid, vout} (a pre-flight probe)' }, 400, cors);
+  }
+
+  const deps = { secp, keccak256: keccak_256, sha256 };
+  const pool = makeConfidentialPool(deps);
+  const kit = makeBurnDepositKit(deps);
+
+  let burnTxHex, envAsset, envNu;
+  if (burnTxHexIn) {
+    if (!/^(0x)?[0-9a-fA-F]+$/.test(burnTxHexIn)) return jsonResponse({ ok: false, error: 'burnTxHex must be hex' }, 400, cors);
+    burnTxHex = withHex(burnTxHexIn);
+    let decode;
+    try { decode = classifyConfidentialTx(burnTxHex); } catch { decode = null; }
+    if (!decode || decode.type !== 'burn') return jsonResponse({ ok: false, error: 'burnTxHex does not classify as a 0x2B burn envelope' }, 400, cors);
+    envAsset = decode.assetId;
+    envNu = decode.nullifier;
+  } else {
+    const noteTxid = String((noteIn && noteIn.txid) || '').replace(/^0x/, '').toLowerCase();
+    const noteVout = Number(noteIn && noteIn.vout);
+    if (!/^[0-9a-f]{64}$/.test(noteTxid) || !Number.isInteger(noteVout) || noteVout < 0) {
+      return jsonResponse({ ok: false, error: 'note.{txid,vout} required (32-byte display-hex txid, non-negative integer vout)' }, 400, cors);
+    }
+    const assetIdHex = String(body.assetId || '').replace(/^0x/, '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(assetIdHex)) return jsonResponse({ ok: false, error: 'assetId required (32-byte hex) alongside note' }, 400, cors);
+    envAsset = '0x' + assetIdHex;
+    burnTxHex = buildProbeBurnTxHex(noteTxid, noteVout);
+    const leaf = kit.burnDepositLeaf(envAsset, burnedCx, burnedCy, withHex(revHex(noteTxid)), noteVout);
+    envNu = pool.nullifier(leaf);
+  }
+
+  const snap = await getReflectionSnapshotForStatus(env, network);
+  const anchorHeight = snap && Number.isInteger(snap.attestedHeight) ? snap.attestedHeight : null;
+  if (anchorHeight == null) return jsonResponse({ ok: false, error: 'no reflection state available yet to check against' }, 409, cors);
+
+  const admission = makeBurndepAdmission({ env, api: apiText, apiRawBytes, network, kit, deps });
+  let enriched, withHeaders;
+  try {
+    enriched = await admission.enrichBurnDeposit(bundle);
+    withHeaders = await admission.buildOrExtendProvHeaders(enriched, anchorHeight);
+  } catch (e) {
+    return jsonResponse({ ok: false, error: `bundle enrichment failed: ${e && e.message || e}` }, 502, { ...cors, 'Cache-Control': 'no-store' });
+  }
+  const provHeaders = Array.isArray(withHeaders.provHeaders) ? withHeaders.provHeaders : [];
+  const hops = (withHeaders.cxfers || []).length;
+
+  let blobHex = '0x';
+  try {
+    const stat = kit.assembler.buildBurnDepositStatic({
+      etch: withHeaders.etch, provHeaders, cxfers: withHeaders.cxfers || [], cmints: withHeaders.cmints || [], poolMemberships: withHeaders.poolMemberships || [],
+    });
+    blobHex = bytesToHexLocal(kit.assembler.serializeProvenanceBlob(stat));
+  } catch { /* an unusable bundle reports a clean refusal below via admit(), never a 500 */ }
+
+  // The chain's own tip, exactly as headerChainTip (dapp/burn-deposit-bitcoin.js) computes it: INTERNAL-order
+  // double-sha256 of the last header, NOT reversed to display order (headers reference each other via this
+  // same internal-order hash in their own prevHash field — display order is purely an esplora/explorer
+  // presentation convention, applied only when a hash is used as a URL path segment, never here).
+  const dsha = (b) => sha256(sha256(b));
+  const lastHeaderHex = provHeaders[provHeaders.length - 1];
+  const batchPrevHash = lastHeaderHex ? bytesToHexLocal(dsha(hexToBytesLocal(lastHeaderHex))) : null;
+
+  let verdict;
+  try {
+    verdict = admission.admit({ burnTxHex, envAsset, envNu, blobHex, provHeaders, burnedCx, burnedCy, batchPrevHash });
+  } catch (e) {
+    return jsonResponse({ ok: true, network, admitted: false, reason: `admission check threw: ${e && e.message || e}`, hops, headerChainLength: provHeaders.length, anchorHeight }, 200, { ...cors, 'Cache-Control': 'no-store' });
+  }
+  return jsonResponse({
+    ok: true, network, admitted: !!verdict.admitted, reason: verdict.reason,
+    hops, headerChainLength: provHeaders.length, anchorHeight,
+  }, 200, { ...cors, 'Cache-Control': 'no-store' });
+}
 
 // Auto-completes pending burn-deposits from pure on-chain data — the same two steps a holder would run
 // themselves (trace, then register), run here so a burn's completion never depends on its original
@@ -1942,7 +2085,10 @@ async function sweepPendingBurnDeposits(env, network, { maxCount = 3 } = {}) {
   const result = { network, attempted: 0, registered: 0, skipped: 0, errors: [] };
   if (!env.REGISTRY_KV) return result;
   const snap = await getReflectionSnapshotForStatus(env, network);
-  if (!snap) return result;
+  if (!snap || !Number.isInteger(snap.attestedHeight)) return result;
+  const deps = { secp, keccak256: keccak_256, sha256 };
+  const kit = makeBurnDepositKit(deps);
+  const admission = makeBurndepAdmission({ env, api: apiText, apiRawBytes, network, kit, deps });
   for (const rec of snap.pendingDepositRecords) {
     if (result.attempted >= maxCount) break;
     if (!rec || rec.completed || !rec.burnedTxid) continue;
@@ -1961,6 +2107,26 @@ async function sweepPendingBurnDeposits(env, network, { maxCount = 3 } = {}) {
         env, network, asset,
         noteTxid: revHex(rec.burnedTxid), noteVout: rec.burnedVout,
       });
+      // Check the assembled bundle against the burn's own on-chain envelope before writing it, the same way
+      // POST /reflection/burndep/check does for a caller-submitted bundle — a mismatch here means this
+      // bundle would sit registered but never fold, blocking a later correct one under first-writer-wins.
+      const burnTxHex = withHex((await apiText(env, `/tx/${revealTxidDisplay}/hex`, {}, network)).trim());
+      const decode = classifyConfidentialTx(burnTxHex);
+      if (!decode || decode.type !== 'burn') throw new Error('burn tx does not classify as a 0x2B burn envelope');
+      const withHeaders = await admission.buildOrExtendProvHeaders(bundle, snap.attestedHeight);
+      const provHeaders = Array.isArray(withHeaders.provHeaders) ? withHeaders.provHeaders : [];
+      const stat = kit.assembler.buildBurnDepositStatic({
+        etch: withHeaders.etch, provHeaders, cxfers: withHeaders.cxfers || [], cmints: withHeaders.cmints || [], poolMemberships: withHeaders.poolMemberships || [],
+      });
+      const blobHex = bytesToHexLocal(kit.assembler.serializeProvenanceBlob(stat));
+      const dsha = (b) => sha256(sha256(b));
+      const lastHeaderHex = provHeaders[provHeaders.length - 1];
+      const batchPrevHash = lastHeaderHex ? bytesToHexLocal(dsha(hexToBytesLocal(lastHeaderHex))) : null;
+      const verdict = admission.admit({
+        burnTxHex, envAsset: decode.assetId, envNu: decode.nullifier, blobHex, provHeaders,
+        burnedCx: withHex(bundle.burned.cx), burnedCy: withHex(bundle.burned.cy), batchPrevHash,
+      });
+      if (!verdict.admitted) throw new Error(`bundle would not be admitted yet: ${verdict.reason}`);
       await env.REGISTRY_KV.put(regKey, JSON.stringify(bundle), { expirationTtl: 90 * 86400 });
       result.registered++;
     } catch (e) {
@@ -25577,7 +25743,8 @@ export {
   apiText, apiRawBytes,
   // Exported so tests can drive the burn-deposit auto-completion sweep and its shared bundle-builder directly
   // against a fake KV + real esplora data, without needing a live REGISTRY_KV.
-  sweepPendingBurnDeposits, buildBurndepBundle, assetKey, handleBurnDepositStatus,
+  sweepPendingBurnDeposits, buildBurndepBundle, assetKey, handleBurnDepositStatus, handleBurnDepositCheck,
+  buildProbeBurnTxHex,
 };
 
 // ============== DISCORD TOKEN-GATE HANDLERS ==============
@@ -25871,6 +26038,7 @@ async function _routeFetch(req, env, ctx) {
     if (url.pathname === '/reflection/burndep-list' && req.method === 'GET') return handleReflectionBurndepList(req, env, url, cors);
     if (url.pathname === '/reflection/burndep/trace' && req.method === 'POST') return handleBurnDepositTrace(req, env, url, cors);
     if (url.pathname === '/reflection/burndep/status' && req.method === 'GET') return handleBurnDepositStatus(req, env, url, cors);
+    if (url.pathname === '/reflection/burndep/check' && req.method === 'POST') return handleBurnDepositCheck(req, env, url, cors);
     if (url.pathname === '/reflection/burndep/sweep' && req.method === 'POST') return handleBurnDepositSweep(req, env, url, cors);
     if (url.pathname === '/crossout/minted' && req.method === 'GET') return handleCrossoutMinted(url, env, cors);
     // Mode-B eth-side state: the eth-state sidecar POSTs eth_prove's output here.
@@ -29169,6 +29337,15 @@ export default {
                 } catch (e) { _logCronError(env, 'reflectionRelayTip', net, e); }
               }
               if (Number.isInteger(target) && target > conf) await att.setTip(target);
+              // Header-cache warm-up (burndep-admission.js): fills a bounded number of chunks per tick toward
+              // the same target height the reflection is advancing to, so a bundle's chain is already cached
+              // by the time a batch or a POST /reflection/burndep/check call needs it. No-op where no floor
+              // is configured for this network (burndep-admission's chain-building itself stays functional
+              // either way — this only shortens how long a fresh chain build takes).
+              const floor = burndepChainFloor(env, net);
+              if (floor && Number.isInteger(target) && att.admission) {
+                await att.admission.warmHeaderChunks(floor, target, { budgetChunks: 2 }).catch((e) => _logCronError(env, 'burndepHeaderWarm', net, e));
+              }
             } catch (e) { _logCronError(env, 'reflectionSetTip', net, e); return; }
             if (env.REFLECTION_PROVE_URL) {
               await att.runCycle().catch((e) => _logCronError(env, 'reflectionCycle', net, e));

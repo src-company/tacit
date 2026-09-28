@@ -1,0 +1,368 @@
+#!/usr/bin/env node
+// dapp/burndep-ux.js: the burn-deposit bridge state machine. Drives a full migrate -> burn -> mint cycle
+// against a real wallet + real cryptography (the same fixture pattern tests/burn-deposit-reveal.test.mjs
+// uses) with the network layer (worker endpoints, MARA, chain broadcast/UTXO selection, bridgeMint) stubbed
+// by an in-memory "world" whose confirmation state advances under the test's own control.
+//
+// Run: node tests/burndep-ux.test.mjs
+import assert from 'node:assert';
+import { createHash } from 'node:crypto';
+import { keccak_256 } from '../node_modules/@noble/hashes/sha3.js';
+import { hmac } from '../node_modules/@noble/hashes/hmac.js';
+import { sha256 as nobleSha256 } from '../node_modules/@noble/hashes/sha2.js';
+import * as secp from '../node_modules/@noble/secp256k1/index.js';
+import { makeConfidentialPool } from '../dapp/confidential-pool.js';
+import { makeBurnDepositUx, BURNDEP_BETA_CAP_RAW } from '../dapp/burndep-ux.js';
+import { makeBurnDepositKit } from '../dapp/burn-deposit-bitcoin.js';
+
+let n = 0, failures = 0;
+const ok = (c, m) => { if (c) { console.log('  ok -', m); n++; } else { console.error('  FAIL -', m); failures++; } };
+
+const sha256 = (b) => new Uint8Array(createHash('sha256').update(Buffer.from(b)).digest());
+const hmacFn = (h, k, ...m) => hmac(nobleSha256, k, Buffer.concat(m.map((x) => Buffer.from(x))));
+const pool = makeConfidentialPool({ secp, keccak256: keccak_256, sha256 });
+const kit = makeBurnDepositKit({ secp, keccak256: keccak_256, sha256 });
+
+const stripHex = (h) => String(h).replace(/^0x/, '');
+const revHex = (h) => stripHex(h).match(/../g).reverse().join('');
+const withHex = (h) => '0x' + stripHex(h);
+const hexToBytes = (h) => { const s = stripHex(h); const a = new Uint8Array(s.length / 2); for (let i = 0; i < a.length; i++) a[i] = parseInt(s.slice(2 * i, 2 * i + 2), 16); return a; };
+const bytesToHex = (b) => '0x' + Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+
+// ---- load dapp/tacit.js under a DOM shim for the pure cxfer/BPP helpers only (see burn-deposit-reveal.js's
+// own header comment on why only these, never anything wallet-stateful, come from tacit.js) ----
+const realFetch = globalThis.fetch, realST = globalThis.setTimeout, realCT = globalThis.clearTimeout;
+await import('../scratchpad/domshim2.mjs');
+globalThis.setTimeout = realST; globalThis.clearTimeout = realCT;
+const tacit = await import('../dapp/tacit.js');
+const { encodeCXferBppPayload, computeKernelMsg, deriveChangeBlinding, deriveAmountKeystreamSelf, encryptAmount, signSchnorr, modN } = tacit;
+globalThis.fetch = realFetch;
+
+const ASSET = withHex('a5'.repeat(32));
+const WALLET_PRIV = new Uint8Array(32).fill(0x22);
+const WALLET_PUB = secp.getPublicKey(WALLET_PRIV, true);
+const NOTE_TXID = '5e'.repeat(31) + '02';
+const NOTE_VOUT = 0;
+const NOTE_AMOUNT = 900_000n, NOTE_BLINDING = 0x88888888n, NOTE_SATS = 1_000;
+const FUND_TXID_1 = '61'.repeat(32);
+const FUND_TXID_2 = '62'.repeat(32);
+const BASE_RATE = 3;
+
+// ---- an in-memory "world": chain state + worker/MARA endpoints, all driven by this test ----
+function makeWorld() {
+  const chainTxs = new Map(); // txid(display, bare) -> {confirmed, vout:[{scriptpubkey}]}
+  const broadcasts = [];
+  const registered = [];
+  let migrateConfirmed = false, burnSubmitted = null, burnConfirmed = false, burnFolded = false, burnRegistered = false;
+  let submitStatus = 'success';
+
+  const wpkhSpkOf = (pub) => bytesToHex(new Uint8Array([0x00, 0x14, ...ripemd160ish(pub)]));
+  // A real HASH160 isn't needed for these tests — only byte-equality between "what the source pays" and
+  // "what the wallet's own p2wpkhScript computes" matters, and both sides go through this same stand-in.
+  function ripemd160ish(pub) { return sha256(pub).subarray(0, 20); }
+
+  chainTxs.set(NOTE_TXID, { confirmed: true, vout: [{ scriptpubkey: wpkhSpkOf(WALLET_PUB).replace(/^0x/, '') }] });
+
+  const fetchImpl = async (url, opts) => {
+    const u = new URL(url);
+    const body = opts && opts.body ? JSON.parse(opts.body) : null;
+    const json = (obj, status = 200) => ({ ok: status < 400, status, json: async () => obj, text: async () => JSON.stringify(obj) });
+
+    if (u.hostname === 'slipstream.mara.com') {
+      if (u.pathname === '/api/transactions') { broadcasts.push({ mara: body.tx_hex }); return json({ status: submitStatus, message: submitStatus }); }
+      if (u.pathname === '/api/rates') return json({ market_rate: 1, effective_rate: 1, submit_fee_rate: 1, multiplier: 1, discounted_multiplier: 1, multiplier_discount_percent: 0, slipstream_rate: 1 });
+      throw new Error('world: unstubbed MARA path ' + u.pathname);
+    }
+
+    if (u.pathname === '/reflection/burndep/trace') {
+      // One hop: whatever note is being traced was produced by a cxfer whose first input is the ORIGINAL
+      // source note — good enough for both the initial trace (asset id's own etch path is irrelevant to
+      // burndep-ux's own logic) and the migrate-confirmed -> traced hop.
+      return json({ ok: true, hops: 1, bundle: { etch: { tx: '0x00', blockHash: 'aa'.repeat(32) }, cxfers: [{ tx: '0x00', txid: withHex('bb'.repeat(32)), inputs: [{ prevTxid: withHex(NOTE_TXID), prevVout: 0 }], outputs: [], rangeProof: '0x', kernelSig: '0x' }] } });
+    }
+    if (u.pathname === '/reflection/burndep/check') return json({ ok: true, admitted: true, reason: 'admitted' });
+    if (u.pathname === '/reflection/burndep') { registered.push(body); burnRegistered = true; return json({ ok: true, stored: 'k' }); }
+    if (u.pathname === '/reflection/burndep/status') {
+      const txid = u.searchParams.get('txid');
+      if (txid === undefined) throw new Error('world: status needs txid');
+      if (stripHex(txid) === stripHex(burnSubmitted || '')) {
+        if (burnFolded) return json({ ok: true, status: 'folded' });
+        if (burnConfirmed) return json({ ok: true, status: burnRegistered ? 'pending' : 'awaiting-scan', registered: burnRegistered });
+        return json({ ok: true, status: 'unconfirmed' });
+      }
+      // any other txid queried is a migrate-reveal-shaped check
+      return json({ ok: true, status: migrateConfirmed ? 'folded' : 'unconfirmed' });
+    }
+    if (u.pathname.startsWith('/chain/tx/')) {
+      const txid = u.pathname.slice('/chain/tx/'.length);
+      const rec = chainTxs.get(stripHex(txid));
+      if (!rec) throw new Error('world: unknown chain tx ' + txid);
+      return json({ status: { confirmed: rec.confirmed }, vout: rec.vout });
+    }
+    throw new Error('world: unstubbed path ' + u.pathname + ' ' + u.hostname);
+  };
+
+  const chain = {
+    getUtxos: async (addr) => [{ txid: FUND_TXID_2, vout: 0, value: 5_000 }],
+    pickSafeCommitSats: async (utxos) => utxos,
+    broadcast: async (hex) => { broadcasts.push({ chain: hex }); return 'txid'; },
+    broadcastWithRetry: async (hex) => { broadcasts.push({ chain: hex }); return 'txid'; },
+    getFeeRate: async () => BASE_RATE,
+  };
+
+  const bridgeMintCalls = [];
+  const bridgeMint = {
+    bridgeMint: async (args) => { bridgeMintCalls.push(args); return { jobId: 'job1', txHash: '0x' + 'cd'.repeat(32) }; },
+  };
+
+  return {
+    fetchImpl, chain, bridgeMint, broadcasts, registered, bridgeMintCalls,
+    setMigrateConfirmed: (v) => { migrateConfirmed = v; },
+    setBurnSubmitted: (txid) => { burnSubmitted = txid; },
+    setBurnConfirmed: (v) => { burnConfirmed = v; },
+    setBurnFolded: (v) => { burnFolded = v; },
+    setBurnHomeOnChain: (txid, spkHex) => chainTxs.set(stripHex(txid), { confirmed: true, vout: [{ scriptpubkey: stripHex(spkHex) }] }),
+    setSubmitStatus: (s) => { submitStatus = s; },
+  };
+}
+
+function makeMemStorage() {
+  const m = new Map();
+  return {
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => m.set(k, v),
+    removeItem: (k) => m.delete(k),
+    get length() { return m.size; },
+    key: (i) => Array.from(m.keys())[i] ?? null,
+    _raw: m,
+  };
+}
+
+function makeUx(world, storage) {
+  return makeBurnDepositUx({
+    network: 'signet', hrp: 'tb', workerBase: 'https://worker.example', fetchImpl: world.fetchImpl, storage,
+    secp, sha256, keccak256: keccak_256, hmac: hmacFn, pool, bridgeMint: world.bridgeMint,
+    chainBindingHex: () => '7c'.repeat(32), tacAssetId: ASSET, chain: world.chain,
+    encodeCXferBppPayload, computeKernelMsg, deriveChangeBlinding, deriveAmountKeystreamSelf, encryptAmount, signSchnorr, modN,
+  });
+}
+
+// ==== eligibility ====
+{
+  const world = makeWorld();
+  const ux = makeUx(world, makeMemStorage());
+  const holdings = [
+    { txid: NOTE_TXID, vout: 0, assetId: ASSET, amount: NOTE_AMOUNT, confirmed: true },
+    { txid: 'aa'.repeat(32), vout: 0, assetId: ASSET, amount: BURNDEP_BETA_CAP_RAW + 1n, confirmed: true },
+    { txid: 'bb'.repeat(32), vout: 0, assetId: withHex('ff'.repeat(32)), amount: 1n, confirmed: true },
+    { txid: 'cc'.repeat(32), vout: 0, assetId: ASSET, amount: 1n, confirmed: false },
+    { txid: 'dd'.repeat(32), vout: 0, assetId: ASSET, amount: 1n, confirmed: true, stealth: true },
+  ];
+  const list = ux.eligibleNotes(holdings);
+  ok(list[0].eligible === true, 'an ordinary confirmed TAC note under the cap is eligible');
+  ok(list[1].eligible === false && /1,000 TAC/.test(list[1].reason), 'a note over the cap is ineligible with a clear reason');
+  ok(list[2].eligible === false && list[2].reason === 'not TAC', 'a non-TAC note is ineligible');
+  ok(list[3].eligible === false && list[3].reason === 'unconfirmed', 'an unconfirmed note is ineligible');
+  ok(list[4].eligible === false && /stealth/.test(list[4].reason), 'a stealth-received note is ineligible');
+  ok(n > 0, 'eligibleNotes checks ran');
+}
+
+// ==== full happy path: migrate-signed -> ... -> minted ====
+let rec;
+{
+  const world = makeWorld();
+  const storage = makeMemStorage();
+  const ux = makeUx(world, storage);
+
+  rec = await ux.start({
+    note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING },
+    walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE,
+  });
+  ok(rec.stage === 'migrate-signed', 'start() produces a migrate-signed record');
+  ok(broadcastsSoFar(world) === 0, 'start() signs but does not broadcast anything');
+  const beforeAdvance = storage._raw.get(Array.from(storage._raw.keys())[0]);
+  ok(typeof beforeAdvance === 'string' && beforeAdvance.length > 0, 'the record is journalled before any broadcast happens');
+
+  rec = await ux.advance(rec.walletPub, rec.id);
+  ok(rec.stage === 'migrate-sent', 'advance() broadcasts the migrate commit+reveal and moves to migrate-sent');
+  ok(world.broadcasts.length === 2 && world.broadcasts.every((b) => b.chain), 'both the commit and reveal were broadcast via chain.broadcastWithRetry');
+
+  rec = await ux.advance(rec.walletPub, rec.id);
+  ok(rec.stage === 'migrate-sent', 'advance() stays at migrate-sent while unconfirmed');
+  world.setMigrateConfirmed(true);
+  rec = await ux.advance(rec.walletPub, rec.id);
+  ok(rec.stage === 'migrate-confirmed', 'advance() moves to migrate-confirmed once the reveal confirms');
+
+  rec = await ux.advance(rec.walletPub, rec.id);
+  ok(rec.stage === 'traced' && Array.isArray(rec.bundle.cxfers), 'advance() traces the burn-home and moves to traced');
+
+  world.setBurnHomeOnChain(rec.burnHome.txid, rec.burnHome.spk);
+  await assert.rejects(() => ux.advance(rec.walletPub, rec.id), /needs the wallet key/, 'advancing past traced without walletPriv is refused');
+  rec = await ux.advance(rec.walletPub, rec.id, { walletPriv: WALLET_PRIV });
+  ok(rec.stage === 'burn-signed' && rec.envelope && rec.dest, 'advance() with the key signs the burn and moves to burn-signed');
+  ok(!JSON.stringify(rec, (k, v) => (typeof v === 'bigint' ? v.toString() : v)).toLowerCase().includes(Buffer.from(WALLET_PRIV).toString('hex')), 'the wallet private key never appears in the journalled record');
+  ok(!storageContainsPrivkey(storage, WALLET_PRIV), 'the wallet private key never appears anywhere in storage');
+
+  world.setBurnSubmitted(rec.burn.txid);
+  rec = await ux.advance(rec.walletPub, rec.id);
+  ok(rec.stage === 'burn-submitted', 'advance() submits to MARA and moves to burn-submitted');
+  ok(world.broadcasts.some((b) => b.mara), 'the burn was submitted to slipstream');
+
+  rec = await ux.advance(rec.walletPub, rec.id);
+  ok(rec.stage === 'burn-submitted', 'advance() stays at burn-submitted while unconfirmed');
+  world.setBurnConfirmed(true);
+  rec = await ux.advance(rec.walletPub, rec.id);
+  ok(rec.stage === 'burn-mined', 'advance() moves to burn-mined once the burn confirms');
+
+  rec = await ux.advance(rec.walletPub, rec.id);
+  ok(rec.stage === 'registered' && world.registered.length === 1, 'advance() registers the bundle and moves to registered');
+
+  rec = await ux.advance(rec.walletPub, rec.id);
+  ok(rec.stage === 'registered', 'advance() stays at registered until the reflection folds it');
+  world.setBurnFolded(true);
+  rec = await ux.advance(rec.walletPub, rec.id);
+  ok(rec.stage === 'folded', 'advance() moves to folded once the reflection folds the burn');
+
+  await assert.rejects(() => ux.advance(rec.walletPub, rec.id), /needs the wallet key/, 'minting without walletPriv is refused');
+  rec = await ux.advance(rec.walletPub, rec.id, { walletPriv: WALLET_PRIV });
+  ok(rec.stage === 'minted', 'advance() with the key mints and reaches the terminal stage');
+  ok(world.bridgeMintCalls.length === 1, 'bridgeMint.bridgeMint was called exactly once');
+
+  const mintArgs = world.bridgeMintCalls[0];
+  const expectedSpentTxid = withHex(revHex(rec.burnHome.txid));
+  ok(mintArgs.spentTxid.toLowerCase() === expectedSpentTxid.toLowerCase() && mintArgs.spentVout === 0, 'bridgeMint is called with the burn-home outpoint in internal byte order');
+  const expectedLeaf = pool.leaf(ASSET, rec.burnHome.cx, rec.burnHome.cy, pool.outpointKey(mintArgs.spentTxid, mintArgs.spentVout));
+  const expectedNullifier = pool.nullifier(expectedLeaf);
+  ok(rec.envelope.nullifier.toLowerCase() === expectedNullifier.toLowerCase(), "the burn's own envelope nullifier matches sourceLeaf's class-0 formula (confidential-bridge-mint.js) computed independently here");
+  const kitLeaf = kit.burnDepositLeaf(ASSET, rec.burnHome.cx, rec.burnHome.cy, mintArgs.spentTxid, mintArgs.spentVout);
+  ok(kitLeaf.toLowerCase() === expectedLeaf.toLowerCase(), 'kit.burnDepositLeaf and pool.leaf(...,pool.outpointKey(...)) agree on the same burned-note leaf formula');
+  ok(mintArgs.dest.owner.toLowerCase() === rec.dest.owner.toLowerCase() && mintArgs.dest.value === rec.dest.value, 'bridgeMint is called with the exact destination the burn envelope committed to');
+
+  await assert.rejects(() => ux.advance(rec.walletPub, 'no-such-id'), /no bridge record/, 'advancing an unknown record id is refused');
+}
+
+// ==== resume after a simulated crash: a fresh instance, same storage, never re-signs ====
+{
+  const world = makeWorld();
+  const storage = makeMemStorage();
+  const ux1 = makeUx(world, storage);
+  let r = await ux1.start({
+    note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING },
+    walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE,
+  });
+  const migrateHexBefore = r.migrate.revealHex;
+  r = await ux1.advance(r.walletPub, r.id); // migrate-sent
+
+  // "the tab closes" — a fresh burndep-ux instance over the SAME storage picks up the record as-is.
+  const ux2 = makeUx(world, storage);
+  const resumed = ux2.list(r.walletPub).find((x) => x.id === r.id);
+  ok(!!resumed && resumed.stage === 'migrate-sent', 'a fresh instance over the same storage sees the in-flight record');
+  ok(resumed.migrate.revealHex === migrateHexBefore, 'the journalled migrate reveal is byte-identical after resume — never rebuilt');
+
+  const before = world.broadcasts.length;
+  const again = await ux2.advance(resumed.walletPub, resumed.id); // still unconfirmed -> re-sends, no state change
+  ok(again.stage === 'migrate-sent', 'resuming an unconfirmed migrate stays at migrate-sent');
+  ok(world.broadcasts.length > before, 'resuming an unconfirmed migrate re-sends the identical (already-journalled) bytes rather than rebuilding');
+}
+
+// ==== hop-limit refusal ====
+{
+  const world = makeWorld();
+  world.fetchImpl0 = world.fetchImpl;
+  const overLimitFetch = async (url, opts) => {
+    const u = new URL(url);
+    if (u.pathname === '/reflection/burndep/trace') {
+      return { ok: true, json: async () => ({ ok: true, hops: 64, bundle: { etch: {}, cxfers: new Array(64).fill({ inputs: [{ prevTxid: withHex(NOTE_TXID), prevVout: 0 }] }) } }) };
+    }
+    return world.fetchImpl0(url, opts);
+  };
+  const storage = makeMemStorage();
+  const ux = makeUx({ ...world, fetchImpl: overLimitFetch }, storage);
+  let r = await ux.start({
+    note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING },
+    walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE,
+  });
+  r = await ux.advance(r.walletPub, r.id);
+  world.setMigrateConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id); // -> migrate-confirmed
+  await assert.rejects(() => ux.advance(r.walletPub, r.id), /over the 63-hop limit/, 'refuses a hop-limit violation');
+  ok(true, 'a burn-home tracing over the hop limit is refused rather than silently proceeding');
+}
+
+// ==== cap refusal in start() ====
+{
+  const world = makeWorld();
+  const ux = makeUx(world, makeMemStorage());
+  await assert.rejects(
+    () => ux.start({
+      note: { txid: NOTE_TXID, vout: 0, sats: NOTE_SATS, amount: BURNDEP_BETA_CAP_RAW + 1n, blinding: NOTE_BLINDING },
+      walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 },
+    }),
+    /over the beta cap/,
+    'refuses over-cap',
+  );
+  ok(true, 'start() refuses a note over the beta cap before signing anything');
+}
+
+// ==== MARA refusal is surfaced, not silently swallowed ====
+{
+  const world = makeWorld();
+  world.setSubmitStatus('error');
+  const storage = makeMemStorage();
+  const ux = makeUx(world, storage);
+  let r = await ux.start({
+    note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING },
+    walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE,
+  });
+  r = await ux.advance(r.walletPub, r.id);
+  world.setMigrateConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id);
+  r = await ux.advance(r.walletPub, r.id);
+  world.setBurnHomeOnChain(r.burnHome.txid, r.burnHome.spk);
+  r = await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV }); // burn-signed
+  await assert.rejects(() => ux.advance(r.walletPub, r.id), /slipstream submit refused/, 'a MARA status!==success response is surfaced as a real error, not treated as submitted');
+  const stillAt = ux.list(r.walletPub).find((x) => x.id === r.id);
+  ok(stillAt.stage === 'burn-signed', 'a refused MARA submission does not advance the stage');
+}
+
+// ==== cross-tab lease ====
+{
+  const world = makeWorld();
+  const storage = makeMemStorage();
+  const ux = makeUx(world, storage);
+  let r = await ux.start({
+    note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING },
+    walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE,
+  });
+  // Simulate another tab holding the lease right now.
+  storage.setItem(`tacit-burndep-bridge-v1:lease:signet:${r.id}`, JSON.stringify({ owner: 'other-tab', at: Date.now() }));
+  await assert.rejects(() => ux.advance(r.walletPub, r.id), /being advanced in another tab/, 'advance() refuses while another tab holds a fresh lease');
+  // A stale lease (past the TTL) is treated as free.
+  storage.setItem(`tacit-burndep-bridge-v1:lease:signet:${r.id}`, JSON.stringify({ owner: 'other-tab', at: Date.now() - 60_000 }));
+  const advanced = await ux.advance(r.walletPub, r.id);
+  ok(advanced.stage === 'migrate-sent', 'a stale lease from a crashed tab does not permanently strand the record');
+}
+
+// ==== reservation across the whole browser, not just one wallet ====
+{
+  const world = makeWorld();
+  const storage = makeMemStorage();
+  const ux = makeUx(world, storage);
+  await ux.start({
+    note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING },
+    walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE,
+  });
+  ok(ux.isReserved(NOTE_TXID, NOTE_VOUT) === true, 'the source note is reserved once a bridge exists for it');
+  ok(ux.isReserved(FUND_TXID_1, 0) === true, "the migrate's own funding UTXO is reserved too, so Send can't spend it out from under the bridge");
+  ok(ux.isReserved('ff'.repeat(32), 0) === false, 'an unrelated outpoint is not reserved');
+}
+
+function broadcastsSoFar(world) { return world.broadcasts.length; }
+function storageContainsPrivkey(storage, priv) {
+  const hex = Buffer.from(priv).toString('hex');
+  for (const [, v] of storage._raw) if (String(v).toLowerCase().includes(hex)) return true;
+  return false;
+}
+
+console.log(failures ? `\n${failures} FAILURES (${n} passed)` : `\nall ${n} burndep-ux checks passed`);
+process.exit(failures ? 1 : 0);

@@ -38,7 +38,10 @@
   (mempool.space REST, the specific conveniences worker URL, the primary
   IPFS gateway plus three public fallbacks for ceremony files when the
   primary is unreachable; w3s.link/dweb.link 301-redirect to per-CID
-  subdomains, hence the wildcard hosts). img-src is tight: 'self' + the
+  subdomains, hence the wildcard hosts; slipstream.mara.com is the
+  direct-to-miner submission path a TAC burn-deposit's oversized witness
+  item needs, since ordinary relay refuses it on standardness grounds —
+  see dapp/burndep-broadcast.js). img-src is tight: 'self' + the
   primary IPFS gateway only — no arbitrary
   https, since direct https:// image URIs in CETCH envelopes would be
   IP-correlation beacons for asset viewers (the renderer enforces this at
@@ -54,7 +57,7 @@
   not read that file, so these headers must be mirrored into the Render
   Dashboard's static-site header config for them to actually take effect.
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ipfs.filebase.io https://10mz1z2351rzze-8080.proxy.runpod.net https://mempool.space https://*.mempool.space https://mempool.emzy.de https://mempool.bitaroo.net https://blockstream.info https://api.coinbase.com https://api.kraken.com https://api.coingecko.com https://cloudflare-eth.com https://api.tacit.finance https://tacit-api.onrender.com https://tacit-points.onrender.com https://tacit-pin.rosscampbell9.workers.dev https://www.tacitscan.io https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link https://uploads.pinata.cloud https://gateway.pinata.cloud https://gateway.liquify.com https://ethereum-sepolia-rpc.publicnode.com https://ethereum-rpc.publicnode.com https://1rpc.io https://eth.llamarpc.com https://eth.drpc.org https://sepolia.drpc.org https://mainnet.gateway.tenderly.co https://sepolia.gateway.tenderly.co; img-src 'self' data: https://ipfs.filebase.io https://api.tacit.finance https://tacit-api.onrender.com https://tacit-pin.rosscampbell9.workers.dev https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ipfs.filebase.io https://10mz1z2351rzze-8080.proxy.runpod.net https://mempool.space https://*.mempool.space https://mempool.emzy.de https://mempool.bitaroo.net https://blockstream.info https://api.coinbase.com https://api.kraken.com https://api.coingecko.com https://cloudflare-eth.com https://api.tacit.finance https://tacit-api.onrender.com https://tacit-points.onrender.com https://tacit-pin.rosscampbell9.workers.dev https://www.tacitscan.io https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link https://uploads.pinata.cloud https://gateway.pinata.cloud https://gateway.liquify.com https://ethereum-sepolia-rpc.publicnode.com https://ethereum-rpc.publicnode.com https://1rpc.io https://eth.llamarpc.com https://eth.drpc.org https://sepolia.drpc.org https://mainnet.gateway.tenderly.co https://sepolia.gateway.tenderly.co https://slipstream.mara.com; img-src 'self' data: https://ipfs.filebase.io https://api.tacit.finance https://tacit-api.onrender.com https://tacit-pin.rosscampbell9.workers.dev https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'">
 <title>tacit</title>
 <meta name="description" content="Confidential money across Bitcoin and Ethereum — one shielded note you can send privately, swap, borrow against, and bridge. Mint cBTC/tacBTC from SP1-reflected Bitcoin locks and borrow cUSD against it.">
 <meta name="theme-color" content="#f7931a">
@@ -104,7 +107,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=76a813e6">
+<link rel="modulepreload" href="./tacit.js?cb=cf0333ba">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -11576,7 +11579,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=76a813e6"></script>
+<script type="module" src="./tacit.js?cb=cf0333ba"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for

@@ -15,30 +15,34 @@ let n = 0; const ok = (s) => { console.log('  ok -', s); n++; };
   let posted = null;
   const fetchImpl = async (url, opts) => {
     posted = { url, body: JSON.parse(opts.body) };
-    return { ok: true, json: async () => ({ success: true }), text: async () => JSON.stringify(({ success: true })) };
+    return { ok: true, json: async () => ({ status: 'success', message: 'ok' }), text: async () => JSON.stringify(({ status: 'success', message: 'ok' })) };
   };
   const b = makeBurnDepositBroadcaster({ fetchImpl });
   const r = await b.submitToSlipstream('deadbeef');
   assert.strictEqual(posted.url, 'https://slipstream.mara.com/api/transactions', 'posts to the slipstream submit endpoint');
   assert.deepStrictEqual(posted.body, { tx_hex: 'deadbeef' }, 'body is { tx_hex }');
-  assert.deepStrictEqual(r, { success: true }, 'returns the slipstream response');
+  assert.deepStrictEqual(r, { status: 'success', message: 'ok' }, 'returns the slipstream response');
   await assert.rejects(() => b.submitToSlipstream(), /txHex required/, 'rejects a missing txHex');
   ok('submitToSlipstream posts tx_hex, returns the response, rejects a missing tx');
 }
 
-// ── 2. submitToSlipstream throws loudly on a rejected submission ──
+// ── 2. submitToSlipstream throws loudly on a rejected submission (transport-level and body-level) ──
 {
   const fetchImpl = async () => ({ ok: false, status: 400, json: async () => ({ error: 'bad tx' }), text: async () => JSON.stringify(({ error: 'bad tx' })) });
   const b = makeBurnDepositBroadcaster({ fetchImpl });
-  await assert.rejects(() => b.submitToSlipstream('deadbeef'), /slipstream submit failed/, 'surfaces a rejected submission');
-  ok('submitToSlipstream fails loudly on a non-ok response');
+  await assert.rejects(() => b.submitToSlipstream('deadbeef'), /slipstream submit failed/, 'surfaces a transport-level rejection');
+
+  const fetchImplRefused = async () => ({ ok: true, json: async () => ({ status: 'error', message: 'invalid transaction' }), text: async () => JSON.stringify(({ status: 'error', message: 'invalid transaction' })) });
+  const b2 = makeBurnDepositBroadcaster({ fetchImpl: fetchImplRefused });
+  await assert.rejects(() => b2.submitToSlipstream('deadbeef'), /slipstream submit refused: invalid transaction/, 'surfaces a 200-with-status-error refusal');
+  ok('submitToSlipstream fails loudly on a non-ok response or a status !== success body');
 }
 
 // ── 3. waitForBurnDepositMined resolves once checkConfirmed says so, not before ──
 {
   let calls = 0;
   const checkConfirmed = async () => (++calls >= 3);
-  const fetchImpl = async () => ({ json: async () => ({ position: { block: 2 } }) });
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ message: 'queued', is_next_block: false, transaction: { position: { block: 2 } } }) });
   const b = makeBurnDepositBroadcaster({ fetchImpl });
   const updates = [];
   const slept = [];
@@ -98,7 +102,7 @@ let n = 0; const ok = (s) => { console.log('  ok -', s); n++; };
   const order = [];
   let confirmedAt = null;
   const fetchImpl = async (url, opts) => {
-    if (url.includes('/api/transactions') && opts?.method === 'POST') { order.push('submit'); return { ok: true, json: async () => ({ success: true }), text: async () => JSON.stringify(({ success: true })) }; }
+    if (url.includes('/api/transactions') && opts?.method === 'POST') { order.push('submit'); return { ok: true, json: async () => ({ status: 'success' }), text: async () => JSON.stringify(({ status: 'success' })) }; }
     if (url.includes('/reflection/burndep')) { order.push('register'); confirmedAt = order.includes('wait-confirmed'); return { ok: true, json: async () => ({ ok: true }), text: async () => JSON.stringify(({ ok: true })) }; }
     return { json: async () => ({}) };
   };
@@ -120,7 +124,7 @@ let n = 0; const ok = (s) => { console.log('  ok -', s); n++; };
   const journal = { load: () => list, save: (l) => { list = l; } };
   const seen = [];
   const fetchImpl = async (url, opts) => {
-    if (url.includes('/api/transactions') && opts?.method === 'POST') { seen.push('submit'); return { ok: true, json: async () => ({ success: true }), text: async () => JSON.stringify(({ success: true })) }; }
+    if (url.includes('/api/transactions') && opts?.method === 'POST') { seen.push('submit'); return { ok: true, json: async () => ({ status: 'success' }), text: async () => JSON.stringify(({ status: 'success' })) }; }
     if (url.includes('/reflection/burndep')) { seen.push('register'); return { ok: true, json: async () => ({ ok: true }), text: async () => JSON.stringify(({ ok: true })) }; }
     return { json: async () => ({}) };
   };
@@ -155,7 +159,7 @@ let n = 0; const ok = (s) => { console.log('  ok -', s); n++; };
   let list = [];
   const journal = { load: () => list, save: (l) => { list = l; } };
   const fetchImpl = async (url, opts) => {
-    if (url.includes('/api/transactions') && opts?.method === 'POST') return { ok: true, json: async () => ({ success: true }), text: async () => JSON.stringify(({ success: true })) };
+    if (url.includes('/api/transactions') && opts?.method === 'POST') return { ok: true, json: async () => ({ status: 'success' }), text: async () => JSON.stringify(({ status: 'success' })) };
     if (url.includes('/reflection/burndep')) return { ok: true, json: async () => ({ ok: true }), text: async () => JSON.stringify(({ ok: true })) };
     return { json: async () => ({}) };
   };
@@ -179,4 +183,50 @@ let n = 0; const ok = (s) => { console.log('  ok -', s); n++; };
   ok('a completed burn clears its record; a sweep reports per burn and keeps the unfinished ones');
 }
 
-console.log(`\n${n}/9 burndep-broadcast checks passed`);
+// ── 10. slipstreamStatus, slipstreamRates, testSlipstreamAccept hit the right endpoints with the right shapes ──
+{
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    calls.push({ url, method: opts && opts.method, body: opts && opts.body ? JSON.parse(opts.body) : null });
+    if (url.includes('/api/transactions/status')) return { ok: true, json: async () => ({ message: 'queued', is_next_block: false, transaction: { position: { block: 1 } } }) };
+    if (url.includes('/api/rates')) return { ok: true, json: async () => ({ market_rate: 1, effective_rate: 1.9, submit_fee_rate: 1.9 }) };
+    if (url.includes('/api/mempool/tests')) return { ok: true, json: async () => ([{ txid: 'abc', allowed: true }]) };
+    throw new Error('unexpected url ' + url);
+  };
+  const b = makeBurnDepositBroadcaster({ fetchImpl });
+
+  const status = await b.slipstreamStatus('abc123');
+  assert.strictEqual(calls[0].url, 'https://slipstream.mara.com/api/transactions/status?tx_id=abc123', 'status hits the right endpoint with tx_id');
+  assert.strictEqual(status.transaction.position.block, 1, 'returns the parsed TransactionInfo');
+  await assert.rejects(() => b.slipstreamStatus(), /txid required/, 'rejects a missing txid');
+
+  const rates = await b.slipstreamRates();
+  assert.strictEqual(calls[1].url, 'https://slipstream.mara.com/api/rates', 'rates hits the right endpoint');
+  assert.strictEqual(rates.effective_rate, 1.9, 'returns the parsed rate info');
+
+  const accept = await b.testSlipstreamAccept('deadbeef');
+  assert.strictEqual(calls[2].url, 'https://slipstream.mara.com/api/mempool/tests', 'mempool test hits the right endpoint');
+  assert.deepStrictEqual(calls[2].body, { tx_hexes: ['deadbeef'] }, 'wraps the single hex in tx_hexes');
+  assert.deepStrictEqual(accept, { txid: 'abc', allowed: true }, 'unwraps the single result from the response array');
+  await assert.rejects(() => b.testSlipstreamAccept(), /txHex required/, 'rejects a missing txHex');
+
+  ok('slipstreamStatus/slipstreamRates/testSlipstreamAccept call the right endpoints with the right shapes');
+}
+
+// ── 11. waitForBurnDepositMined reports "next-block" once MARA flags is_next_block, distinct from "queued" ──
+{
+  let calls = 0;
+  const checkConfirmed = async () => (++calls >= 2);
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ is_next_block: true, transaction: { position: { block: 0 } } }) });
+  const b = makeBurnDepositBroadcaster({ fetchImpl });
+  const updates = [];
+  await b.waitForBurnDepositMined({
+    txid: 'abc123', checkConfirmed, intervalMs: 1,
+    onUpdate: (u) => updates.push(u.status),
+    sleep: async () => {},
+  });
+  assert.deepStrictEqual(updates, ['next-block', 'confirmed'], 'is_next_block reports a distinct status from plain queued');
+  ok('waitForBurnDepositMined surfaces is_next_block as its own progress state');
+}
+
+console.log(`\n${n}/11 burndep-broadcast checks passed`);

@@ -234,6 +234,46 @@ export function makeBurnDepositReveal({ pool, secp, prims: defaultPrims = null }
     }
   }
 
+  // Rebuilds the exact object buildMigrationTxs returns under `.burnHome`, from the wallet key and the
+  // SOURCE note's own outpoint alone (deriveBurnHomeKey/deriveChangeBlinding are both keyed by that outpoint,
+  // never by the burn-home's own txid — see planMigrationToBurnHome) — so a caller who lost buildMigrationTxs's
+  // return value (a reloaded page, a different device) can recover it from data the wallet seed already
+  // implies, once the migration itself is confirmed on chain. `chainSpk` is the REAL on-chain scriptPubKey at
+  // burnHomeTxid:0 (bytes or hex, fetched by the caller — this module makes no network calls of its own,
+  // matching every other function here); the reconstruction is refused rather than returned unverified if it
+  // doesn't match, since an unverified wrong key here would build a burn-reveal that can't spend the real
+  // output. deriveChangeBlinding needs computeKernelMsg's own sibling from MIGRATE_NEED, so prims here is the
+  // same wider surface buildMigrationTxs takes, not just BASE_NEED.
+  function reconstructBurnHome({ prims, walletPriv, source, amount, burnHomeTxid, chainSpk } = {}) {
+    const P = primsOf(prims, MIGRATE_NEED);
+    if (!source || !/^[0-9a-fA-F]{64}$/.test(stripHex(source.txid || ''))) throw new Error('burn-deposit-reveal: source.txid (display hex) required');
+    const srcVout = Number(source.vout);
+    if (!Number.isInteger(srcVout) || srcVout < 0) throw new Error('burn-deposit-reveal: bad source.vout');
+    if (!/^[0-9a-fA-F]{64}$/.test(stripHex(burnHomeTxid || ''))) throw new Error('burn-deposit-reveal: burnHomeTxid (display hex) required');
+    const amountBig = BigInt(amount);
+    if (amountBig <= 0n) throw new Error('burn-deposit-reveal: amount must be positive');
+    if (chainSpk == null) throw new Error('burn-deposit-reveal: chainSpk (the real on-chain scriptPubKey at burnHomeTxid:0) required — reconstruction is refused unverified');
+
+    const K1 = deriveBurnHomeKey({ walletPriv, noteTxid: source.txid, noteVout: srcVout }, { sha256: P.sha256 });
+    const S = homeScriptS(K1.xonly);
+    const anchor = cat([reverseBytes(hexToBytesLocal(stripHex(source.txid))), le32(srcVout)]);
+    const blinding = P.deriveChangeBlinding(walletPriv, anchor, 0);
+    const commitment = pedersenCommit(amountBig, blinding);
+    const spk = P.p2trScript(P.tweakedOutputKey(P.TAP_NUMS, P.tapLeafHash(S)).Q_xonly);
+    const controlBlock = P.controlBlock(P.TAP_NUMS, P.tweakedOutputKey(P.TAP_NUMS, P.tapLeafHash(S)).parity);
+
+    const chainSpkHex = lc(typeof chainSpk === 'string' ? stripHex(chainSpk) : P.bytesToHex(chainSpk).replace(/^0x/, ''));
+    if (lc(P.bytesToHex(spk).replace(/^0x/, '')) !== chainSpkHex) {
+      throw new Error('burn-deposit-reveal: reconstructed burn-home script does not match the real on-chain output — wrong wallet key or source outpoint');
+    }
+    const { cx, cy } = pool.decompressCommitment('0x' + P.bytesToHex(pointToBytes(commitment)));
+    return {
+      txid: stripHex(burnHomeTxid), vout: 0, value: DUST, sats: DUST,
+      amount: amountBig, blinding, cx, cy,
+      priv: K1.priv, pub: K1.pub, xonly: K1.xonly, scriptS: S, controlBlock, spk,
+    };
+  }
+
   // ---- Phase 2: the burn-deposit reveal itself ----
   //   burnHome : the object buildMigrationTxs returned under `.burnHome` (or reconstructed identically from a
   //              stored migration record) — { txid, vout, value(sats), amount, blinding, priv, xonly, scriptS,
@@ -324,7 +364,7 @@ export function makeBurnDepositReveal({ pool, secp, prims: defaultPrims = null }
     }
   }
 
-  return { deriveBurnHomeKey, planMigrationToBurnHome, buildMigrationTxs, planBurnDepositReveal, buildBurnDepositRevealTxs };
+  return { deriveBurnHomeKey, planMigrationToBurnHome, buildMigrationTxs, reconstructBurnHome, planBurnDepositReveal, buildBurnDepositRevealTxs };
 }
 
 // ---- small local byte helpers (kept dependency-free rather than importing a whole wallet module for these) ----

@@ -32,10 +32,16 @@ function defaultJournal() {
   };
 }
 
-export function makeBurnDepositBroadcaster({ workerBase, fetchImpl, slipstreamBase = SLIPSTREAM_BASE, journal = null } = {}) {
+// slipstreamHeaders: extra headers merged into every MARA request. /api/transactions, /api/transactions/status
+// and /api/rates work unauthenticated; /api/mempool/tests does not (confirmed live — it 401s with "Missing or
+// invalid Authorization header" even though MARA's own published OpenAPI spec declares no security scheme for
+// it), and no header name/scheme is documented anywhere public. Pass whatever MARA gives you directly here
+// once you have it; testSlipstreamAccept surfaces the real 401 + body verbatim until then.
+export function makeBurnDepositBroadcaster({ workerBase, fetchImpl, slipstreamBase = SLIPSTREAM_BASE, slipstreamHeaders = null, journal = null } = {}) {
   const f = fetchImpl || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
   if (!f) throw new Error('burndep-broadcast: no fetch implementation');
   const store = journal || defaultJournal();
+  const mhdrs = (extra) => ({ ...(slipstreamHeaders || {}), ...extra });
 
   /** Burns submitted from this client that have not been registered yet, oldest first. */
   function pendingBurnDeposits() { return store.load(); }
@@ -53,7 +59,7 @@ export function makeBurnDepositBroadcaster({ workerBase, fetchImpl, slipstreamBa
     if (!txHex || typeof txHex !== 'string') throw new Error('burndep-broadcast: txHex required');
     const res = await f(`${slipstreamBase}/api/transactions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: mhdrs({ 'content-type': 'application/json' }),
       body: JSON.stringify({ tx_hex: txHex }),
     });
     // Status BEFORE parsing. A successful submit that answers with a non-JSON body would otherwise throw out
@@ -62,7 +68,44 @@ export function makeBurnDepositBroadcaster({ workerBase, fetchImpl, slipstreamBa
     const text = await res.text();
     let body; try { body = text ? JSON.parse(text) : {}; } catch { body = { raw: text }; }
     if (!res.ok) throw new Error(`burndep-broadcast: slipstream submit failed (${res.status}): ${text.slice(0, 300)}`);
+    // TxSubmitResponse always carries {status, message} — a 200 with status !== 'success' is still a refusal
+    // (MARA's own response shape, distinct from the HTTP status), so res.ok alone under-reports it.
+    if (body.status !== 'success') throw new Error(`burndep-broadcast: slipstream submit refused: ${body.message || JSON.stringify(body)}`);
     return body;
+  }
+
+  // GET /api/transactions/status?tx_id= — MARA's own queue/confirmation view for one tx (TransactionInfo).
+  // Queue depth lives at transaction.position.block, not at the top level.
+  async function slipstreamStatus(txid) {
+    if (!txid) throw new Error('burndep-broadcast: txid required');
+    const res = await f(`${slipstreamBase}/api/transactions/status?tx_id=${txid}`, { headers: mhdrs({}) });
+    if (!res.ok) throw new Error(`burndep-broadcast: slipstream status failed (${res.status})`);
+    return res.json();
+  }
+
+  // GET /api/rates — the current fee-rate floor (submit_fee_rate) and the rate a submission would need to
+  // actually compete for blockspace (effective_rate), both sat/vB. Read fresh right before building/bumping
+  // a burn's fee, not cached — these move with the market.
+  async function slipstreamRates() {
+    const res = await f(`${slipstreamBase}/api/rates`, { headers: mhdrs({}) });
+    if (!res.ok) throw new Error(`burndep-broadcast: slipstream rates failed (${res.status})`);
+    return res.json();
+  }
+
+  // POST /api/mempool/tests — MARA's own dry-run consensus/policy check, ahead of a real submit. Takes one
+  // tx hex (matching this module's other single-tx calls) and returns its own result, not the wrapping array.
+  // Confirmed live to require slipstreamHeaders (see this factory's own comment) — every other call here works
+  // without it.
+  async function testSlipstreamAccept(txHex) {
+    if (!txHex || typeof txHex !== 'string') throw new Error('burndep-broadcast: txHex required');
+    const res = await f(`${slipstreamBase}/api/mempool/tests`, {
+      method: 'POST',
+      headers: mhdrs({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ tx_hexes: [txHex] }),
+    });
+    if (!res.ok) throw new Error(`burndep-broadcast: slipstream mempool test failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+    const results = await res.json();
+    return Array.isArray(results) ? results[0] : results;
   }
 
   // Poll until `checkConfirmed` (an injected real chain lookup, e.g. against a public esplora or the
@@ -82,11 +125,9 @@ export function makeBurnDepositBroadcaster({ workerBase, fetchImpl, slipstreamBa
         return { confirmed: true, txid };
       }
       let slipstream = null;
-      try {
-        const res = await f(`${slipstreamBase}/api/transactions/status?tx_id=${txid}`);
-        slipstream = await res.json();
-      } catch { /* best-effort progress only; checkConfirmed is the real signal */ }
-      const label = slipstream && slipstream.position ? 'queued' : 'unseen';
+      try { slipstream = await slipstreamStatus(txid); } catch { /* best-effort progress only; checkConfirmed is the real signal */ }
+      const tx = slipstream && slipstream.transaction;
+      const label = slipstream && slipstream.is_next_block ? 'next-block' : tx && tx.position ? 'queued' : 'unseen';
       if (label !== last) { last = label; if (onUpdate) onUpdate({ status: label, txid, slipstream }); }
       if (Date.now() > deadline) {
         throw new Error(`burndep-broadcast: not confirmed after ${Math.round(timeoutMs / 60000)}min — check ${slipstreamBase}/api/transactions/status?tx_id=${txid} before resubmitting`);
@@ -148,5 +189,6 @@ export function makeBurnDepositBroadcaster({ workerBase, fetchImpl, slipstreamBa
   }
 
   return { submitToSlipstream, waitForBurnDepositMined, registerBurnDeposit, completeBurnDepositToEthereum,
-    pendingBurnDeposits, resumeBurnDeposit, resumePendingBurnDeposits };
+    pendingBurnDeposits, resumeBurnDeposit, resumePendingBurnDeposits,
+    slipstreamStatus, slipstreamRates, testSlipstreamAccept };
 }

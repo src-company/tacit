@@ -74,6 +74,7 @@ import { prfRegister, prfLogin, loadPrfMap, savePrfMap, clearPrfMap, isPasskeyAv
 import { bppRangeProve, bppRangeVerify } from './bulletproofs-plus.js';
 import { makeConfidentialPool } from './confidential-pool.js';
 import { makeConfidentialPoolUx, setExternalTacHolders } from './confidential-pool-ux.js';
+import { makeBurnDepositUx } from './burndep-ux.js';
 import { renderConfidentialPoolTab } from './confidential-pool-tab.js';
 import { renderLanePanel } from './cross-chain-lane.js';
 import { renderCdpTab } from './confidential-defi-tab.js';
@@ -3690,7 +3691,7 @@ async function getUtxos(a, onProgress) {
   // its escrow. Filtering at this single point covers every caller. A genuine redemption builds its
   // transaction from the outpoint explicitly rather than through coin selection, so it is unaffected.
   const _filterRecent = (utxos) => Array.isArray(utxos)
-    ? utxos.filter(u => !_isRecentlySpent(u.txid, u.vout) && !_isProtectedOutpoint(u.txid, u.vout))
+    ? utxos.filter(u => !_isRecentlySpent(u.txid, u.vout) && !_isProtectedOutpoint(u.txid, u.vout) && !_burndepReserved(u.txid, u.vout))
     : utxos;
   if (_heavyAddresses.has(a)) {
     // Heavy path: try the sniff-then-cache shortcut.
@@ -19756,6 +19757,30 @@ let _poolUx = null;
 function _poolUxSingleton() {
   return _poolUx || (_poolUx = makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256 }));
 }
+// TAC-to-Ethereum burn-deposit bridge (beta, capped at BURNDEP_BETA_CAP_RAW). Rebuilt whenever the network
+// changes (network is baked into the journal key and every worker/chain call), so this is cached per network
+// name rather than unconditionally, unlike _poolUxSingleton (which has no such dependency).
+let _burndepUx = null, _burndepUxNet = null;
+function _burndepUxSingleton() {
+  const net = NET.name;
+  if (_burndepUx && _burndepUxNet === net) return _burndepUx;
+  const poolUx = _poolUxSingleton();
+  _burndepUxNet = net;
+  return (_burndepUx = makeBurnDepositUx({
+    network: net, hrp: NET.hrp, workerBase: WORKER_BASE, secp, sha256, keccak256: keccak_256, hmac,
+    pool: poolUx.pool, bridgeMint: poolUx.bridgeMint, chainBindingHex: poolUx.chainBindingHex,
+    tacAssetId: '0x' + CANONICAL_TAC_ASSET_ID_HEX,
+    chain: { getUtxos, pickSafeCommitSats, broadcastWithRetry, getFeeRate },
+    encodeCXferBppPayload, computeKernelMsg, deriveChangeBlinding, deriveAmountKeystreamSelf, encryptAmount, signSchnorr, modN,
+  }));
+}
+// Every outpoint any bridge record (any wallet, this browser) has reserved as its source note or its Bitcoin
+// funding — checked from getUtxos' own _filterRecent so ordinary coin selection (Send, other bridges) can
+// never spend out from under an in-flight burn-deposit. Fails open (returns false) if the bridge module isn't
+// ready yet, matching every other best-effort filter in _filterRecent.
+function _burndepReserved(txid, vout) {
+  try { return _burndepUxSingleton().isReserved(txid, vout); } catch { return false; }
+}
 // A connected Ethereum wallet's public TAC counts toward the holder exit rate in every pool tab.
 setExternalTacHolders(() => (ethWallet?.state?.address ? ['0x' + String(ethWallet.state.address).replace(/^0x/, '')] : []));
 
@@ -22640,6 +22665,102 @@ function _renderHoldingsTethBridgeNotes(listEl) {
   section.querySelector('[data-act="teth-burn-to-eth"]')?.addEventListener('click', () => {
     if (window._openBridgeModal) window._openBridgeModal();
   });
+}
+
+// TAC burn-deposit bridges in progress (dapp/burndep-ux.js) — the counterpart to
+// _renderHoldingsTethBridgeNotes above for the OTHER bridge direction (Bitcoin -> Ethereum). One row per
+// non-terminal record for the current wallet; 'minted' bridges are done and don't need a row here (the minted
+// note just shows up as an ordinary Ethereum-lane balance).
+const _BURNDEP_STAGE_LABEL = {
+  'migrate-signed': 'broadcasting the move…', 'migrate-sent': 'move confirming on Bitcoin…',
+  'migrate-confirmed': 'tracing provenance…', traced: 'ready to burn',
+  'burn-signed': 'submitting to MARA…', 'burn-submitted': 'burn confirming on Bitcoin…',
+  'burn-mined': 'registering with the reflection…', registered: 'waiting for the reflection to fold it…',
+  folded: 'ready to mint',
+};
+function _renderHoldingsBurndepBridges(listEl) {
+  if (!wallet || !wallet.pub || !WORKER_BASE) return;
+  let ux, records;
+  try { ux = _burndepUxSingleton(); records = ux.list(bytesToHex(wallet.pub)).filter((r) => r.stage !== 'minted'); }
+  catch { return; }
+  const existing = listEl.querySelector('.burndep-bridge-holdings');
+  if (existing) existing.remove();
+  if (!records.length) return;
+  _startBurndepAutoRefresh();
+  const section = document.createElement('div');
+  section.className = 'burndep-bridge-holdings';
+  section.style.cssText = 'margin:12px 0;padding:12px 14px;border:1px solid var(--purple);border-radius:6px;background:rgba(139,92,246,0.04);';
+  const rowsHtml = records.map((rec, i) => {
+    const meta = getAssetMeta(rec.source.assetId) || {};
+    const decimals = Number.isInteger(meta.decimals) ? meta.decimals : 8;
+    const ticker = meta.ticker || 'TAC';
+    const amtStr = fmtAssetAmount(BigInt(rec.source.amount), decimals);
+    const label = _BURNDEP_STAGE_LABEL[rec.stage] || rec.stage;
+    const watchTxid = rec.burn?.txid || rec.migrate?.revealTxid;
+    const watchLink = watchTxid ? ` · <a href="https://mempool.space/${NET.name === 'signet' ? 'signet/' : ''}tx/${escapeHtml(watchTxid)}" target="_blank" rel="noopener noreferrer">view ↗</a>` : '';
+    const needsKey = rec.stage === 'traced' || rec.stage === 'folded';
+    const actLabel = rec.stage === 'traced' ? 'Burn' : rec.stage === 'folded' ? 'Mint' : 'Refresh';
+    return `
+      <div data-burndep-row="${i}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;${i ? 'border-top:1px solid var(--ink-faint);' : ''}">
+        <div style="font-size:11px;line-height:1.5;">
+          <div><strong>${escapeHtml(amtStr)} ${escapeHtml(ticker)}</strong> — ${escapeHtml(label)}</div>
+          <div class="muted">${shorten(rec.id.split(':')[0], 6)}:${rec.id.split(':')[1]}${watchLink}</div>
+        </div>
+        <button data-burndep-act="${needsKey ? 'sign' : 'poll'}" data-burndep-id="${escapeHtml(rec.id)}" style="font-size:11px;padding:5px 10px;white-space:nowrap;">${actLabel}</button>
+      </div>`;
+  }).join('');
+  section.innerHTML = `
+    <div style="font-size:13px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px;">🌉 Bridges to Ethereum</div>
+    ${rowsHtml}
+    <div class="muted" data-burndep-status style="display:none;font-size:11px;margin-top:8px;"></div>
+  `;
+  listEl.prepend(section);
+  section.querySelectorAll('[data-burndep-act]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.burndepId;
+      const statusEl = section.querySelector('[data-burndep-status]');
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '…';
+      try {
+        if (btn.dataset.burndepAct === 'sign') await ensurePrivkey();
+        await ux.advance(bytesToHex(wallet.pub), id, { walletPriv: wallet.priv });
+        renderHoldings();
+      } catch (e) {
+        if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = e?.message || String(e); }
+        btn.disabled = false; btn.textContent = orig;
+      }
+    });
+  });
+}
+
+// Advances every burndep bridge for the current wallet that can move without the private key (polling
+// stages only — 'traced' and 'folded' wait for the Continue/Mint click in _renderHoldingsBurndepBridges, same
+// as the design's own "stages that need the key wait for the user's click"). Started lazily the first time
+// there's at least one bridge to watch; self-stops once none remain, mirroring startHoldingsAutoRefresh's own
+// pending-work-gated lifecycle.
+const BURNDEP_POLL_INTERVAL_MS = 75 * 1000;
+let _burndepPollTimer = null;
+function _startBurndepAutoRefresh() {
+  if (_burndepPollTimer) return;
+  _burndepPollTimer = setInterval(async () => {
+    if (document.hidden || _isAppIdle()) return;
+    if (!wallet || !wallet.pub) { _stopBurndepAutoRefresh(); return; }
+    let ux, records;
+    try { ux = _burndepUxSingleton(); records = ux.list(bytesToHex(wallet.pub)).filter((r) => r.stage !== 'minted'); }
+    catch { return; }
+    if (!records.length) { _stopBurndepAutoRefresh(); return; }
+    let changed = false;
+    for (const rec of records) {
+      if (rec.stage === 'traced' || rec.stage === 'folded') continue; // needs the key — user-driven only
+      try { const after = await ux.advance(bytesToHex(wallet.pub), rec.id); if (after.stage !== rec.stage) changed = true; }
+      catch { /* a poll failure just retries next tick */ }
+    }
+    if (changed && document.querySelector('.tab.active[data-tab="holdings"]')) renderHoldings();
+  }, BURNDEP_POLL_INTERVAL_MS);
+}
+function _stopBurndepAutoRefresh() {
+  if (_burndepPollTimer) { clearInterval(_burndepPollTimer); _burndepPollTimer = null; }
 }
 
 function _renderHoldingsSlotSummary() {
@@ -60170,6 +60291,7 @@ async function renderHoldings() {
           catch (e) { btn.disabled = false; btn.textContent = orig; toast('Retry failed: ' + (e?.message || e), 'error'); }
         };
         try { _renderHoldingsTethBridgeNotes(list); } catch {}
+        try { _renderHoldingsBurndepBridges(list); } catch {}
         setStatus('#holdings-status', 'scan returned zero · likely transient');
         setTabBadge('holdings', 0);
         _holdingsLastRenderOk = true;
@@ -60205,6 +60327,7 @@ async function renderHoldings() {
         emptyMarketBtn.onclick = (ev) => { ev.preventDefault(); location.hash = '#tab=market'; };
       }
       try { _renderHoldingsTethBridgeNotes(list); } catch {}
+      try { _renderHoldingsBurndepBridges(list); } catch {}
       try { _renderHoldingsMixerSummary(list); } catch {}
       setStatus('#holdings-status', '');
       setTabBadge('holdings', 0);
@@ -60552,6 +60675,12 @@ async function renderHoldings() {
           `</details>`
         : '';
       const dangerButtons = h.balance > 0n && !h.unknownAsset ? `<button class="danger" data-act="burn" data-aid="${h.assetIdHex}">Burn</button>` : '';
+      // TAC-only (CANONICAL_TAC_ASSET_ID_HEX), beta: bridges a single note (≤1,000 TAC) to a private
+      // Ethereum-side balance via the burn-deposit path (dapp/burndep-ux.js). Shown whenever the holding has
+      // any UTXO at all — eligibility per-note (amount, confirmation, stealth-origin) is decided in the note
+      // picker itself, not here, so an ineligible note is explained rather than making the whole action vanish.
+      const bridgeButtons = (h.assetIdHex === CANONICAL_TAC_ASSET_ID_HEX && WORKER_BASE && h.utxos.length)
+        ? `<button data-act="bridge-eth" data-aid="${h.assetIdHex}" title="Move a single TAC note to a private balance on Ethereum. Beta: capped at 1,000 TAC per bridge.">Bridge to Ethereum</button>` : '';
 
       // [data-region] markers wrap the data-fetch-dependent regions so the
       // enrichment phase can update them in place without re-rendering the
@@ -60751,6 +60880,14 @@ async function renderHoldings() {
               <div data-list-form="${h.assetIdHex}" style="display:none;width:100%;"></div>
             </div>
           </details>` : ''}
+        ${bridgeButtons ? `
+          <details class="actions-group">
+            <summary><span class="arrow">▸</span>Bridge · move to Ethereum (beta)</summary>
+            <div class="group-body">
+              <div class="group-blurb">Move a single TAC note to a private balance on Ethereum. Capped at 1,000 TAC per bridge while in beta; irreversible once the burn is mined.</div>
+              ${bridgeButtons}
+            </div>
+          </details>` : ''}
         ${dangerButtons ? `
           <details class="actions-group">
             <summary><span class="arrow">▸</span>Danger · destroy supply</summary>
@@ -60765,6 +60902,7 @@ async function renderHoldings() {
     }
     list.appendChild(frag);
     try { _renderHoldingsTethBridgeNotes(list); } catch {}
+    try { _renderHoldingsBurndepBridges(list); } catch {}
     // Scroll-anchor restore (paired with the snapshot above). Try to
     // re-find the card whose aid matched the pre-render anchor; if
     // found, scrollBy by the delta between its new viewport Y and the
@@ -61091,6 +61229,96 @@ async function renderHoldings() {
               maxLink.onclick = (e) => { e.preventDefault(); amtInput.value = balanceDisp; amtInput.focus(); };
             }
           }
+        } else if (b.dataset.act === 'bridge-eth') {
+          const aid = b.dataset.aid;
+          const target = holdings.get(aid);
+          if (!target) return;
+          const ux = _burndepUxSingleton();
+          const candidates = target.utxos.map((u) => ({
+            txid: u.utxo.txid, vout: u.utxo.vout, sats: u.utxo.value, assetId: aid,
+            amount: u.amount, blinding: u.blinding,
+            confirmed: !!(u.utxo.status && u.utxo.status.confirmed), stealth: !!u.stealthTweakedSk,
+          }));
+          const eligible = ux.eligibleNotes(candidates);
+          if (!eligible.length) { toast('No TAC notes to bridge yet.', 'error'); return; }
+          let chosen = null, review = null;
+          openInlineForm(b, {
+            submitLabel: 'Continue',
+            content: `
+              <label>Choose a note to bridge (beta, capped at 1,000 TAC)</label>
+              <div style="display:flex;flex-direction:column;gap:6px;margin:6px 0 4px;max-height:240px;overflow-y:auto;">
+                ${eligible.map((n, i) => `
+                  <label style="display:flex;align-items:flex-start;gap:8px;padding:4px 0;font-size:12px;${n.eligible ? 'cursor:pointer;' : 'opacity:.55;'}">
+                    <input type="radio" name="bridge-note" value="${i}" ${n.eligible ? '' : 'disabled'} style="margin-top:2px;">
+                    <span>${shorten(n.txid, 6)}:${n.vout} · ${escapeHtml(fmtAssetAmount(n.amount, target.decimals))} ${escapeHtml(target.ticker)}${n.eligible ? '' : `<br><span style="color:var(--ink-mid);">${escapeHtml(n.reason)}</span>`}</span>
+                  </label>`).join('')}
+              </div>
+              <div data-bridge-body></div>
+              <div class="progress-strip" style="display:none;margin-top:10px;" aria-live="polite">
+                <div class="progress-step" data-step="0"><span class="progress-num">1</span><span class="progress-label">Move</span></div>
+                <div class="progress-step" data-step="1"><span class="progress-num">2</span><span class="progress-label">Confirm</span></div>
+              </div>`,
+            onSubmit: async ({ host, errEl }) => {
+              const body = host.querySelector('[data-bridge-body]');
+              if (!review) {
+                const picked = host.querySelector('input[name="bridge-note"]:checked');
+                if (!picked) { errEl.textContent = 'choose a note'; return false; }
+                chosen = eligible[Number(picked.value)];
+                await ensurePrivkey();
+                body.innerHTML = `<div class="muted" style="font-size:11px;">Checking the note's provenance and current Bitcoin fees — this can take up to a minute…</div>`;
+                let pf;
+                try { pf = await ux.preflight({ note: chosen, walletPub: wallet.pub }); }
+                catch (e) { body.innerHTML = ''; errEl.textContent = 'check failed: ' + (e.message || e); return false; }
+                if (!pf.ok) {
+                  body.innerHTML = `<div style="color:var(--red);font-size:11px;line-height:1.6;">${pf.steps.map((s) => `${s.ok ? '✓' : '✗'} ${escapeHtml(s.name)}${s.detail ? ' — ' + escapeHtml(s.detail) : ''}`).join('<br>')}</div>`;
+                  return false;
+                }
+                review = pf;
+                const amtStr = fmtAssetAmount(BigInt(chosen.amount), target.decimals);
+                body.innerHTML = `
+                  <div style="margin-top:8px;padding:10px 12px;background:var(--bg-warm);border:1px dashed var(--ink-faint);font-size:11px;line-height:1.7;">
+                    <div><strong>${escapeHtml(amtStr)} ${escapeHtml(target.ticker)}</strong> → your private Ethereum balance (no relay fee)</div>
+                    <div>Two Bitcoin transactions, paid from your wallet's own sats — a move, then a burn-deposit sent directly to a miner (MARA Slipstream) since its witness data is too large for ordinary relay.</div>
+                    <div>Typical timeline: the move confirms in a block or so; the burn can take hours to be mined; the reflection then takes about a day to fold it before it mints.</div>
+                    <div style="color:var(--red);margin-top:6px;font-weight:500;">⚠ Irreversible once the burn is mined. This beta has no way to cancel a bridge in progress.</div>
+                  </div>
+                  <label class="checkbox-row" style="margin-top:10px;">
+                    <input type="checkbox" data-field="confirm">
+                    <span class="cbx-body" style="font-size:11px;">I understand this bridge is irreversible once the burn is mined.</span>
+                  </label>`;
+                return false;
+              }
+              const confirmed = body.querySelector('[data-field="confirm"]')?.checked;
+              if (!confirmed) { errEl.textContent = 'check the irreversibility box first'; return false; }
+              if (!await ensureBurnerBackedUp('Bridge TAC to Ethereum (the burn-home key is derived from your wallet seed)')) {
+                errEl.textContent = 'Back up the in-page privkey first, then retry.'; return false;
+              }
+              // Rough, generous estimate for the migrate's own commit+reveal (observed real sizes: ~120vB
+              // commit, ~415vB reveal — see tests/burn-deposit-reveal.test.mjs) plus the DUST burn-home output.
+              const migrateRate = review.migrateFeeRate;
+              const estSats = Math.ceil((120 + 415) * migrateRate) + 546 + 300;
+              if (!(await ensureSatsFunded(estSats, 'Bridging'))) { errEl.textContent = 'Funding cancelled.'; return false; }
+              const utxos = await getUtxos(wallet.address());
+              const safe = await pickSafeCommitSats(utxos);
+              const fundingUtxo = Array.isArray(safe) ? safe[0] : safe;
+              if (!fundingUtxo) { errEl.textContent = 'no plain sats UTXO available to fund the move'; return false; }
+              const strip = host.querySelector('.progress-strip');
+              if (strip) strip.style.display = 'flex';
+              setProgressStrip(strip, 0);
+              try {
+                const rec = await ux.start({ note: chosen, walletPriv: wallet.priv, fundingUtxo, feeRate: migrateRate });
+                await ux.advance(rec.walletPub, rec.id);
+                setProgressStrip(strip, 1);
+                applyOptimisticDebit(aid, BigInt(chosen.amount));
+                recordActivity({ kind: 'bridge-eth', ticker: target.ticker, amount: chosen.amount, decimals: target.decimals, assetId: aid, txid: rec.migrate.revealTxid });
+                toast(`Bridge started — moving ${fmtAssetAmount(BigInt(chosen.amount), target.decimals)} ${target.ticker} to its burn-home on Bitcoin.`, 'success');
+                renderHoldings(); renderActivity();
+              } catch (e) {
+                if (strip) setProgressStrip(strip, -1, { errorAt: 0 });
+                throw e;
+              }
+            },
+          });
         } else if (b.dataset.act === 'mint') {
           const aid = b.dataset.aid;
           const target = holdings.get(aid);
@@ -63313,6 +63541,9 @@ const ACTIVITY_VERBS = {
   // from the normal Received row so the user (and tester) can verify the
   // recovery flow worked.
   'preauth-recover': 'Recovered',
+  // TAC burn-deposit bridge to Ethereum (dapp/burndep-ux.js) — logged once the move to the burn-home
+  // broadcasts; the row's own txid is the move's reveal, not the eventual burn or mint.
+  'bridge-eth':   'Bridged to Ethereum',
 };
 function relTime(ts) {
   const d = Math.max(0, Date.now() - Number(ts));
