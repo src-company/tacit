@@ -13,7 +13,7 @@
      leave a stale pin behind. Fonts are same-origin static files, not a third-party
      CDN. connect-src is limited to public Bitcoin explorers + IPFS gateways.
      No third-party script, no analytics. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Fw1s4D4rukDk5UVYkp31oT9dPmTymV+eqldTLSuPWkU='; style-src 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src https://mempool.space https://blockstream.info https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link https://gateway.pinata.cloud https://trustless-gateway.link https://*.ipfs.inbrowser.link; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-NbpB6/aFRqnWoj+f3NCKcTrVo7uCjn7Gma50Y02hpzA='; style-src 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src https://mempool.space https://blockstream.info https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link https://gateway.pinata.cloud https://trustless-gateway.link https://*.ipfs.inbrowser.link; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#E8E0CC" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#15130E" media="(prefers-color-scheme: dark)">
@@ -155,7 +155,7 @@ footer a:hover { color: var(--ink); }
   </div>
 
   <ol class="steps" id="rows"></ol>
-  <div id="verdict" class="verdict run">Running checks&hellip;</div>
+  <div id="verdict" class="verdict run" role="status" aria-live="polite">Running checks&hellip;</div>
 
   <div class="actions">
     <button class="btn ghost" id="rerun" type="button">Re-run</button>
@@ -209,7 +209,10 @@ const ETCH_TXID    = (q.get('txid')     || CANON_ETCH_TXID).toLowerCase();
 const IS_CANONICAL = TAC_ASSET_ID === CANON_ASSET_ID && ETCH_TXID === CANON_ETCH_TXID;
 const EXPECT_H = '02bd7bf40fb5db2f7e0a1e8660ca13df55bb0d9f904e36e6297361f00376865e56'; // SPEC §3.1 KAT
 const BTC_APIS = ['https://mempool.space/api', 'https://blockstream.info/api'];
-const IPFS_GATEWAYS = ['https://ipfs.io/ipfs/{cid}', 'https://{cid}.ipfs.inbrowser.link/', 'https://trustless-gateway.link/ipfs/{cid}?format=raw', 'https://dweb.link/ipfs/{cid}', 'https://w3s.link/ipfs/{cid}', 'https://gateway.pinata.cloud/ipfs/{cid}'];
+// Ordered by observed reliability, not preference — trustless-gateway.link and Pinata answered cleanly in
+// testing while ipfs.io/dweb.link/w3s.link were rate-limiting; fetchVerifiedIpfs still tries all of them
+// regardless of order, this just reaches a working one faster on the common case.
+const IPFS_GATEWAYS = ['https://trustless-gateway.link/ipfs/{cid}?format=raw', 'https://gateway.pinata.cloud/ipfs/{cid}', 'https://ipfs.io/ipfs/{cid}', 'https://{cid}.ipfs.inbrowser.link/', 'https://dweb.link/ipfs/{cid}', 'https://w3s.link/ipfs/{cid}'];
 document.getElementById('aid').textContent = TAC_ASSET_ID;
 document.getElementById('txid').textContent = ETCH_TXID;
 if (!IS_CANONICAL) {
