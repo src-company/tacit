@@ -11,8 +11,11 @@ const POINTS_BASE = 'https://tacit-points.onrender.com';
 const TAB_BODY_ID = 'points-body';
 const SEL_CLAIM = '2f52ebb7'; // claim(uint256,bytes32[]) — confirmed against the deployed PointsDistributor's own dispatcher
 
+// Keyed by the indexer's stored activity (points-store.js: V1 wraps are 'wrap', EVM-pool deposits 'evmpooldeposit').
 const ACTIVITY_LABELS = {
-  ethwrap: 'Wrapped ETH into the pool',
+  wrap: 'Wrapped ETH into the pool',
+  evmpooldeposit: 'Deposited ETH into the private pool',
+  weiname: 'Registered a .wei name',
   zswapeth: 'Swapped ETH via zRouter',
   cbtcmint: 'Minted cBTC',
   cusdmint: 'Minted cUSD',
