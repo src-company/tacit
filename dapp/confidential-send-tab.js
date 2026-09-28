@@ -675,8 +675,11 @@ function wireInvoice(wallet, ux) {
   if (payBtn) payBtn.onclick = async () => {
     const st = document.getElementById('csend-pay-status');
     const raw = (document.getElementById('csend-pay-input') || {}).value || '';
+    // The invoice JSON, or a payment request link carrying it (…#tacit-invoice=<base64url JSON>, as zSwap shares them).
+    const link = raw.match(/tacit-invoice=([A-Za-z0-9_-]{16,8000})/);
     let invoice;
-    try { invoice = JSON.parse(raw.trim()); } catch { if (st) st.textContent = 'Invoice is not valid JSON.'; return; }
+    try { invoice = JSON.parse(link ? atob(link[1].replace(/-/g, '+').replace(/_/g, '/')) : raw.trim()); }
+    catch { if (st) st.textContent = 'That is not an invoice or a payment request link.'; return; }
     if (!inv.verifyInvoice(invoice)) { if (st) st.textContent = 'Invoice failed verification (malformed / not claimable).'; return; }
     payBtn.disabled = true;
     if (st) st.textContent = 'Paying the invoice…';
@@ -968,7 +971,7 @@ export async function renderSendTab(wallet, helpers = {}) {
     <details class="divider">
       <summary>Pay an invoice <span class="muted" style="font-weight:400;">· settle a confidential request</span></summary>
       <div class="details-body">
-        <textarea id="csend-pay-input" rows="4" placeholder="Paste an invoice JSON" style="font-size:10px;font-family:var(--mono);"></textarea>
+        <textarea id="csend-pay-input" rows="4" placeholder="Paste an invoice, or a payment request link" style="font-size:10px;font-family:var(--mono);"></textarea>
         <button id="csend-pay-btn" style="margin-top:8px;">Verify + pay</button>
         <div id="csend-pay-status" class="muted field-status" style="margin-top:4px;"></div>
       </div>
