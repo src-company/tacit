@@ -8,6 +8,7 @@
 //   tacfarm  TAC alone zapped in with a permit; half withdrawn as ETH; LP held staked again; the rest withdrawn as TAC
 //   sell     TAC sold for ETH through zRouter in one transaction, the permit riding as its first leg
 //   v1       the identity signature unlocks the key; a tipped wrap lands and its settle is submitted
+//   devsend  the EVM pool's Send takes a bp1… pool address (a private send) or an 0x… address (a withdrawal to it)
 //   device   a deposit into the EVM pool, proved in the page's worker
 //   borrow   the Bitcoin deposit address renders; a bond for a lock record posts through the escrow helper
 //   keys     an Ethereum signature opens a key; after locking, "continue" reopens the same tacit1 address; a pasted key opens
@@ -38,7 +39,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,pair,farm,buy,tacfarm,sell,v1,device,borrow,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -334,6 +335,21 @@ await step('v1', async () => {
   await page.click('#w-go');
   await until(page, () => /stubbed|failed|err/i.test(document.querySelector('#v1-status')?.innerHTML || ''), null, 1200000);   // two log walks on a cold fork
   ok(submits.slice(n0).some((s) => s.type === 'wrap'), `v1: the tipped deposit landed and its settle was submitted ${(await text(page, '#v1-status')).slice(0, 80)}`);
+});
+
+await step('devsend', async () => {
+  await page.goto(url + '#device');
+  if (await page.$('#eth-dev [data-in="eth"]')) await page.click('#eth-dev [data-in="eth"]');
+  await page.waitForSelector('[data-dev="send"]', { timeout: 60000 });
+  await page.click('[data-dev="receive"]');
+  await page.waitForSelector('#d-form [data-copy]', { timeout: 120000 });
+  const bp1 = await page.$eval('#d-form [data-copy]', (b) => b.dataset.copy);
+  await page.click('[data-dev="send"]');
+  await page.waitForSelector('#d-to');
+  await page.fill('#d-to', '0x000000000000000000000000000000000000beef');
+  ok(/Send to this address/.test(await text(page, '#d-go')) && /leaves the pool/.test(await text(page, '#d-to-note')), 'devsend: an 0x… address is paid by a withdrawal to it');
+  await page.fill('#d-to', bp1);
+  ok(/^bp1/.test(bp1) && /Send privately/.test(await text(page, '#d-go')) && /inside the pool/.test(await text(page, '#d-to-note')), 'devsend: a bp1… pool address is paid privately');
 });
 
 await step('device', async () => {
