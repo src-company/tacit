@@ -9,7 +9,7 @@
 
 import { secp, sha256, keccak_256, hmac } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater, protectOutpoint, listProtectedOutpoints, listReservedLocks, reservedLockSats, evmAccountHint, decOf, lockedWalletHTML, wireUnlockButton } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater, protectOutpoint, listProtectedOutpoints, listReservedLocks, reservedLockSats, evmAccountHint, decOf, lockedWalletHTML, wireUnlockButton, shownTicker } from './confidential-deployments.js';
 import { makeConfidentialCdp } from './confidential-cdp.js';
 import { makeConfidentialFarm } from './confidential-farm.js';
 import { makeConfidentialDefiActions } from './confidential-defi-actions.js';
@@ -533,7 +533,7 @@ export async function renderCdpTab(wallet, helpers = {}) {
           const dec = decOf(ux, n.asset);
           return `<label class="check-row" style="padding:5px 0;">
             <input type="checkbox" class="cdp-collat-pick" data-leaf="${n.leafIndex}">
-            <span>${formatUnits(n.value, dec)} ${esc(ticker)} <span class="muted">#${n.leafIndex}</span>${inboundBadgeHtml(n)}</span></label>`;
+            <span>${formatUnits(n.value, dec)} ${esc(shownTicker(ticker))} <span class="muted">#${n.leafIndex}</span>${inboundBadgeHtml(n)}</span></label>`;
         }).join('') + inboundSummaryHtml(collatNotes);
       }
     }

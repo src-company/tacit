@@ -14,6 +14,8 @@
 
 // esc() from confidential-deployments.js, inlined so this module stays importable on its own (the tabs pass
 // nothing in, and the tests import it without the vendor bundle).
+import { shownTicker } from './confidential-deployments.js';
+
 export function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -113,7 +115,7 @@ export function pendingWrapRowsHtml(diag, ux) {
     const meta = ux.assets.find((x) => x.assetId.toLowerCase() === String(p.asset).toLowerCase());
     const dec = meta ? (meta.tacitDecimals ?? meta.decimals) : 8;
     return `<div class="list-row" data-pending-asset="${escapeHtml(p.asset)}" data-pending-index="${p.index}" style="padding:6px 0;">`
-      + `<span>${formatUnits(p.value, dec)} ${escapeHtml(ticker)} <span class="muted">deposited, not yet settled</span></span>`
+      + `<span>${formatUnits(p.value, dec)} ${escapeHtml(shownTicker(ticker))} <span class="muted">deposited, not yet settled</span></span>`
       + `<button class="cpool-resume-wrap" style="padding:4px 10px;font-size:10px;flex:0 0 auto;">Resume</button></div>`;
   }).join('');
   return `<div class="warn" style="margin:8px 0;padding:8px 10px;">`

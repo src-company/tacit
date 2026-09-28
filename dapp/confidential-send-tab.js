@@ -13,7 +13,7 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater, lockedWalletHTML, wireUnlockButton } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater, lockedWalletHTML, wireUnlockButton, shownTicker } from './confidential-deployments.js';
 import { formatUnits as fmtUnits } from './confidential-payout.js';
 import { makeConfidentialInvoice } from './confidential-invoice.js';
 import { makeConfidentialNames, makeMainnetCall, NameError } from './confidential-names.js';
@@ -288,8 +288,8 @@ function wireSend(wallet, ux, notes, helpers) {
         previewEl.style.display = 'block';
         previewEl.innerHTML = `
           <div class="tx-preview" style="margin-top:12px;">
-            <h4>Review ${esc(intent.ticker)} note send</h4>
-            <div class="row"><span class="label">Send</span> ${fmtUnits(intent.amount, intent.dec)} ${esc(intent.ticker)}</div>
+            <h4>Review ${esc(shownTicker(intent.ticker))} note send</h4>
+            <div class="row"><span class="label">Send</span> ${fmtUnits(intent.amount, intent.dec)} ${esc(shownTicker(intent.ticker))}</div>
             ${intent.recipientName
               ? `<div class="row"><span class="label">To</span> <b>${esc(intent.recipientName.name)}</b> → <code class="addr">${esc(short(intent.recipientName.address, 10))}</code> ${intent.isSelf ? '<span class="muted">(you)</span>' : ''}</div>
             <div class="row" style="color:var(--ink-mid);">Looked up just now on Ethereum (${esc(intent.recipientName.source)}); this send pays the key in that address (<code class="addr">${esc(short(intent.recipient, 8))}</code>). Check the address with the recipient if the name is new to you.</div>`
@@ -331,7 +331,7 @@ function wireSend(wallet, ux, notes, helpers) {
         // a plain note-to-note mint to their published key would be unspendable, since owner = H(nk)).
         let sendNotes = picked;
         if (!sendNotes) {
-          if (statusEl) statusEl.textContent = `No shielded balance yet — wrapping ${fmtUnits(amount, dec)} ${ticker} from your wallet first…`;
+          if (statusEl) statusEl.textContent = `No shielded balance yet — wrapping ${fmtUnits(amount, dec)} ${shownTicker(ticker)} from your wallet first…`;
           const wrapFn = routerOK ? ux.routerWrap : ux.wrap;
           await wrapFn.call(ux, { walletPriv: wallet.priv, amountWei, ticker });
           if (statusEl) statusEl.textContent = 'Wrap broadcast — waiting for it to settle before locking it to the recipient…';
@@ -339,7 +339,7 @@ function wireSend(wallet, ux, notes, helpers) {
           if (!note) throw new Error('The wrap settled slower than expected — check your shielded balance in a moment, then Send again (it will pick up the fresh note).');
           sendNotes = [note];
         }
-        if (statusEl) statusEl.textContent = `Locking ${fmtUnits(amount, dec)} ${ticker} to a one-time address only the recipient can claim…`;
+        if (statusEl) statusEl.textContent = `Locking ${fmtUnits(amount, dec)} ${shownTicker(ticker)} to a one-time address only the recipient can claim…`;
         let built = null;
         const r = await ux.stealthSend({
           walletPriv: wallet.priv, recipientPubHex: recipient, notes: sendNotes, amount, selfRelay,
@@ -360,29 +360,29 @@ function wireSend(wallet, ux, notes, helpers) {
           // that memo, so say what was lost rather than let the panel imply a saved backstop.
           if (!saved.persisted) notify('This send\u2019s local refund record could not be saved securely in this browser — refund it from this tab before closing it, or recover it later from the chain.', 'error');
         }
-        if (statusEl) statusEl.innerHTML = `Locked ${fmtUnits(amount, dec)} ${esc(ticker)} for the recipient`
+        if (statusEl) statusEl.innerHTML = `Locked ${fmtUnits(amount, dec)} ${esc(shownTicker(ticker))} for the recipient`
           + (r && r.txHash ? ` (<code class="addr">${esc(r.txHash)}</code>)` : '')
           + (deadlineStr ? ` — refundable to you after ${esc(deadlineStr)} if they don’t claim it.` : '.');
-        notify(`Locked ${fmtUnits(amount, dec)} ${ticker} for the recipient`, 'ok');
+        notify(`Locked ${fmtUnits(amount, dec)} ${shownTicker(ticker)} for the recipient`, 'ok');
         setTimeout(() => renderSendTab(wallet, helpers), 1500);
         return;
       }
       if (picked) {
         // Pay from the shielded balance already in the pool — note-to-note transfer.
-        if (statusEl) statusEl.textContent = `Sending ${fmtUnits(amount, dec)} ${ticker} from your shielded balance…`;
+        if (statusEl) statusEl.textContent = `Sending ${fmtUnits(amount, dec)} ${shownTicker(ticker)} from your shielded balance…`;
         const r = await ux.transfer({
           walletPriv: wallet.priv, notes: picked, recipientPubHex: recipient, amount, fee, selfRelay,
           waitOpts: { onUpdate: proveUpdater(statusEl, 'Sending') },
         });
-        if (statusEl) statusEl.innerHTML = `Sent ${fmtUnits(amount, dec)} ${esc(ticker)}`
+        if (statusEl) statusEl.innerHTML = `Sent ${fmtUnits(amount, dec)} ${esc(shownTicker(ticker))}`
           + (r && r.txHash ? ` (<code class="addr">${esc(r.txHash)}</code>)` : '')
           + ' — recoverable from your own key as a fresh note.';
-        notify(`Sent ${fmtUnits(amount, dec)} ${ticker}`, 'ok');
+        notify(`Sent ${fmtUnits(amount, dec)} ${shownTicker(ticker)}`, 'ok');
         setTimeout(() => renderSendTab(wallet, helpers), 1500);
         return;
       }
       // No (usable) shielded balance → wrap from the wallet and send in one transaction.
-      if (statusEl) statusEl.textContent = `No shielded balance yet — wrapping + sending ${fmtUnits(amount, dec)} ${ticker} from your wallet in one transaction…`;
+      if (statusEl) statusEl.textContent = `No shielded balance yet — wrapping + sending ${fmtUnits(amount, dec)} ${shownTicker(ticker)} from your wallet in one transaction…`;
       // Accumulated locally, not merged via localStorage, so a stale record from an earlier stuck attempt
       // can never leak into this one — each save is a full replace of whatever this attempt has built so far.
       const thisAttempt = {};
@@ -397,10 +397,10 @@ function wireSend(wallet, ux, notes, helpers) {
         },
       });
       _clearWrapSendResume(ux, wallet);
-      if (statusEl) statusEl.innerHTML = `Wrapped + sent ${fmtUnits(amount, dec)} ${esc(ticker)} in one tx`
+      if (statusEl) statusEl.innerHTML = `Wrapped + sent ${fmtUnits(amount, dec)} ${esc(shownTicker(ticker))} in one tx`
         + (r && r.txHash ? ` (<code class="addr">${esc(r.txHash)}</code>)` : '')
         + ' — recoverable from your own key as a fresh note.';
-      notify(`Wrapped + sent ${fmtUnits(amount, dec)} ${ticker}`, 'ok');
+      notify(`Wrapped + sent ${fmtUnits(amount, dec)} ${shownTicker(ticker)}`, 'ok');
       setTimeout(() => renderSendTab(wallet, helpers), 1500);
     } catch (e) {
       const m = formatSpecErr(e, 'Send');
@@ -442,7 +442,7 @@ function wireResumeWraps(wallet, ux, diag, onDone) {
         const unitScale = BigInt((meta && meta.unitScale) || '1');
         const built = ux.buildWrap({ walletPriv: wallet.priv, amountWei: (BigInt(p.value) * unitScale).toString(), ticker, index: p.index });
         await ux.submitWrapSettle({ built });
-        notify(`Settled — ${fmtUnits(p.value, meta ? (meta.tacitDecimals ?? meta.decimals) : 8)} ${ticker} note ready`, 'ok');
+        notify(`Settled — ${fmtUnits(p.value, meta ? (meta.tacitDecimals ?? meta.decimals) : 8)} ${shownTicker(ticker)} note ready`, 'ok');
         setTimeout(onDone, 1500);
       } catch (e) {
         btn.disabled = false;
@@ -533,7 +533,7 @@ function wireHold(wallet, ux, helpers) {
     const unitScale = BigInt(meta.unitScale || '1');
     const amountWei = amount * unitScale;
     btn.disabled = true;
-    if (statusEl) statusEl.textContent = `Wrapping ${fmtUnits(amount, dec)} ${ticker} into a private note you own…`;
+    if (statusEl) statusEl.textContent = `Wrapping ${fmtUnits(amount, dec)} ${shownTicker(ticker)} into a private note you own…`;
     let r; // declared outside try so the catch block can still report a txHash from a step after broadcast
     try {
       r = routerOK
@@ -545,8 +545,8 @@ function wireHold(wallet, ux, helpers) {
       await ux.waitReceipt(r.txHash);
       if (statusEl) statusEl.textContent = 'Deposit confirmed — submitting for settle (proving your note; can take a minute)…';
       await ux.submitWrapSettle({ built: r });
-      if (statusEl) statusEl.innerHTML = `Settled${r && r.txHash ? ` (<code class="addr">${esc(r.txHash)}</code>)` : ''} — your ${esc(ticker)} note is ready.`;
-      notify(`Wrapped ${fmtUnits(amount, dec)} ${ticker}`, 'ok');
+      if (statusEl) statusEl.innerHTML = `Settled${r && r.txHash ? ` (<code class="addr">${esc(r.txHash)}</code>)` : ''} — your ${esc(shownTicker(ticker))} note is ready.`;
+      notify(`Wrapped ${fmtUnits(amount, dec)} ${shownTicker(ticker)}`, 'ok');
       setTimeout(() => renderSendTab(wallet, helpers), 2000);
     } catch (e) {
       const m = formatSpecErr(e, 'Wrap');
@@ -582,7 +582,7 @@ function wireAssetLane() {
       amount.step = amountStep(ticker);
     }
     if (badge) {
-      badge.innerHTML = isBtc ? '' : `${assetMark(ticker)}<span>${esc(ticker)}</span>`;
+      badge.innerHTML = isBtc ? '' : `${assetMark(ticker)}<span>${esc(shownTicker(ticker))}</span>`;
       badge.style.display = isBtc ? 'none' : 'inline-flex';
     }
   };
@@ -726,7 +726,7 @@ function wireClaimAndRefund(wallet, ux, helpers) {
       const deadlineMs = Number(rec.deadline) * 1000;
       const claimable = Date.now() >= deadlineMs;
       return `<div class="row" style="align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--ink-faint);flex-wrap:wrap;">
-        <span>${fmtUnits(rec.amount, dec)} ${esc(rec.ticker)} → ${rec.recipientName ? `${esc(rec.recipientName)} ` : ''}<code class="addr">${esc(short(rec.recipientPubHex, 8))}</code></span>
+        <span>${fmtUnits(rec.amount, dec)} ${esc(shownTicker(rec.ticker))} → ${rec.recipientName ? `${esc(rec.recipientName)} ` : ''}<code class="addr">${esc(short(rec.recipientPubHex, 8))}</code></span>
         <span class="muted" style="font-size:10px;">${claimable ? 'refund available' : `refundable ${esc(new Date(deadlineMs).toLocaleDateString())}`}</span>
         <button data-i="${i}" class="csend-refund-btn" style="font-size:10px;padding:2px 8px;">Refund</button>
       </div>`;
@@ -747,7 +747,7 @@ function wireClaimAndRefund(wallet, ux, helpers) {
             lIndex: pos.lIndex, lPath: pos.lPath };
           await ux.stealthRefund({ walletPriv: wallet.priv, lockRecord, refundPriv: auth.refundPriv, lockSetRoot: pos.lockSetRoot });
           _stealthStore.remove(rec.lockLeaf);
-          notify(`Refunded ${fmtUnits(rec.amount, rec.dec ?? 8)} ${rec.ticker} to your shielded balance`, 'ok');
+          notify(`Refunded ${fmtUnits(rec.amount, rec.dec ?? 8)} ${shownTicker(rec.ticker)} to your shielded balance`, 'ok');
           renderPending();
         } catch (e) {
           notify(formatSpecErr(e, 'Refund'), 'error');
@@ -792,7 +792,7 @@ function wireClaimAndRefund(wallet, ux, helpers) {
             : daysLeft <= 0 ? 'claim window may have lapsed — claim now'
             : `claim by ${esc(new Date(deadlineMs).toLocaleDateString())}${daysLeft < 7 ? ' · expiring soon' : ''}`;
           return `<div class="row" style="align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--ink-faint);flex-wrap:wrap;">
-            <span>${fmtUnits(rec.amount, dec)} ${esc(ticker)}</span>
+            <span>${fmtUnits(rec.amount, dec)} ${esc(shownTicker(ticker))}</span>
             ${deadlineLabel ? `<span class="muted" style="font-size:10px;${daysLeft < 7 ? 'color:var(--red-warn, var(--red));' : ''}">${deadlineLabel}</span>` : ''}
             <button data-i="${i}" class="csend-claim-btn primary" style="font-size:10px;padding:2px 8px;">Claim</button>
           </div>`;
@@ -851,7 +851,7 @@ export async function renderSendTab(wallet, helpers = {}) {
     ...preferred.map((t) => sendAssets.find((a) => a.ticker === t)).filter(Boolean),
     ...sendAssets.filter((a) => !preferred.includes(a.ticker)),
   ];
-  const assetOptions = orderedSendAssets.map((a) => `<option value="${a.assetId}" data-ticker="${esc(a.ticker)}">${a.ticker}</option>`).join('');
+  const assetOptions = orderedSendAssets.map((a) => `<option value="${a.assetId}" data-ticker="${esc(a.ticker)}">${esc(shownTicker(a.ticker))}</option>`).join('');
   if (!orderedSendAssets.length) {
     body.innerHTML = '<div class="muted">No Ethereum confidential assets are registered for this network yet.</div>';
     return;
@@ -927,7 +927,7 @@ export async function renderSendTab(wallet, helpers = {}) {
         </div>
         ${helpers.crosslaneLive ? `
         <div class="muted" style="font-size:11px;margin-top:10px;padding-top:8px;border-top:1px dashed var(--ink-faint);">
-          Moving value to <span class="btc-word">Bitcoin</span>? cETH bridges 1:1 to <b>tETH</b> and back —
+          Moving value to <span class="btc-word">Bitcoin</span>? <b>tETH</b> moves 1:1 between Ethereum and Bitcoin —
           <a href="#" id="csend-bridge-link">open the bridge →</a>
         </div>` : ''}
       </div>
@@ -958,7 +958,7 @@ export async function renderSendTab(wallet, helpers = {}) {
         <div class="muted" style="font-size:11px;margin-bottom:8px;">Generate an invoice and hand it to a payer. They wrap public funds straight into a note only you can spend — they never learn your blinding.</div>
         <div class="field-row">
           <select id="csend-inv-asset">
-            ${orderedSendAssets.map((a) => `<option value="${a.ticker}">${a.ticker}</option>`).join('')}
+            ${orderedSendAssets.map((a) => `<option value="${a.ticker}">${esc(shownTicker(a.ticker))}</option>`).join('')}
           </select>
           <input id="csend-inv-amount" type="number" min="0" step="0.0001" placeholder="Amount">
           <button id="csend-inv-btn">Create invoice</button>
@@ -1036,7 +1036,7 @@ export async function renderSendTab(wallet, helpers = {}) {
           + assets.map((a) => {
             const m = ux.assets.find((x) => x.assetId.toLowerCase() === a.asset) || {};
             const dec = m.tacitDecimals ?? m.decimals ?? 8; // note values are in-system units
-            return `<div style="padding:2px 0;">${fmtUnits(a.value, dec)} ${esc(a.ticker || a.asset.slice(0, 10) + '…')}</div>`;
+            return `<div style="padding:2px 0;">${fmtUnits(a.value, dec)} ${esc(shownTicker(a.ticker) || a.asset.slice(0, 10) + '…')}</div>`;
           }).join('')
         : (scanHealthHtml(diag) // an empty result from an incomplete scan is not "you hold nothing"
           ? 'No shielded notes were found in the channels that did finish.'

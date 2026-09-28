@@ -5,7 +5,7 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater, evmAccountHint } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater, evmAccountHint, shownTicker } from './confidential-deployments.js';
 import { formatUnits as fmtUnits } from './confidential-payout.js';
 import { classifyFinality, finalityBadgeHtml, listProvisional } from './confidential-finality.js';
 import { scanHealthHtml, inboundBadgeHtml, inboundSummaryHtml, recoveryCoverageHtml, recoveryCoverage, pendingWrapRowsHtml, notifyPendingWrapsOnce } from './confidential-scan-health.js';
@@ -50,10 +50,10 @@ function wireWrap(wallet, ux) {
         : await ux.wrap({ walletPriv: wallet.priv, amountWei: wei });
       if (st) st.innerHTML = `Deposit broadcast${ux.cfg.router ? ' (one-tx router)' : ''}: <code class="addr">${esc(r.txHash)}</code> — waiting for it to confirm…`;
       await ux.waitReceipt(r.txHash);
-      if (st) st.innerHTML = `Deposit confirmed: <code class="addr">${esc(r.txHash)}</code> — submitting for settle (proving your cETH note; can take a minute)…`;
+      if (st) st.innerHTML = `Deposit confirmed: <code class="addr">${esc(r.txHash)}</code> — submitting for settle (proving your tETH note; can take a minute)…`;
       await ux.submitWrapSettle({ built: r });
-      if (st) st.innerHTML = `Settled: <code class="addr">${esc(r.txHash)}</code> — your cETH note is ready.`;
-      notify('Wrap settled — cETH note ready', 'ok');
+      if (st) st.innerHTML = `Settled: <code class="addr">${esc(r.txHash)}</code> — your tETH note is ready.`;
+      notify('Wrap settled — tETH note ready', 'ok');
     } catch (e) {
       const m = formatSpecErr(e, 'Wrap');
       // The deposit itself may already be irreversibly on-chain even though this failed (a dropped
@@ -98,7 +98,7 @@ function wireResumeWraps(wallet, ux, diag) {
         const unitScale = BigInt((meta && meta.unitScale) || '1');
         const built = ux.buildWrap({ walletPriv: wallet.priv, amountWei: (BigInt(p.value) * unitScale).toString(), ticker, index: p.index });
         await ux.submitWrapSettle({ built });
-        notify(`Settled — ${fmtUnits(p.value, meta ? (meta.tacitDecimals ?? meta.decimals) : 8)} ${ticker} note ready`, 'ok');
+        notify(`Settled — ${fmtUnits(p.value, meta ? (meta.tacitDecimals ?? meta.decimals) : 8)} ${shownTicker(ticker)} note ready`, 'ok');
         setTimeout(() => renderConfidentialPoolTab(wallet), 1500); // refresh balance + pending list
       } catch (e) {
         btn.disabled = false;
@@ -135,7 +135,7 @@ function wireExit(wallet, ux, notes) {
         : '→ too small for a fee exit — tick “No fee”';
     } catch { /* leave preview blank */ }
     return `<div class="list-row">`
-      + `<span>${fmtUnits(n.value, dec)} ${esc(ticker)}${inboundBadgeHtml(n)} <span class="muted">${esc(preview)}</span></span>`
+      + `<span>${fmtUnits(n.value, dec)} ${esc(shownTicker(ticker))}${inboundBadgeHtml(n)} <span class="muted">${esc(preview)}</span></span>`
       + `<button data-leaf="${n.leafIndex}" class="cpool-exit-one" style="padding:4px 10px;font-size:10px;flex:0 0 auto;">Exit</button></div>`;
   }).join('') + inboundSummaryHtml(notes);
 
@@ -157,10 +157,10 @@ function wireExit(wallet, ux, notes) {
         const dec = decOf(note.asset);
         const ticker = ux.tickerOf(note.asset) || 'cETH';
         if (statusEl) {
-          statusEl.innerHTML = `Exit settled — ${fmtUnits(r.net, dec)} ${esc(ticker)} sent to <code class="addr">${esc(r.recipient)}</code>`
+          statusEl.innerHTML = `Exit settled — ${fmtUnits(r.net, dec)} ${esc(shownTicker(ticker))} sent to <code class="addr">${esc(r.recipient)}</code>`
             + (r.txHash ? ` (<code class="addr">${esc(r.txHash)}</code>)` : '') + '.';
         }
-        notify(`Exit settled — ${fmtUnits(r.net, dec)} ${ticker}`, 'ok');
+        notify(`Exit settled — ${fmtUnits(r.net, dec)} ${shownTicker(ticker)}`, 'ok');
         setTimeout(() => renderConfidentialPoolTab(wallet), 1500); // refresh balance + exitable notes
       } catch (e) {
         const msg = (e && e.message) || String(e);
@@ -252,7 +252,7 @@ function renderPoolPanel() {
     + `<button id="cpool-wrap-btn" class="primary">Wrap</button>`
     + `</div>`
     + `<div id="cpool-wrap-status" class="muted field-status" style="margin-top:6px;"></div>`
-    + `<div class="muted" style="font-size:11px;margin-top:6px;">Fund your confidential account (above) with ETH first. The deposit escrows ETH; your cETH note appears after the settle.</div>`;
+    + `<div class="muted" style="font-size:11px;margin-top:6px;">Fund your confidential account (above) with ETH first. The deposit escrows ETH; your tETH note appears after the settle.</div>`;
 
   const exitBody =
     `<input id="cpool-exit-recipient" type="text" placeholder="Recipient address (default: your account)">`
@@ -268,8 +268,8 @@ function renderPoolPanel() {
     intro,
     lanes: [
       { key: 'eth', label: 'Ethereum lane', actions: [
-        { title: 'Wrap ETH → cETH', dir: 'in', body: wrapBody },
-        { title: 'Exit cETH → ETH', dir: 'out', meta: 'gasless — relayer settles for a small fee', body: exitBody },
+        { title: 'Wrap ETH → tETH', dir: 'in', body: wrapBody },
+        { title: 'Exit tETH → ETH', dir: 'out', meta: 'gasless — relayer settles for a small fee', body: exitBody },
       ] },
       { key: 'btc', label: 'Bitcoin lane', actions: [
         { title: 'Bring value from Bitcoin', dir: 'over', body: btcBody },
@@ -315,7 +315,7 @@ export async function renderConfidentialPoolTab(wallet) {
     if (statusEl) {
       statusEl.textContent = notes.length
         ? `${notes.length} shielded note${notes.length === 1 ? '' : 's'} recovered`
-        : 'No shielded notes yet — wrap ETH to mint your first cETH note.';
+        : 'No shielded notes yet — wrap ETH to mint your first tETH note.';
     }
     notifyPendingWrapsOnce(diag, notify);
     if (balEl) {
@@ -328,7 +328,7 @@ export async function renderConfidentialPoolTab(wallet) {
           const meta = ux.assets.find((x) => x.assetId.toLowerCase() === a.asset);
           const dec = meta ? (meta.tacitDecimals ?? meta.decimals) : 8; // note values are in-system units
           return `<div class="list-row">`
-            + `<span>${esc(a.ticker || (a.asset.slice(0, 10) + '…'))}</span><strong>${fmtUnits(a.value, dec)}</strong></div>`;
+            + `<span>${esc(shownTicker(a.ticker) || (a.asset.slice(0, 10) + '…'))}</span><strong>${fmtUnits(a.value, dec)}</strong></div>`;
         }).join('');
     }
     wireExit(wallet, ux, notes);

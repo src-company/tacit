@@ -20,6 +20,7 @@
 // (all of mainnet today; signet until an asset is flipped live).
 
 import { scanHealth } from './confidential-scan-health.js';
+import { shownTicker } from './confidential-deployments.js';
 
 // A shielded balance that looks too small to cover a send is only a fact when the scan that produced it
 // saw every channel. When it did not, the refusal says which scan is missing rather than asserting the
@@ -167,7 +168,7 @@ export function makeUnifiedSend(deps) {
 
     if (shielded < need) {
       if (!opts.allowWrap) {
-        return { ok: false, reason: shortfallReason(`insufficient shielded ${ticker}; enable wrap-and-send to top up from your balance`, bal.diag) };
+        return { ok: false, reason: shortfallReason(`insufficient shielded ${shownTicker(ticker)}; enable wrap-and-send to top up from your balance`, bal.diag) };
       }
       const shortfall = need - shielded;
 
@@ -219,7 +220,7 @@ export function makeUnifiedSend(deps) {
     let sendNotes = usable ? myAssetNotes : null;
     if (!sendNotes) {
       if (!opts.allowWrap) {
-        return { ok: false, reason: shortfallReason(`no single existing ${ticker} note covers that amount; enable wrap-and-send to fund a fresh one`, bal.diag) };
+        return { ok: false, reason: shortfallReason(`no single existing ${shownTicker(ticker)} note covers that amount; enable wrap-and-send to fund a fresh one`, bal.diag) };
       }
       const unitScale = BigInt((ux.assetByTicker[ticker] || {}).unitScale || '1');
       onPhase({ phase: 'wrap', shortfall: amount, ticker });

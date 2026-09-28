@@ -17,7 +17,7 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, copyToClipboard, evmAccountHint, decOf } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, copyToClipboard, evmAccountHint, decOf, shownTicker } from './confidential-deployments.js';
 import { formatUnits, parseUnits } from './confidential-payout.js';
 import { makeConfidentialOtc } from './confidential-otc.js';
 import { randomScalar } from './bulletproofs-plus.js';
@@ -254,7 +254,7 @@ export async function renderOtcTab(wallet) {
   }
   const acct = ux.account(wallet.priv);
   const taFont = 'font-size:10px;font-family:var(--mono);';
-  const assetOptions = (ux.assets || []).map((a) => `<option value="${a.assetId}">${a.ticker}</option>`).join('');
+  const assetOptions = (ux.assets || []).map((a) => `<option value="${a.assetId}">${esc(shownTicker(a.ticker))}</option>`).join('');
   body.innerHTML = `
     <div class="tab-form">
     <div class="note-concept"><b>Trade note-for-note, privately.</b> A confidential OTC
@@ -326,7 +326,7 @@ export async function renderOtcTab(wallet) {
       box.innerHTML = banner + '<div style="font-weight:600;margin-bottom:4px;color:var(--ink);">Your tradeable notes</div>'
         + notes.map((n) => {
           const ticker = ux.tickerOf(n.asset) || 'note';
-          return `<div style="padding:3px 0;">${esc(formatUnits(n.value, decOf(ux, n.asset)))} ${esc(ticker)} <span class="muted">#${n.leafIndex}</span>${inboundBadgeHtml(n)}</div>`;
+          return `<div style="padding:3px 0;">${esc(formatUnits(n.value, decOf(ux, n.asset)))} ${esc(shownTicker(ticker))} <span class="muted">#${n.leafIndex}</span>${inboundBadgeHtml(n)}</div>`;
         }).join('') + inboundSummaryHtml(notes);
     }
     wireComposer(wallet, ux, notes || []);

@@ -399,6 +399,12 @@ export function esc(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// The name a ticker is shown under. The ETH note's SDK ticker is cETH; people see it as tETH, the asset's on-chain
+// name, on either chain. Lookups and API calls keep the SDK ticker.
+export function shownTicker(ticker) {
+  return ticker === 'cETH' ? 'tETH' : ticker;
+}
+
 // The decimal places to format/parse an asset's note values at — tacitDecimals when the asset registers
 // one (in-system display places, e.g. 8 for cETH/cBTC/cUSD/cTAC even though the underlying token may carry
 // more), falling back to the asset's own `decimals`, then 8. Every confidential/EVM tab needs this to avoid

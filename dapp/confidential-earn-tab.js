@@ -10,7 +10,7 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatSpecErr, lockedWalletHTML, wireUnlockButton } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatSpecErr, lockedWalletHTML, wireUnlockButton, shownTicker } from './confidential-deployments.js';
 import { formatUnits as fmtUnits } from './confidential-payout.js';
 import { scanHealth, scanHealthHtml } from './confidential-scan-health.js';
 
@@ -27,7 +27,7 @@ function dayOnePairs(ux) {
   const tac = ids.cTac;
   if (!tac) return [];
   return [
-    { label: 'cETH / TAC', a: ids.cEth, b: tac, ta: 'cETH', tb: 'TAC' },
+    { label: 'tETH / TAC', a: ids.cEth, b: tac, ta: 'cETH', tb: 'TAC' },
     { label: 'cBTC / TAC', a: ids.cBtc, b: tac, ta: 'cBTC', tb: 'TAC' },
     { label: 'cUSD / TAC', a: ids.cUsd, b: tac, ta: 'cUSD', tb: 'TAC' },
   ].filter((p) => p.a && p.b);
@@ -37,7 +37,7 @@ function dayOnePairs(ux) {
 // pair's assets are read back from the pool itself, so a re-weighted or added pool needs no code change here.
 function farmPairs(ux) {
   const farm = ux.cfg && ux.cfg.farm;
-  return farm ? (farm.pools || []).map((p) => ({ label: String(p.pair).replace('/', ' / '), poolId: p.poolId, feeBps: p.feeBps })) : [];
+  return farm ? (farm.pools || []).map((p) => ({ label: String(p.pair).split('/').map(shownTicker).join(' / '), poolId: p.poolId, feeBps: p.feeBps })) : [];
 }
 
 // GET /farm/health (docs/BUILD-A-TACIT-DAPP.md §"Earn TAC": "a solvency verdict, read from the manager on
@@ -81,7 +81,7 @@ async function renderPositions(wallet, ux) {
   const nowSec = Math.floor(Date.now() / 1000);
   box.innerHTML = `<div style="font-weight:600;margin-bottom:6px;font-size:13px;">Your farm positions</div>`
     + positions.map((p, i) => {
-      const pairLabel = esc(p.pair || ux.tickerOf(p.lpAsset) || 'LP position');
+      const pairLabel = esc(p.pair ? String(p.pair).split('/').map(shownTicker).join('/') : (ux.tickerOf(p.lpAsset) || 'LP position'));
       const pendingTac = Number(p.pendingTac || 0);
       const pendingLabel = pendingTac > 0 ? `${esc(p.pendingTac)} TAC pending` : 'no reward pending yet';
       const lockedLabel = p.unlockAt && p.unlockAt > nowSec ? ` · locked until ${esc(new Date(p.unlockAt * 1000).toLocaleDateString())}` : '';
@@ -186,7 +186,7 @@ export async function renderEarnTab(wallet, helpers = {}) {
   const wrap = el('earn-pools');
   if (!pairs.length) {
     if (wrap) wrap.innerHTML = `<div class="muted" style="font-size:12px;line-height:1.6;">
-      The TAC farms (cETH/TAC · cBTC/TAC · cUSD/TAC) appear here once their pools are seeded.
+      The TAC farms (tETH/TAC · cBTC/TAC · cUSD/TAC) appear here once their pools are seeded.
       Meanwhile you can wrap into the <a href="#tab=confidential-pool">confidential pool</a>, claim your
       <a href="#tab=claim">airdrop</a>, or bring value over from <span class="btc-word">Bitcoin</span>.</div>`;
     return;
@@ -247,7 +247,7 @@ export async function renderEarnTab(wallet, helpers = {}) {
     const why = !reserves ? 'pool not deployed on this network yet'
       : !controller ? 'farm not deployed for this pool yet'
       : !init ? 'pool not initialized'
-      : (!aNote || !bNote) ? `need a ${p.ta} note and a ${p.tb} note (wrap into the pool first)`
+      : (!aNote || !bNote) ? `need a ${shownTicker(p.ta)} note and a ${shownTicker(p.tb)} note (wrap into the pool first)`
         + (scanFailed ? ' — your notes could not be read on this pass' : noteHealth.ok ? '' : ` — ${noteHealth.text}`)
       : 'add liquidity & bond into the farm in one transaction';
     p._feeBps = feeBps; p._controller = controller; p._reserves = reserves;
@@ -284,8 +284,8 @@ export async function renderEarnTab(wallet, helpers = {}) {
         const wantA = aLimited ? a : (b * rA + rB - 1n) / rB;
         const wantB = aLimited ? (a * rB + rA - 1n) / rA : b;
         const dec = (t) => Number((ux.assetByTicker[t] || {}).tacitDecimals ?? 8);
-        const ok = window.confirm(`Add ${fmtUnits(wantA, dec(p.ta))} ${p.ta} + ${fmtUnits(wantB, dec(p.tb))} ${p.tb} to ${p.label} and bond the shares into the farm?`
-          + ((aLimited ? wantB !== b : wantA !== a) ? `\n\nYour ${aLimited ? p.tb : p.ta} note is split first so only the in-ratio amount is added; the rest stays in your wallet.` : ''));
+        const ok = window.confirm(`Add ${fmtUnits(wantA, dec(p.ta))} ${shownTicker(p.ta)} + ${fmtUnits(wantB, dec(p.tb))} ${shownTicker(p.tb)} to ${p.label} and bond the shares into the farm?`
+          + ((aLimited ? wantB !== b : wantA !== a) ? `\n\nYour ${shownTicker(aLimited ? p.tb : p.ta)} note is split first so only the in-ratio amount is added; the rest stays in your wallet.` : ''));
         if (!ok) { btn.disabled = false; return; }
         let sizedA = aNote, sizedB = bNote;
         if (st) st.textContent = 'Sizing your notes to the pool ratio…';

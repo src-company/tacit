@@ -16,7 +16,7 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatSpecErr, notify, decOf } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatSpecErr, notify, decOf, shownTicker } from './confidential-deployments.js';
 import { formatUnits } from './confidential-payout.js';
 import { scanHealth, scanHealthHtml, inboundBadgeText, inboundSummaryHtml } from './confidential-scan-health.js';
 
@@ -52,7 +52,7 @@ export async function renderSwapTab(wallet) {
     body.innerHTML = '<div class="muted">Unlock a wallet to swap shielded notes.</div>';
     return;
   }
-  const assetOptions = (ux.assets || []).map((a) => `<option value="${a.assetId}">${a.ticker}</option>`).join('');
+  const assetOptions = (ux.assets || []).map((a) => `<option value="${a.assetId}">${esc(shownTicker(a.ticker))}</option>`).join('');
   body.innerHTML = `
     <div class="tab-form">
     <div class="note-concept"><b>Swap, shielded.</b> Trade one note for another against the
@@ -77,7 +77,7 @@ export async function renderSwapTab(wallet) {
       <div id="cswap-status" class="muted field-status"></div>
       <div class="muted" style="font-size:11px;margin-top:12px;padding-top:8px;border-top:1px dashed var(--ink-faint);">
         Want <span class="btc-word">real sats</span>? Trade on the <a href="#tab=market">order book</a>.
-        Moving a note to <span class="btc-word">Bitcoin</span>? Use the bridge (cETH ⇄ tETH).
+        Moving a note to <span class="btc-word">Bitcoin</span>? Use the bridge; tETH crosses 1:1.
       </div>
     </div>
     </div>`;
