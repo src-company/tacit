@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ho91sUPrDuZpAJmTI28eat5dxwkPVlM02tlXYEt/6Rw=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-yszlcQbJqSiorP0kpaH0Sl0IN5auKGoCInZ99X/XO/s=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit lite</title>
 <meta name="description" content="Private ETH, the TAC airdrop, TAC farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -234,6 +234,8 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .callout .btn { width: auto; min-height: 36px; margin: 0; padding: 6px 14px; }
 .ack { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 12.5px; color: var(--err); cursor: pointer; }
 .ack input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--err); flex: none; }
+.pick { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; font-size: 12.5px; color: var(--mute); cursor: pointer; }
+.pick input { width: 18px; height: 18px; margin: 0; accent-color: var(--ink); flex: none; }
 .ack input:not([type]) { width: 72px; flex: none; font: 500 16px var(--mono); color: var(--ink); background: var(--field); border: 1px solid var(--err); padding: 6px 8px; }
 .kv .link { flex: none; }
 .kv .mono { margin-left: auto; }
@@ -1265,7 +1267,7 @@ function wireSub(el, name, set) { $$(`[data-${name}]`, el).forEach((b) => b.oncl
 
 // ── Tacit V1 pool: shared module, loaded on first use ────────────────────────────────────────────────────
 const getUx = lazy(async () => {
-  const [{ makeConfidentialPoolUx }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=c6495b04'), import('/confidential-deployments.js')]);
+  const [{ makeConfidentialPoolUx }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=a97c6533'), import('/confidential-deployments.js')]);
   dep.setActiveNetwork('mainnet');
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
 });
@@ -2183,6 +2185,7 @@ const EARN = [
   ['device', 'Deposit ETH on this device', '1,000 per ETH, on Ethereum, Base or Robinhood'],
   ['buy', 'Buy TAC with ETH', '1,000 per ETH, through the Precision pool'],
   ['borrow', 'Post a bond toward cBTC', '1,000 per wstETH'],
+  ['borrow', 'Borrow cUSD, sending the loan yourself', '2 per dollar borrowed'],
 ];
 render.pts = () => {
   const el = $('#pts-body');
@@ -2659,6 +2662,7 @@ render.borrow = () => {
           ${s3 && !s4 ? html`
             <div class="amt act"><input id="bw-debt" inputmode="decimal" placeholder="${st.usd ? plain(st.usd / 2n / 10n ** 6n * 10n ** 6n, 8) : '0'}" autocomplete="off" aria-label="cUSD to borrow"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-cusd"/></svg>cUSD</span></div>
             <div class="rcpt" id="bw-rcpt" hidden></div>
+            <label class="pick"><input type="checkbox" id="bw-pts"><span>Earn points: send the loan from ${your()}, which pays its gas and is linked to it</span></label>
             <button class="btn" type="button" id="bw-borrow">Borrow cUSD</button>` : ''}
           ${s4 && st.cusd?.value ? html`<div class="kv"><span>Private cUSD</span><b>${fmt(st.cusd.value, 8, 2)}</b></div><button class="btn ghost" type="button" id="bw-out">Withdraw as tacUSD</button>` : ''}
         </div>
@@ -2750,11 +2754,21 @@ render.borrow = () => {
       const anchor = t.pool.nativeNu(leg.owner, leg.nk, t.pool.leaf(leg.asset, leg.cx, leg.cy, leg.owner));
       const d = t.deriveOutput(priv, anchor, 'cdpDebt', 0);
       const rate = String(await t.ethCall(c, '0x' + SEL.rate)).toLowerCase();
+      // Settled from the paying account, the mint is credited to it by the points program; relayed, nobody is.
+      const self = !!$('#bw-pts')?.checked;
+      let sentSelf = false;
+      const selfSettle = async (x) => {
+        sentSelf = true;
+        say(status, `Sending the loan from ${your()}…`);
+        const hash = await sendTx({ to: t.cfg.pool, data: t.settleCalldata(x) });
+        await waitTx(hash);
+        return { txHash: hash };
+      };
       say(status, 'The relay is proving your loan…');
-      const r = await t.defiActions(priv).openCdp({ controller: c, debtValue, rateSnapshot: rate, fee: 0n, collateral: [leg], spendRoot: n.root, debtBlinding: d.blindingHex, positionOwner, debtNk: d.nk, waitOpts: { timeoutMs: 20 * 60e3 } });
+      const r = await t.defiActions(priv).openCdp({ controller: c, debtValue, rateSnapshot: rate, fee: 0n, collateral: [leg], spendRoot: n.root, debtBlinding: d.blindingHex, positionOwner, debtNk: d.nk, ...(self ? { selfSettle } : {}), waitOpts: { timeoutMs: 20 * 60e3 } });
       await ps.add(priv, { controller: c, debtValue: debtValue.toString(), nonce: '0x' + '0'.repeat(64), keyNonce, positionOwner, rateSnapshot: rate, debtAnchor: anchor, basket: [{ asset: leg.asset, value: String(BigInt(leg.value)) }], openedAt: r?.txHash || null }).catch(() => {});
       store.set(lockKey(), { ...rec, borrowed: debtValue.toString() });
-      toast(`Borrowed ${fmt(debtValue, 8, 2)} cUSD`);
+      toast(self && !sentSelf ? `Borrowed ${fmt(debtValue, 8, 2)} cUSD through the relay, so it earns no points` : `Borrowed ${fmt(debtValue, 8, 2)} cUSD`);
       await loadBorrow(); rerender('borrow');
     } catch (e) { sayErr(status, e); }
   });
