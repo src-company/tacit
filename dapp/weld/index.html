@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-wEBCWYpf2Olfphy5W4e4TttOuANRCFX8a63pMoUC82o=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-tQAtKa7TK05UPJfUqenNg/f6kCkNqn9VJuJ320xTXS8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -374,7 +374,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <a class="tile" href="#farm" data-open="farm" aria-haspopup="dialog">
       <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><svg class="tk" aria-hidden="true"><use href="#tk-eth"/></svg></span>
       <h2>Farm TAC</h2>
-      <p>Provide liquidity and earn TAC every second, in public or private pools.</p>
+      <p>Provide liquidity and earn TAC every second, in public or private pools. While the pools are small, early liquidity earns the most.</p>
       <span class="tile-foot"><span class="dot live" data-dot="farm"></span><span data-foot="farm">Reading farms…</span><span class="go" aria-hidden="true">→</span></span>
     </a>
     <a class="tile" href="#borrow" data-open="borrow" aria-haspopup="dialog">
@@ -2646,6 +2646,20 @@ load.farm = () => loadFarms();
 const LOGO = { TAC: 'tk-tac', cETH: 'tk-teth', cUSD: 'tk-cusd', cBTC: 'tk-cbtc', ETH: 'tk-eth' };
 const logoPair = (a, b, cls = 'md') => html`<span class="pair"><svg class="tk ${cls}" aria-hidden="true"><use href="#${LOGO[a]}"/></svg><svg class="tk ${cls}" aria-hidden="true"><use href="#${LOGO[b]}"/></svg></span>`;
 const pairName = (pair) => pair.replace('cETH', 'tETH').replace('/', ' / ');
+// A farm's APR now: a year of its TAC at the Precision mid price, over the ETH value staked in it. It moves with every
+// deposit, withdrawal and trade. The private pools all pair tETH, so each is worth twice its tETH side.
+const CETH_ID = '0x3cba71e1114af183cdeacc6b8457a474d17529fd28704480ca799d0d03126f34';
+const aprOf = (tacPerDay, stakedEth) => (stakedEth > 0 && FARM.precision?.tacEth ? tacPerDay * 365 * FARM.precision.tacEth / stakedEth * 100 : null);
+const precisionApr = (x) => (x?.supply ? aprOf(Number(x.perDay) / 1e18, x.value / 1e18 * Number(x.totalStaked) / Number(x.supply)) : null);
+const shieldedApr = (p) => {
+  const r = p.reserves || {};
+  if (String(r.assetA).toLowerCase() !== CETH_ID || !Number(r.lpTotalShares)) return null;
+  return aprOf(Number(p.tacPerDayForPool), 2 * Number(r.reserveA) / 1e8 * Number(p.totalShares) / Number(r.lpTotalShares));
+};
+const aprShort = (a) => (a == null ? '' : a >= 1000 ? '1,000%+ APR' : `${Math.round(a)}% APR`);
+const aprLong = (a) => (a >= 100000 ? 'over 100,000%' : `about ${Math.round(a).toLocaleString('en-US')}%`);
+const aprRow = (a) => (a == null ? '' : html`<div class="kv"><span>APR now</span><b>${aprLong(a)}</b></div>
+  <p class="note">At today’s TAC price and stake. It falls as more liquidity joins, so the earliest deposits earn the most.</p>`);
 render.farm = () => {
   const x = FARM.precision, prog = FARM.program, list = $('#farm-list');
   const mine = (pid) => (FARM.positions || []).filter((p) => Number(p.pid) === pid);
@@ -2655,7 +2669,7 @@ render.farm = () => {
       <button type="button" aria-controls="farm-precision" aria-expanded="${FARM.open === 'precision'}">
         ${logoPair('TAC', 'ETH')}
         <span><span class="name">TAC / ETH</span><span class="kind">Precision pool · public${x?.staked > 0n ? html`<span class="tag">yours</span>` : ''}</span></span>
-        <span class="rate">${x ? html`<b>${fmt(x.perDay, 18, 0)} TAC</b><span>a day</span>` : html`<span>…</span>`}</span>
+        <span class="rate">${x ? html`<b>${fmt(x.perDay, 18, 0)} TAC</b><span>a day${x.live && precisionApr(x) != null ? ` · ${aprShort(precisionApr(x))}` : ''}</span>` : html`<span>…</span>`}</span>
       </button>
       <div class="body" id="farm-precision"></div>
     </li>`];
@@ -2666,7 +2680,7 @@ render.farm = () => {
         <button type="button" aria-controls="farm-pid${p.pid}" aria-expanded="${FARM.open === 'pid' + p.pid}">
           ${logoPair(a === 'cETH' ? b : a, 'cETH')}
           <span><span class="name">${pairName(p.pair)}</span><span class="kind">Tacit pool · private${mine(p.pid).length ? html`<span class="tag">yours</span>` : ''}</span></span>
-          <span class="rate"><b>${live ? Math.round(Number(p.tacPerDayForPool)).toLocaleString('en-US') : 0} TAC</b><span>a day</span></span>
+          <span class="rate"><b>${live ? Math.round(Number(p.tacPerDayForPool)).toLocaleString('en-US') : 0} TAC</b><span>a day${live && shieldedApr(p) != null ? ` · ${aprShort(shieldedApr(p))}` : ''}</span></span>
         </button>
         <div class="body" id="farm-pid${p.pid}"></div>
       </li>`);
@@ -2694,6 +2708,7 @@ function renderPrecision(el) {
   const myDay = has && x.totalStaked ? x.perDay * x.staked / x.totalStaked : 0n;
   mount(el, html`
     <div class="kv"><span>${x.live ? 'Stream ends' : 'Stream'}</span><b>${x.live ? dayFmt(x.finish) : 'between reward periods'}</b></div>
+    ${x.live ? aprRow(precisionApr(x)) : ''}
     ${has ? html`
       <div class="kv"><span>Your stake</span><b>${fmt(x.mine.eth, 18, 4)} ETH + ${fmt(x.mine.tac, 18, 2)} TAC</b></div>
       <div class="kv"><span>Earning</span><b>${fmt(myDay, 18, 2)} TAC a day · ${pctFmt(Number(x.staked * 10000n / x.totalStaked) / 100)} of the farm</b></div>
@@ -2873,6 +2888,7 @@ function renderShielded(el, p) {
   mount(el, html`
     <div class="kv"><span>Bonded</span><b>${Math.round(Number(p.totalShares) * 100 / Math.max(1, Number(r.lpTotalShares || 1)))}% of the pool's shares</b></div>
     <div class="kv"><span>${FARM.program.epoch?.active ? 'Stream ends' : 'Stream'}</span><b>${FARM.program.epoch?.active ? dayFmt(FARM.program.epoch.periodFinish) : 'between reward periods'}</b></div>
+    ${FARM.program.epoch?.active ? aprRow(shieldedApr(p)) : ''}
     <div id="sf-${p.pid}"></div>
     <div class="status" role="status" id="sf-status-${p.pid}"></div>`);
   const box = $(`#sf-${p.pid}`), status = $(`#sf-status-${p.pid}`);

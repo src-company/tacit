@@ -4,6 +4,7 @@
 //   airdrop  a listed recipient claims its TAC; the tile updates
 //   links    friendly links open the right sheet and tab (#swap, #points, #earn), the address bar follows the tab, and
 //            every sheet has a copy-link button
+//   apr      every farm row shows its APR now, and the public farm's card spells it out
 //   pair     ETH + TAC staked in one transaction with an EIP-2612 permit
 //   farm     a one-sided ETH zap waits for its typed loss acceptance, stakes, claims, then withdraws everything
 //   buy      TAC bought with ETH through zRouter
@@ -41,7 +42,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -216,6 +217,18 @@ await step('links', async () => {
   const shares = await page.$$eval('dialog.sheet:not(.layer) .sheet-head .x.share', (b) => b.length);
   const sheets = await page.$$eval('dialog.sheet:not(.layer)', (d) => d.length);
   ok(shares === sheets && sheets >= 6, `links: every sheet has a copy-link button (${shares}/${sheets})`);
+});
+
+await step('apr', async () => {
+  await page.goto(url + '#farm');
+  await page.waitForSelector('#pf-connect, [data-pfm]', { timeout: 60000 });
+  if (await page.$('#pf-connect')) await page.click('#pf-connect');
+  await until(page, () => /APR now/.test(document.querySelector('#farm-precision')?.textContent || ''), null, 120000);
+  const rows = await page.$$eval('.farm .rate', (r) => r.map((x) => x.textContent.replace(/\s+/g, ' ').trim()));
+  const card = await page.$eval('#farm-precision', (e) => e.textContent.replace(/\s+/g, ' '));
+  console.log('   rows:', rows.join(' | '));
+  console.log('   card:', (card.match(/APR now[^.]*\./) || [''])[0]);
+  ok(rows.length >= 2 && rows.every((r) => /APR/.test(r)) && /APR now\s*(about [\d,]+%|over 100,000%)/.test(card), 'apr: every farm shows its APR now, the public card in full');
 });
 
 await step('pair', async () => {
