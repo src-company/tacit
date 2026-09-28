@@ -395,11 +395,14 @@ export const CFG = {
   pointsPollSecs: num('POINTS_POLL_SECS', 60),
   pointsScanChunk: num('POINTS_SCAN_CHUNK', 2000), // getLogs block span per call
   // scanZRouterCycle's Signal 1 fetches a FULL block body (every transaction, not just hashes) per block in
-  // range — much heavier than a getLogs call, so it gets its own, much smaller chunk. A fast L2 (observed:
-  // Robinhood Chain accumulating tens of thousands of blocks per hour) can otherwise hand this a backlog
-  // large enough to OOM the whole service in one uncapped pass before the cursor ever gets to save partial
-  // progress — a real incident this default is sized to prevent from recurring.
-  zrouterBlockScanChunk: num('ZROUTER_BLOCK_SCAN_CHUNK', 300),
+  // range — much heavier than a getLogs call, so it gets its own, much smaller chunk. Signal 1 only runs on
+  // mainnet now (L2s switched to the cheaper getLogs-only Signal 2 the same day this was added), so this is
+  // effectively a mainnet-only knob, and mainnet blocks are heavy: measured ~390ms/block fetching real
+  // recent blocks with full transaction bodies (100-300+ tx each), so the original default of 300 took ~2
+  // minutes for ONE cycle -- slower than blocks accumulate, so the scan could never catch up and blocked
+  // everything main()'s loop runs after it (a real incident: zRouter and the ETH-wrap scanner froze for over
+  // an hour). 40 blocks (~15s at that rate) comfortably outpaces mainnet's own ~5 blocks/min production.
+  zrouterBlockScanChunk: num('ZROUTER_BLOCK_SCAN_CHUNK', 40),
   // Wait this many blocks behind head before scanning, so a reorg can't hand out points for a wrap that
   // then disappears. 12 covers ordinary reorgs; the wrap is still irreversible well before finality.
   pointsConfirmations: num('POINTS_CONFIRMATIONS', 12),
