@@ -1742,6 +1742,12 @@ async function handleReflectionBurndepList(req, env, url, cors) {
   } while (cursor);
   return jsonResponse({ network, count: out.length, entries: out }, 200, { ...cors, 'Cache-Control': 'no-store' });
 }
+// Bitcoin's own wire format stores a vin's prev-txid in the SAME internal (little-endian) byte order as the
+// hash itself, never the reversed "display" hex block explorers and esplora's REST API use — a distinct
+// convention from the display-hex txids this whole file otherwise passes to apiText. Needed wherever a value
+// derived from bitcoin::extract_inputs (cxfer-core/src/bitcoin.rs) or its JS mirror (burnedTxid in
+// pendingDepositRecords) has to be compared against or fetched via a display-hex source.
+const revHex = (h) => String(h).replace(/^0x/, '').match(/../g).reverse().join('');
 // POST /reflection/burndep/trace?network= — { note: {txid, vout}, assetId, maxDepth? } — traces a note's
 // provenance DAG live from public Bitcoin data (burndep-live-tracer.js's getCxferByOutput, wired to
 // dapp/burn-deposit-tracer.js's existing walk) and returns it as a bundle already shaped for
@@ -1776,37 +1782,46 @@ async function handleBurnDepositTrace(req, env, url, cors) {
   if (!asset || !asset.etch_txid) {
     return jsonResponse({ ok: false, error: `asset ${assetIdHex} has no indexed etch on ${network} — POST /assets/hint with its reveal_txid first` }, 404, cors);
   }
-  let tracedCxfers, etchTx, etchBlockHash;
+  let bundle, hops;
   try {
-    const pool = makeConfidentialPool({ secp, keccak256: keccak_256, sha256 });
-    const trace = makeBurnDepositTracer({ outpointKey: pool.outpointKey }).trace;
-    const res = await traceBurnDepositProvenance({
-      env, apiText, apiRawBytes, network, outpointKey: pool.outpointKey, sha256, trace, maxDepth,
-      note: { txid: noteTxid, vout: noteVout },
-      leaves: [{ txid: asset.etch_txid, vout: asset.etch_vout || 0 }],
-    });
-    tracedCxfers = res.cxfers;
-    // The etch leaf itself is never fetched by the walk (leaves are terminal — see burn-deposit-tracer.js's
-    // `if (leaves.has(op)) continue`), so it needs one more explicit lookup for the registration bundle's own
-    // `etch` field — through the same live tracer so a repeat call for this asset hits the same permanent
-    // cache instead of re-fetching from esplora every time.
-    const etchRec = await res.live.resolveShallow(asset.etch_txid);
-    if (etchRec.kind !== 'cetch') {
-      return jsonResponse({ ok: false, error: `asset ${assetIdHex}'s recorded etch_txid does not resolve to a CETCH (got '${etchRec.kind}') — indexed etch record may be wrong` }, 502, { ...cors, 'Cache-Control': 'no-store' });
-    }
-    etchTx = etchRec.tx;
-    etchBlockHash = etchRec.blockHash;
+    const built = await buildBurndepBundle({ env, network, noteTxid, noteVout, asset, maxDepth });
+    bundle = built.bundle;
+    hops = built.hops;
   } catch (e) {
     return jsonResponse({ ok: false, error: `trace failed: ${e && e.message || e}` }, 502, { ...cors, 'Cache-Control': 'no-store' });
   }
+  return jsonResponse({ ok: true, network, hops, bundle }, 200, { ...cors, 'Cache-Control': 'no-store' });
+}
+
+// Shared by handleBurnDepositTrace (a holder tracing their own note) and sweepPendingBurnDeposits (an ops-run
+// sweep completing someone else's stuck burn from pure on-chain data) — both need exactly the same DAG walk
+// plus the one extra etch/leaf lookup, assembled into the same minimal /reflection/burndep registration shape.
+// `asset` is the already-fetched registry record ({etch_txid, etch_vout, etched_at_height, ...}); throws on any
+// failure (dangling lineage, wrong etch record, etc.) rather than returning a partial bundle.
+async function buildBurndepBundle({ env, network, noteTxid, noteVout, asset, maxDepth }) {
+  const pool = makeConfidentialPool({ secp, keccak256: keccak_256, sha256 });
+  const trace = makeBurnDepositTracer({ outpointKey: pool.outpointKey }).trace;
+  const res = await traceBurnDepositProvenance({
+    env, apiText, apiRawBytes, network, outpointKey: pool.outpointKey, sha256, trace, maxDepth,
+    note: { txid: noteTxid, vout: noteVout },
+    leaves: [{ txid: asset.etch_txid, vout: asset.etch_vout || 0 }],
+  });
+  // The etch leaf itself is never fetched by the walk (leaves are terminal — see burn-deposit-tracer.js's
+  // `if (leaves.has(op)) continue`), so it needs one more explicit lookup for the registration bundle's own
+  // `etch` field — through the same live tracer so a repeat call for this asset hits the same permanent cache
+  // instead of re-fetching from esplora every time.
+  const etchRec = await res.live.resolveShallow(asset.etch_txid);
+  if (etchRec.kind !== 'cetch') {
+    throw new Error(`asset ${asset.asset_id || ''}'s recorded etch_txid does not resolve to a CETCH (got '${etchRec.kind}') — indexed etch record may be wrong`);
+  }
   const bundle = {
-    etch: { tx: etchTx, blockHash: etchBlockHash, blockHeight: asset.etched_at_height },
-    cxfers: tracedCxfers.map((c) => ({
+    etch: { tx: etchRec.tx, blockHash: etchRec.blockHash, blockHeight: asset.etched_at_height },
+    cxfers: res.cxfers.map((c) => ({
       tx: c.tx, txid: c.txid, inputs: c.inputs, inputSkip: c.inputSkip, outputs: c.outputs,
       rangeProof: c.rangeProof, kernelSig: c.kernelSig, blockHash: c.blockHash,
     })),
   };
-  return jsonResponse({ ok: true, network, hops: tracedCxfers.length, bundle }, 200, { ...cors, 'Cache-Control': 'no-store' });
+  return { bundle, hops: res.cxfers.length };
 }
 
 // Small cache for the parts of the reflection snapshot handleBurnDepositStatus needs (attestedHeight +
@@ -1875,7 +1890,12 @@ async function handleBurnDepositStatus(req, env, url, cors) {
   const registered = !!(await env.REGISTRY_KV.get(`reflection:burndep:${network}:${revealTxid}`));
   const snap = await getReflectionSnapshotForStatus(env, network);
   const pool = makeConfidentialPool({ secp, keccak256: keccak_256, sha256 });
-  const noteOutpoint = pool.outpointKey(noteTxid, noteVout).toLowerCase();
+  // pendingDepositRecords' own key is outpoint_key(burned_txid, burned_vout) computed guest-side from
+  // bitcoin::extract_inputs (cxfer-core/src/bitcoin.rs) — a raw copy of the wire-format vin bytes, INTERNAL
+  // (little-endian) order, never reversed to the display order esplora's JSON API uses for `vin0.txid`. The
+  // JS mirror (confidential-reflection-scan-indexer.js's txSpec, burnDepositPendingRecord) preserves this
+  // exactly. Reverse here or this comparison silently never matches a real pending record.
+  const noteOutpoint = pool.outpointKey(revHex(noteTxid), noteVout).toLowerCase();
   const pendingRec = snap && snap.pendingDepositRecords.find((r) => String((r && r.key) || '').toLowerCase() === noteOutpoint);
 
   let status, detail;
@@ -1902,6 +1922,63 @@ async function handleBurnDepositStatus(req, env, url, cors) {
     attestedHeight: snap ? snap.attestedHeight : null,
     registered, note: { txid: noteTxid, vout: noteVout }, assetId: decode.assetId, detail,
   }, 200, { ...cors, 'Cache-Control': 'public, max-age=10' });
+}
+
+// Auto-completes pending burn-deposits from pure on-chain data — the same two steps a holder would run
+// themselves (trace, then register), run here so a burn's completion never depends on its original
+// broadcaster's browser session coming back. burndep-broadcast.js's own journal is a convenience for THAT
+// session, not a dependency of the bridge's own completeness: an unregistered burn already stays pending and
+// folds in any later batch once someone registers a valid bundle for it (see burndep-broadcast.js's own
+// comment) — this is that "someone," running unattended. Reads candidates straight from
+// pendingDepositRecords (the scanner's own discovery — no client-side data needed at all) and skips anything
+// already registered, since the next fold attempt handles that regardless of who submitted it.
+//
+// Bounded per call (`maxCount`): a cold trace is a real per-burn cost — tens of seconds even with the
+// persistent hop cache warming as it goes — so this makes bounded progress per call rather than draining the
+// whole pending set at once. Not wired into the shared cron tick yet (deliberately: that function drives
+// every other scheduled operation this pool depends on, and a slow or wedged trace has no business risking
+// its budget until this has been exercised standalone first) — callable directly for now.
+async function sweepPendingBurnDeposits(env, network, { maxCount = 3 } = {}) {
+  const result = { network, attempted: 0, registered: 0, skipped: 0, errors: [] };
+  if (!env.REGISTRY_KV) return result;
+  const snap = await getReflectionSnapshotForStatus(env, network);
+  if (!snap) return result;
+  for (const rec of snap.pendingDepositRecords) {
+    if (result.attempted >= maxCount) break;
+    if (!rec || rec.completed || !rec.burnedTxid) continue;
+    const revealTxidDisplay = String(rec.burnTxidDisplay || '').replace(/^0x/, '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(revealTxidDisplay)) { result.skipped++; continue; }
+    const regKey = `reflection:burndep:${network}:${revealTxidDisplay}`;
+    if (await env.REGISTRY_KV.get(regKey)) { result.skipped++; continue; } // already registered — next fold attempt will pick it up
+    result.attempted++;
+    try {
+      const assetIdHex = String(rec.asset || '').replace(/^0x/, '').toLowerCase();
+      const asset = await env.REGISTRY_KV.get(assetKey(network, assetIdHex), 'json');
+      if (!asset || !asset.etch_txid) throw new Error(`asset ${assetIdHex} has no indexed etch on ${network}`);
+      // rec.burnedTxid is internal-order (see revHex's own doc comment) — traceBurnDepositProvenance queries
+      // esplora by display-hex, same as every other caller in this file.
+      const { bundle } = await buildBurndepBundle({
+        env, network, asset,
+        noteTxid: revHex(rec.burnedTxid), noteVout: rec.burnedVout,
+      });
+      await env.REGISTRY_KV.put(regKey, JSON.stringify(bundle), { expirationTtl: 90 * 86400 });
+      result.registered++;
+    } catch (e) {
+      result.errors.push({ burnedTxid: rec.burnedTxid, burnTxidDisplay: rec.burnTxidDisplay, error: String((e && e.message) || e) });
+    }
+  }
+  return result;
+}
+// POST /reflection/burndep/sweep?network=&maxCount= — triggers sweepPendingBurnDeposits. Box-token gated:
+// unlike /reflection/burndep/trace (a holder acting on their own note) this acts on every pending record
+// regardless of whose it is, so it's an ops/maintenance operation rather than a self-service primitive — the
+// same posture as /reflection/burndep-list.
+async function handleBurnDepositSweep(req, env, url, cors) {
+  if (!checkConfidentialAuth(req, env)) return jsonResponse({ error: 'not found' }, 404, cors);
+  const network = url.searchParams.get('network') === 'signet' ? 'signet' : 'mainnet';
+  const maxCount = Math.min(Math.max(1, Number(url.searchParams.get('maxCount')) || 3), 20);
+  const result = await sweepPendingBurnDeposits(env, network, { maxCount });
+  return jsonResponse({ ok: true, ...result }, 200, { ...cors, 'Cache-Control': 'no-store' });
 }
 
 async function handleReflectionAck(req, env, cors) {
@@ -25498,6 +25575,9 @@ export {
   // reflection's own getHeaders/getBlockTxs are built on — exported so burndep-live-tracer.js can reuse the
   // same reliability characteristics instead of a second, independently-drifting fetch implementation.
   apiText, apiRawBytes,
+  // Exported so tests can drive the burn-deposit auto-completion sweep and its shared bundle-builder directly
+  // against a fake KV + real esplora data, without needing a live REGISTRY_KV.
+  sweepPendingBurnDeposits, buildBurndepBundle, assetKey, handleBurnDepositStatus,
 };
 
 // ============== DISCORD TOKEN-GATE HANDLERS ==============
@@ -25791,6 +25871,7 @@ async function _routeFetch(req, env, ctx) {
     if (url.pathname === '/reflection/burndep-list' && req.method === 'GET') return handleReflectionBurndepList(req, env, url, cors);
     if (url.pathname === '/reflection/burndep/trace' && req.method === 'POST') return handleBurnDepositTrace(req, env, url, cors);
     if (url.pathname === '/reflection/burndep/status' && req.method === 'GET') return handleBurnDepositStatus(req, env, url, cors);
+    if (url.pathname === '/reflection/burndep/sweep' && req.method === 'POST') return handleBurnDepositSweep(req, env, url, cors);
     if (url.pathname === '/crossout/minted' && req.method === 'GET') return handleCrossoutMinted(url, env, cors);
     // Mode-B eth-side state: the eth-state sidecar POSTs eth_prove's output here.
     if (url.pathname === '/reflection/eth-state' && req.method === 'GET') return handleReflectionEthStateGet(req, env, url, cors);

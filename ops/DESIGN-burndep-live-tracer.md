@@ -269,6 +269,52 @@ computed `outpointKey` matches the format `pendingDepositRecords` stores by cons
 Cheap by design — one esplora tx fetch plus one KV read, cached 10s (same TTL as `/reflection/status`'s own
 cache) — unlike `/reflection/burndep/trace`, which does a real multi-hop DAG crawl.
 
+## Update: the status endpoint's own core match was broken — found before it ever mattered, by luck of timing
+
+Building the auto-completion sweep (below) needed the same `pendingDepositRecords` matching
+`/reflection/burndep/status` already used, which prompted tracing exactly where `burnedTxid` comes from —
+and surfaced a real bug in the already-shipped, already-"verified" status endpoint: `outpointKey(noteTxid, ...)`
+was computed from `vin0.txid` as esplora's REST API returns it (display-hex), but `pendingDepositRecords[].key`
+is `outpoint_key(&burned_txid, ...)` computed guest-side (`reflect.rs`) from `bitcoin::extract_inputs`
+(`cxfer-core/src/bitcoin.rs:2365-2368`) — a raw copy of the wire-format vin bytes, which Bitcoin stores
+internal (little-endian), never reversed to display order. The JS mirror preserves this exactly
+(`confidential-reflection-scan-indexer.js`'s `txSpec`/`burnDepositPendingRecord` chain). Two different byte
+orders hashed into two different keys: the comparison could never match a real pending record, meaning the
+endpoint could never have returned `pending` — a genuinely stuck burn would misreport as `folded` (the
+"not found in the pending set" fallback) instead.
+
+This shipped and was called "verified" against the real, already-folded `b49f4016…` burn — but
+`pendingDepositRecords` was EMPTY in production at the time (confirmed via `/reflection/dump`), so that test
+could only ever exercise the fallback path, never the actual matching logic the bug was in. A confirming test
+that can't reach the code path it's meant to confirm isn't a confirmation — this is worth remembering
+generally, not just here.
+
+Confirmed the correct convention directly against the guest's own Rust source (not inferred from the JS
+mirror alone, given how much this file's earlier byte-order findings turned on exactly that distinction):
+`reflect.rs:1359`'s `outpoint_key(&burned_txid, burned_vout)` call, fed by
+`bitcoin::extract_inputs`'s raw `tx_data[pos..pos+32]` copy with zero reversal. Fixed by reversing
+`noteTxid` to internal order before hashing. Verified with a synthetic-but-realistic
+`pendingDepositRecords` entry (real note/reveal txids, a correctly-computed internal-order key) built entirely
+in a local test — `completed: false` → `status: 'pending'`, `completed: true` → `status: 'folded'` via the
+actual match, not the fallback. Both are now real confirmations, not proxy ones.
+
+## Update: an auto-completion sweep for pending burn-deposits
+
+Closes the reliability gap `burndep-broadcast.js`'s own comment already named: registration is a liveness
+convenience today, not a deadline, but nothing actually performs it if the original broadcaster's browser
+never comes back. `sweepPendingBurnDeposits(env, network, {maxCount})` reads `pendingDepositRecords` directly
+(the scanner's own discovery mechanism — no client-side journal needed at all), and for each incomplete,
+not-yet-registered entry, runs the exact same trace-then-register steps a holder would run themselves,
+using `rec.burnedTxid` (reversed to display order — the same fix as above) as the trace's starting note.
+
+Bounded per call, since a cold trace is a genuine tens-of-seconds cost even with the persistent cache warming
+as it goes. Exposed at `POST /reflection/burndep/sweep` (box-token gated — this acts on every pending record
+regardless of whose burn it is, an ops/maintenance operation, not a self-service primitive) rather than wired
+into the shared cron tick: that function drives every other scheduled operation this pool depends on, and a
+slow or wedged trace has no business risking its budget before this has been exercised standalone. Verified
+against the same synthetic pending record used above: traced the real 38-hop lineage and registered a complete
+bundle, using only real esplora data with the KV layer mocked.
+
 ## What NOT to do
 
 - Do not skip the byte-for-byte diff against real historical burns and ship on "it looks right."
