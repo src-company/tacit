@@ -108,7 +108,7 @@ export function makeBridgeBurnBroadcaster({ pool, bridgeMint, prims: defaultPrim
       throw new Error(`bridge-burn: dest.value ${dest.value} is not the burned value net of the fee (${vDest}); the mint proves v_burn == v_dest + fee`);
     }
     if (sourceClass != null && Number(sourceClass) !== SOURCE_REFLECTED && Number(sourceClass) !== SOURCE_REFLECTED_BOUND) {
-      throw new Error('bridge-burn: this path burns reflected notes (class 1 or 2); a never-reflected note is a burn-deposit (burndep-broadcast.js)');
+      throw new Error('bridge-burn: this path burns reflected notes (class 1 or 2); a never-reflected note needs the separate burn-deposit reveal construction, not this module');
     }
 
     const owner = xonlyOf(notePriv);

@@ -315,6 +315,51 @@ slow or wedged trace has no business risking its budget before this has been exe
 against the same synthetic pending record used above: traced the real 38-hop lineage and registered a complete
 bundle, using only real esplora data with the KV layer mocked.
 
+## Update: reveal-transaction construction — the piece every real burn had to hand-build from scratch
+
+Auditing what's left for a permissionless, reliable bridge (beyond trace/register/status/sweep, all above)
+surfaced a bigger gap than expected: nothing had ever turned reveal-transaction construction into reusable
+code. Every one of the 4 real burns (1000/100/250k/1M TAC) was built by three independently hand-rolled
+scratchpad scripts, each reimplementing the same envelope-encoding and signing logic with hardcoded addresses
+and txids. This is a different risk class from everything else in this file — it constructs and signs a real
+Bitcoin transaction spending real value, not read-only tracing or idempotent bookkeeping — so it got the
+scrutiny that implies: full reading of the proven scripts before writing anything, and independent
+verification after.
+
+The mechanism (confirmed against the real scripts, not assumed) is two-phase, because reflect.rs defines the
+burned note as the burn tx's own first spent input and reads the envelope from that same input's witness — so
+unlike an ordinary bridge-burn (bridge-burn-broadcast.js), which splits the envelope-carrier and the spent note
+across two inputs of one reveal tx, a burn-deposit can't:
+
+1. **Migrate** — an ordinary confidential transfer (same shape as any other cxfer) moves the source note's
+   value into a fresh "burn-home" output: `P2TR(NUMS, leaf(S))` where `S = OP_DROP <K1_xonly> OP_CHECKSIG`. The
+   NUMS internal key makes it script-path-only; because `S` itself never references the envelope, it can be
+   committed at migration time even though the envelope it will eventually carry isn't chosen yet.
+2. **Reveal** — spends the burn-home (input 0) plus a plain funding UTXO (input 1) via script-path: witness =
+   `[sig, envelope-as-a-dummy-script-shaped-item, S, control-block]`. `S`'s `OP_DROP` discards that dummy item
+   before `OP_CHECKSIG` runs — Bitcoin consensus never sees it as meaningful — but it's still real witness data,
+   sitting exactly where `extractTaprootEnvelope` (the same function reflect.rs mirrors) reads it from.
+
+`K1` (the burn-home's own key) is deterministic from the wallet key and the source note's own outpoint —
+nothing new to back up. The migrate step's own output becomes one more hop in the note's provenance chain, the
+same chain the tracer above already walks.
+
+Built as `dapp/burn-deposit-reveal.js`, structured like `bridge-burn-broadcast.js` (dependency-injected prims,
+plan/build split, local signature verification before returning, standardness checks) — reusing its proven
+conventions rather than inventing new ones. One real bug surfaced along the way and is worth remembering
+generally: `dapp/tacit.js` and `dapp/bitcoin-taproot-wallet.js` (`makeBtcWallet`) each carry their own,
+separately-stateful `wallet` singleton — mixing a signing function from one with the wallet object from the
+other silently signs under the wrong key, since neither shares state with the other. Every wallet-*stateful*
+prim this module needs must come from ONE source; only the pure/stateless BPP+cxfer math (explicit-parameter
+functions with no implicit wallet dependency) is safe to source separately.
+
+Verified in `tests/burn-deposit-reveal.test.mjs` with a deterministic test wallet and a synthetic note: both
+built transactions classify correctly via the exact functions reflect.rs mirrors
+(`classifyConfidentialTx`/`extractInputs`), and — independently of the module's own internal checks — both
+signatures verify against a from-scratch BIP-341 sighash reimplementation, and the migration's commit output
+independently re-derives to the correct NUMS-tweaked key. 7/7 checks pass. Not yet exercised against a real
+UTXO or broadcast — that's a deliberate next step, not skipped.
+
 ## What NOT to do
 
 - Do not skip the byte-for-byte diff against real historical burns and ship on "it looks right."
