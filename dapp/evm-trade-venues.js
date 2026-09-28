@@ -46,6 +46,7 @@ const SEL = {
   guardDeadline: '10c2e3cd',  // zGuard.deadline(deadline,executor)
   snwap: '5f3bd1c8',          // zRouter.snwap(tokenIn,amountIn,recipient,tokenOut,minOut,executor,executorData)
   zMulticall: 'ac9650d8',     // zRouter.multicall(bytes[])
+  zPermit: '7ac2ff7b',        // zRouter.permit(token,value,deadline,v,r,s): an EIP-2612 permit to zRouter, as a multicall leg
   agg3: '82ad56cb',           // Multicall3.aggregate3((address,bool,bytes)[])
   tacitQuote: '3bc1414a',     // TacitPublicAmm.quoteSwap(assetIn,assetOut,feeBps,amountIn) -> amountOut
   tacitSwap: 'cfdf9dcc',      // TacitPublicAmm.swapPublic(assetIn,assetOut,feeBps,amountIn,minOut,deadline,to)
@@ -148,6 +149,9 @@ function encSnwap({ tokenIn, amountIn, recipient, tokenOut, minOut, executor, da
   return '0x' + SEL.snwap + addrWord(tokenIn) + word(amountIn) + addrWord(recipient) + addrWord(tokenOut)
     + word(minOut) + addrWord(executor) + word(224) + word(d.length / 2) + padRight64(d);
 }
+function encZRouterPermit({ token, value, deadline, v, r, s }) {
+  return '0x' + SEL.zPermit + addrWord(token) + word(value) + word(deadline) + word(v) + bytes32Word(r) + bytes32Word(s);
+}
 function encZRouterMulticall(calls) {
   const n = calls.length;
   let head = '', tail = '', off = n * 32;
@@ -178,7 +182,7 @@ async function quotePrecision({ ethCall, dir, amountIn, account, block }) {
   return { venue: VENUES.PRECISION, amountIn, amountOut: best.amountOut, feeBps, pool: best.pool, tokenIn, tokenOut };
 }
 
-function buildPrecisionSwap({ quote, account, minOut, deadline, keccak256 }) {
+function buildPrecisionSwap({ quote, account, minOut, deadline, keccak256, permit }) {
   const { tokenIn, tokenOut, pool, amountIn } = quote;
   const to = account;
   const routeData = encPrecisionRoute({ tokenIn, tokenOut, amountIn, minOut, to, pools: [pool] });
@@ -193,8 +197,11 @@ function buildPrecisionSwap({ quote, account, minOut, deadline, keccak256 }) {
     // Native ETH in: no funding pull needed, no checkpoint required (nothing else can spend msg.value mid-tx).
     return { to: ZROUTER, data: encZRouterMulticall([guardLeg, routedLeg]), value: amountIn, approval: null };
   }
-  // TAC in: bind the pulled funds to this exact route (the checkpoint), then let snwap pull TAC from the user.
+  // TAC in: bind the pulled funds to this exact route (the checkpoint), then let snwap pull TAC from the user. A permit
+  // the seller signed for zRouter rides first (zRouter's own permit leg, delegatecalled with the seller as msg.sender),
+  // so the sale needs no separate approval.
   const checkpointLeg = encSnwap({ tokenIn: ZERO_ADDR, amountIn: 0n, recipient: to, tokenOut: ZERO_ADDR, minOut: 0n, executor: PRECISION_ROUTE, data: encPrecisionCheckpoint({ fund: tokenIn, routeDataHex: routeData, account, keccak256 }) });
+  if (permit) return { to: ZROUTER, data: encZRouterMulticall([encZRouterPermit({ token: tokenIn, ...permit }), guardLeg, checkpointLeg, routedLeg]), value: 0n, approval: null };
   return { to: ZROUTER, data: encZRouterMulticall([guardLeg, checkpointLeg, routedLeg]), value: 0n, approval: { token: tokenIn, spender: ZROUTER, amount: amountIn } };
 }
 
@@ -379,13 +386,15 @@ export function makeEvmTradeVenues({ ethCall, keccak256 } = {}) {
     return { dir, amountIn, ranked, best: ranked[0] || null, precision, tacitAmm, boards, zquoter };
   }
 
-  function build({ quote, dir, account, slippageBps = 50, deadline }) {
+  // `permit` ({ value, deadline, v, r, s }, an EIP-2612 permit over TAC to zRouter) is used by the TAC-in Precision
+  // route in place of an approval; the other routes return `approval` whatever is passed.
+  function build({ quote, dir, account, slippageBps = 50, deadline, permit }) {
     if (!quote || !quote.venue) throw new Error('build: a ranked quote is required');
     const dl = deadline ?? BigInt(Math.floor(Date.now() / 1000) + 1800);
     const minOut = (quote.amountOut * BigInt(10000 - slippageBps)) / 10000n;
     if (quote.venue === VENUES.PRECISION) {
       if (typeof keccak256 !== 'function' && quote.tokenIn !== ZERO_ADDR) throw new Error('build: keccak256 required for a TAC-in Precision route');
-      return buildPrecisionSwap({ quote, account, minOut, deadline: dl, keccak256 });
+      return buildPrecisionSwap({ quote, account, minOut, deadline: dl, keccak256, permit: quote.tokenIn === ZERO_ADDR ? null : permit });
     }
     if (quote.venue === VENUES.TACIT_AMM) return buildTacitAmmSwap({ quote, dir, account, minOut, deadline: dl });
     if (quote.venue === VENUES.ZQUOTER) return buildZQuoterSwap({ quote });
@@ -402,4 +411,4 @@ export function makeEvmTradeVenues({ ethCall, keccak256 } = {}) {
   };
 }
 
-export const _internal = { alignDown, encAggregate3, decAggregate3, encSnwap, encZRouterMulticall, encPrecisionRoute, encGuardDeadline, encTacitQuote, encTacitSwap, encBuildBestSwap, decBuildBestSwap, decQuoteBest, decCandidateCount };
+export const _internal = { alignDown, encAggregate3, decAggregate3, encSnwap, encZRouterMulticall, encZRouterPermit, encPrecisionRoute, encGuardDeadline, encTacitQuote, encTacitSwap, encBuildBestSwap, decBuildBestSwap, decQuoteBest, decCandidateCount };

@@ -5,6 +5,8 @@
 //   pair     ETH + TAC staked in one transaction with an EIP-2612 permit
 //   farm     a one-sided ETH zap waits for its typed loss acceptance, stakes, claims, then withdraws everything
 //   buy      TAC bought with ETH through zRouter
+//   tacfarm  TAC alone zapped in with a permit; half withdrawn as ETH; LP held staked again; the rest withdrawn as TAC
+//   sell     TAC sold for ETH through zRouter in one transaction, the permit riding as its first leg
 //   v1       the identity signature unlocks the key; a tipped wrap lands and its settle is submitted
 //   device   a deposit into the EVM pool, proved in the page's worker
 //   borrow   the Bitcoin deposit address renders; a bond for a lock record posts through the escrow helper
@@ -36,7 +38,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,pair,farm,buy,v1,device,borrow,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,pair,farm,buy,tacfarm,sell,v1,device,borrow,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -155,6 +157,28 @@ const A0 = '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266', K0 = '0xac0974bec39a17e
 const RECIPIENT = '0x1c0aa8ccd568d90d61659f060d1bfb1e6f855a20';           // airdrop index 978
 const tacOf = async (a) => BigInt(await rpc('eth_call', [{ to: TAC, data: '0x70a08231' + addrWord(a) }, 'latest']));
 const stakedOf = async (a) => BigInt(await rpc('eth_call', [{ to: FARM, data: '0x98807d84' + addrWord(a) }, 'latest']));
+const allowanceOf = async (token, owner, spender) => BigInt(await rpc('eth_call', [{ to: token, data: '0xdd62ed3e' + addrWord(owner) + addrWord(spender) }, 'latest']));
+const ZROUTER = '0x000000000000FB114709235f1ccBFfb925F600e4', RESERVE = '0x006CD14F36F65eCbB29b2519cCBe63A0DC8549F2';
+// TAC for a scenario that runs on its own, sent from the reserve (the ops multisig) on the fork.
+async function fundTac(to, amount) {
+  await rpc('anvil_impersonateAccount', [RESERVE]); await rpc('anvil_setBalance', [RESERVE, '0x' + (10n ** 18n).toString(16)]);
+  await rpc('eth_sendTransaction', [{ from: RESERVE, to: TAC, data: '0xa9059cbb' + addrWord(to) + word(amount) }]);
+  await rpc('anvil_stopImpersonatingAccount', [RESERVE]);
+}
+// Wait for a button to enable, accepting the loss gate beside it if the pool's depth puts one up.
+async function acceptLoss(page, goSel, ackSel) {
+  await until(page, ([g, a]) => { const b = document.querySelector(g); return (b && !b.disabled) || !!document.querySelector(a); }, [goSel, ackSel], 240000);
+  for (let i = 0; i < 6 && await page.isDisabled(goSel); i++) {
+    if (await page.$(ackSel)) {
+      if (await page.$eval(ackSel, (x) => x.type === 'checkbox')) await page.check(ackSel);
+      else await page.fill(ackSel, await page.$eval(ackSel, (x) => x.closest('.ack').querySelector('b').textContent));
+    }
+    await sleep(1500);
+  }
+}
+// Chain state, polled, is the check: a toast from an earlier step can still be on screen.
+async function chainUntil(fn, ms = 240000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await fn()) return true; await sleep(1500); } return false; }
+const toastSays = (page, re) => until(page, (r) => new RegExp(r).test(document.querySelector('#toast-container')?.textContent || '') || /class="err"/.test(document.querySelector('#pf-status')?.innerHTML || ''), re.source, 240000);
 
 const main = await openPage({ account: A0, key: K0 });
 const { page, url } = main;
@@ -194,8 +218,8 @@ await step('farm', async () => {
   await page.goto(url + '#farm');
   await page.waitForSelector('#pf-connect, [data-pfm]', { timeout: 60000 });
   if (await page.$('#pf-connect')) await page.click('#pf-connect');
-  await page.waitForSelector('[data-pfm="zap"]', { timeout: 60000 });
-  await page.click('[data-pfm="zap"]');
+  await page.waitForSelector('[data-pfm="eth"]', { timeout: 60000 });
+  await page.click('[data-pfm="eth"]');
   await page.fill('#pf-amt', '0.05');
   try { await page.waitForSelector('#pf-ackv', { timeout: 60000 }); } catch (e) {
     if (process.env.DEBUG) console.log('   farm state:', JSON.stringify(await page.evaluate(() => ({ amt: document.querySelector('#pf-amt')?.value, open: document.querySelector('.farm.open')?.dataset.farm, mode: document.querySelector('[data-pfm][aria-selected="true"]')?.dataset.pfm, rcpt: document.querySelector('#pf-rcpt')?.textContent.replace(/\s+/g, ' '), status: document.querySelector('#pf-status')?.textContent, go: document.querySelector('#pf-go')?.disabled }))));
@@ -237,6 +261,66 @@ await step('buy', async () => {
   await page.click('#b-go');
   await until(page, () => /Bought|err/.test(document.querySelector('#b-status')?.innerHTML || ''));
   ok((await tacOf(A0)) > t0, `buy: TAC arrives ${await text(page, '#b-status')}`);
+});
+
+await step('tacfarm', async () => {
+  if ((await tacOf(A0)) < 100n * 10n ** 18n) await fundTac(A0, 1000n * 10n ** 18n);
+  await page.goto(url + '#farm');
+  await page.waitForSelector('#pf-connect, [data-pfm]', { timeout: 60000 });
+  if (await page.$('#pf-connect')) await page.click('#pf-connect');
+  await page.waitForSelector('[data-pfm="tac"]', { timeout: 60000 });
+  await page.click('[data-pfm="tac"]');
+  await page.fill('#pf-tac', '20');
+  await acceptLoss(page, '#pf-go', '#pf-ackv');
+  const s0 = await stakedOf(A0), t0 = await tacOf(A0);
+  await page.click('#pf-go');
+  await chainUntil(async () => (await stakedOf(A0)) > s0);
+  ok((await stakedOf(A0)) > s0 && t0 - (await tacOf(A0)) <= 20n * 10n ** 18n, `tacfarm: TAC alone staked with a permit ${await text(page, '#pf-status')}`);
+  ok((await allowanceOf(TAC, A0, FARM)) === 0n, 'tacfarm: the permit leaves no allowance behind');
+  await page.waitForSelector('[data-pfp="50"]');
+  await page.click('[data-pfp="50"]'); await page.click('[data-pfr="eth"]');
+  await acceptLoss(page, '#pf-exit', '#pf-outv');
+  const st1 = await stakedOf(A0), tac1 = await tacOf(A0);
+  await page.click('#pf-exit');
+  await chainUntil(async () => (await stakedOf(A0)) < st1);
+  const st2 = await stakedOf(A0);
+  ok(st2 > 0n && st2 * 2n >= st1 - 1n && st2 * 2n <= st1 + 1n && (await tacOf(A0)) <= tac1, `tacfarm: half withdrawn as ETH, half still staked ${await text(page, '#pf-status')}`);
+  await rpc('eth_sendTransaction', [{ from: A0, to: FARM, data: '0x2e1a7d4d' + word(st2 / 2n) }]);   // withdraw(shares): LP held, not staked
+  await page.evaluate(() => { location.hash = ''; location.hash = '#farm'; });
+  await page.waitForSelector('#pf-stake', { timeout: 60000 });
+  await page.click('#pf-stake');
+  await chainUntil(async () => (await stakedOf(A0)) === st2);
+  ok((await stakedOf(A0)) === st2, `tacfarm: LP held is staked again with a permit ${await text(page, '#pf-status')}`);
+  await page.waitForSelector('[data-pfp="100"]');
+  await page.click('[data-pfp="100"]'); await page.click('[data-pfr="tac"]');
+  await acceptLoss(page, '#pf-exit', '#pf-outv');
+  const tac2 = await tacOf(A0);
+  await page.click('#pf-exit');
+  await chainUntil(async () => (await stakedOf(A0)) === 0n);
+  ok((await stakedOf(A0)) === 0n && (await tacOf(A0)) > tac2, `tacfarm: exit all as TAC leaves nothing staked ${await text(page, '#pf-status')}`);
+});
+
+await step('sell', async () => {
+  // A fresh EOA: the anvil keys carry sweeper code on mainnet, which forwards ETH on before a router can count it.
+  const key = '0x' + Buffer.from(secp.utils.randomPrivateKey()).toString('hex');
+  const who = '0x' + Buffer.from(keccak_256(secp.getPublicKey(key.slice(2), false).slice(1)).slice(12)).toString('hex');
+  await rpc('anvil_impersonateAccount', [who]); await rpc('anvil_setBalance', [who, '0x' + (10n ** 17n).toString(16)]);
+  await fundTac(who, 100n * 10n ** 18n);
+  const r = await openPage({ account: who, key });
+  try {
+    await r.page.goto(r.url + '#sell');
+    await r.page.waitForSelector('#sell-connect, #s-amt', { timeout: 60000 });
+    if (await r.page.$('#sell-connect')) await r.page.click('#sell-connect');
+    await r.page.waitForSelector('#s-amt');
+    await r.page.fill('#s-amt', '25');
+    await acceptLoss(r.page, '#s-go', '#s-ackv');
+    const e0 = BigInt(await rpc('eth_getBalance', [who, 'latest'])), n0 = BigInt(await rpc('eth_getTransactionCount', [who, 'latest']));
+    await r.page.click('#s-go');
+    await until(r.page, () => /Sold|class="err"/.test(document.querySelector('#s-status')?.innerHTML || ''), null, 240000);
+    ok((await tacOf(who)) === 75n * 10n ** 18n, `sell: 25 TAC sold ${await text(r.page, '#s-status')}`);
+    ok(BigInt(await rpc('eth_getTransactionCount', [who, 'latest'])) === n0 + 1n && (await allowanceOf(TAC, who, ZROUTER)) === 0n, 'sell: one transaction, the permit riding inside it, no allowance left');
+    ok(BigInt(await rpc('eth_getBalance', [who, 'latest'])) > e0, 'sell: ETH arrives, net of gas');
+  } finally { await r.browser.close(); await rpc('anvil_stopImpersonatingAccount', [who]); }
 });
 
 await step('v1', async () => {

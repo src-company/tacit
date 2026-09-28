@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-zPttP4Nfwz+SVXnHotLX+MPct0rcMaWXvGzoUFhM2i4=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-+zwVq9bnVmAEm9O+OOeQOGWpGUnA19ZshMyLQN3eUpE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -443,10 +443,12 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <div id="tac-bal"></div>
     <div class="seg" role="tablist" aria-label="TAC">
       <button type="button" role="tab" aria-selected="true" data-tac-mode="air">Airdrop</button>
-      <button type="button" role="tab" aria-selected="false" data-tac-mode="buy">Buy with ETH</button>
+      <button type="button" role="tab" aria-selected="false" data-tac-mode="buy">Buy</button>
+      <button type="button" role="tab" aria-selected="false" data-tac-mode="sell">Sell</button>
     </div>
     <div id="air-body" role="tabpanel"></div>
     <div id="buy-body" role="tabpanel" hidden></div>
+    <div id="sell-body" role="tabpanel" hidden></div>
   </div>
 </dialog>
 
@@ -529,7 +531,7 @@ import { makeEvmWallet } from '/evm-wallet.js?cb=0b99ec4f';
 import { makeEvmAccount } from '/evm-account.js';
 import { makeEvmTx } from '/evm-tx.js';
 import { makeTacAirdrop, makeRpcCall } from '/tac-airdrop.js?cb=02ef61b4';
-import { makeEvmTradeVenues } from '/evm-trade-venues.js?cb=b8e0c106';
+import { makeEvmTradeVenues, encErc20Approve } from '/evm-trade-venues.js?cb=38171d17';
 import { parseRecipient } from '/confidential-payout.js?cb=c27b4853';
 
 if (!secp.etc.hmacSha256Sync) secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, concatBytes(...m));
@@ -557,6 +559,7 @@ const SEL = {
   totalStaked: '817b1cd2', rewardRate: '7b0a47ee', periodFinish: 'ebe2b12b', staked: '98807d84', earned: '008cc262',
   previewZap: 'e7cddab0', previewAdd: 'e03ec807', zapETH: '8703a0d8', addAndStake: '6d15c09b', addAndStakeWithPermit: 'ddd9f3fb',
   claim: '4e71d92d', exitAndRemove: 'bccbe38a', aggregate3: '82ad56cb', timestamp: '0f28c97d',
+  zapToken: '9376f34e', zapTokenWithPermit: '51291e77', withdrawAndRemove: 'bd8196a9', withdrawTo: '47d1eebd', exitTo: '6ae36ea7', stake: 'a694fc3a', stakeWithPermit: 'ecd9ba82',
   wrapWithTip: 'fc24c435', postEscrowWithETH: 'c0e2d9a1', requiredEscrow: '034448ed', stEthPerWst: 'bb2952fc',
   escrowSufficient: '058e18b0', escrowTotal: 'e06e89c9', cbtcLockVBtc: '7cea1c1a', cbtcMinted: 'e2c2a40c', btcToUsd: 'd5901347', cdpRatioBps: '4827ecb3', liqRatioBps: '1432d93f', rate: '2c4e722e',
 };
@@ -1124,6 +1127,15 @@ function permitFromTacit({ token, name, version, owner, spender, value, nonce, d
   const sig = secp.sign(keccak_256(hexToBytes('1901' + domain + struct)), hexToBytes(strip(S.acct.priv)));
   return { v: 27 + sig.recovery, r: '0x' + sig.r.toString(16).padStart(64, '0'), s: '0x' + sig.s.toString(16).padStart(64, '0') };
 }
+// A permit from the paying account over TAC ('Tacit Token') or Precision LP shares ('Precision LP'), both version 1.
+async function permitSig({ token, name, spender, value, deadline, status }) {
+  const owner = S.address, nonce = wordAt(await ethCall(token, '7ecebe00' + addrWord(owner)), 0);
+  const permit = { token, name, version: '1', owner, spender, value, nonce, deadline };
+  if (payer() === 'tacit') return permitFromTacit(permit);
+  say(status, `Sign the ${name === 'Tacit Token' ? 'TAC' : 'LP'} approval in your wallet…`);
+  await ensureChain(1);
+  return evm.signErc2612(permit);
+}
 async function waitTx(hash, { timeoutMs = 10 * 60e3 } = {}) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
@@ -1290,7 +1302,7 @@ document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-
 
 // ── sheets + deep links ──────────────────────────────────────────────────────────────────────────────────
 const SHEETS = ['eth', 'btc', 'tac', 'pts', 'farm', 'borrow', 'wallet'];
-const ALIAS = { airdrop: ['tac', 'air'], buy: ['tac', 'buy'], private: ['eth', 'v1'], device: ['eth', 'dev'] };
+const ALIAS = { airdrop: ['tac', 'air'], buy: ['tac', 'buy'], sell: ['tac', 'sell'], private: ['eth', 'v1'], device: ['eth', 'dev'] };
 function openSheet(name) {
   const [sheet, tab] = ALIAS[name] || [name];
   const d = $(`#sheet-${sheet}`);
@@ -2182,9 +2194,8 @@ async function loadAirdrop() {
 }
 render.tac = () => {
   renderTacBal($('#tac-bal'));
-  $('#air-body').hidden = TAB.tac !== 'air';
-  $('#buy-body').hidden = TAB.tac !== 'buy';
-  if (TAB.tac === 'air') renderAirdrop($('#air-body')); else renderBuy($('#buy-body'));
+  for (const t of ['air', 'buy', 'sell']) $(`#${t}-body`).hidden = TAB.tac !== t;
+  ({ air: renderAirdrop, buy: renderBuy, sell: renderSell })[TAB.tac]($(`#${TAB.tac}-body`));
 };
 load.tac = () => Promise.all([TAB.tac === 'air' ? loadAirdrop() : loadPrecision(), loadTacHoldings()]);
 // One TAC balance across its three homes: canonical TAC on Bitcoin (this key's own address and the shielded payments it
@@ -2258,7 +2269,7 @@ function renderAirdrop(el) {
   if (ct) ct.onclick = () => busy(ct, async () => { try { await finish(await air.claimTo(S.wallet, recipientOf($('#air-to-addr').value), { send: sendWallet })); } catch (e) { sayErr(status, e); } });
   const wa = $('#air-watch');
   if (wa) wa.onclick = () => S.provider.request({ method: 'wallet_watchAsset', params: { type: 'ERC20', options: { address: ADDR.tac, symbol: 'TAC', decimals: 18, image: 'https://tacit.finance/tac-logo.png' } } }).catch(() => {});
-  const fm = $('#air-farm'); if (fm) fm.onclick = () => { $('#sheet-tac').close(); FARM.open = 'precision'; FARM.mode = 'pair'; openSheet('farm'); };
+  const fm = $('#air-farm'); if (fm) fm.onclick = () => { $('#sheet-tac').close(); Object.assign(FARM, { open: 'precision', mode: 'pair', fill: 'tac' }); openSheet('farm'); };
 }
 
 // Buy: the same venue search Tacit's market page runs (Precision band and Tacit's public AMM), sent through
@@ -2317,6 +2328,67 @@ function renderBuy(el) {
       clearField(input); rc.hidden = true; mount(ackBox, html``);
       toast('TAC bought'); say(status, html`<span class="ok">Bought.</span> ${txLink(hash)}`);
       loadPrecision().catch(() => {});
+    } catch (e) { sayErr(status, e); }
+  });
+}
+
+// Sell: public TAC for ETH through the same venues. A Precision sale is one transaction, zRouter taking the TAC permit as
+// its first leg; the Tacit public pool pulls the TAC itself, so it is approved first when it is the better route.
+function renderSell(el) {
+  if (!S.address) { mount(el, gate('Sell public TAC for ETH at the best quote.', 'Connect wallet', 'sell-connect')); return wireConnect('sell-connect', () => rerender('tac')); }
+  mount(el, html`
+    <div class="lbl"><span>Sell</span><button type="button" id="s-max">${payName()} <span id="s-bal">…</span> TAC</button></div>
+    <div class="amt"><input id="s-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="TAC to sell"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</span></div>
+    <div class="rcpt" id="s-rcpt" hidden></div>
+    <div id="s-ack"></div>
+    <button class="btn" type="button" id="s-go" disabled>Sell TAC</button>
+    <div class="status" role="status" id="s-status"></div>`);
+  const input = $('#s-amt'), go = $('#s-go'), rc = $('#s-rcpt'), status = $('#s-status'), ackBox = $('#s-ack'), who = S.address;
+  let bal = null, q = null, seq = 0;
+  multicall([{ to: ADDR.tac, data: SEL.balanceOf + addrWord(who) }]).then(([r]) => { bal = r ? wordAt(r, 0) : null; const e = $('#s-bal'); if (e) e.textContent = bal == null ? '—' : fmt(bal, 18, 2); }).catch(() => {});
+  $('#s-max').onclick = () => { if (bal) { input.value = plain(bal, 18); input.dispatchEvent(new Event('input')); } };
+  const gateOk = () => { go.disabled = !q || (bal != null && q.amountIn > bal) || !lossOk(ackBox, q.impact); };
+  onEdit([input], go, async (e) => {
+    const wei = parseUnits(input.value);
+    if (!input.isConnected) return;
+    q = null; go.disabled = true; if (e?.isTrusted) say(status, ''); mount(ackBox, html``);
+    if (!wei) { rc.hidden = true; return; }
+    const my = ++seq;
+    try {
+      const [r, sp] = await Promise.all([venues.quoteAll({ dir: 'TAC_TO_ETH', amountIn: wei, account: who, includeZQuoter: false }), ethCall(ADDR.precisionPool, SEL.sqrtPrice)]);
+      if (my !== seq || !input.isConnected) return;
+      if (!r.best) throw new Error('No pool can fill this right now.');
+      const s = Number(BigInt(sp)) / 1e18, mid = s > 0 ? Number(wei) / (s * s) : 0;     // ETH wei at the band's mid price
+      const impact = mid > 0 ? Math.max(0, (1 - Number(r.best.amountOut) / mid) * 100) : 0;
+      q = { ...r.best, impact };
+      mount(rc, html`
+        <div class="kv"><span>You get about</span><b>${fmt(r.best.amountOut, 18, 6)} ETH</b></div>
+        ${lossLine(impact)}
+        <div class="kv"><span>Route</span><b>${r.best.venue === 'precision' ? 'Precision pool' : 'Tacit public pool'}</b></div>`);
+      rc.hidden = false;
+      mount(ackBox, lossGate('s-ackv', impact, 'sale'));
+      wireAck(ackBox, 's-ackv', impact, gateOk);
+      if (bal != null && wei > bal) warn(rc, `${payName()} holds ${fmt(bal, 18, 2)} TAC on Ethereum.`);
+      else if (impact >= 5) warn(rc, 'This pool is thin: smaller amounts move the price less.');
+      gateOk();
+    } catch (e) { if (my === seq) quoteErr(rc, e); }
+  });
+  go.onclick = () => busy(go, async () => {
+    const x = q;
+    if (!x || !lossOk(ackBox, x.impact)) return;
+    try {
+      const dl = deadline(), args = { quote: x, dir: 'TAC_TO_ETH', account: who, slippageBps: 50, deadline: dl };
+      let tx = venues.build(args);
+      if (tx.approval && wordAt(await ethCall(ADDR.tac, SEL.allowance + addrWord(who) + addrWord(tx.approval.spender)), 0) < tx.approval.amount) {
+        if (x.venue === 'precision') tx = venues.build({ ...args, permit: { value: x.amountIn, deadline: dl, ...(await permitSig({ token: ADDR.tac, name: 'Tacit Token', spender: tx.approval.spender, value: x.amountIn, deadline: dl, status })) } });
+        else { const h = await sendTx({ to: ADDR.tac, data: encErc20Approve(tx.approval.spender, tx.approval.amount) }); say(status, html`Approving TAC… ${txLink(h)}`); await waitTx(h); }
+      }
+      const hash = await sendTx({ to: tx.to, data: tx.data, value: tx.value });
+      say(status, html`Selling… ${txLink(hash)}`);
+      await waitTx(hash);
+      clearField(input); rc.hidden = true; mount(ackBox, html``);
+      toast('TAC sold'); say(status, html`<span class="ok">Sold.</span> ${txLink(hash)}`);
+      loadTacHoldings().then(() => rerender('tac')).catch(() => {}); loadPrecision().catch(() => {});
     } catch (e) { sayErr(status, e); }
   });
 }
@@ -2491,7 +2563,7 @@ function weiForm(f, status) {
 }
 
 // ── farms ────────────────────────────────────────────────────────────────────────────────────────────────
-const FARM = { precision: null, program: null, open: 'precision', mode: 'zap', positions: null };
+const FARM = { precision: null, program: null, open: 'precision', mode: null, positions: null, outPct: '100', outAs: 'both', fill: null };
 let precisionSeq = 0;
 async function loadPrecision() {
   const my = ++precisionSeq;
@@ -2501,10 +2573,11 @@ async function loadPrecision() {
     { to: f, data: SEL.totalStaked }, { to: f, data: SEL.rewardRate }, { to: f, data: SEL.periodFinish }, { to: ADDR.multicall, data: SEL.timestamp },
   ];
   if (S.address) calls.push({ to: f, data: SEL.staked + addrWord(S.address) }, { to: f, data: SEL.earned + addrWord(S.address) },
-    { to: ADDR.tac, data: SEL.balanceOf + addrWord(S.address) }, { to: ADDR.tac, data: SEL.allowance + addrWord(S.address) + addrWord(f) });
+    { to: ADDR.tac, data: SEL.balanceOf + addrWord(S.address) }, { to: ADDR.tac, data: SEL.allowance + addrWord(S.address) + addrWord(f) },
+    { to: p, data: SEL.balanceOf + addrWord(S.address) }, { to: p, data: SEL.allowance + addrWord(S.address) + addrWord(f) });
   const r = await multicall(calls);
   const w = (i) => r[i] ? wordAt(r[i], 0) : 0n;
-  const x = { who: S.address, r0: w(0), r1: w(1), supply: w(2), sp: w(3), totalStaked: w(4), rate: w(5), finish: Number(w(6)), t: Number(w(7)) || now(), staked: w(8), earned: w(9), tac: w(10), allowance: w(11) };
+  const x = { who: S.address, r0: w(0), r1: w(1), supply: w(2), sp: w(3), totalStaked: w(4), rate: w(5), finish: Number(w(6)), t: Number(w(7)) || now(), staked: w(8), earned: w(9), tac: w(10), allowance: w(11), lp: w(12), lpAllow: w(13) };
   x.live = x.t < x.finish;
   CLOCK.skew = x.t - now();
   x.perDay = x.live ? x.rate * 86400n : 0n;
@@ -2581,111 +2654,185 @@ render.farm = () => {
   else if (FARM.open?.startsWith('pid')) renderShielded($(`#farm-${FARM.open}`), (prog?.pools || []).find((p) => 'pid' + p.pid === FARM.open));
 };
 
+// The public farm, whole: add from ETH, TAC or both (a permit stands in for any approval), stake LP already held, and
+// see, claim and withdraw a position — part or all of it, as both assets or swapped into one.
 function renderPrecision(el) {
   const x = FARM.precision;
   if (!x) { mount(el, html`<p class="note">Reading the farm…</p>`); return; }
-  if (!S.address) { mount(el, gate('Deposit ETH, or ETH with TAC, and the farm stakes it for you. TAC streams to you every second.', 'Connect wallet', 'pf-connect')); return wireConnect('pf-connect', () => rerender('farm')); }
+  if (!S.address) { mount(el, gate('Deposit ETH, TAC or both, and the farm stakes it for you. TAC streams to you every second.', 'Connect wallet', 'pf-connect')); return wireConnect('pf-connect', () => rerender('farm')); }
   if (x.who !== S.address) { mount(el, html`<p class="note">Reading your balances…</p>`); loadFarms().then(() => rerender('farm')).catch(() => {}); return; }
-  const has = x.staked > 0n;
+  if (!FARM.mode) FARM.mode = x.tac >= 10n ** 18n ? 'pair' : 'eth';
+  const has = x.staked > 0n, mode = FARM.mode, withEth = mode !== 'tac', withTac = mode !== 'eth';
+  const myDay = has && x.totalStaked ? x.perDay * x.staked / x.totalStaked : 0n;
   mount(el, html`
     <div class="kv"><span>${x.live ? 'Stream ends' : 'Stream'}</span><b>${x.live ? dayFmt(x.finish) : 'between reward periods'}</b></div>
     ${has ? html`
       <div class="kv"><span>Your stake</span><b>${fmt(x.mine.eth, 18, 4)} ETH + ${fmt(x.mine.tac, 18, 2)} TAC</b></div>
-      <div class="kv"><span>Earned</span><b>${fmt(x.earned, 18, 4)} TAC</b></div>
-      <div class="row2">
-        <button class="btn ghost" type="button" id="pf-claim" ${x.earned === 0n ? 'disabled' : ''}>Claim TAC</button>
-        <button class="btn ghost" type="button" id="pf-exit">Withdraw all</button>
-      </div>` : ''}
-    ${segSub('pfm', FARM.mode, [['zap', 'ETH only'], ['pair', 'ETH + TAC']])}
-    <div class="lbl"><span>ETH</span><button type="button" id="pf-max">${payName()} ${fmt(x.bal || 0n, 18, 4)} ETH</button></div>
-    <div class="amt"><input id="pf-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="ETH to deposit"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>
+      <div class="kv"><span>Earning</span><b>${fmt(myDay, 18, 2)} TAC a day · ${pctFmt(Number(x.staked * 10000n / x.totalStaked) / 100)} of the farm</b></div>
+      <button class="btn ghost" type="button" id="pf-claim" ${x.earned === 0n ? 'disabled' : ''}>Claim ${fmt(x.earned, 18, 2)} TAC</button>
+      <div class="lbl"><span>Withdraw</span></div>
+      ${segSub('pfp', FARM.outPct, [['25', '25%'], ['50', '50%'], ['100', 'All']])}
+      ${segSub('pfr', FARM.outAs, [['both', 'ETH + TAC'], ['eth', 'As ETH'], ['tac', 'As TAC']])}
+      <div class="rcpt" id="pf-out-rcpt" hidden></div>
+      <div id="pf-out-ack"></div>
+      <button class="btn ghost" type="button" id="pf-exit" disabled>Withdraw</button>` : ''}
+    ${x.lp > 0n ? html`
+      <div class="kv"><span>LP shares not staked</span><b>${fmt(x.lp, 18, 6)}</b></div>
+      <button class="btn ghost" type="button" id="pf-stake">Stake them</button>` : ''}
+    <div class="lbl"><span>${has ? 'Add more' : 'Farm with'}</span></div>
+    ${segSub('pfm', mode, [['eth', 'ETH'], ['tac', 'TAC'], ['pair', 'ETH + TAC']])}
+    ${withEth ? html`
+      <div class="lbl"><span>ETH</span><button type="button" id="pf-max">${payName()} ${fmt(x.bal || 0n, 18, 4)} ETH</button></div>
+      <div class="amt"><input id="pf-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="ETH to deposit"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>` : ''}
+    ${withTac ? html`
+      <div class="lbl"><span>TAC</span><button type="button" id="pf-tmax">${payName()} ${fmt(x.tac, 18, 2)} TAC</button></div>
+      <div class="amt"><input id="pf-tac" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="TAC to deposit"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</span></div>` : ''}
     <div class="rcpt" id="pf-rcpt" hidden></div>
     <div id="pf-ack"></div>
-    <button class="btn" type="button" id="pf-go" disabled>${FARM.mode === 'zap' ? 'Farm with ETH' : 'Farm with ETH + TAC'}</button>
+    <button class="btn" type="button" id="pf-go" disabled>${{ eth: 'Farm with ETH', tac: 'Farm with TAC', pair: 'Farm with ETH + TAC' }[mode]}</button>
     <div class="status" role="status" id="pf-status"></div>`);
+  const status = $('#pf-status'), done = async (hash, what, note) => {
+    say(status, html`${what}… ${txLink(hash)}`);
+    await waitTx(hash);
+    say(status, html`<span class="ok">${note}</span> ${txLink(hash)}`);
+    await loadFarms(); rerender('farm');
+  };
   wireSub(el, 'pfm', (m) => { FARM.mode = m; keep($('#sheet-farm'), render.farm); });
-  const input = $('#pf-amt'), go = $('#pf-go'), rc = $('#pf-rcpt'), status = $('#pf-status'), ackBox = $('#pf-ack');
+
+  // ── add ──
+  const ethIn = $('#pf-amt'), tacIn = $('#pf-tac'), go = $('#pf-go'), rc = $('#pf-rcpt'), ackBox = $('#pf-ack');
+  const GAS = 3n * 10n ** 15n, spendable = x.bal > GAS ? x.bal - GAS : 0n;
+  const tacFor = (wei) => (x.r0 > 0n ? (wei * x.r1 + x.r0 - 1n) / x.r0 : 0n);        // TAC at the pool's own ratio
+  const ethFor = (tac) => (x.r1 > 0n ? (tac * x.r0 + x.r1 - 1n) / x.r1 : 0n);
   let q = null, seq = 0;
   const gateOk = () => { go.disabled = !q || q.over || !lossOk(ackBox, q.loss); };
   const requote = async (e) => {
-    const wei = parseUnits(input.value);
-    if (!input.isConnected) return;
+    if (mode === 'pair' && e?.target === ethIn) tacIn.value = ethIn.value ? plain(tacFor(parseUnits(ethIn.value) || 0n), 18) : '';
+    if (mode === 'pair' && e?.target === tacIn) ethIn.value = tacIn.value ? plain(ethFor(parseUnits(tacIn.value) || 0n), 18) : '';
+    const wei = withEth ? parseUnits(ethIn.value) || 0n : 0n, tac = withTac ? parseUnits(tacIn.value) || 0n : 0n;
+    if (!go.isConnected) return;
     q = null; go.disabled = true; mount(ackBox, html``); if (e?.isTrusted) say(status, '');
-    if (!wei || wei <= 0n) { rc.hidden = true; return; }
+    if (!wei && !tac) { rc.hidden = true; return; }
     const my = ++seq;
     try {
-      let lp, tac = 0n, loss = 0;
-      if (FARM.mode === 'zap') {
-        const r = strip(await ethCall(ADDR.precisionLens, SEL.previewZap + addrWord(ADDR.precisionPool) + addrWord(ZERO) + word(wei)));
-        if (wordAt(r, 0) !== 1n || wordAt(r, 2) === 0n) throw new Error('The pool would refuse this deposit.');
-        lp = wordAt(r, 2);
-        const ideal = Number(x.supply) * Number(wei) / x.value;                       // shares a balanced deposit of the same value gets
-        loss = ideal > 0 ? Math.max(0, (1 - Number(lp) / ideal) * 100) : 0;
-      } else {
-        tac = x.r0 > 0n ? (wei * x.r1 + x.r0 - 1n) / x.r0 : 0n;                        // TAC at the pool's own ratio
+      let lp, loss = 0;
+      if (mode === 'pair') {
         const r = strip(await ethCall(ADDR.precisionLens, SEL.previewAdd + addrWord(ADDR.precisionPool) + word(wei) + word(tac)));
         if (wordAt(r, 0) !== 1n || wordAt(r, 1) === 0n) throw new Error('The pool would refuse this deposit.');
         lp = wordAt(r, 1);
+      } else {
+        const amount = mode === 'eth' ? wei : tac;
+        const r = strip(await ethCall(ADDR.precisionLens, SEL.previewZap + addrWord(ADDR.precisionPool) + addrWord(mode === 'eth' ? ZERO : ADDR.tac) + word(amount)));
+        if (wordAt(r, 0) !== 1n || wordAt(r, 2) === 0n) throw new Error('The pool would refuse this deposit.');
+        lp = wordAt(r, 2);
+        const worth = mode === 'eth' ? Number(amount) : Number(amount) * x.tacEth;       // in ETH wei at mid
+        const ideal = Number(x.supply) * worth / x.value;                                 // shares a balanced deposit of the same value gets
+        loss = ideal > 0 ? Math.max(0, (1 - Number(lp) / ideal) * 100) : 0;
       }
-      if (my !== seq || !input.isConnected) return;
+      if (my !== seq || !go.isConnected) return;
       const share = lp * 10000n / (x.totalStaked + lp);
-      q = { wei, lp, tac, loss, over: (x.bal != null && wei > x.bal) || (tac > 0n && tac > x.tac) };
+      q = { wei, tac, lp, loss, over: wei > (x.bal ?? wei) || tac > x.tac };
       mount(rc, html`
-        ${tac ? html`<div class="kv"><span>With TAC</span><b>${fmt(tac, 18, 4)} TAC <span class="mute">of ${fmt(x.tac, 18, 2)}</span></b></div>` : ''}
+        ${mode === 'pair' ? html`<div class="kv"><span>Deposit</span><b>${fmt(wei, 18, 5)} ETH + ${fmt(tac, 18, 2)} TAC</b></div>` : ''}
         ${lossLine(loss)}
         <div class="kv"><span>Share of the farm</span><b>${(Number(share) / 100).toFixed(2)}%</b></div>
         <div class="kv"><span>Earns about</span><b>${fmt(x.perDay * lp / (x.totalStaked + lp), 18, 2)} TAC a day</b></div>`);
       rc.hidden = false;
       mount(ackBox, lossGate('pf-ackv', loss, 'deposit'));
       wireAck(ackBox, 'pf-ackv', loss, gateOk);
-      if (q.over) warn(rc, wei > (x.bal ?? wei) ? lowEth() : html`Not enough TAC. <button class="link" type="button" data-go="buy">Buy TAC</button> or claim the airdrop.`);
-      else if (loss >= 0.5) warn(rc, html`Depositing ETH alone swaps half through this thin pool.${x.tac > 0n ? html` <button class="link" type="button" data-go="pair">Add TAC too</button>` : ''}`);
+      if (wei > (x.bal ?? wei)) warn(rc, lowEth());
+      else if (tac > x.tac) warn(rc, html`Not enough TAC. <button class="link" type="button" data-go="buy">Buy TAC</button> or claim the airdrop.`);
+      else if (loss >= 0.5) warn(rc, html`A one-sided deposit swaps about half through this thin pool.${mode === 'eth' && x.tac > 0n ? html` <button class="link" type="button" data-go="pair">Add TAC too</button>` : ''}`);
       rc.querySelector('[data-go="buy"]')?.addEventListener('click', () => { $('#sheet-farm').close(); openSheet('buy'); });
       rc.querySelector('[data-go="pair"]')?.addEventListener('click', () => { FARM.mode = 'pair'; keep($('#sheet-farm'), render.farm); });
       gateOk();
-    } catch (e) { if (my === seq) quoteErr(rc, e); }
+    } catch (e2) { if (my === seq) quoteErr(rc, e2); }
   };
-  onEdit([input], go, requote);
-  $('#pf-max').onclick = () => { if (x.bal) { const v = x.bal > 3n * 10n ** 15n ? x.bal - 3n * 10n ** 15n : 0n; input.value = v ? plain(v, 18) : ''; requote(); } };
+  onEdit([ethIn, tacIn].filter(Boolean), go, requote);
+  const fill = (input, v) => { input.value = v > 0n ? plain(v, 18) : ''; requote({ target: input }); };
+  $('#pf-max')?.addEventListener('click', () => fill(ethIn, mode === 'pair' ? (ethFor(x.tac) < spendable ? ethFor(x.tac) : spendable) : spendable));
+  $('#pf-tmax')?.addEventListener('click', () => fill(tacIn, mode === 'pair' ? (tacFor(spendable) < x.tac ? tacFor(spendable) : x.tac) : x.tac));
+  if (FARM.fill === 'tac' && tacIn) { FARM.fill = null; $('#pf-tmax').click(); }
   go.onclick = () => busy(go, async () => {
     const z = q;                                                  // the quote shown when pressed, whatever is typed after
     if (!z || !lossOk(ackBox, z.loss)) return;
     try {
-      const minShares = z.lp * 995n / 1000n, dl = deadline();
-      let hash;
-      if (FARM.mode === 'zap') hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.zapETH + word(0) + word(minShares) + word(dl), value: z.wei });
-      else if (x.allowance >= z.tac) hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.addAndStake + word(z.tac) + word(minShares) + word(dl), value: z.wei });
-      else {
-        const nonce = wordAt(await ethCall(ADDR.tac, '7ecebe00' + addrWord(S.address)), 0);
-        const permit = { token: ADDR.tac, name: 'Tacit Token', version: '1', owner: S.address, spender: ADDR.precisionFarm, value: z.tac, nonce, deadline: dl };
-        let sig;
-        if (payer() === 'tacit') sig = permitFromTacit(permit);
-        else { say(status, 'Sign the TAC approval in your wallet…'); await ensureChain(1); sig = await evm.signErc2612(permit); }
-        hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.addAndStakeWithPermit + word(z.tac) + word(minShares) + word(dl) + word(sig.v) + strip(sig.r) + strip(sig.s), value: z.wei });
-      }
-      say(status, html`Staking… ${txLink(hash)}`);
-      await waitTx(hash);
-      clearField(input); delete acked['pf-ackv'];
-      say(status, html`<span class="ok">Staked.</span> ${txLink(hash)}`);
-      await loadFarms(); rerender('farm');
+      const minShares = z.lp * 995n / 1000n, dl = deadline(), tail = word(minShares) + word(dl);
+      const permit = async () => { const sig = await permitSig({ token: ADDR.tac, name: 'Tacit Token', spender: ADDR.precisionFarm, value: z.tac, deadline: dl, status }); return word(sig.v) + strip(sig.r) + strip(sig.s); };
+      let tx;
+      if (mode === 'eth') tx = { data: SEL.zapETH + word(0) + tail, value: z.wei };
+      else if (mode === 'tac') tx = { data: x.allowance >= z.tac ? SEL.zapToken + word(z.tac) + word(0) + tail : SEL.zapTokenWithPermit + word(z.tac) + word(0) + tail + await permit() };
+      else tx = { data: x.allowance >= z.tac ? SEL.addAndStake + word(z.tac) + tail : SEL.addAndStakeWithPermit + word(z.tac) + tail + await permit(), value: z.wei };
+      const hash = await sendTx({ to: ADDR.precisionFarm, ...tx });
+      [ethIn, tacIn].forEach((i) => i && clearField(i)); delete acked['pf-ackv'];
+      await done(hash, 'Staking', 'Staked.');
       toast('Staked. TAC is streaming to you.');
     } catch (e) { sayErr(status, e); }
   });
+
+  // ── stake LP already held ──
+  const st = $('#pf-stake');
+  if (st) st.onclick = () => busy(st, async () => {
+    try {
+      const dl = deadline();
+      let data = SEL.stake + word(x.lp);
+      if (x.lpAllow < x.lp) { const sig = await permitSig({ token: ADDR.precisionPool, name: 'Precision LP', spender: ADDR.precisionFarm, value: x.lp, deadline: dl, status }); data = SEL.stakeWithPermit + word(x.lp) + word(dl) + word(sig.v) + strip(sig.r) + strip(sig.s); }
+      await done(await sendTx({ to: ADDR.precisionFarm, data }), 'Staking', 'Staked.');
+      toast('Staked. TAC is streaming to you.');
+    } catch (e) { sayErr(status, e); }
+  });
+
+  // ── the position: claim and withdraw ──
   const c = $('#pf-claim');
   if (c) c.onclick = () => busy(c, async () => {
-    try { const hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.claim }); say(status, html`Claiming… ${txLink(hash)}`); await waitTx(hash); say(status, html`<span class="ok">Claimed to ${your()}.</span> ${txLink(hash)}`); await loadFarms(); rerender('farm'); toast('TAC claimed'); }
+    try { await done(await sendTx({ to: ADDR.precisionFarm, data: SEL.claim }), 'Claiming', `Claimed to ${your()}.`); toast('TAC claimed'); }
     catch (e) { sayErr(status, e); }
   });
   const ex = $('#pf-exit');
-  if (ex) ex.onclick = () => busy(ex, async () => {
+  if (!ex) return;
+  const outRc = $('#pf-out-rcpt'), outAck = $('#pf-out-ack');
+  // All of it goes through exit*, which also pays what has been earned; part of it through withdraw*, which leaves the
+  // rest staked and earning. `as` picks both assets back, or one of them with the other half swapped in.
+  const outData = (all, as, shares, m0, m1, dl) => (as === 'both'
+    ? (all ? SEL.exitAndRemove : SEL.withdrawAndRemove + word(shares)) + word(m0) + word(m1) + word(dl)
+    : (all ? SEL.exitTo + word(as === 'eth' ? 1 : 0) : SEL.withdrawTo + word(as === 'eth' ? 1 : 0) + word(shares)) + word(m0) + word(dl));
+  let w = null, wseq = 0;
+  const outGateOk = () => { ex.disabled = !w || !lossOk(outAck, w.loss); };
+  const preview = async () => {
+    const my = ++wseq, all = FARM.outPct === '100', as = FARM.outAs, shares = all ? x.staked : x.staked * BigInt(FARM.outPct) / 100n;
+    w = null; ex.disabled = true; mount(outAck, html``);
     try {
-      // Simulate the exit for its exact outputs, then hold each to 0.5% below.
-      const dl = deadline();
-      const sim = strip(await ethCall(ADDR.precisionFarm, SEL.exitAndRemove + word(0) + word(0) + word(dl), { from: S.address }));
-      const min0 = wordAt(sim, 0) * 995n / 1000n, min1 = wordAt(sim, 1) * 995n / 1000n;
-      const hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.exitAndRemove + word(min0) + word(min1) + word(dl) });
-      say(status, html`Withdrawing ETH, TAC and rewards… ${txLink(hash)}`);
-      await waitTx(hash); say(status, html`<span class="ok">Withdrawn to ${your()}.</span> ${txLink(hash)}`); await loadFarms(); rerender('farm'); toast(`Withdrawn to ${your()}`);
+      const r = strip(await ethCall(ADDR.precisionFarm, outData(all, as, shares, 0n, 0n, deadline()), { from: S.address }));
+      if (my !== wseq || !ex.isConnected) return;
+      const worth = x.value * Number(shares) / Number(x.supply);                        // in ETH wei at mid
+      const got = as === 'both' ? null : wordAt(r, 0);
+      const loss = got == null ? 0 : Math.max(0, (1 - Number(got) / (as === 'eth' ? worth : worth / x.tacEth)) * 100);
+      w = { all, as, shares, loss };
+      mount(outRc, html`
+        <div class="kv"><span>You get about</span><b>${as === 'both' ? `${fmt(wordAt(r, 0), 18, 5)} ETH + ${fmt(wordAt(r, 1), 18, 2)} TAC` : `${fmt(got, 18, as === 'eth' ? 5 : 2)} ${as === 'eth' ? 'ETH' : 'TAC'}`}</b></div>
+        ${all && x.earned > 0n ? html`<div class="kv"><span>Plus earned</span><b>${fmt(x.earned, 18, 2)} TAC</b></div>` : ''}
+        ${lossLine(loss)}`);
+      outRc.hidden = false;
+      mount(outAck, lossGate('pf-outv', loss, 'withdrawal'));
+      wireAck(outAck, 'pf-outv', loss, outGateOk);
+      ex.textContent = all ? 'Withdraw all' : `Withdraw ${FARM.outPct}%`;
+      outGateOk();
+    } catch (e) { if (my === wseq) quoteErr(outRc, e); }
+  };
+  wireSub(el, 'pfp', (v) => { FARM.outPct = v; keep($('#sheet-farm'), render.farm); });
+  wireSub(el, 'pfr', (v) => { FARM.outAs = v; keep($('#sheet-farm'), render.farm); });
+  preview();
+  ex.onclick = () => busy(ex, async () => {
+    const z = w;
+    if (!z || !lossOk(outAck, z.loss)) return;
+    try {
+      // Simulate for the exact outputs, then hold each to 0.5% below.
+      const dl = deadline(), sim = strip(await ethCall(ADDR.precisionFarm, outData(z.all, z.as, z.shares, 0n, 0n, dl), { from: S.address }));
+      const min0 = wordAt(sim, 0) * 995n / 1000n, min1 = z.as === 'both' ? wordAt(sim, 1) * 995n / 1000n : 0n;
+      const hash = await sendTx({ to: ADDR.precisionFarm, data: outData(z.all, z.as, z.shares, min0, min1, dl) });
+      delete acked['pf-outv'];
+      await done(hash, 'Withdrawing', `Withdrawn to ${your()}.`);
+      toast(`Withdrawn to ${your()}`);
     } catch (e) { sayErr(status, e); }
   });
 }
