@@ -13,7 +13,7 @@
      leave a stale pin behind. Fonts are same-origin static files, not a third-party
      CDN. connect-src is limited to public Bitcoin explorers + IPFS gateways.
      No third-party script, no analytics. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-rprOIzjDJqDtLQHZHCTWN2uJ4d8BNm4UchZe55Zo01c='; style-src 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src https://mempool.space https://blockstream.info https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link https://gateway.pinata.cloud https://trustless-gateway.link https://*.ipfs.inbrowser.link; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Fw1s4D4rukDk5UVYkp31oT9dPmTymV+eqldTLSuPWkU='; style-src 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src https://mempool.space https://blockstream.info https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link https://gateway.pinata.cloud https://trustless-gateway.link https://*.ipfs.inbrowser.link; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#E8E0CC" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#15130E" media="(prefers-color-scheme: dark)">
@@ -306,20 +306,25 @@ function b32decode(s) { let bits = 0, val = 0; const out = []; for (const ch of 
 function cidDigest(cid) { const raw = b32decode(cid.slice(1)); if (raw[0] !== 0x01 || raw[1] !== 0x55 || raw[2] !== 0x12 || raw[3] !== 0x20) throw new Error('not a CIDv1 raw sha2-256'); return raw.slice(4, 36); }
 async function fetchVerifiedIpfs(cid) {
   const want = toHex(cidDigest(cid));
+  const errors = [];
   for (const tmpl of IPFS_GATEWAYS) {
     const url = tmpl.replace('{cid}', cid);
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 15000);
         const r = await fetch(url, { signal: ctl.signal }); clearTimeout(t);
-        if (!r.ok) break;
+        if (!r.ok) { errors.push(`${url}: HTTP ${r.status}`); break; }
         const buf = new Uint8Array(await r.arrayBuffer());
-        if (toHex(await sha256(buf)) !== want) throw new Error('content does not match CID');
+        if (toHex(await sha256(buf)) !== want) { errors.push(`${url}: content does not match CID`); break; }
         return buf;
-      } catch (e) { if (String(e.message).includes('match CID')) throw e; }
+      } catch (e) { errors.push(`${url}: ${e.message || e}`); }
     }
   }
-  throw new Error('all IPFS gateways unreachable — re-run (public gateways are flaky)');
+  // A single gateway serving wrong bytes (rate-limit interstitial, stale cache, bad actor) must never abort
+  // the whole check — CID verification means exactly that no single gateway is trusted, so a mismatch from
+  // one is just that gateway failing, same as a timeout or a 5xx. Only exhausting every gateway is fatal.
+  console.error('IPFS gateway failures:\n  ' + errors.join('\n  '));
+  throw new Error(`all ${IPFS_GATEWAYS.length} IPFS gateways failed to serve this CID (see console for detail) — re-run (public gateways are flaky)`);
 }
 async function fetchTx(txid) {
   for (const api of BTC_APIS) { try { const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 10000); const r = await fetch(`${api}/tx/${txid}`, { signal: ctl.signal }); clearTimeout(t); if (r.ok) return await r.json(); } catch {} }
