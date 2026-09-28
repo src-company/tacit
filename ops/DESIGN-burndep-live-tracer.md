@@ -357,8 +357,41 @@ Verified in `tests/burn-deposit-reveal.test.mjs` with a deterministic test walle
 built transactions classify correctly via the exact functions reflect.rs mirrors
 (`classifyConfidentialTx`/`extractInputs`), and — independently of the module's own internal checks — both
 signatures verify against a from-scratch BIP-341 sighash reimplementation, and the migration's commit output
-independently re-derives to the correct NUMS-tweaked key. 7/7 checks pass. Not yet exercised against a real
-UTXO or broadcast — that's a deliberate next step, not skipped.
+independently re-derives to the correct NUMS-tweaked key. 7/7 checks pass.
+
+## Update: proven against real signet infrastructure, both phases
+
+Followed the synthetic test with a real signet run: a fresh test asset etched live (funded via the project's
+own signet faucet, `~/.tacit-seed-note`-style throwaway keys — zero real value), migrated to its burn-home via
+a real, broadcast, confirmed transaction pair, then the actual burn-deposit reveal built and checked.
+
+Two real, previously-untested facts surfaced along the way, both now resolved:
+
+- **Bulletproofs+ range proofs are not deterministic.** An RBF attempt that regenerated the proof from scratch
+  (same value, same blinding) produced a different proof, and therefore a different envelope, leaf hash, and
+  commit-output key than what the already-broadcast commit had actually committed to — a real
+  `mempool-script-verify-flag-failed` rejection from a live node, not a theoretical concern. Fixed by extracting
+  and reusing the exact original envelope bytes from the pending transaction's own witness rather than
+  recomputing them — the only safe way to bump a stuck proof-carrying transaction's fee.
+- **Signet fee estimation here is unreliable** — reported ~64 sat/vB consistently while blocks were actually
+  confirming transactions in the low single digits, and low-fee transactions could sit for multiple blocks
+  before inclusion despite the network processing blocks on a normal (if irregular, 2-17 minute) cadence.
+  Worked around by picking rates empirically and bumping via RBF rather than trusting the estimator.
+
+The migration step confirmed for real: commit and reveal both broadcast, both mined, the resulting burn-home
+output live on chain. The burn-deposit reveal itself was built and correctly **rejected by ordinary relay** —
+`bad-witness-nonstandard`, the exact, expected, designed-for policy rejection (the 161-byte envelope exceeds
+Core's 80-byte witness-item standardness cap) that is the entire reason real burn-deposits need direct-to-miner
+submission (MARA on mainnet; signet has no equivalent public service). Confirmed the transaction is fully
+consensus-valid anyway using the same technique every real mainnet burn used: a probe with the oversized
+witness item replaced by a small dummy (BIP341's sighash excludes witness stack contents, so this doesn't
+change what the signature covers) checked via `testmempoolaccept` against a real, independent public signet
+Bitcoin Core node (`bitcoin-signet-rpc.publicnode.com`) — `"allowed": true`, txid/wtxid matching the locally
+computed values exactly. The burn-home note itself was never actually spent (the probe is a pure dry run,
+never broadcast), so it remains available for a future real test if one is wanted.
+
+Both phases of `dapp/burn-deposit-reveal.js` are now verified: not just synthetically, but against real
+broadcast transactions and a real Bitcoin Core node's own consensus engine.
 
 ## What NOT to do
 
