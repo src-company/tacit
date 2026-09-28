@@ -320,6 +320,9 @@ export function createTacitServer({ workerModule, env, driver, ctxFactory }) {
       }
       await writeWebResponse(resp, nodeRes);
     } catch (e) {
+      // The client went away mid-response (tab closed, a proxy timeout) — Node can no longer pipe into
+      // the socket. Routine under any concurrent load, not a handler bug; nothing to write back to either.
+      if (e?.code === 'ERR_STREAM_UNABLE_TO_PIPE') { console.log('[harness] client disconnected mid-response', nodeReq.method, nodeReq.url); return; }
       console.error('[harness]', nodeReq.method, nodeReq.url, e?.stack || e);
       if (!nodeRes.headersSent) nodeRes.writeHead(500, { 'Content-Type': 'application/json' });
       if (!nodeRes.writableEnded) nodeRes.end(JSON.stringify({ error: 'internal error' }));

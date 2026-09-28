@@ -74,6 +74,9 @@ const memGuard = process.env.MEM_GUARD_DISABLED === '1' ? null : startMemoryGuar
   onShutdown: (reason) => shutdown(reason),
 });
 server.memGuard = memGuard;
+// Late-wired for the same reason srv.memGuard is: worker/src/index.js only ever sees `env`, never `srv`,
+// and a pre-request memory check (handleReflectionJob) needs it there.
+env.memGuard = memGuard;
 
 const port = Number(process.env.PORT) || 8787;
 server.listen(port, () => {

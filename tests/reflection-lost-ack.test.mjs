@@ -246,6 +246,18 @@ ok('and records the tx', JSON.parse(kvStore.get('reflection:lastack:mainnet')).t
   ok('the drift probe needs a trusted last ack', /!att\.lastAck\.seeded/.test(fn));
 }
 
+// ── memory pressure gate: /reflection/job refuses (503 + Retry-After) before paying assembleJob's cost ──
+{
+  env.memGuard = { snapshot: () => ({ rssMb: 800, limitMb: 1000, softMb: 750, hardMb: 900, heapUsedMb: null, heapLimitMb: null }) };
+  const r = await call('/reflection/job?network=mainnet');
+  ok('over the soft memory threshold refuses with 503', r.status === 503);
+  ok('and names a retry window', r.headers.get('retry-after') === '5');
+  env.memGuard = { snapshot: () => ({ rssMb: 200, limitMb: 1000, softMb: 750, hardMb: 900, heapUsedMb: null, heapLimitMb: null }) };
+  const r2 = await call('/reflection/job?network=mainnet');
+  ok('under the threshold serves normally again', r2.status === 200);
+  delete env.memGuard;
+}
+
 globalThis.fetch = realFetch;
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

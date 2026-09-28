@@ -1013,6 +1013,26 @@ async function handleReflectionAttestState(req, env, url, cors) {
   return jsonResponse({ network, submitted: await readJson(reflectionSubmittedKey(network)), lastAck, driftStreak: drift ? Number(drift.streak) | 0 : 0, crossOutGapSince: coGap ? Number(coGap.since) || 0 : 0, now: Date.now() }, 200, h);
 }
 
+// Single-flight per network: concurrent /reflection/job polls (a retry, more than one relayer instance)
+// would otherwise each pay assembleJob's full block-fetch+index cost for the same batch. A second caller
+// awaits the first's in-flight result instead of building a redundant one; `ethContentHash` is captured
+// from whichever `att` actually ran the assembly, since a caller that only awaited would otherwise read
+// its own (never-run) closure's stale value.
+const _reflectionAssembleInFlight = new Map(); // network -> Promise<{ job, ethContentHash }>
+
+// True once RSS is at or above server/memory-guard.mjs's own soft threshold (or, lacking an RSS reading,
+// once the heap is at or above the same fraction of its own cap) — mirroring the guard's "whichever
+// ceiling is nearer" check with what `snapshot()` exposes. `env.memGuard` only exists under the Node
+// harness (server/index.mjs wires it on late, the same way `srv.memGuard` is); a Cloudflare Workers
+// deployment has neither, so this reads null and never blocks there.
+function reflectionOverSoftMemory(env) {
+  const mem = env.memGuard?.snapshot?.();
+  if (!mem || !mem.limitMb) return false;
+  const softRatio = mem.softMb / mem.limitMb;
+  if (mem.rssMb / mem.limitMb >= softRatio) return true;
+  return !!(mem.heapLimitMb && mem.heapUsedMb / mem.heapLimitMb >= softRatio);
+}
+
 // Reflection relay: serve the next assembled Bitcoin-state batch for the relayer to prove. The relayer
 // (worker-relay/src/reflection-folder.js) proves it, submits attestBitcoinStateProven on-chain, then
 // POSTs /reflection/ack. Returns {} when nothing is pending; 404 when reflection attest is off.
@@ -1036,11 +1056,21 @@ async function handleReflectionJob(req, env, url, cors) {
   // from it would revert; adopt the landed batch first so the next job builds on what the pool actually holds.
   try { await reconcileLandedReflection(env, network, att); }
   catch (e) { console.log(`[reflection] lost-ack reconcile failed: ${e?.message || e}`); }
-  const job = await att.assembleJob();
+  // Refuse before paying assembleJob's cost rather than let it land on top of an already-stressed
+  // process — the guard's own hard ceiling would otherwise recycle mid-response. The relayer just retries.
+  if (reflectionOverSoftMemory(env)) {
+    return jsonResponse({ error: 'temporarily over capacity, retry shortly' }, 503, { ...cors, 'Cache-Control': 'no-store', 'Retry-After': '5' });
+  }
+  let inFlight = _reflectionAssembleInFlight.get(network);
+  if (!inFlight) {
+    inFlight = att.assembleJob().then((job) => ({ job, ethContentHash: att.lastEthContentHash ? att.lastEthContentHash() : null }));
+    inFlight.finally(() => { if (_reflectionAssembleInFlight.get(network) === inFlight) _reflectionAssembleInFlight.delete(network); });
+    _reflectionAssembleInFlight.set(network, inFlight);
+  }
+  const { job, ethContentHash } = await inFlight;
   if (job) {
     // Stash the snapshot (+ which eth-state candidate this job used, if any) so ack (which only carries
     // jobId) can both advance the persisted state and promote that candidate once the batch lands.
-    const ethContentHash = att.lastEthContentHash ? att.lastEthContentHash() : null;
     await env.REGISTRY_KV.put(reflectionPendingKey(network, job.jobId), JSON.stringify({ newSnapshot: job.newSnapshot, ethContentHash, attestedTo: job.attestedTo }), { expirationTtl: 86400 });
     const { newSnapshot, ...jobForBox } = job; // the relayer needs input + jobId + attestedTo, not the snapshot
     return jsonResponse(jobForBox, 200, { ...cors, 'Cache-Control': 'no-store' });
