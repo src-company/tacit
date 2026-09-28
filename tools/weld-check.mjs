@@ -2,6 +2,8 @@
 // the fork and window.ethereum is an EIP-1193 stub that sends as the chosen account (anvil's first key, or an
 // impersonated one). The relay's submit and the EVM-pool keepers are stubbed, so nothing reaches a live service.
 //   airdrop  a listed recipient claims its TAC; the tile updates
+//   links    friendly links open the right sheet and tab (#swap, #points, #earn), the address bar follows the tab, and
+//            every sheet has a copy-link button
 //   pair     ETH + TAC staked in one transaction with an EIP-2612 permit
 //   farm     a one-sided ETH zap waits for its typed loss acceptance, stakes, claims, then withdraws everything
 //   buy      TAC bought with ETH through zRouter
@@ -39,7 +41,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -198,6 +200,22 @@ await step('airdrop', async () => {
   ok(/claimed/i.test(await text(r.page, '[data-foot="tac"]')), 'airdrop: the tile says claimed');
   await r.browser.close();
   await rpc('eth_sendTransaction', [{ from: RECIPIENT, to: TAC, data: '0xa9059cbb' + addrWord(A0) + word(1000n * 10n ** 18n) }]);
+});
+
+await step('links', async () => {
+  await page.goto(url + '#swap');
+  await page.waitForSelector('#sheet-tac[open] [data-tac-mode="buy"][aria-selected="true"]', { timeout: 60000 });
+  ok(true, 'links: #swap opens TAC on Buy');
+  await page.click('[data-tac-mode="sell"]');
+  ok((await page.evaluate(() => location.hash)) === '#sell', 'links: the address bar follows the tab (#sell)');
+  await shot(page, 'links-sell');
+  await page.goto(url + '#points');
+  await page.waitForSelector('#sheet-pts[open]', { timeout: 60000 });
+  await page.goto(url + '#earn');
+  await page.waitForSelector('#sheet-farm[open]', { timeout: 60000 });
+  const shares = await page.$$eval('dialog.sheet:not(.layer) .sheet-head .x.share', (b) => b.length);
+  const sheets = await page.$$eval('dialog.sheet:not(.layer)', (d) => d.length);
+  ok(shares === sheets && sheets >= 6, `links: every sheet has a copy-link button (${shares}/${sheets})`);
 });
 
 await step('pair', async () => {

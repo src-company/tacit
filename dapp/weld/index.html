@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-azzhTgjSxkTAaa5rwMeVO9pjPI1fjwfM8E6rMCtSbm8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-wEBCWYpf2Olfphy5W4e4TttOuANRCFX8a63pMoUC82o=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -148,6 +148,8 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 .x { margin-left: auto; width: var(--tap); height: var(--tap); display: grid; place-items: center; font-size: 22px; line-height: 1;
   background: none; border: 1px solid transparent; cursor: pointer; color: var(--mute); }
 .x:hover { color: var(--ink); border-color: var(--hair-2); }
+.x.share + .x { margin-left: 0; }
+.x.share svg { width: 18px; height: 18px; }
 
 .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--hair-2); margin: 0 0 18px; }
 .seg button { min-height: var(--tap); padding: 8px 10px; background: none; border: 0; cursor: pointer; color: var(--mute); line-height: 1.25; }
@@ -1302,7 +1304,10 @@ document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-
 
 // ── sheets + deep links ──────────────────────────────────────────────────────────────────────────────────
 const SHEETS = ['eth', 'btc', 'tac', 'pts', 'farm', 'borrow', 'wallet'];
-const ALIAS = { airdrop: ['tac', 'air'], buy: ['tac', 'buy'], sell: ['tac', 'sell'], private: ['eth', 'v1'], device: ['eth', 'dev'] };
+const ALIAS = { airdrop: ['tac', 'air'], buy: ['tac', 'buy'], sell: ['tac', 'sell'], swap: ['tac', 'buy'], private: ['eth', 'v1'], device: ['eth', 'dev'],
+  points: ['pts'], names: ['pts'], bitcoin: ['btc'], earn: ['farm'], lp: ['farm'] };
+// The link for what a sheet shows now: its tab's own name where it has one (#sell, #device), else the sheet's (#farm).
+const linkName = (sheet) => Object.keys(ALIAS).find((k) => ALIAS[k][0] === sheet && ALIAS[k][1] && ALIAS[k][1] === TAB[sheet]) || sheet;
 function openSheet(name) {
   const [sheet, tab] = ALIAS[name] || [name];
   const d = $(`#sheet-${sheet}`);
@@ -1341,9 +1346,20 @@ for (const [sheet, attr] of Object.entries(TABS)) {
   $$(`[data-${attr}]`).forEach((b) => b.onclick = () => {
     if (running(sheet)) return;                                   // tabs hold still while an action in the sheet runs
     selectTab(sheet, b.dataset[attr.replace(/-(\w)/, (_, c) => c.toUpperCase())]);
+    history.replaceState(null, '', '#' + linkName(sheet));
     keep($(`#sheet-${sheet}`), render[sheet]);
     load[sheet]?.().then(() => rerender(sheet)).catch(() => {});
   });
+}
+// Every sheet copies a link to what it shows (tacit.finance/weld/#airdrop, #swap, #farm…), to share.
+for (const d of $$('dialog.sheet:not(.layer)')) {
+  const x = d.querySelector('.sheet-head [data-close]');
+  if (!x) continue;
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'x share'; b.setAttribute('aria-label', 'Copy a link to this');
+  b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.6 13.4a4 4 0 0 0 5.65 0l3-3a4 4 0 0 0-5.65-5.66l-1.2 1.2M13.4 10.6a4 4 0 0 0-5.65 0l-3 3a4 4 0 0 0 5.65 5.66l1.2-1.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+  b.onclick = () => copy(`${location.origin}${location.pathname}#${linkName(d.id.replace('sheet-', ''))}`, 'Link copied');
+  x.before(b);
 }
 const setFoot = (name, text, dot = '') => { $(`[data-foot="${name}"]`).textContent = text; $(`[data-dot="${name}"]`).className = 'dot' + (dot ? ' ' + dot : ''); };
 const gate = (text, label, id) => html`<div class="gate"><p>${text}</p><button class="btn" type="button" id="${id}">${label}</button></div>`;

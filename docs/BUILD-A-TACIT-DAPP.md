@@ -1288,12 +1288,20 @@ Two conventions to keep:
 carried through the launch features in one file:
 
 - the confidential pool: the tipped wrap above, private sends with their claims and take-backs, and exits;
-- the EVM pool (§5h), proved in the browser: deposits, sends, withdrawals, the deposit address and its sweep,
-  and moves into the confidential pool or to Base and Robinhood Chain;
+- the EVM pool (§5h), proved in the browser: deposits, sends (to a `bp1…` pool address privately, or to an `0x…`
+  address as a withdrawal), the deposit address and its sweep, and moves into the confidential pool or to Base and
+  Robinhood Chain;
 - Bitcoin: silent payments, shielded TAC sends and the payment links that let a recipient find them;
-- TAC: the airdrop (§5a), buying TAC, and one balance across Bitcoin, the ERC-20 and private notes;
-- points claims and `.wei` names, the TAC/ETH Precision farm and the shielded farms;
+- TAC: the airdrop (§5a), buying and selling TAC through zRouter (a sale is one transaction: zRouter's own
+  EIP-2612 `permit` leg rides first in the multicall), and one balance across Bitcoin, the ERC-20 and private notes;
+- points claims and `.wei` names, the shielded farms, and the TAC/ETH Precision farm end to end: add from ETH, TAC
+  or both (`zapETH`, `zapTokenWithPermit`, `addAndStakeWithPermit`), stake LP already held (`stakeWithPermit`), and
+  withdraw part or all of a position as both assets or as either one (`withdrawAndRemove`, `withdrawTo`, `exitTo`);
 - the cBTC lock, bond, mint and cUSD loan.
+
+Every sheet has a link: `#private`, `#device`, `#bitcoin`, `#airdrop`, `#buy` (or `#swap`), `#sell`, `#points`,
+`#farm`, `#borrow` and `#wallet` open it directly, and the link button in each sheet's header copies the one for
+what it shows.
 
 Public transactions come from a connected wallet or from the key's own Tacit account, which signs in the page.
 Its one inline module is pinned by hash in its own CSP, and `npm run build` refreshes that pin with its `?cb=`
