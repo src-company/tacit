@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-wwvAqdc+JVnsumIXtqlB5JmYjctY4iCZ0peGTuzepFI=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-zPttP4Nfwz+SVXnHotLX+MPct0rcMaWXvGzoUFhM2i4=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
-<title>tacit lite</title>
+<title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="tacit">
-<meta property="og:url" content="https://tacit.finance/lite/">
-<meta property="og:title" content="tacit lite">
+<meta property="og:url" content="https://tacit.finance/weld/">
+<meta property="og:title" content="tacit weld">
 <meta property="og:description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin.">
 <meta property="og:image" content="https://tacit.finance/tacit-card.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -327,7 +327,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
 
 <div class="shell">
   <header class="top">
-    <a class="brand" href="/lite/" aria-label="tacit lite"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><b>tacit</b><i>lite</i></a>
+    <a class="brand" href="/weld/" aria-label="tacit weld"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><b>tacit</b><i>weld</i></a>
     <button class="chip" id="wallet" type="button"><span class="dot" id="wallet-dot"></span><span id="wallet-label">Connect wallet</span></button>
   </header>
 
@@ -384,12 +384,12 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
   </main>
 
   <footer>
-    <span>tacit lite · mainnet</span>
+    <span>tacit weld · mainnet</span>
     <nav aria-label="More">
       <a href="/">Full app</a>
       <a href="/tacit-v1.pdf">Whitepaper</a>
-      <a href="https://github.com/z0r0z/tacit/blob/main/docs/BUILD-A-TACIT-DAPP.md" rel="noopener">Build on Tacit</a>
-      <a href="https://github.com/z0r0z/tacit/blob/main/SECURITY.md" rel="noopener">Security</a>
+      <a href="https://github.com/src-company/tacit/blob/main/docs/BUILD-A-TACIT-DAPP.md" rel="noopener">Build on Tacit</a>
+      <a href="https://github.com/src-company/tacit/blob/main/SECURITY.md" rel="noopener">Security</a>
       <a href="https://etherscan.io/address/0x000000000Ed1eabD231Be41d93b719056F7febFC" rel="noopener">Pool contract</a>
     </nav>
   </footer>
@@ -528,7 +528,7 @@ import { bip352TaggedHash } from '/bip352.js';
 import { makeEvmWallet } from '/evm-wallet.js?cb=0b99ec4f';
 import { makeEvmAccount } from '/evm-account.js';
 import { makeEvmTx } from '/evm-tx.js';
-import { makeTacAirdrop, makeRpcCall } from '/tac-airdrop.js?cb=4cc48934';
+import { makeTacAirdrop, makeRpcCall } from '/tac-airdrop.js?cb=02ef61b4';
 import { makeEvmTradeVenues } from '/evm-trade-venues.js?cb=b8e0c106';
 import { parseRecipient } from '/confidential-payout.js?cb=c27b4853';
 
@@ -583,6 +583,7 @@ const CLOCK = { skew: 0 };
 const chainNow = () => now() + CLOCK.skew;
 const deadline = (s = 1800) => BigInt(chainNow() + s);
 const E10 = 10n ** 10n;
+// Saved state keeps the page's first name in its keys (tacit-lite-…), so nothing already stored is lost.
 const store = {
   get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
   set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch {} },
@@ -902,7 +903,7 @@ function setKey(k) {
 // tacit.js opens the passphrase-locked and Bitcoin-signed keys exactly as tacit.finance does. It loads only for
 // those paths, as a library: it reads the shared network once at import, so this page pins mainnet for its visit,
 // and any call that rewrites the app's linked-wallet records is run with them put back afterwards.
-const TACIT_URL = '/tacit.js?cb=06ef6dd0';
+const TACIT_URL = '/tacit.js?cb=6c29d83c';
 const SHARED_NET = 'tacit-network-v1', PREV_NET = 'tacit-lite-prev-net-v1';
 const SHARED_WALLET_KEYS = ['tacit-eth-identity', 'tacit-btc-identity', 'tacit-active-mode-v1', 'tacit-ext-mode-v1', 'tacit-ext-state-v1',
   ...['mainnet', 'signet'].flatMap((n) => [`tacit-eth-identity:${n}`, `tacit-btc-identity:${n}`])];
@@ -1243,7 +1244,7 @@ const your = () => (payer() === 'tacit' ? 'your Tacit account' : 'your wallet');
 
 // ── asset cards: what each Tacit asset is, and where to check it ──────────────────────────────────────────
 // Opened from any [data-asset] (the hero shelf, balance headers). A layer, so it stacks above an open sheet.
-const GH = 'https://github.com/z0r0z/tacit/blob/main/', ETHERSCAN = (a, kind = 'address') => `${SCAN}/${kind}/${a}`;
+const GH = 'https://github.com/src-company/tacit/blob/main/', ETHERSCAN = (a, kind = 'address') => `${SCAN}/${kind}/${a}`;
 const ASSETS = {
   teth: { name: 'tETH', icon: 'teth',
     lede: ['tETH is ETH held as a private note in the Tacit pool, one for one: wrap ETH to enter, unwrap to any address to leave.',
@@ -2110,7 +2111,7 @@ function btcSendForm(f, status, b) {
         return id;
       });
       const kind = r.kind === 'sp' ? 'sp' : r.kind === 'stealth' ? 'st' : null;
-      BTC.share = kind ? { kind, url: `${location.origin}/lite/#${kind}=${txid}` } : null;
+      BTC.share = kind ? { kind, url: `${location.origin}/weld/#${kind}=${txid}` } : null;
       clearField(amt);
       toast(`Sent ${fmt(v, dec, 8)} ${unit}`);
       await loadBtc(true).catch(() => {});
@@ -2380,7 +2381,7 @@ render.pts = () => {
       <a class="opt" href="${ZSWAP}" target="_blank" rel="noopener"><span class="opt-t"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Swap or bet with ETH on zSwap ↗</span><span class="opt-m">1,000 per ETH</span></a></div>
     <div class="lbl"><span>Get a .wei name</span></div>
     <div id="wei-form"></div>
-    <p class="note">Early activity counts up to five times over. Holding 100, 1,000 or 10,000 public TAC at the same address through the past day multiplies its points by 1.25, 1.5 or 2. <a href="https://github.com/z0r0z/tacit#points-and-farms" target="_blank" rel="noopener">The program ↗</a></p>
+    <p class="note">Early activity counts up to five times over. Holding 100, 1,000 or 10,000 public TAC at the same address through the past day multiplies its points by 1.25, 1.5 or 2. <a href="https://github.com/src-company/tacit#points-and-farms" target="_blank" rel="noopener">The program ↗</a></p>
     <div class="status" role="status" id="pts-status"></div>`);
   const status = $('#pts-status');
   $$('[data-earn]', el).forEach((b) => b.onclick = () => openSheet(b.dataset.earn));

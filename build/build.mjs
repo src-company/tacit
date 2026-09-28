@@ -29,7 +29,7 @@ const PREBOOT    = join(DAPP_DIR, 'preboot.js');             // head-loaded, SW-
 const PRF_WALLET = join(DAPP_DIR, 'prf-wallet.js');          // passkey/PRF key derivation, SW-cached like tacit.js
 const SW_JS      = join(DAPP_DIR, 'sw.js');
 const VERIFY_HTML = join(DAPP_DIR, 'verify.html');   // self-contained verifier; its inline module is CSP-hash-pinned
-const LITE_HTML  = join(DAPP_DIR, 'lite', 'index.html');     // tacit lite: one file, its inline module CSP-hash-pinned
+const WELD_HTML  = join(DAPP_DIR, 'weld', 'index.html');     // tacit weld: one file, its inline module CSP-hash-pinned
 const OUT_DIR    = join(HERE, 'out');                        // build artifacts (gitignored)
 const BR_OUT     = join(OUT_DIR, 'tacit.js.br');             // brotli-q11 copy for the edge route
 
@@ -153,9 +153,9 @@ function updateCacheBust(htmlBytes, appJsBytes, prebootBytes) {
 // then app.js, then the page that loads app.js) so each token covers bytes already final. Returns the drift it found; writes only
 // when asked, so --verify-only reuses the same walk.
 const SATS_CB_FILES = ['sats/join-worker.js', 'sats/mix.js', 'sats/secret.js', 'sats/eth.js', 'sats/app.js', 'sats/index.html'];
-// dapp/lite/ is one page whose imports all sit in its inline module, so its tokens are rewritten before that
+// dapp/weld/ is one page whose imports all sit in its inline module, so its tokens are rewritten before that
 // module's CSP hash is taken (updatePinnedCsp below).
-const LITE_CB_FILES = ['lite/index.html'];
+const WELD_CB_FILES = ['weld/index.html'];
 function pageCacheBust(files, write) {
   const drift = [];
   for (const rel of files) {
@@ -209,11 +209,11 @@ function verifyCspDigest(htmlText) {
   if (!m) return null;
   return 'sha256-' + createHash('sha256').update(m[1], 'utf8').digest('base64');
 }
-// The pinned pages and where each keeps its hash: verify.html's script-src is the hash alone, lite's is 'self' plus
+// The pinned pages and where each keeps its hash: verify.html's script-src is the hash alone, weld's is 'self' plus
 // the hash (it also imports same-origin modules).
 const PINNED_PAGES = [
   { name: 'verify.html', file: VERIFY_HTML, re: /script-src '(unsafe-inline|sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src '${d}'` },
-  { name: 'lite/index.html', file: LITE_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
+  { name: 'weld/index.html', file: WELD_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
 ];
 function updatePinnedCsp(page) {
   const htmlText = readFileSync(page.file).toString('utf8');
@@ -281,7 +281,7 @@ async function main() {
     if (gotCb !== wantCb) drift.push(`index.html tacit.js ?cb=${gotCb} but sha256(dapp/tacit.js)=${wantCb}`);
     if (gotPreboot !== wantPreboot) drift.push(`index.html preboot.js ?cb=${gotPreboot} but sha256(dapp/preboot.js)=${wantPreboot}`);
     if (gotSw !== wantSw) drift.push(`sw.js CACHE_VERSION suffix ${gotSw} but sha256(vendor‖prf-wallet)=${wantSw}`);
-    drift.push(...pageCacheBust(SATS_CB_FILES, false), ...pageCacheBust(LITE_CB_FILES, false));
+    drift.push(...pageCacheBust(SATS_CB_FILES, false), ...pageCacheBust(WELD_CB_FILES, false));
     if (drift.length) {
       console.error('✗ cache-bust tokens are stale — run `npm run build` and commit the result:');
       for (const d of drift) console.error(`    ${d}`);
@@ -307,8 +307,8 @@ async function main() {
     if (cb.changed) html = readFileSync(HTML);
     const satsDrift = pageCacheBust(SATS_CB_FILES, true);
     console.log(`• sats page cache-bust: ${satsDrift.length ? `${satsDrift.length} token(s) updated` : 'unchanged'}`);
-    const liteDrift = pageCacheBust(LITE_CB_FILES, true);
-    console.log(`• lite page cache-bust: ${liteDrift.length ? `${liteDrift.length} token(s) updated` : 'unchanged'}`);
+    const weldDrift = pageCacheBust(WELD_CB_FILES, true);
+    console.log(`• weld page cache-bust: ${weldDrift.length ? `${weldDrift.length} token(s) updated` : 'unchanged'}`);
 
     for (const page of PINNED_PAGES) {
       if (!existsSync(page.file)) continue;

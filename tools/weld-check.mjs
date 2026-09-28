@@ -1,4 +1,4 @@
-// Checks dapp/lite/index.html in a real browser against an anvil fork of Ethereum: public RPC hosts are routed to
+// Checks dapp/weld/index.html in a real browser against an anvil fork of Ethereum: public RPC hosts are routed to
 // the fork and window.ethereum is an EIP-1193 stub that sends as the chosen account (anvil's first key, or an
 // impersonated one). The relay's submit and the EVM-pool keepers are stubbed, so nothing reaches a live service.
 //   airdrop  a listed recipient claims its TAC; the tile updates
@@ -20,7 +20,7 @@
 //            zRouter's commit and reveal and publishes its tacit1 address on it
 //   btc      a pasted key's Bitcoin sheet: balances read, BTC routes (tacit1 and sp1 as silent payments, bc1 plain), TAC
 //            routes refuse plain addresses, a tacit1's silent-payment keys are the ones this wallet scans, a payment link checks
-//   PLAYWRIGHT=<path to playwright-core> node tools/lite-check.mjs [scenario,…] [fork rpc]   (SHOTS=<dir> saves screenshots)
+//   PLAYWRIGHT=<path to playwright-core> node tools/weld-check.mjs [scenario,…] [fork rpc]   (SHOTS=<dir> saves screenshots)
 
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -140,12 +140,12 @@ async function openPage({ account, key = null, host = '127.0.0.1', init = null, 
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(`${e.message} @ ${(e.stack || '').split('\n').slice(1, 3).map((s) => s.trim()).join(' < ')}`));
-  return { browser, ctx, page, errors, url: `http://${host}:${WEB}/lite/` };
+  return { browser, ctx, page, errors, url: `http://${host}:${WEB}/weld/` };
 }
 
 let fails = 0;
 const ok = (c, m) => { if (!c) fails++; console.log(c ? 'ok  ' : 'FAIL', m); };
-const shot = (page, name) => SHOTS ? page.screenshot({ path: join(SHOTS, `lite-${name}.png`) }) : null;
+const shot = (page, name) => SHOTS ? page.screenshot({ path: join(SHOTS, `weld-${name}.png`) }) : null;
 async function step(name, fn) { if (!ONLY.has(name)) return; try { await fn(); } catch (e) { fails++; console.log('FAIL', name, '-', e.message.split('\n')[0]); } }
 const text = (page, sel) => page.evaluate((s) => document.querySelector(s)?.textContent || '', sel);
 const until = (page, fn, arg, timeout = 60000) => page.waitForFunction(fn, arg, { timeout });

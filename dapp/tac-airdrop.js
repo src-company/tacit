@@ -34,8 +34,8 @@ export const AIRDROP_DEPLOYMENTS = Object.freeze({
 const PROOFS_COMMIT = '1b2eedde8490801c9ef4406020530059162e6d47';
 export const PROOF_HOSTS = Object.freeze({
   sameOrigin: '/airdrop/v1/proofs',
-  cdn: `https://cdn.jsdelivr.net/gh/z0r0z/tacit@${PROOFS_COMMIT}/dapp/airdrop/v1/proofs`,
-  mirror: `https://raw.githubusercontent.com/z0r0z/tacit/${PROOFS_COMMIT}/dapp/airdrop/v1/proofs`,
+  cdn: `https://cdn.jsdelivr.net/gh/src-company/tacit@${PROOFS_COMMIT}/dapp/airdrop/v1/proofs`,
+  mirror: `https://raw.githubusercontent.com/src-company/tacit/${PROOFS_COMMIT}/dapp/airdrop/v1/proofs`,
 });
 export const PUBLIC_PROOF_HOSTS = Object.freeze([PROOF_HOSTS.cdn, PROOF_HOSTS.mirror]);
 

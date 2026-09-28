@@ -107,7 +107,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=cf0333ba">
+<link rel="modulepreload" href="./tacit.js?cb=6c29d83c">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -9487,7 +9487,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 
       <!-- TOKEN mode -->
       <div id="send-mode-token">
-        <div class="muted" style="margin-bottom:14px;">Confidential transfer of one asset — observers always see valid math, never the amount. <details style="display:inline;"><summary style="display:inline;cursor:pointer;list-style:none;">more ▾</summary> Optionally hide the recipient too by pasting their <em>shielded address</em> (tcs1…) instead of a pubkey; the on-chain marker becomes a per-tx unique address. Recipients auto-discover their balance on their next scan. The recipient's key needs to sit in a tacit-aware wallet — a general Bitcoin wallet (UniSat, Sparrow, Xverse, etc.) has no concept of this protocol and, if it ever spends the exact UTXO carrying this balance, would treat it as a few hundred sats of dust and destroy the token value riding on it. Any wallet can add tacit awareness by following the public protocol (<a href="https://github.com/z0r0z/tacit/blob/main/SPEC.md#3-the-bitcoin-metaprotocol" target="_blank" rel="noopener noreferrer">SPEC.md §3</a>) — none do today, so only send to a key someone will hold in this dapp or another tacit-aware wallet.</details></div>
+        <div class="muted" style="margin-bottom:14px;">Confidential transfer of one asset — observers always see valid math, never the amount. <details style="display:inline;"><summary style="display:inline;cursor:pointer;list-style:none;">more ▾</summary> Optionally hide the recipient too by pasting their <em>shielded address</em> (tcs1…) instead of a pubkey; the on-chain marker becomes a per-tx unique address. Recipients auto-discover their balance on their next scan. The recipient's key needs to sit in a tacit-aware wallet — a general Bitcoin wallet (UniSat, Sparrow, Xverse, etc.) has no concept of this protocol and, if it ever spends the exact UTXO carrying this balance, would treat it as a few hundred sats of dust and destroy the token value riding on it. Any wallet can add tacit awareness by following the public protocol (<a href="https://github.com/src-company/tacit/blob/main/SPEC.md#3-the-bitcoin-metaprotocol" target="_blank" rel="noopener noreferrer">SPEC.md §3</a>) — none do today, so only send to a key someone will hold in this dapp or another tacit-aware wallet.</details></div>
 
         <label>Asset</label>
         <select id="x-asset"><option value="">— select —</option></select>
@@ -10649,7 +10649,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
     <div class="section-body protocol-body">
       <p class="protocol-lede">Confidential money across Bitcoin and Ethereum — one shielded note you can send, swap, borrow against, and bridge, settled in ordinary on-chain transactions.</p>
       <p>Tacit is a Bitcoin metaprotocol: Bitcoin orders and stores the data, and open-source indexers enforce the token rules by reading the chain. The same note extends into a <strong>confidential pool</strong> on Ethereum, where it transfers, trades on an AMM, borrows and lends, and bridges back — amounts hidden and your key as your backup throughout.</p>
-      <p style="margin-top:12px;">The Ethereum contracts are live on mainnet at Etherscan-verified addresses. The ConfidentialPool, ConfidentialRouter, asset factory and SP1 guests are immutable: no owner, no proxy, no pause. The CollateralEngine and FarmManager are governed by a 2-of-4 multisig within fixed bounds. Addresses are in <a href="https://github.com/z0r0z/tacit/blob/main/docs/DEPLOYMENTS.md" target="_blank" rel="noopener noreferrer">DEPLOYMENTS.md</a>.</p>
+      <p style="margin-top:12px;">The Ethereum contracts are live on mainnet at Etherscan-verified addresses. The ConfidentialPool, ConfidentialRouter, asset factory and SP1 guests are immutable: no owner, no proxy, no pause. The CollateralEngine and FarmManager are governed by a 2-of-4 multisig within fixed bounds. Addresses are in <a href="https://github.com/src-company/tacit/blob/main/docs/DEPLOYMENTS.md" target="_blank" rel="noopener noreferrer">DEPLOYMENTS.md</a>.</p>
 
       <div class="protocol-grid">
         <div class="protocol-card">
@@ -10704,7 +10704,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
       <h3 class="protocol-h3" id="proto-validation">Validation model</h3>
       <p>Bitcoin validates the transactions; indexers validate the tokens. Tacit's rules are <strong>not enforced by Bitcoin nodes</strong>: an indexer reads the chain and checks the cryptography on top — commitments, range proofs, kernel signatures and zero-knowledge proofs.</p>
       <p>Everything an indexer needs is on the chain. Any UTXO can be walked back to its origin and re-verified step by step, so every indexer running the spec reaches the same verdict, with no off-chain proof files and no consensus change.</p>
-      <p>That also means <strong>your key is your backup</strong>: a fresh wallet holding only its private key rebuilds its balance from chain data alone. For how SP1 proofs, range proofs and the two Groth16 ceremonies fit together, see <a href="https://github.com/z0r0z/tacit/blob/main/SPEC.md#28-circuits-and-ceremonies" target="_blank" rel="noopener noreferrer">SPEC §2.8</a>.</p>
+      <p>That also means <strong>your key is your backup</strong>: a fresh wallet holding only its private key rebuilds its balance from chain data alone. For how SP1 proofs, range proofs and the two Groth16 ceremonies fit together, see <a href="https://github.com/src-company/tacit/blob/main/SPEC.md#28-circuits-and-ceremonies" target="_blank" rel="noopener noreferrer">SPEC §2.8</a>.</p>
 
       <p style="margin-top:18px;">The sections below go one layer deeper each, from privacy down to the cryptography and the security work behind it:</p>
 
@@ -10816,7 +10816,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
       <div class="script-decode" style="margin:10px 0;">
         <span class="hex">0x60–0x64</span><span class="op">tETH bridge ops</span><span class="desc">kept in the validator for recovery; new flows use the confidential pool</span>
       </div>
-      <p style="margin-top:8px;">Wire-format examples below cover the core four (CETCH / CXFER / T_MINT / T_BURN). The other opcodes use the same envelope with their own payload layouts and rules — see <a href="https://github.com/z0r0z/tacit/blob/main/SPEC.md#3-the-bitcoin-metaprotocol" target="_blank" rel="noopener noreferrer">SPEC.md</a> §3.</p>
+      <p style="margin-top:8px;">Wire-format examples below cover the core four (CETCH / CXFER / T_MINT / T_BURN). The other opcodes use the same envelope with their own payload layouts and rules — see <a href="https://github.com/src-company/tacit/blob/main/SPEC.md#3-the-bitcoin-metaprotocol" target="_blank" rel="noopener noreferrer">SPEC.md</a> §3.</p>
       <p style="margin-top:8px;">Marketplace flows settle through <code>T_AXFER</code> and the preauth bids, with no separate opcodes: <strong>atomic intents</strong> (a seller publishes one signed offer and any taker settles it atomically on Bitcoin), <strong>preauth sales</strong> (the seller pre-signs, then goes offline), and <strong>batched takes</strong> (a buyer sweeps several preauths in one reveal tx, using position-independent <code>SIGHASH_SINGLE|ANYONECANPAY</code>). They share the kernel and range-proof checks of a plain CXFER; only the coordination differs.</p>
       </details>
 
@@ -10913,12 +10913,12 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
           <li><strong>Reflection bridge.</strong> Bitcoin ⇄ Ethereum value moves by SP1 zero-knowledge <em>reflection</em>: a burn on one side is proven on the other and minted once, after Bitcoin blocks are 24 confirmations deep. No multisig or attestor set signs a bridge message.</li>
           <li><strong>One unified address.</strong> Publish a single <code>tacit1…</code> address; senders don't need to know whether you're receiving on Bitcoin or in the confidential pool — it resolves to the right endpoint, and a send can wrap straight into a shielded note for the recipient.</li>
         </ul>
-        <p style="margin-top:12px;">Every one of these settles through the same conservation kernel as a plain transfer, so value-in equals value-out per asset, and any op can be relayed gaslessly with the fee bound inside the proof. See <a href="https://github.com/z0r0z/tacit/blob/main/SPEC.md#6-reflection-and-the-bridge" target="_blank" rel="noopener noreferrer">SPEC §6</a> for the cross-chain path.</p>
+        <p style="margin-top:12px;">Every one of these settles through the same conservation kernel as a plain transfer, so value-in equals value-out per asset, and any op can be relayed gaslessly with the fee bound inside the proof. See <a href="https://github.com/src-company/tacit/blob/main/SPEC.md#6-reflection-and-the-bridge" target="_blank" rel="noopener noreferrer">SPEC §6</a> for the cross-chain path.</p>
       </details>
 
       <details class="protocol-section" id="proto-cryptography">
         <summary class="protocol-h3">Cryptography</summary>
-      <p style="margin-top:8px;">See <a href="https://github.com/z0r0z/tacit/blob/main/SPEC.md#28-circuits-and-ceremonies" target="_blank" rel="noopener noreferrer">SPEC §2.8</a> for the canonical walkthrough.</p>
+      <p style="margin-top:8px;">See <a href="https://github.com/src-company/tacit/blob/main/SPEC.md#28-circuits-and-ceremonies" target="_blank" rel="noopener noreferrer">SPEC §2.8</a> for the canonical walkthrough.</p>
       <h4 class="protocol-h4">On-chain commitments — Pedersen on secp256k1</h4>
       <p style="margin-top:8px;">Commitments: <code>C = a·H + r·G</code>, additively homomorphic. <code>H</code> is a NUMS generator (no known discrete log w.r.t. <code>G</code>) derived deterministically by hash-to-curve from the seed <code>"tacit-generator-H-v1"</code>. The protocol carries <code>C</code> on chain; <code>(a, r)</code> stay private.</p>
       <h4 class="protocol-h4">Rangeproofs — aggregated Bulletproofs + Bulletproofs+</h4>
@@ -10957,7 +10957,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 
       <details class="protocol-section" id="proto-ceremony">
         <summary class="protocol-h3">Ceremony artifacts</summary>
-        <p style="margin-top:8px;">Tacit's Groth16 circuits use two trusted-setup ceremonies, and every artifact is published on IPFS: the Powers-of-Tau lineage, each circuit's final zkey, the pinned verifying keys, and the Bitcoin-block beacon that seals each ceremony. Anyone can re-derive a pinned verifying key from its bundle. <strong>Soundness needs only one honest contributor; zero-knowledge never depends on the ceremony.</strong> <a href="https://github.com/z0r0z/tacit/blob/main/docs/CEREMONY.md" target="_blank" rel="noopener noreferrer">CEREMONY.md</a> lists every CID and hash.</p>
+        <p style="margin-top:8px;">Tacit's Groth16 circuits use two trusted-setup ceremonies, and every artifact is published on IPFS: the Powers-of-Tau lineage, each circuit's final zkey, the pinned verifying keys, and the Bitcoin-block beacon that seals each ceremony. Anyone can re-derive a pinned verifying key from its bundle. <strong>Soundness needs only one honest contributor; zero-knowledge never depends on the ceremony.</strong> <a href="https://github.com/src-company/tacit/blob/main/docs/CEREMONY.md" target="_blank" rel="noopener noreferrer">CEREMONY.md</a> lists every CID and hash.</p>
 
         <p class="protocol-kicker">Mixer ceremony — <code>withdraw.circom</code></p>
         <p style="margin-top:6px;font-size:12px;">Phase 1 from the Polygon Hermez <code>pot14</code> Powers of Tau; Phase 2 with <strong>2,227 contributors</strong>, sealed by a beacon over <strong>Bitcoin block 948,824</strong>. Used by the legacy Bitcoin mixer, and available to any denominated anonymity pool built on Tacit.</p>
@@ -10980,7 +10980,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
           <dt>Pinned VK bundle</dt><dd><a href="https://ipfs.io/ipfs/bafkreibjpe4xfqtq2ziki4uupydnkeiakqi76m674xtdhmxnfbrn4iomp4" target="_blank" rel="noopener noreferrer">ipfs://bafkreibjpe…iomp4</a></dd>
           <dt>Ceremony bundle</dt><dd><a href="https://ipfs.io/ipfs/bafybeiheww2ndia2gld4mu7x2h7iwzawv6likpmfpklm6x5kj3btaniuam/" target="_blank" rel="noopener noreferrer">ipfs://bafybeiheww…niuam</a> (per-circuit zkeys · vkeys · transcripts)</dd>
         </dl>
-        <p style="margin-top:10px;font-size:12px;">The confidential pool, cBTC and the reflection bridge otherwise run on SP1 proofs, Bulletproofs+ and Schnorr kernels, which need no Tacit ceremony. The one exception is swap batches: the <code>amm_swap_batch</code> key above is compiled into both SP1 guests, for <code>OP_SWAP_BLIND</code> and <code>T_SWAP_BATCH</code>. See <a href="https://github.com/z0r0z/tacit/blob/main/SPEC.md#28-circuits-and-ceremonies" target="_blank" rel="noopener noreferrer">SPEC §2.8</a> for the full circuit walkthrough.</p>
+        <p style="margin-top:10px;font-size:12px;">The confidential pool, cBTC and the reflection bridge otherwise run on SP1 proofs, Bulletproofs+ and Schnorr kernels, which need no Tacit ceremony. The one exception is swap batches: the <code>amm_swap_batch</code> key above is compiled into both SP1 guests, for <code>OP_SWAP_BLIND</code> and <code>T_SWAP_BATCH</code>. See <a href="https://github.com/src-company/tacit/blob/main/SPEC.md#28-circuits-and-ceremonies" target="_blank" rel="noopener noreferrer">SPEC §2.8</a> for the full circuit walkthrough.</p>
       </details>
 
       <details class="protocol-section" id="proto-audits" open>
@@ -10988,7 +10988,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
         <div class="audit-attest" style="margin-top:10px;">
           <p class="audit-verdict" style="margin-top:0;">Independent, adversarial reviews of the immutable contracts, the SP1 guests and the relayed cross-chain ops, before and after deployment. The deployed bytecode was checked byte for byte against source. <strong>No open fund-impacting findings</strong>: every finding is fixed or dispositioned in its report.</p>
         </div>
-        <p style="margin-top:12px;">Full review history: <a href="https://github.com/z0r0z/tacit/blob/main/audit/AUDITS.md" target="_blank" rel="noopener noreferrer">AUDITS.md</a>. The v1 release's agentic audits: <a href="https://github.com/z0r0z/tacit/blob/main/audit/AUDIT-2026-09-16-17-fable51-lock-checkpoint.md" target="_blank" rel="noopener noreferrer">Fable 5.1 lock checkpoint</a> (the review that gated the deploy), an <a href="https://github.com/z0r0z/tacit/blob/main/audit/AUDIT-2026-09-21-gpt-astra-external-review.md" target="_blank" rel="noopener noreferrer">external automated review</a>, and the <a href="https://github.com/z0r0z/tacit/blob/main/audit/AUDIT-2026-09-24-pashov-solidity-auditor-v4.md" target="_blank" rel="noopener noreferrer">Pashov <code>solidity-auditor</code> v4 round</a> (24-agent, post-deploy, extended to the zkVM guest) — run after a week of live mainnet use.</p>
+        <p style="margin-top:12px;">Full review history: <a href="https://github.com/src-company/tacit/blob/main/audit/AUDITS.md" target="_blank" rel="noopener noreferrer">AUDITS.md</a>. The v1 release's agentic audits: <a href="https://github.com/src-company/tacit/blob/main/audit/AUDIT-2026-09-16-17-fable51-lock-checkpoint.md" target="_blank" rel="noopener noreferrer">Fable 5.1 lock checkpoint</a> (the review that gated the deploy), an <a href="https://github.com/src-company/tacit/blob/main/audit/AUDIT-2026-09-21-gpt-astra-external-review.md" target="_blank" rel="noopener noreferrer">external automated review</a>, and the <a href="https://github.com/src-company/tacit/blob/main/audit/AUDIT-2026-09-24-pashov-solidity-auditor-v4.md" target="_blank" rel="noopener noreferrer">Pashov <code>solidity-auditor</code> v4 round</a> (24-agent, post-deploy, extended to the zkVM guest) — run after a week of live mainnet use.</p>
       </details>
 
       <details class="protocol-section" id="proto-trust">
@@ -11011,7 +11011,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 </div>
 
 <footer>
-  <span><a href="https://github.com/z0r0z/tacit" target="_blank" rel="noopener noreferrer">tacit</a> · open-source · <a href="#tab=about" title="Protocol documentation">docs</a></span>
+  <span><a href="https://github.com/src-company/tacit" target="_blank" rel="noopener noreferrer">tacit</a> · open-source · <a href="#tab=about" title="Protocol documentation">docs</a></span>
   <span>TAC · <a href="#tab=govern" title="Governance portal — proposals, voting, reserve flows">governance</a> · <a href="https://etherscan.io/token/0xA1313eb9f3A445606D9583bcAc3ebeB56a858279" target="_blank" rel="noopener noreferrer" title="TAC on Ethereum, ERC-20">ERC-20</a></span>
   <span><a href="https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki" target="_blank" rel="noopener noreferrer">BIP-341</a> · <a href="https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki" target="_blank" rel="noopener noreferrer">BIP-340</a> · <a href="https://blockstream.com/bitcoin17-final41.pdf" target="_blank" rel="noopener noreferrer">CT (Maxwell)</a></span>
 </footer>
@@ -11321,7 +11321,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 
       <div class="faq-q">Can I recover from just my private key?</div>
       <div class="faq-a">
-        Yes. The dapp rebuilds Bitcoin balances by re-deriving blindings from your key and the chain, and pool notes by decrypting their on-chain memos — no share-link, sync server or counterparty needed. If a marketplace commit confirms but its reveal fails, the stranded output is spendable back to your wallet, and Holdings shows a Recover button. <a href="https://github.com/z0r0z/tacit/blob/main/docs/RECOVERY.md" target="_blank" rel="noopener noreferrer">RECOVERY.md</a> lists the exact reads.
+        Yes. The dapp rebuilds Bitcoin balances by re-deriving blindings from your key and the chain, and pool notes by decrypting their on-chain memos — no share-link, sync server or counterparty needed. If a marketplace commit confirms but its reveal fails, the stranded output is spendable back to your wallet, and Holdings shows a Recover button. <a href="https://github.com/src-company/tacit/blob/main/docs/RECOVERY.md" target="_blank" rel="noopener noreferrer">RECOVERY.md</a> lists the exact reads.
       </div>
 
       <div class="faq-q">How much privacy do I get?</div>
@@ -11360,7 +11360,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
       </div>
     </div>
     <div class="faq-foot">
-      Deeper read: <a href="https://github.com/z0r0z/tacit/blob/main/README.md" target="_blank" rel="noopener noreferrer">README</a> · <a href="https://github.com/z0r0z/tacit/blob/main/SPEC.md" target="_blank" rel="noopener noreferrer">SPEC.md</a> · open the Docs tab for the on-page primer, including the published ceremony artifacts and security reviews.
+      Deeper read: <a href="https://github.com/src-company/tacit/blob/main/README.md" target="_blank" rel="noopener noreferrer">README</a> · <a href="https://github.com/src-company/tacit/blob/main/SPEC.md" target="_blank" rel="noopener noreferrer">SPEC.md</a> · open the Docs tab for the on-page primer, including the published ceremony artifacts and security reviews.
     </div>
   </div>
 </div>
@@ -11503,7 +11503,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   <div class="welcome-card">
     <div class="welcome-title" id="bridge-title" style="display:flex;align-items:center;gap:10px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="36" height="36" style="flex-shrink:0;"><style>.tr{stroke:#0a0a0a}@media(prefers-color-scheme:dark){.tr{stroke:#f4efe6}}</style><circle class="tr" cx="16" cy="16" r="13" fill="none" stroke-width="2.5"/><path d="M17.5 7L13 22.5Q13 25 18 24" fill="none" stroke="#627eea" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11L21 11" stroke="#627eea" stroke-width="2.4" stroke-linecap="round"/><path d="M14.8 17L19 17" stroke="#627eea" stroke-width="2.2" stroke-linecap="round"/></svg><span>tETH <span class="accent">bridge</span></span></div>
     <div class="welcome-lede">
-      Legacy tETH bridge, kept for redeeming existing tETH notes. For cross-chain value use the <a href="#tab=confidential-pool">confidential pool</a>.<br><span style="font-size:11px;">Fixed 0.001 ETH deposits. <a href="https://github.com/z0r0z/tacit/blob/main/SPEC.md#38-legacy-ops" target="_blank" rel="noopener noreferrer">how it works</a></span>
+      Legacy tETH bridge, kept for redeeming existing tETH notes. For cross-chain value use the <a href="#tab=confidential-pool">confidential pool</a>.<br><span style="font-size:11px;">Fixed 0.001 ETH deposits. <a href="https://github.com/src-company/tacit/blob/main/SPEC.md#38-legacy-ops" target="_blank" rel="noopener noreferrer">how it works</a></span>
     </div>
     <div class="xchain-header" style="margin:6px 0 10px;"><span class="chain-badge btc"><span class="dot"></span>Bitcoin</span><span class="xchain-arrow" aria-hidden="true">⇄</span><span class="chain-badge eth"><span class="dot"></span>Ethereum</span><span class="xchain-note">· tETH · legacy</span></div>
     <div id="bridge-supply-stats" style="margin:-4px 0 8px;"></div>
@@ -11579,7 +11579,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=cf0333ba"></script>
+<script type="module" src="./tacit.js?cb=6c29d83c"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for

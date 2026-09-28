@@ -1284,7 +1284,7 @@ Two conventions to keep:
   memos }`; the UI only ever renders that. It is what lets `tacit.js` be a thin renderer over the same
   modules, and it is why a redesign never risks the crypto.
 
-[`dapp/lite/index.html`](../dapp/lite/index.html), served at `https://tacit.finance/lite/`, is the same idea
+[`dapp/weld/index.html`](../dapp/weld/index.html), served at `https://tacit.finance/weld/`, is the same idea
 carried through the launch features in one file:
 
 - the confidential pool: the tipped wrap above, private sends with their claims and take-backs, and exits;

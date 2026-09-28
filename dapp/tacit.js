@@ -3868,7 +3868,7 @@ function renderBppSignetBanner() {
   try { dismissed = localStorage.getItem(BPP_BANNER_DISMISS_KEY) === '1'; } catch {}
   if (!isSignet || !bppEnabled() || dismissed) { el.style.display = 'none'; return; }
   el.style.display = 'block';
-  el.innerHTML = `<span>⚡ <strong>Bulletproofs+ active</strong> on signet — confidential transfers run the BP+ port (SPEC §2.3), ~5% lower fees per send.</span> <a href="https://github.com/z0r0z/tacit/blob/main/SPEC.md#23-range-proofs" target="_blank" rel="noopener noreferrer" style="color:#1d4d27;margin-left:8px;">verify ↗</a> <a href="#" id="bpp-banner-dismiss" style="color:#1d4d27;text-decoration:underline;margin-left:8px;">dismiss</a>`;
+  el.innerHTML = `<span>⚡ <strong>Bulletproofs+ active</strong> on signet — confidential transfers run the BP+ port (SPEC §2.3), ~5% lower fees per send.</span> <a href="https://github.com/src-company/tacit/blob/main/SPEC.md#23-range-proofs" target="_blank" rel="noopener noreferrer" style="color:#1d4d27;margin-left:8px;">verify ↗</a> <a href="#" id="bpp-banner-dismiss" style="color:#1d4d27;text-decoration:underline;margin-left:8px;">dismiss</a>`;
   const dismiss = el.querySelector('#bpp-banner-dismiss');
   if (dismiss) {
     dismiss.onclick = (ev) => {
@@ -75337,7 +75337,7 @@ function renderMarketAssetHeader(assetId, rows) {
   const _heroStatusHtml = _lastTradeTsHero > 0
     ? `<span class="mkt-hero-status">last fill <span data-age-ts="${_lastTradeTsHero}" data-age-fmt="ago">${escapeHtml(_heroAgeStr)} ago</span>${_heroDotHtml}</span>`
     : '';
-  // External URL display — kept compact "github.com/z0r0z/tacit" form
+  // External URL display — kept compact "github.com/src-company/tacit" form
   // when possible, else hidden. Lives on the id row so the description
   // block below can stay focused on the prose.
   const _heroExternalDisplay = _externalUrl ? (() => {
