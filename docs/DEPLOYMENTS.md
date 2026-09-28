@@ -111,14 +111,13 @@ pool notes. Icons: [`cbtc-zk-icon.svg`](../contracts/tokenlist-drafts/cbtc-zk-ic
 composite cBTC/TAC and cUSD/TAC pairing icons elsewhere in `contracts/`.
 
 **cBTC** mints against real Bitcoin locks ([SPEC §5.7](../SPEC.md#57-cdp-cusd-and-cbtc)): `cbtcBackingSats()`
-on the pool — the cumulative value of every `T_CBTC_LOCK` reflection has recorded — currently reads
-**6,800 sats** (`cast call` against the live pool). Of that, three locks (`cbtcLockVBtc` of 700, 700 and
-2,000 sats, each independently confirmed live) have cleared the 1.5× wstETH escrow gate and actually
-minted; the remaining lock sits under-escrowed and correctly stays unmintable.
+on the pool — the reflection-attested sum of live self-custody lock sats — read **4,800 sats** on 2026-09-28
+(`cast call` against the live pool). A lock mints cBTC only once its 1.5× wstETH escrow clears; an
+under-escrowed lock stays unmintable.
 
 **cUSD** mints as CDP debt against cBTC collateral, at the same 150% mint / 130% liquidation thresholds
-([SPEC §5.7](../SPEC.md#57-cdp-cusd-and-cbtc)). `CollateralEngine.outstandingCusd()` currently reads
-**49,815,650** (in-system units) across the engine's two currently-open positions; the insurance reserve is
+([SPEC §5.7](../SPEC.md#57-cdp-cusd-and-cbtc)). `CollateralEngine.outstandingCusd()` read
+**49,815,650** (in-system units) on 2026-09-28 across the engine's two currently-open positions; the insurance reserve is
 still empty (nothing has ever been liquidated). Three real `CdpMinted` mints and one `CdpClosed` close, all
 on the current engine:
 [`0xb4a1f32d…afa7d4908`](https://etherscan.io/tx/0xb4a1f32d80ff1cd413d58023811eaafa8aed3388d3fa82741f52f06afa7d4908),

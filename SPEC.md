@@ -189,7 +189,7 @@ Hermez `pot18` powers of tau, with keys derived deterministically from those par
 
 | Circuit | Proves | Verified by |
 |---|---|---|
-| Bitcoin shielded pool (`btc-pool-halo2`, the relation of `btc-pool/spend.circom`) | One `T_BTC_SHIELD` or `T_BTC_SPEND` (§3.10), proved on the user's device. Not enabled. | Natively by pool indexers and relayers, Halo2-KZG against the key pinned by `vk_hash` (BLAKE2b-512 of `vk.bin`) in [`dapp/btc-pool/pin.json`](./dapp/btc-pool/pin.json) |
+| Bitcoin shielded pool (`btc-pool-halo2`, the relation of `btc-pool/spend.circom`) | One `T_BTC_SHIELD` or `T_BTC_SPEND` (§3.10), proved on the user's device. Live on mainnet, experimental; TAC only at launch. | Natively by pool indexers and relayers, Halo2-KZG against the key pinned by `vk_hash` (BLAKE2b-512 of `vk.bin`) in [`dapp/btc-pool/pin.json`](./dapp/btc-pool/pin.json) |
 
 Artifacts are content-addressed. [`docs/CEREMONY.md`](./docs/CEREMONY.md) lists every zkey, verifying key,
 r1cs and witness generator with its CID and hash, including the finalized `amm_swap_batch` zkey
@@ -393,16 +393,17 @@ These stay in the validator so existing UTXOs keep their meaning. New flows use 
 | 0x5B–0x5E | Pre-authorized bids; 0x5D and 0x5E reserved (§10) |
 | 0x60–0x64 | Legacy bridge |
 | 0x65–0x69 | Cross-chain and cBTC (§3.6–3.7) |
-| 0x6C, 0x6D | Bitcoin-native shielded pool; reserved, not enabled (§3.10) |
+| 0x6C, 0x6D | Bitcoin-native shielded pool; live on mainnet, experimental (§3.10) |
 | 0x6A, 0x6B, 0x6E–0xFF | Free |
 
 A new opcode is claimed by updating this table together with `dapp/tacit.js`, `worker/src/index.js` and,
 if it folds into the pool, `cxfer-core` and the reflection guest.
 
-### 3.10 Bitcoin-native shielded pool (reserved, not enabled)
+### 3.10 Bitcoin-native shielded pool (live on mainnet, experimental)
 
-`0x6C`/`0x6D` are reserved and not enabled on mainnet. The reference implementation runs on signet. The
-design is [`DESIGN-btc-shielded-pool.md`](./contracts/sp1/confidential/DESIGN-btc-shielded-pool.md), and its
+`0x6C`/`0x6D` are enabled on mainnet, flagged experimental. TAC is the only asset the dapp offers into
+the pool at launch. The reference implementation also runs on signet. The design is
+[`DESIGN-btc-shielded-pool.md`](./contracts/sp1/confidential/DESIGN-btc-shielded-pool.md), and its
 security and privacy analysis is
 [`DESIGN-btc-shielded-pool-security.md`](./contracts/sp1/confidential/DESIGN-btc-shielded-pool-security.md).
 

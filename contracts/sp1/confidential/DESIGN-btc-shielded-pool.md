@@ -1,7 +1,7 @@
 # Bitcoin-native shielded pool: private payments on Bitcoin, no second chain
 
-Status: DESIGN, reference implementation live on signet. Opcodes `0x6C`/`0x6D` are reserved in SPEC §3.10
-and not enabled on mainnet. Companion analysis: `DESIGN-btc-shielded-pool-security.md`.
+Status: LIVE on mainnet, flagged experimental (SPEC §3.10) — TAC only at launch. The reference
+implementation also runs on signet. Companion analysis: `DESIGN-btc-shielded-pool-security.md`.
 
 A shielded pool over Tacit's Bitcoin assets. Alice pays Bob: the amount, the note that funded the
 payment, and the link between the two parties are hidden from everyone else. The pool lives entirely on

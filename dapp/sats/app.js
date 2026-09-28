@@ -2,7 +2,7 @@
 // or the chain comes from ../tacit.js, imported only once the user connects.
 
 const TACIT_URL = '/tacit.js?cb=7d3a3a74';
-const SECRET_URL = '/sats/secret.js?cb=2e13e4ed';
+const SECRET_URL = '/sats/secret.js?cb=503d9938';
 const MIX_URL = '/sats/mix.js?cb=52f7e8da';
 const ETH_URL = '/sats/eth.js?cb=017f773e';
 const POOL_STATUS = 'https://tacit-btc-pool.onrender.com/btc-pool/status';
@@ -163,9 +163,12 @@ function renderNet() {
   renderScan();
   renderSendLabels();
   const ph = $('secret-placeholder');
+  // #secret-steps carries the signet demo's static preview markup (six signet-only steps) until mountSecret()
+  // replaces it with the network's own panel. Pre-mount, that preview is only accurate for signet; mainnet
+  // stays on the placeholder line below until mountMainnet() unhides and fills it.
   if (ph) show('secret-steps', net !== 'mainnet');
   if (ph) ph.textContent = net === 'mainnet'
-    ? 'The private pool runs on signet. Switch the wallet to signet to try it.'
+    ? 'Connect a wallet above to start. Shield, pay and exit TAC in the pool — each step is one Bitcoin transaction.'
     : 'Connect a wallet above to start. Each step is one signet transaction.';
   show('mix-hint', net !== 'mainnet');
   const mp = $('mix-placeholder');
@@ -1104,13 +1107,15 @@ async function mountSecret() {
   if (secretMounted) return;
   secretMounted = true;
   const ph = $('secret-placeholder');
-  if (T.NET.name !== 'signet') { renderNet(); return; }
+  const mainnet = T.NET.name === 'mainnet';
   let mod;
-  try { mod = await import(SECRET_URL); } catch (e) { console.warn('[sats] secret.js', e); ph.textContent = 'Secret payments are coming soon.'; return; }
-  if (typeof mod.mount !== 'function') { ph.textContent = 'Secret payments are coming soon.'; return; }
-  ph.remove();
+  try { mod = await import(SECRET_URL); } catch (e) { console.warn('[sats] secret.js', e); if (ph) ph.textContent = 'Secret payments are coming soon.'; return; }
+  const fn = mainnet ? mod.mountMainnet : mod.mount;
+  if (typeof fn !== 'function') { if (ph) ph.textContent = 'Secret payments are coming soon.'; return; }
+  if (ph) ph.remove();
+  show('secret-steps', true);
   try {
-    secretHandle = await mod.mount($('secret-steps'), {
+    secretHandle = await fn($('secret-steps'), {
       tacit: T,
       wallet: T.wallet,
       network: T.NET.name,

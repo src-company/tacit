@@ -1,6 +1,6 @@
 {
   "note": "Halo2-KZG over the pinned Hermez pot18: no circuit-specific setup. Keys are derived from the SRS and the circuit.",
-  "network": "signet",
+  "network": "signet, mainnet",
   "system": "halo2-kzg-bn254",
   "circuit": "contracts/sp1/confidential/btc-pool-halo2 (the dapp/circuits/btc-pool/spend.circom relation, 12 publics)",
   "srs": "powersOfTau28_hez_final_18.ptau, BLAKE2b-512 7e6a9c2e5f05179ddfc923f38f917c9e6831d16922a902b0b4758b8e79c2ab8a81bb5f29952e16ee6c5067ed044d7857b5de120a90704c1d3b637fd94b95b13e",

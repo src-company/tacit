@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ipfs.filebase.io https://mempool.space https://*.mempool.space https://mempool.emzy.de https://mempool.bitaroo.net https://blockstream.info https://api.coinbase.com https://api.kraken.com https://api.coingecko.com https://cloudflare-eth.com https://api.tacit.finance https://tacit-api.onrender.com https://tacit-points.onrender.com https://tacit-pin.rosscampbell9.workers.dev https://www.tacitscan.io https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link https://uploads.pinata.cloud https://gateway.pinata.cloud https://gateway.liquify.com https://ethereum-sepolia-rpc.publicnode.com https://ethereum-rpc.publicnode.com https://mainnet.base.org https://base-rpc.publicnode.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://1rpc.io https://eth.llamarpc.com https://eth.drpc.org https://sepolia.drpc.org https://mainnet.gateway.tenderly.co https://sepolia.gateway.tenderly.co https://tacit-btc-pool.onrender.com https://tacit-sats-faucet.onrender.com https://tacit-sp-index.onrender.com https://tacit-join-board.onrender.com https://base.drpc.org https://rpc.flashbots.net; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ipfs.filebase.io https://mempool.space https://*.mempool.space https://mempool.emzy.de https://mempool.bitaroo.net https://blockstream.info https://api.coinbase.com https://api.kraken.com https://api.coingecko.com https://cloudflare-eth.com https://api.tacit.finance https://tacit-api.onrender.com https://tacit-points.onrender.com https://tacit-pin.rosscampbell9.workers.dev https://www.tacitscan.io https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link https://uploads.pinata.cloud https://gateway.pinata.cloud https://gateway.liquify.com https://ethereum-sepolia-rpc.publicnode.com https://ethereum-rpc.publicnode.com https://mainnet.base.org https://base-rpc.publicnode.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://1rpc.io https://eth.llamarpc.com https://eth.drpc.org https://sepolia.drpc.org https://mainnet.gateway.tenderly.co https://sepolia.gateway.tenderly.co https://tacit-btc-pool.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://tacit-sats-faucet.onrender.com https://tacit-sp-index.onrender.com https://tacit-join-board.onrender.com https://base.drpc.org https://rpc.flashbots.net; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>Secret Sats</title>
 <meta property="og:type" content="website">
@@ -173,6 +173,10 @@ input:focus-visible, select:focus-visible { outline: 2px solid var(--ink); outli
 .secret-key { font-size: var(--t-xs); word-break: break-all; background: var(--bg); padding: var(--s2) var(--s3); cursor: pointer; }
 .activity { margin: var(--s4) 0 0; }
 
+/* token art: solid ring = a public, transparent Tacit note; dashed ring = a shielded note in the pool */
+.tok { width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--ink); background: #fff; object-fit: contain; flex: none; vertical-align: -6px; margin-right: var(--s1); }
+.tok.shielded { border-style: dashed; }
+
 /* tabs */
 .tabs { display: flex; gap: var(--s5); border-bottom: 1px solid var(--hair); margin: 0 0 var(--s5); overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
@@ -288,7 +292,7 @@ footer a:hover { color: var(--ink); }
             <button type="button" class="mainnet" data-net="mainnet" aria-pressed="false">mainnet</button>
           </div>
         </div>
-        <p class="note hidden" id="mainnet-note">Mainnet moves real bitcoin. Send and silent payments work here; the private pool runs on signet.</p>
+        <p class="note hidden" id="mainnet-note">Mainnet moves real bitcoin. Send, silent payments and the shielded pool — TAC only, experimental — all work here.</p>
 
         <div id="connect">
           <p class="note">The same wallet as on tacit.finance: a passkey or linked wallet opens it on both.</p>
@@ -529,11 +533,11 @@ footer a:hover { color: var(--ink); }
     <h2 id="faq-h">Questions</h2>
     <details><summary>What is this?</summary><p>A working demo of private payments on Bitcoin. Send sats, pay a silent address, mix sats with other wallets into equal coins with no history, or move cBTC through a shielded pool that hides amounts and owners.</p></details>
     <details><summary>Is it a sidechain?</summary><p>No. Every step is an ordinary Bitcoin transaction. Indexers replay Bitcoin and check each proof; there is no other chain, federation or operator.</p></details>
-    <details><summary>Where are my sats? What is cBTC?</summary><p>Sats and silent payments stay sats in your wallet. The pool holds cBTC, a Tacit token backed by locked BTC and a slashable escrow. Sats turn into cBTC and back to sats by atomic swap, no custodian either way. On signet cBTC is a test token.</p></details>
+    <details><summary>Where are my sats? What is cBTC?</summary><p>Sats and silent payments stay sats in your wallet. On signet, the pool holds cBTC, a Tacit token backed by locked BTC and a slashable escrow; sats turn into cBTC and back to sats by atomic swap, no custodian either way. On mainnet the pool carries TAC.</p></details>
     <details><summary>Who can see what?</summary><p>Anyone sees that a pool transaction happened. Only payer and payee know the amount and who paid whom. Silent and shielded addresses give each payment a fresh output only the recipient can find.</p></details>
     <details><summary>Do I need to trust anyone?</summary><p>Bitcoin, the proof system, and the indexer you use — run your own and it is just Bitcoin and the proofs. No one holds the pool: a note moves only with its owner’s proof.</p></details>
     <details><summary>Does proving cost anything?</summary><p>No. Your device proves each shield, payment and exit in seconds, after a one-time download of the prover. You pay only the Bitcoin fee.</p></details>
-    <details><summary>Mainnet or signet?</summary><p>Sends and silent payments run on mainnet today. The pool runs on signet, where cBTC is a test token: an ordinary Tacit asset with a fixed supply and no BTC behind it, sold by the faucet for signet sats. When the pool opens on mainnet it will carry real cBTC, and its proof system needs no new setup ceremony.</p></details>
+    <details><summary>Mainnet or signet?</summary><p>Both. Sends, silent payments and the shielded pool all run on mainnet, where the pool is flagged experimental and carries TAC only. Shielding, paying privately and exiting all work today, each paying its own Bitcoin fee; gasless relaying for payments and exits is rolling out next. Signet keeps the full demo — a test cBTC the faucet hands out for signet sats — for trying every step before you move real TAC.</p></details>
   </section>
 
   <footer>
@@ -558,6 +562,6 @@ footer a:hover { color: var(--ink); }
   </form>
 </div>
 <div id="toast-container" aria-live="polite"></div>
-<script type="module" src="/sats/app.js?cb=615eba86"></script>
+<script type="module" src="/sats/app.js?cb=22314052"></script>
 </body>
 </html>
