@@ -481,7 +481,8 @@ export const CFG = {
     8453: opt('EVM_POOL_EXPLORER_API_8453', 'https://base.blockscout.com/api/v2'),
     4663: opt('EVM_POOL_EXPLORER_API_4663', 'https://robinhoodchain.blockscout.com/api/v2'),
   },
-  // Senders never credited for an EVM pool deposit or a box funding (the shared relay EOA, plus any keeper).
+  // Senders never credited for any activity, EVM pool deposits and box fundings included: the shared relay EOA that
+  // settles relayed operations (a relayed cUSD mint's tx.from), plus any keeper.
   evmPoolPointsExclude: opt('EVM_POOL_POINTS_EXCLUDE', '0x68575B073DE49a94e3E3ACf6F3A0d6E3b66267C7')
     .split(',').map((a) => a.trim().toLowerCase()).filter(Boolean),
   evmPoolScanMaxChunks: num('EVM_POOL_SCAN_MAX_CHUNKS', 20),

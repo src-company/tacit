@@ -22,6 +22,14 @@ try {
   assert.equal(store.loadCursor().ethDepositCount, 2);
   assert.equal(store.countByActivity('wrap'), 2);
   console.log('ok - the wrap bonus divisor counts wraps only');
+
+  const RELAY = '0x68575B073DE49a94e3E3ACf6F3A0d6E3b66267C7';
+  const guarded = openStore(join(dir, 'guarded.db'), { excluded: [RELAY] });
+  assert.equal(guarded.recordDeposit({ ...row(8, 'cusdmint'), depositor: RELAY.toLowerCase() }), false);
+  assert.equal(guarded.recordDeposit({ ...row(9, 'cusdmint'), depositor: `0x${'b'.repeat(40)}` }), true);
+  assert.equal(guarded.countByActivity('cusdmint'), 1);
+  assert.equal(guarded.totalFor(RELAY.toLowerCase())?.points ?? 0, 0);
+  console.log('ok - an excluded sender earns nothing for any activity');
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

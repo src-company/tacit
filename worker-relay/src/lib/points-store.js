@@ -6,7 +6,10 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 
-export function openStore(dbPath) {
+// excluded: addresses never credited for any activity (the shared relay EOA that settles relayed operations, and any
+// keeper); a row naming one is not recorded.
+export function openStore(dbPath, { excluded = [] } = {}) {
+  const never = new Set(excluded.map((a) => String(a).toLowerCase()));
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
@@ -321,6 +324,7 @@ export function openStore(dbPath) {
   // way `depositor` (tx.from, the transaction's own signer) is what earns points — a forwarder tip never
   // changes who that is.
   const recordDeposit = db.transaction((dep) => {
+    if (never.has(String(dep.depositor).toLowerCase())) return false;
     const wrote = insertDeposit.run({ tipWei: null, tipRecipient: null, ppBoosted: 0, activity: 'wrap', tacBoost: 1, zShareBoost: 1, chainId: 1, ...dep });
     if (wrote.changes === 0) return false; // already recorded (safe to re-scan a chunk after a crash)
     bumpTotals.run({ address: dep.depositor, points: dep.points, amountWei: dep.amountWei });

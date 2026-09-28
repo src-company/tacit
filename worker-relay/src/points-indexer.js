@@ -1488,7 +1488,7 @@ function startHttp(store, evmState) {
 
 async function main() {
   if (!CFG.pointsStartBlock) throw new Error('missing required env POINTS_START_BLOCK');
-  const store = openStore(CFG.pointsDbPath);
+  const store = openStore(CFG.pointsDbPath, { excluded: CFG.evmPoolPointsExclude });
   if (CFG.tacBoostTiers) {
     if (!CFG.tacBoostStartBlock) throw new Error('TAC_BOOST_TIERS needs TAC_BOOST_START_BLOCK');
     tacBoost = openTacBoost(new Database(CFG.pointsDbPath), {
