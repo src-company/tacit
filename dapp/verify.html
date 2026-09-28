@@ -10,10 +10,14 @@
      origin with the key-bearing dapp whose entire defence is that no inline
      script executes here. build/build.mjs recomputes the hash on every build
      (npm run build:verify fails on drift), so editing the script cannot silently
-     leave a stale pin behind. connect-src is limited to public Bitcoin explorers
-     + IPFS gateways. No third-party script, no analytics. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-DqcpstUry16EAHuudU+oQOWtoWWQW+RrfW5sahKgCGM='; style-src 'unsafe-inline'; img-src 'self' data:; connect-src https://mempool.space https://blockstream.info https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link https://gateway.pinata.cloud https://trustless-gateway.link https://*.ipfs.inbrowser.link; base-uri 'none'; form-action 'none'">
-<link rel="icon" type="image/svg+xml" href='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><style>.r{stroke:%230a0a0a}@media(prefers-color-scheme:dark){.r{stroke:%23f4efe6}}</style><circle class="r" cx="16" cy="16" r="13" fill="none" stroke-width="2.5"/><path d="M17.5 7L13 22.5Q13 25 18 24" fill="none" stroke="%23f7931a" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11L21 11" stroke="%23f7931a" stroke-width="2.4" stroke-linecap="round"/></svg>'>
+     leave a stale pin behind. Fonts are same-origin static files, not a third-party
+     CDN. connect-src is limited to public Bitcoin explorers + IPFS gateways.
+     No third-party script, no analytics. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-rprOIzjDJqDtLQHZHCTWN2uJ4d8BNm4UchZe55Zo01c='; style-src 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src https://mempool.space https://blockstream.info https://ipfs.io https://w3s.link https://*.ipfs.w3s.link https://dweb.link https://*.ipfs.dweb.link https://gateway.pinata.cloud https://trustless-gateway.link https://*.ipfs.inbrowser.link; base-uri 'none'; form-action 'none'">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#E8E0CC" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15130E" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>Verify TAC&rsquo;s fixed supply &middot; Tacit</title>
 <meta name="description" content="Verify TAC's fixed 21,000,000 supply from Bitcoin + IPFS, in your browser. TAC is non-mintable and its supply commitment opens to exactly 21M — nothing trusted.">
 <meta property="og:type" content="website">
@@ -27,55 +31,151 @@
 <meta name="twitter:description" content="Check it yourself from Bitcoin + IPFS, in your browser: TAC is non-mintable and its supply opens to exactly 21,000,000.">
 <meta name="twitter:image" content="https://tacit.finance/tac-logo.png">
 <style>
-  :root { --bg:#0e0f12; --fg:#e6e7ea; --dim:#9aa0a8; --pass:#1fb360; --fail:#e0533d; --line:#23262c; --accent:#f0883a; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
-  .wrap { max-width:760px; margin:0 auto; padding:32px 20px 64px; }
-  h1 { font-size:20px; margin:0 0 4px; letter-spacing:-0.01em; }
-  .sub { color:var(--dim); margin:0 0 24px; font-size:13px; }
-  .ids { background:#15171b; border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin-bottom:20px; font-size:12.5px; color:var(--dim); word-break:break-all; }
-  .ids b { color:var(--fg); font-weight:600; }
-  #rows { display:flex; flex-direction:column; gap:2px; margin:0 0 22px; }
-  .row { display:flex; gap:10px; align-items:flex-start; padding:7px 10px; border-radius:6px; background:#131519; }
-  .badge { flex:0 0 auto; font-weight:700; font-size:12px; padding:1px 7px; border-radius:4px; margin-top:1px; }
-  .b-pass { color:#062; background:#bff0d2; } .b-fail { color:#5a140a; background:#ffc9bf; } .b-run { color:#3a2c10; background:#f3d9a8; } .b-wait { color:var(--dim); background:#23262c; }
-  .row .label { flex:1; }
-  .row .extra { color:var(--dim); font-size:12px; display:block; margin-top:2px; word-break:break-all; }
-  #verdict { font-size:16px; font-weight:700; padding:16px 18px; border-radius:10px; border:1px solid var(--line); }
-  #verdict.ok { color:var(--pass); border-color:#16633a; background:#0d1f15; }
-  #verdict.bad { color:var(--fail); border-color:#5a221a; background:#1f100d; }
-  #verdict.run { color:var(--accent); }
-  .actions { margin-top:20px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-  button { font:inherit; font-size:13px; padding:8px 16px; border-radius:7px; border:1px solid var(--line); background:#1a1d22; color:var(--fg); cursor:pointer; }
-  button:hover { border-color:var(--accent); }
-  a { color:var(--accent); }
-  .note { color:var(--dim); font-size:12px; margin-top:18px; line-height:1.7; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 400; font-display: swap; src: url('/fonts/ibm-plex-mono-400-latin.woff2') format('woff2'); }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 500; font-display: swap; src: url('/fonts/ibm-plex-mono-500-latin.woff2') format('woff2'); }
+@font-face { font-family: 'Instrument Serif'; font-weight: 400; font-display: swap; src: url('/fonts/instrument-serif-400-latin.woff2') format('woff2'); }
+@font-face { font-family: 'Instrument Serif'; font-weight: 400; font-style: italic; font-display: swap; src: url('/fonts/instrument-serif-400i-latin.woff2') format('woff2'); }
+
+:root {
+  --paper: #E8E0CC; --card: #F2EBD4; --field: #FAF6EA; --ink: #1A1A1A; --mute: #6B6557;
+  --hair: rgba(26,26,26,.12); --hair-2: rgba(26,26,26,.28);
+  --orange: #f7931a; --ok: #0a7d3a; --err: #b8341d;
+  --lift: 0 22px 44px -28px rgba(26,26,26,.45);
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --serif: 'Instrument Serif', Georgia, serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #15130E; --card: #1F1C15; --field: #191711; --ink: #EDE5CF; --mute: #A39B85;
+    --hair: rgba(237,229,207,.12); --hair-2: rgba(237,229,207,.28);
+    --ok: #8fcf9a; --err: #f08a6c; --lift: 0 22px 44px -28px rgba(0,0,0,.9);
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--paper); color: var(--ink); }
+body {
+  font: 14px/1.6 var(--mono); letter-spacing: -.01em;
+  background-image: radial-gradient(var(--hair) 1px, transparent 1px); background-size: 24px 24px;
+  padding: 0 16px;
+}
+a { color: inherit; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { text-decoration-thickness: 2px; }
+button { font: inherit; color: inherit; letter-spacing: inherit; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+code { font: inherit; }
+.mute { color: var(--mute); }
+
+.shell { max-width: 640px; margin: 0 auto; padding-bottom: 56px; }
+
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 0; }
+.brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
+.tk { width: 30px; height: 30px; border-radius: 50%; display: block; flex: none; }
+.brand b { font: italic 400 26px/1 var(--serif); letter-spacing: -.01em; }
+.brand i { font: 500 10px/1 var(--mono); font-style: normal; letter-spacing: .16em; text-transform: uppercase; color: var(--mute);
+  border: 1px solid var(--hair-2); padding: 4px 6px 3px; margin-left: 2px; }
+.chip { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px; background: var(--card);
+  border: 1px solid var(--hair-2); text-decoration: none; font-size: 12.5px; color: var(--mute); }
+.chip:hover { border-color: var(--ink); color: var(--ink); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hair-2); flex: none; }
+.dot.on { background: var(--ok); }
+
+.hero { padding: 20px 0 30px; }
+.hero h1 { font: 400 clamp(34px, 8vw, 48px)/1.04 var(--serif); letter-spacing: -.02em; margin: 0 0 14px; }
+.hero h1 em { font-style: italic; color: var(--orange); }
+.hero p { color: var(--mute); margin: 0; max-width: 48ch; }
+
+.idcard { background: var(--card); border: 1px solid var(--hair); padding: 2px 16px; margin: 22px 0; }
+.kv { display: flex; justify-content: space-between; gap: 14px; font-size: 12.5px; color: var(--mute); padding: 11px 0; }
+.idcard .kv:not(:last-child) { border-bottom: 1px solid var(--hair); }
+.kv b { font-weight: 400; color: var(--ink); text-align: right; overflow-wrap: anywhere; word-break: break-all; }
+
+.steps { list-style: none; margin: 0 0 24px; padding: 0; }
+.step { display: grid; grid-template-columns: 28px minmax(0,1fr); gap: 0 14px; position: relative; padding-bottom: 18px; }
+.step:not(:last-child)::before { content: ''; position: absolute; left: 13.5px; top: 30px; bottom: 2px; width: 1px; background: var(--hair-2); }
+.step .n { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--hair-2); display: grid; place-items: center;
+  font-size: 12px; color: var(--mute); background: var(--card); }
+.step h3 { font: 400 16.5px/1.35 var(--serif); font-style: italic; margin: 1px 0 2px; color: var(--mute); }
+.step .d { font-size: 11.5px; color: var(--mute); word-break: break-all; min-height: 1px; }
+.step.run .n { border-color: var(--orange); color: var(--ink); }
+.step.pass .n { background: var(--ok); border-color: var(--ok); color: var(--card); font-style: normal; }
+.step.fail .n { background: var(--err); border-color: var(--err); color: var(--card); }
+.step.pass h3, .step.fail h3 { color: var(--ink); font-style: normal; }
+
+.verdict { font: 400 21px/1.3 var(--serif); padding: 18px 20px; margin: 0 0 22px; border-left: 3px solid var(--hair-2); background: var(--card); }
+.verdict.run { border-color: var(--orange); color: var(--mute); }
+.verdict.ok { border-color: var(--ok); color: var(--ink); }
+.verdict.bad { border-color: var(--err); color: var(--ink); }
+
+.warnbox { border: 1px solid var(--err); color: var(--err); padding: 14px 16px; margin: 0 0 20px; font-size: 13px; font-weight: 500; background: var(--field); }
+
+.actions { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.btn { font-size: 12.5px; padding: 9px 18px; background: var(--ink); color: var(--paper); border: 1px solid var(--ink); cursor: pointer; }
+.btn:hover { background: transparent; color: var(--ink); }
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--hair-2); }
+.btn.ghost:hover { border-color: var(--ink); }
+
+.note { color: var(--mute); font-size: 12px; line-height: 1.7; margin: 0; }
+.section { margin-top: 34px; padding-top: 26px; border-top: 1px solid var(--hair-2); }
+.section h2 { font: 400 22px/1.2 var(--serif); letter-spacing: -.01em; margin: 0 0 10px; }
+.section p { color: var(--mute); font-size: 13px; line-height: 1.65; margin: 0 0 10px; }
+.section p:last-child { margin-bottom: 0; }
+.section a { color: var(--orange); }
+
+footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; margin-top: 40px; padding-top: 18px;
+  border-top: 1px solid var(--hair-2); color: var(--mute); font-size: 12px; }
+footer nav { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+footer a { color: var(--mute); }
+footer a:hover { color: var(--ink); }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
-    <img src="/tac-logo.png" alt="TAC" width="40" height="40" style="border-radius:8px;flex:0 0 auto;">
-    <h1 style="margin:0;">Verify TAC&rsquo;s fixed supply</h1>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="tk-tac" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#0a0a0a"/><circle cx="16" cy="16" r="13" fill="none" stroke="#f4efe6" stroke-width="2.5"/><path d="M17.5 7L13 22.5Q13 25 18 24" fill="none" stroke="#f7931a" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11L21 11" stroke="#f7931a" stroke-width="2.4" stroke-linecap="round"/></symbol>
+  </defs>
+</svg>
+
+<div class="shell">
+  <header class="top">
+    <a class="brand" href="/verify.html"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><b>tacit</b><i>verify</i></a>
+    <a class="chip" href="https://github.com/z0r0z/tacit/blob/main/dapp/verify.html" rel="noopener"><span class="dot on"></span>View source</a>
+  </header>
+
+  <section class="hero">
+    <h1>Verify TAC, <em>yourself</em>.</h1>
+    <p>From Bitcoin and IPFS, in your browser. No server, no indexer trusted &mdash; this page recomputes everything below on its own.</p>
+  </section>
+
+  <div class="idcard">
+    <div class="kv"><span>asset</span><b id="aid"></b></div>
+    <div class="kv"><span>etch tx</span><b id="txid"></b></div>
   </div>
-  <p class="sub">From Bitcoin + IPFS, in your browser. No server, no indexer trusted &mdash; this page recomputes everything itself.</p>
-  <div class="ids">
-    <div>asset&nbsp;&nbsp;<b id="aid"></b></div>
-    <div>etch tx&nbsp;<b id="txid"></b></div>
-  </div>
-  <div id="rows"></div>
-  <div id="verdict" class="run">Running checks&hellip;</div>
+
+  <ol class="steps" id="rows"></ol>
+  <div id="verdict" class="verdict run">Running checks&hellip;</div>
+
   <div class="actions">
-    <button id="rerun">Re-run</button>
-    <span class="note" style="margin:0;">Pass <code>?asset_id=&hellip;&amp;txid=&hellip;</code> to check any fixed-supply asset.</span>
+    <button class="btn ghost" id="rerun" type="button">Re-run</button>
+    <span class="note">Pass <code>?asset_id=&hellip;&amp;txid=&hellip;</code> to check any fixed-supply asset.</span>
   </div>
   <p class="note">
     What this proves: (1) the asset id is <b>SHA-256(etch&nbsp;txid&nbsp;&Vert;&nbsp;vout)</b> &mdash; it can only be this one etch;
     (2) the etch&rsquo;s <b>mint authority is zero</b> &mdash; no new TAC can ever be valid;
     (3) the published opening verifies the on-chain <b>Pedersen commitment</b> to exactly 21,000,000.
     The Bitcoin tx comes from a public explorer but isn&rsquo;t trusted: the asset id is recomputed locally and the IPFS blob is checked against its own content hash (the CID).
-    Read this page&rsquo;s source &mdash; it&rsquo;s ~250 lines, no dependencies.
   </p>
+
+  <footer>
+    <span>tacit verify</span>
+    <nav aria-label="More">
+      <a href="/">Full app</a>
+      <a href="/lite/">tacit lite</a>
+      <a href="https://github.com/z0r0z/tacit" rel="noopener">GitHub</a>
+    </nav>
+  </footer>
 </div>
 
 <script type="module">
@@ -97,14 +197,13 @@ const IPFS_GATEWAYS = ['https://ipfs.io/ipfs/{cid}', 'https://{cid}.ipfs.inbrows
 document.getElementById('aid').textContent = TAC_ASSET_ID;
 document.getElementById('txid').textContent = ETCH_TXID;
 if (!IS_CANONICAL) {
-  const b = document.createElement('p');
-  b.className = 'bad';
+  const b = document.createElement('div');
+  b.className = 'warnbox';
   b.setAttribute('role', 'alert');
-  b.style.cssText = 'border:2px solid currentColor;padding:.75em;margin:1em 0;font-weight:700';
   b.textContent = 'CUSTOM ASSET — THIS IS NOT TAC. This page was opened with an asset id or genesis '
-    + 'transaction supplied in the link, not TAC\u2019s own. Whatever it reports below describes that asset, '
+    + 'transaction supplied in the link, not TAC’s own. Whatever it reports below describes that asset, '
     + 'not TAC. Open https://tacit.finance/verify.html with no query string to verify the real TAC.';
-  document.body.insertBefore(b, document.body.firstChild);
+  document.querySelector('.shell').insertBefore(b, document.querySelector('.hero'));
 }
 
 // ───────────────────────── helpers ─────────────────────────
@@ -114,7 +213,6 @@ const fromHex = h => Uint8Array.from(h.match(/.{2}/g).map(x => parseInt(x, 16)))
 const sha256 = async b => new Uint8Array(await crypto.subtle.digest('SHA-256', b));
 const cat = (...a) => { const n = a.reduce((s, x) => s + x.length, 0), o = new Uint8Array(n); let i = 0; for (const x of a) { o.set(x, i); i += x.length; } return o; };
 const u32le = n => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n >>> 0, true); return b; };
-const escHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // ───────────── inline secp256k1 (affine, BigInt) ─────────────
 const Pp = 0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2fn;
@@ -214,22 +312,23 @@ async function fetchTx(txid) {
 
 // ───────────────────────── UI plumbing ─────────────────────────
 const rowsEl = document.getElementById('rows'), verdictEl = document.getElementById('verdict');
-let anyFail = false;
+let anyFail = false, stepN = 0;
 function row(label) {
-  const el = document.createElement('div'); el.className = 'row';
-  el.innerHTML = `<span class="badge b-wait">&hellip;</span><span class="label">${label}</span>`;
+  stepN += 1;
+  const el = document.createElement('li'); el.className = 'step run';
+  el.innerHTML = `<span class="n">${stepN}</span><div><h3>${label}</h3><div class="d"></div></div>`;
   rowsEl.appendChild(el); return el;
 }
 function settle(el, pass, extra = '') {
-  const b = el.querySelector('.badge');
-  b.className = 'badge ' + (pass ? 'b-pass' : 'b-fail'); b.textContent = pass ? 'PASS' : 'FAIL';
-  if (extra) el.querySelector('.label').insertAdjacentHTML('beforeend', `<span class="extra">${escHtml(extra)}</span>`);
+  el.className = 'step ' + (pass ? 'pass' : 'fail');
+  el.querySelector('.n').textContent = pass ? '✓' : '✗';
+  if (extra) el.querySelector('.d').textContent = extra;
   if (!pass) anyFail = true;
 }
 
 async function run() {
-  rowsEl.innerHTML = ''; anyFail = false;
-  verdictEl.className = 'run'; verdictEl.textContent = 'Running checks…';
+  rowsEl.innerHTML = ''; anyFail = false; stepN = 0;
+  verdictEl.className = 'verdict run'; verdictEl.textContent = 'Running checks…';
   try {
     let r;
     r = row('NUMS generator H derives to the pinned value (SPEC §3.1)');
@@ -250,7 +349,7 @@ async function run() {
     r = row(`ticker is TAC, decimals = ${etch.decimals}`);
     settle(r, etch.ticker === 'TAC');
 
-    r = row('mint authority is zero → non-mintable, no new TAC can ever be valid');
+    r = row('mint authority is zero — non-mintable, no new TAC can ever be valid');
     settle(r, etch.mintAuthority.every(b => b === 0), toHex(etch.mintAuthority));
 
     const cid = (etch.imageUri || '').replace(/^ipfs:\/\//, '');
@@ -266,13 +365,13 @@ async function run() {
     r = row('supply opens to exactly 21,000,000 TAC');
     settle(r, supply === 2100000000000000n, `${(supply / (10n ** BigInt(etch.decimals))).toLocaleString('en-US')} at ${etch.decimals} decimals`);
 
-    if (anyFail) { verdictEl.className = 'bad'; verdictEl.textContent = '✗ verification FAILED'; }
-    else if (IS_CANONICAL) { verdictEl.className = 'ok'; verdictEl.textContent = '✓ TAC supply is provably fixed at 21,000,000 — non-mintable, opening verified from Bitcoin + IPFS'; }
+    if (anyFail) { verdictEl.className = 'verdict bad'; verdictEl.textContent = '✗ verification FAILED'; }
+    else if (IS_CANONICAL) { verdictEl.className = 'verdict ok'; verdictEl.textContent = '✓ TAC supply is provably fixed at 21,000,000 — non-mintable, opening verified from Bitcoin + IPFS'; }
     // Name the asset in the verdict itself, not only in the banner: the verdict line is the part that gets
     // screenshotted and quoted.
-    else { verdictEl.className = 'ok'; verdictEl.textContent = `✓ checks passed for CUSTOM asset ${TAC_ASSET_ID} — this is NOT TAC`; }
+    else { verdictEl.className = 'verdict ok'; verdictEl.textContent = `✓ checks passed for CUSTOM asset ${TAC_ASSET_ID} — this is NOT TAC`; }
   } catch (e) {
-    verdictEl.className = 'bad'; verdictEl.textContent = '✗ could not complete: ' + e.message;
+    verdictEl.className = 'verdict bad'; verdictEl.textContent = '✗ could not complete: ' + e.message;
   }
 }
 document.getElementById('rerun').addEventListener('click', run);
