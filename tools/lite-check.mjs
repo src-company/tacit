@@ -198,7 +198,7 @@ await step('farm', async () => {
   await page.click('[data-pfm="zap"]');
   await page.fill('#pf-amt', '0.05');
   try { await page.waitForSelector('#pf-ackv', { timeout: 60000 }); } catch (e) {
-    if (process.env.DEBUG) console.log('   farm state:', JSON.stringify(await page.evaluate(() => ({ amt: document.querySelector('#pf-amt')?.value, open: document.querySelector('.farm[aria-expanded="true"]')?.dataset.farm, mode: document.querySelector('[data-pfm][aria-selected="true"]')?.dataset.pfm, rcpt: document.querySelector('#pf-rcpt')?.textContent.replace(/\s+/g, ' '), status: document.querySelector('#pf-status')?.textContent, go: document.querySelector('#pf-go')?.disabled }))));
+    if (process.env.DEBUG) console.log('   farm state:', JSON.stringify(await page.evaluate(() => ({ amt: document.querySelector('#pf-amt')?.value, open: document.querySelector('.farm.open')?.dataset.farm, mode: document.querySelector('[data-pfm][aria-selected="true"]')?.dataset.pfm, rcpt: document.querySelector('#pf-rcpt')?.textContent.replace(/\s+/g, ' '), status: document.querySelector('#pf-status')?.textContent, go: document.querySelector('#pf-go')?.disabled }))));
     throw e;
   }
   ok(await page.isDisabled('#pf-go'), 'farm: a zap this size waits for its loss to be accepted');
@@ -375,7 +375,7 @@ await step('bitcoin', async () => {
   await until(r.page, () => (window.__sent || []).length > 0 || /err/.test(document.querySelector('#bw-status')?.innerHTML || ''), null, 60000);
   const sent = await r.page.evaluate(() => window.__sent);
   const deposit = await r.page.$eval('#borrow-body [data-copy]', (b) => b.dataset.copy);
-  ok(sent.length === 1 && sent[0][0] === deposit && sent[0][1] >= 23000, `bitcoin: one popup funds the deposit address with ${sent[0]?.[1]} sats`);
+  ok(sent.length === 1 && sent[0][0] === deposit && sent[0][1] >= 21000, `bitcoin: one popup funds the deposit address with ${sent[0]?.[1]} sats, the lock and its fees`);
   if (r.errors.length) { fails++; console.log('FAIL bitcoin page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   await r.browser.close();
 });
