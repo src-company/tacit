@@ -467,6 +467,15 @@ async function scanPmCycle(store) {
   }
   betCandidates.sort((a, b) => (a.blockNumber < b.blockNumber ? -1 : a.blockNumber > b.blockNumber ? 1 : 0));
 
+  // Same guard as scanCollateralEngineCycle/scanWeinameCycle: Blockscout serves blocks a boost's transfer
+  // replay hasn't reached yet. Score nothing and keep the cursor, so the whole page is retried next cycle
+  // rather than either recording a bet/creator-award unboosted or reaching tacMultiplier/zShareMultiplier past
+  // their coverage, which throws and would abort every candidate in this batch on every retry until the
+  // replay caught all the way up to the newest one — markets are still recorded above regardless, since that
+  // part carries no boost multiplier and needs no such guard.
+  const newestCandidate = betCandidates.reduce((m, c) => (c.blockNumber > m ? c.blockNumber : m), 0n);
+  if (capToBoostCoverage(newestCandidate) < newestCandidate) return;
+
   let betCount = store.countByActivity('pmbet');
   let createCount = store.countByActivity('pmcreate');
   const creatorAwardedThisCycle = new Set(); // marketId — belt-and-suspenders against awarding twice within one batch
@@ -559,6 +568,13 @@ async function scanWeinameCycle(store) {
   }
 
   registeredCandidates.sort((a, b) => (a.blockNumber < b.blockNumber ? -1 : a.blockNumber > b.blockNumber ? 1 : 0));
+
+  // Same guard as scanCollateralEngineCycle: Blockscout serves blocks a boost's transfer replay hasn't reached
+  // yet. Score nothing and keep the cursor, so the whole page is retried next cycle rather than either
+  // recording a registration unboosted or reaching tacMultiplier/zShareMultiplier past their coverage (which
+  // throws — this is exactly what aborted a real registration's scoring the first time this came up live).
+  const newestCandidate = registeredCandidates.reduce((m, c) => (c.blockNumber > m ? c.blockNumber : m), 0n);
+  if (capToBoostCoverage(newestCandidate) < newestCandidate) return;
 
   let priorCount = store.countByActivity('weiname');
   for (const { item, tokenId, blockNumber, blockTime } of registeredCandidates) {
