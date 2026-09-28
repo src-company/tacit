@@ -67,25 +67,34 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
   // types, not CETCH/CMINT). So resolution has five possible outcomes, tagged here so both this module's own
   // forward walk (getCxferByOutput) and its backward input-classification (classifyInput) can share one cache
   // and one esplora fetch per txid, whether they reach it via a direct DAG hop or via an input one hop earlier:
-  //   cxfer                — a confidential transfer; carries the full shape a DAG hop needs.
+  //   cxfer                — a confidential transfer; carries its OWN shape (outputs + raw vins), unresolved.
   //   cetch                — the asset's own supply note (opcode 0x21); carries its commitment.
   //   funding              — no envelope at all — a plain, non-confidential input paying for a reveal tx.
   //   other-fold           — a recognized-but-different fold type (amm/farm/bid/…) — not resolvable here.
   //   unrecognized-envelope — an envelope this module doesn't parse (opcode noted) — likely CMINT/bound-asset.
+  // Deliberately SHALLOW: a cxfer's own vins are returned raw (txid/vout only), never further resolved here.
+  // The recursion ACROSS hops belongs to burn-deposit-tracer.js's outer walk (mirrored, for a hop's OWN inputs,
+  // by getCxferByOutput below) — resolveShallow must not do it too. It first did, transitively: classifyInput
+  // called what was then a single merged resolver, which itself called classifyInput for ITS OWN inputs, so
+  // resolving hop 1 silently resolved the WHOLE lineage before the outer BFS's maxDepth counter ever ran —
+  // turning maxDepth into a check that fires only after the very work it exists to cap has already happened.
+  // Splitting the shallow, cacheable "what is this txid" fact from the one-hop "resolve this cxfer's inputs"
+  // step (now in getCxferByOutput, still cheap for a repeat call since it only re-reads already-cached shallow
+  // facts, never re-fetches) keeps each outer BFS step doing exactly one hop's worth of fresh resolution again.
   // Scope stays plain cxfer + CETCH leaves only — not CMINT (a separate provenance branch the assembler tracks
   // via its own `cmints[]` array, not through a cxfer's inputs) and not cxfer_bound (0x39, deployment-bound
   // assets). TAC — the only asset burn-deposit has moved so far — is non-mintable (fixed supply, confirmed via
   // its own /assets/:id record) and folds unbound (SPEC.md §6.2), so its lineage should never contain a cmint
   // or a bound hop; a DAG that does throws rather than silently mis-resolving it.
-  const hopCacheKey = (txidDisplay) => `burndephop:${network}:${stripHexPrefix(txidDisplay).toLowerCase()}`;
-  const resolvedCache = new Map(); // txidDisplay (no 0x, lowercase) -> the tagged resolution — this request only
-  async function resolveTxid(txidDisplay) {
+  const shallowCacheKey = (txidDisplay) => `burndepshallow:${network}:${stripHexPrefix(txidDisplay).toLowerCase()}`;
+  const shallowCache = new Map(); // txidDisplay (no 0x, lowercase) -> the tagged shallow resolution
+  async function resolveShallow(txidDisplay) {
     const key = stripHexPrefix(txidDisplay).toLowerCase();
-    let rec = resolvedCache.get(key);
+    let rec = shallowCache.get(key);
     if (rec) return rec;
     if (env.REGISTRY_KV) {
-      const cached = await env.REGISTRY_KV.get(hopCacheKey(key), 'json');
-      if (cached) { resolvedCache.set(key, cached); return cached; }
+      const cached = await env.REGISTRY_KV.get(shallowCacheKey(key), 'json');
+      if (cached) { shallowCache.set(key, cached); return cached; }
     }
     const [hex, jsonText] = await Promise.all([
       fetchText(`/tx/${key}/hex`),
@@ -96,24 +105,9 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
     const decode = classifyConfidentialTx(withHexPrefix(hexTrimmed));
     if (decode && decode.type === 'cxfer') {
       if (!json.status || !json.status.confirmed) throw new Error(`burndep-live-tracer: ${txidDisplay} is not yet confirmed`);
-      const vins = json.vin || [];
-      const classified = await Promise.all(vins.map((v) => classifyInput(v.txid, v.vout)));
-      // Funding inputs (assembler's `inputSkip`) are, by construction, the LEADING ones. A 'funding'
-      // classification after a real one is not a shape this reveal pattern produces, so it's treated as an
-      // anomaly rather than silently included or silently dropped.
-      let inputSkip = 0;
-      while (inputSkip < classified.length && classified[inputSkip].kind === 'funding') inputSkip++;
-      for (let i = inputSkip; i < classified.length; i++) {
-        if (classified[i].kind === 'funding') {
-          throw new Error(`burndep-live-tracer: ${txidDisplay} has a non-confidential input at index ${i}, `
-            + `after a confidential one at a lower index — funding inputs are expected to be leading only`);
-        }
-      }
-      const inputs = vins.slice(inputSkip).map((v, i) => ({
-        prevTxid: withHexPrefix(v.txid), prevVout: v.vout, commitment: classified[inputSkip + i].commitment,
-      }));
       rec = {
-        kind: 'cxfer', tx: withHexPrefix(hexTrimmed), inputs, inputSkip,
+        kind: 'cxfer', tx: withHexPrefix(hexTrimmed),
+        vins: (json.vin || []).map((v) => ({ txid: v.txid, vout: v.vout })),
         outputs: decode.vouts.map((v, i) => ({ vout: v, commitment: decode.commitments[i] })),
         rangeProof: decode.rangeProof, kernelSig: decode.kernelSig, blockHash: json.status.block_hash,
       };
@@ -122,19 +116,19 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
     } else {
       const envHex = extractTaprootEnvelope(hexTrimmed);
       const cetch = envHex && parseCetch(envHex);
-      rec = cetch ? { kind: 'cetch', commitment: cetch.c0Compressed }
+      rec = cetch ? { kind: 'cetch', commitment: cetch.c0Compressed, tx: withHexPrefix(hexTrimmed), blockHash: json.status && json.status.block_hash }
         : envHex ? { kind: 'unrecognized-envelope', opcode: envHex.slice(2, 4) }
         : { kind: 'funding' };
     }
-    resolvedCache.set(key, rec);
+    shallowCache.set(key, rec);
     // Confirmed, classified, immutable — safe to cache forever. Any caller sharing this KV (a future request,
     // or an offline crawler warming it ahead of time) reads it back with zero esplora calls.
-    if (env.REGISTRY_KV) await env.REGISTRY_KV.put(hopCacheKey(key), JSON.stringify(rec));
+    if (env.REGISTRY_KV) await env.REGISTRY_KV.put(shallowCacheKey(key), JSON.stringify(rec));
     return rec;
   }
 
   async function classifyInput(prevTxidDisplay, prevVout) {
-    const rec = await resolveTxid(prevTxidDisplay);
+    const rec = await resolveShallow(prevTxidDisplay);
     if (rec.kind === 'cxfer') {
       const o = rec.outputs.find((x) => x.vout === prevVout);
       if (!o) throw new Error(`burndep-live-tracer: ${prevTxidDisplay} has no cxfer output at vout ${prevVout}`);
@@ -168,14 +162,32 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
     const plain = seen.get(String(op).toLowerCase());
     if (!plain) throw new Error(`burndep-live-tracer: getCxferByOutput called with an outpoint this tracer never seeded or discovered: ${op}`);
     const { txidDisplay, vout } = plain;
-    const rec = await resolveTxid(txidDisplay);
+    const rec = await resolveShallow(txidDisplay);
     if (rec.kind !== 'cxfer') return null; // not produced by a cxfer — tracer treats as unprovable unless it's a leaf
     if (!rec.outputs.some((o) => o.vout === vout)) return null;
+    // Resolve THIS hop's own inputs — one hop back each, via classifyInput (which itself only ever calls
+    // resolveShallow, never recurses further) — so a lineage's total depth is still driven by the outer BFS
+    // loop in traceBurnDepositProvenance, one hop per iteration, exactly where maxDepth is enforced.
+    const classified = await Promise.all(rec.vins.map((v) => classifyInput(v.txid, v.vout)));
+    // Funding inputs (assembler's `inputSkip`) are, by construction, the LEADING ones. A 'funding'
+    // classification after a real one is not a shape this reveal pattern produces, so it's treated as an
+    // anomaly rather than silently included or silently dropped.
+    let inputSkip = 0;
+    while (inputSkip < classified.length && classified[inputSkip].kind === 'funding') inputSkip++;
+    for (let i = inputSkip; i < classified.length; i++) {
+      if (classified[i].kind === 'funding') {
+        throw new Error(`burndep-live-tracer: ${txidDisplay} has a non-confidential input at index ${i}, `
+          + `after a confidential one at a lower index — funding inputs are expected to be leading only`);
+      }
+    }
+    const inputs = rec.vins.slice(inputSkip).map((v, i) => ({
+      prevTxid: withHexPrefix(v.txid), prevVout: v.vout, commitment: classified[inputSkip + i].commitment,
+    }));
     // Seed every one of THIS tx's own REAL inputs into `seen` so the tracer's next hop (which will call
     // getCxferByOutput with outpointKey(inp.prevTxid, inp.prevVout), computed inside burn-deposit-tracer.js
     // itself) resolves to a plaintext txid/vout this module already knows, without needing to invert a hash.
     // Funding inputs are never seeded: nothing should ever ask this tracer to resolve one further.
-    for (const inp of rec.inputs) seed(inp.prevTxid, inp.prevVout);
+    for (const inp of inputs) seed(inp.prevTxid, inp.prevVout);
     // fetchBlockWitness downloads and parses the FULL raw block (every tx in it) — real bandwidth/CPU cost per
     // hop, needed only for the merkle-proof fields (blockTxids/blockWtxids/coinbase/index). The minimal
     // /reflection/burndep registration shape needs none of those, only blockHash — already on `rec` for free
@@ -194,8 +206,8 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
     return {
       txid: withHexPrefix(txidDisplay),
       tx: rec.tx,
-      inputs: rec.inputs,
-      inputSkip: rec.inputSkip,
+      inputs,
+      inputSkip,
       outputs: rec.outputs,
       rangeProof: rec.rangeProof,
       kernelSig: rec.kernelSig,
@@ -211,7 +223,10 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
     };
   }
 
-  return { getCxferByOutput, seed, outpointKeyOf: (txidDisplay, vout) => outpointKey(withHexPrefix(txidDisplay), vout) };
+  // Exposed so a caller that needs a txid's own data outside the DAG walk (e.g. the asset's etch/leaf tx,
+  // never fetched by trace() itself — see traceBurnDepositProvenance's own leaf comment) can share this same
+  // cache instead of fetching it separately and uncached on every call.
+  return { getCxferByOutput, seed, resolveShallow, outpointKeyOf: (txidDisplay, vout) => outpointKey(withHexPrefix(txidDisplay), vout) };
 }
 
 // Top-level entry point: given a note's own outpoint and the asset's supply leaf(ves), produce the full

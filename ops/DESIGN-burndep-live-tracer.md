@@ -206,6 +206,43 @@ the same earlier transfers). A deliberate warm-up pass (calling this endpoint fo
 anywhere — this repo's own tooling, or a separate always-on box with better esplora rate-limit headroom) is
 just normal use of the endpoint, not a special mode.
 
+## Update: the caching refactor silently defeated maxDepth — found and fixed before it mattered
+
+Re-reviewing the KV-cache change above (nothing prompted this beyond "keep looking for real problems") surfaced
+a genuine structural bug: `resolveTxid` (that update's merged resolver) called `classifyInput` to classify its
+own inputs, and `classifyInput` called `resolveTxid` right back — on the INPUT's txid. If that input was itself
+a cxfer, resolving IT would recurse into ITS OWN inputs the same way, and so on, all the way back through the
+entire lineage. For this module's real 38-hop test lineage, that meant the very first `getCxferByOutput` call —
+hop 1 of 38 — silently resolved (and esplora-fetched, and KV-wrote) the WHOLE chain internally before returning
+hop 1's own result. `traceBurnDepositProvenance`'s outer BFS loop still enforces `maxDepth`, but only counts
+its own iterations — by the time it could throw on iteration 6, the recursive first call had usually already
+done all the work maxDepth exists to cap. The throw still fired eventually (so a caller couldn't be fooled into
+trusting a partial result), but the cost control it's supposed to provide was gone: a lineage far beyond the
+intended cap would still be fully crawled and cached before being rejected.
+
+The recursion existed only because a single function both cached a txid's classification AND resolved its
+inputs recursively — the same conflation that made the original `classifyInput`/`fetchTx` split correct in the
+first place (module header comment: "the recursion ACROSS hops is burn-deposit-tracer.js's own job... not this
+module's"). Fixed by splitting `resolveTxid` back into two layers: `resolveShallow` (cached, returns a txid's
+own kind + raw unresolved vins — never calls classifyInput, never recurses) and `getCxferByOutput` (resolves
+ONE hop's own inputs via `classifyInput`, which itself only calls `resolveShallow`). Every cache benefit from
+the update above is preserved — a txid reached via either path is still esplora-fetched at most once, ever —
+but a lineage's depth is once again driven entirely by the outer BFS, one hop per iteration, exactly where
+`maxDepth` is checked.
+
+Verified with `maxDepth: 5` against the same real 38-hop lineage: threw `exceeded maxDepth (5)` after 11 esplora
+txid fetches (6 real chain hops — 5 processed + 1 lookahead — plus 5 of those hops' own leading funding inputs,
+a real per-hop characteristic of this particular lineage, not a symptom of anything wrong), not the ~76 the
+recursive bug would have pulled in regardless of the cap. Re-ran the full unrelated `maxDepth: 128` trace too:
+still 38/38 hops, same result as before the fix (~39s cold, correctness unchanged).
+
+## Update: the etch/leaf tx now shares the same cache
+
+`handleBurnDepositTrace`'s separate lookup of the asset's own etch tx (never reached by the walk itself, since
+leaves are terminal) was two raw, uncached esplora calls on every request. `resolveShallow` is now exposed from
+the live tracer's return value, so this lookup goes through the same permanent cache as every other hop — a
+repeat trace for the same asset no longer re-fetches its etch tx from esplora at all.
+
 ## What NOT to do
 
 - Do not skip the byte-for-byte diff against real historical burns and ship on "it looks right."

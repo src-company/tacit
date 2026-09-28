@@ -1776,7 +1776,7 @@ async function handleBurnDepositTrace(req, env, url, cors) {
   if (!asset || !asset.etch_txid) {
     return jsonResponse({ ok: false, error: `asset ${assetIdHex} has no indexed etch on ${network} — POST /assets/hint with its reveal_txid first` }, 404, cors);
   }
-  let tracedCxfers;
+  let tracedCxfers, etchTx, etchBlockHash;
   try {
     const pool = makeConfidentialPool({ secp, keccak256: keccak_256, sha256 });
     const trace = makeBurnDepositTracer({ outpointKey: pool.outpointKey }).trace;
@@ -1786,20 +1786,18 @@ async function handleBurnDepositTrace(req, env, url, cors) {
       leaves: [{ txid: asset.etch_txid, vout: asset.etch_vout || 0 }],
     });
     tracedCxfers = res.cxfers;
+    // The etch leaf itself is never fetched by the walk (leaves are terminal — see burn-deposit-tracer.js's
+    // `if (leaves.has(op)) continue`), so it needs one more explicit lookup for the registration bundle's own
+    // `etch` field — through the same live tracer so a repeat call for this asset hits the same permanent
+    // cache instead of re-fetching from esplora every time.
+    const etchRec = await res.live.resolveShallow(asset.etch_txid);
+    if (etchRec.kind !== 'cetch') {
+      return jsonResponse({ ok: false, error: `asset ${assetIdHex}'s recorded etch_txid does not resolve to a CETCH (got '${etchRec.kind}') — indexed etch record may be wrong` }, 502, { ...cors, 'Cache-Control': 'no-store' });
+    }
+    etchTx = etchRec.tx;
+    etchBlockHash = etchRec.blockHash;
   } catch (e) {
     return jsonResponse({ ok: false, error: `trace failed: ${e && e.message || e}` }, 502, { ...cors, 'Cache-Control': 'no-store' });
-  }
-  // The etch leaf itself is never fetched by the walk (leaves are terminal — see burn-deposit-tracer.js's
-  // `if (leaves.has(op)) continue`), so it needs one more explicit lookup for the registration bundle's own
-  // `etch` field.
-  let etchTx, etchBlockHash;
-  try {
-    const etchJson = JSON.parse(await apiText(env, `/tx/${asset.etch_txid}`, {}, network));
-    const etchHex = (await apiText(env, `/tx/${asset.etch_txid}/hex`, {}, network)).trim();
-    etchTx = etchHex.startsWith('0x') ? etchHex : '0x' + etchHex;
-    etchBlockHash = etchJson.status && etchJson.status.block_hash;
-  } catch (e) {
-    return jsonResponse({ ok: false, error: `could not fetch the asset's own etch tx: ${e && e.message || e}` }, 502, { ...cors, 'Cache-Control': 'no-store' });
   }
   const bundle = {
     etch: { tx: etchTx, blockHash: etchBlockHash, blockHeight: asset.etched_at_height },
