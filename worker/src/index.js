@@ -95,6 +95,8 @@ import { makeConfidentialIndex } from './confidential-index.js';
 import { buildCrossoutConsumer, crossoutMintLeaf } from './crossout-consumer.js';
 import { buildGovernance } from './governance.js';
 import { makeTacAncestry } from './tac-ancestry.js';
+import { traceBurnDepositProvenance } from './burndep-live-tracer.js';
+import { makeBurnDepositTracer } from '../../dapp/burn-deposit-tracer.js';
 import { buildOversight } from './governance-oversight.js';
 import { validateConsumedSource, deriveConsumedSource } from './consumed-source.js';
 import { makeConfidentialPool } from '../../dapp/confidential-pool.js';
@@ -1739,6 +1741,74 @@ async function handleReflectionBurndepList(req, env, url, cors) {
     cursor = list.list_complete ? undefined : list.cursor;
   } while (cursor);
   return jsonResponse({ network, count: out.length, entries: out }, 200, { ...cors, 'Cache-Control': 'no-store' });
+}
+// POST /reflection/burndep/trace?network= — { note: {txid, vout}, assetId, maxDepth? } — traces a note's
+// provenance DAG live from public Bitcoin data (burndep-live-tracer.js's getCxferByOutput, wired to
+// dapp/burn-deposit-tracer.js's existing walk) and returns it as a bundle already shaped for
+// /reflection/burndep's registration door: {tx, blockHash} per hop, not the full merkle-proof data (the
+// server fills that in automatically at fold time — see enrichBurnDeposit in reflection-attest.js). A holder
+// (or an integrator's UI) can go from "here's my note" straight to a registerable bundle without running the
+// tracer themselves.
+//
+// Needs the asset's own etch already indexed (POST /assets/hint once per asset registers it permanently) —
+// this endpoint reads that record for the leaf the trace bottoms out at rather than requiring the caller to
+// supply it. Permissionless like every other burn-deposit liveness route (a holder must be able to discover
+// their own note's provenance without asking anyone; the guest re-verifies everything regardless of what this
+// returns), but genuinely expensive per call (a real esplora fetch per DAG hop, not a KV read), so rate-limited
+// tighter than /reflection/burndep and depth-capped by default rather than only on request.
+async function handleBurnDepositTrace(req, env, url, cors) {
+  if (!env.REGISTRY_KV) return jsonResponse({ error: 'no kv' }, 500, cors);
+  const ip = req.headers.get('CF-Connecting-IP') || 'anon';
+  const rl = await proveRateLimit(env, ip, 'burndep-trace', Number(env.BURNDEP_TRACE_RL_BURST || 5), Number(env.BURNDEP_TRACE_RL_REFILL_MS || 60000));
+  if (!rl.ok) return jsonResponse({ ok: false, error: `too many trace requests — retry in ~${rl.retryAfter}s`, retryAfter: rl.retryAfter }, 429, { ...cors, 'Cache-Control': 'no-store', 'Retry-After': String(rl.retryAfter) });
+  const network = url.searchParams.get('network') === 'signet' ? 'signet' : 'mainnet';
+  let body;
+  try { body = await req.json(); } catch { return jsonResponse({ ok: false, error: 'bad json' }, 400, cors); }
+  const noteTxid = String((body && body.note && body.note.txid) || '').replace(/^0x/, '').toLowerCase();
+  const noteVout = Number(body && body.note && body.note.vout);
+  if (!/^[0-9a-f]{64}$/.test(noteTxid) || !Number.isInteger(noteVout) || noteVout < 0) {
+    return jsonResponse({ ok: false, error: 'note.{txid,vout} required (32-byte display-hex txid, non-negative integer vout)' }, 400, cors);
+  }
+  const assetIdHex = String((body && body.assetId) || '').replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(assetIdHex)) return jsonResponse({ ok: false, error: 'assetId required (32-byte hex)' }, 400, cors);
+  const maxDepth = Math.min(Math.max(1, Number(body.maxDepth) || 256), 1024);
+  const asset = await env.REGISTRY_KV.get(assetKey(network, assetIdHex), 'json');
+  if (!asset || !asset.etch_txid) {
+    return jsonResponse({ ok: false, error: `asset ${assetIdHex} has no indexed etch on ${network} — POST /assets/hint with its reveal_txid first` }, 404, cors);
+  }
+  let tracedCxfers;
+  try {
+    const pool = makeConfidentialPool({ secp, keccak256: keccak_256, sha256 });
+    const trace = makeBurnDepositTracer({ outpointKey: pool.outpointKey }).trace;
+    const res = await traceBurnDepositProvenance({
+      env, apiText, apiRawBytes, network, outpointKey: pool.outpointKey, sha256, trace, maxDepth,
+      note: { txid: noteTxid, vout: noteVout },
+      leaves: [{ txid: asset.etch_txid, vout: asset.etch_vout || 0 }],
+    });
+    tracedCxfers = res.cxfers;
+  } catch (e) {
+    return jsonResponse({ ok: false, error: `trace failed: ${e && e.message || e}` }, 502, { ...cors, 'Cache-Control': 'no-store' });
+  }
+  // The etch leaf itself is never fetched by the walk (leaves are terminal — see burn-deposit-tracer.js's
+  // `if (leaves.has(op)) continue`), so it needs one more explicit lookup for the registration bundle's own
+  // `etch` field.
+  let etchTx, etchBlockHash;
+  try {
+    const etchJson = JSON.parse(await apiText(env, `/tx/${asset.etch_txid}`, {}, network));
+    const etchHex = (await apiText(env, `/tx/${asset.etch_txid}/hex`, {}, network)).trim();
+    etchTx = etchHex.startsWith('0x') ? etchHex : '0x' + etchHex;
+    etchBlockHash = etchJson.status && etchJson.status.block_hash;
+  } catch (e) {
+    return jsonResponse({ ok: false, error: `could not fetch the asset's own etch tx: ${e && e.message || e}` }, 502, { ...cors, 'Cache-Control': 'no-store' });
+  }
+  const bundle = {
+    etch: { tx: etchTx, blockHash: etchBlockHash, blockHeight: asset.etched_at_height },
+    cxfers: tracedCxfers.map((c) => ({
+      tx: c.tx, txid: c.txid, inputs: c.inputs, inputSkip: c.inputSkip, outputs: c.outputs,
+      rangeProof: c.rangeProof, kernelSig: c.kernelSig, blockHash: c.blockHash,
+    })),
+  };
+  return jsonResponse({ ok: true, network, hops: tracedCxfers.length, bundle }, 200, { ...cors, 'Cache-Control': 'no-store' });
 }
 async function handleReflectionAck(req, env, cors) {
   if (!checkConfidentialAuth(req, env)) return jsonResponse({ error: 'not found' }, 404, cors);
@@ -25621,6 +25691,7 @@ async function _routeFetch(req, env, ctx) {
     if (url.pathname === '/reflection/burndep' && req.method === 'POST') return handleReflectionBurndep(req, env, url, cors);
     if (url.pathname === '/reflection/consumed-source' && req.method === 'POST') return handleReflectionConsumedSource(req, env, url, cors);
     if (url.pathname === '/reflection/burndep-list' && req.method === 'GET') return handleReflectionBurndepList(req, env, url, cors);
+    if (url.pathname === '/reflection/burndep/trace' && req.method === 'POST') return handleBurnDepositTrace(req, env, url, cors);
     if (url.pathname === '/crossout/minted' && req.method === 'GET') return handleCrossoutMinted(url, env, cors);
     // Mode-B eth-side state: the eth-state sidecar POSTs eth_prove's output here.
     if (url.pathname === '/reflection/eth-state' && req.method === 'GET') return handleReflectionEthStateGet(req, env, url, cors);

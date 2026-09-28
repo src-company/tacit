@@ -123,6 +123,36 @@ correctly separated from the one real input), and the resolved output commitment
 independently. CMINT and cxfer_bound hops remain unimplemented (both throw explicitly rather than guess);
 neither has occurred in TAC's own lineage so far.
 
+## Update: wired to a worker endpoint, and a real async/sync contract bug caught before it shipped
+
+`worker/src/index.js` now exposes `POST /reflection/burndep/trace` (permissionless, rate-limited tighter than
+`/reflection/burndep`), which runs the live tracer against a holder's own note and returns a bundle already
+shaped for `/reflection/burndep`'s registration door.
+
+Wiring this up surfaced a real contract mismatch that every prior verification in this document had missed:
+`dapp/burn-deposit-tracer.js`'s `trace()` calls `getCxferByOutput(op)` internally without `await` — correct
+only for a SYNCHRONOUS producer, which is exactly what its own unit tests (`tests/burn-deposit-tracer.mjs`)
+and every historical scratchpad script (`tests/tac-bridge-bundle.mjs`, `tests/tac-bridge-provenance-dag.mjs` —
+the latter's own comment says so directly: "getCxferByOutput is async; tracer is sync → pre-build the graph by
+BFS") have always supplied. `live.getCxferByOutput` does real per-hop esplora fetches and is genuinely async;
+handed directly to `trace()`, it would return a pending Promise where `trace()` expects a resolved object,
+throwing `TypeError: cx.inputs is not iterable` on the very first hop of any real trace. Every previous
+verification in this document exercised `live.getCxferByOutput` directly, one hop at a time — never through
+`trace()`'s own recursive walk — so this never triggered.
+
+Fixed by following the exact pattern the two historical scripts already established, rather than changing
+`trace()`'s tested sync contract: `traceBurnDepositProvenance` now resolves the whole DAG itself first (an
+async BFS over `live.getCxferByOutput`, same maxDepth cap `trace()` would have enforced), then hands `trace()`
+a synchronous lookup over the already-resolved graph. `trace()` and its test suite are unchanged.
+
+Verified against the same real, already-registered 100-TAC burn used above, but this time through the actual
+recursive walk end to end (the part that was never previously exercised) rather than a single hop: traced all
+38 cxfers back to C_0 with no error, and the resulting txid set is an exact match for `tac-bundle-final.json`'s
+own recorded `cxfers[]` (once its internal-byte-order txids are reversed to display order — the same
+convention already noted above, now confirmed to apply to every `cxfers[].txid` in the recorded bundle, not
+just `burnedInput.prevTxid`). The full `node --test` suite for reflection/burndep and the tracer itself
+(15 files) still passes.
+
 ## What NOT to do
 
 - Do not skip the byte-for-byte diff against real historical burns and ship on "it looks right."

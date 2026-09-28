@@ -171,6 +171,11 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
       outputs: decode.vouts.map((v, i) => ({ vout: v, commitment: decode.commitments[i] })),
       rangeProof: decode.rangeProof,
       kernelSig: decode.kernelSig,
+      // blockHash alongside the full merkle-proof data: a caller assembling a MINIMAL /reflection/burndep
+      // registration bundle (which only needs {tx, blockHash|blockHeight} per hop — the server enriches the
+      // rest at fold time, see reflection-attest.js's enrichBurnDeposit) doesn't need blockTxids/blockWtxids/
+      // coinbase/index at all, but does need this.
+      blockHash,
       blockTxids,
       blockWtxids,
       coinbase,
@@ -188,13 +193,36 @@ export function makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, 
 //   note        : { txid, vout } — display-hex txid, the note being bridged
 //   leaves      : [{ txid, vout }, ...] — the asset's C_0 (and any authorized cmint reveals); at least one
 //                 required, or every lineage throws as unprovable
-export async function traceBurnDepositProvenance({ env, apiText, apiRawBytes, network, outpointKey, sha256, trace, note, leaves, maxDepth } = {}) {
+export async function traceBurnDepositProvenance({ env, apiText, apiRawBytes, network, outpointKey, sha256, trace, note, leaves, maxDepth = 256 } = {}) {
   if (typeof trace !== 'function') throw new Error('traceBurnDepositProvenance: trace required (dapp/burn-deposit-tracer.js makeBurnDepositTracer({outpointKey}).trace)');
   if (!note || note.txid == null || note.vout == null) throw new Error('traceBurnDepositProvenance: note {txid, vout} required');
   if (!Array.isArray(leaves) || !leaves.length) throw new Error('traceBurnDepositProvenance: at least one leaf (the asset\'s C_0) required');
   const live = makeLiveBurnDepositTracer({ env, apiText, apiRawBytes, network, outpointKey, sha256 });
   const noteOutpoint = live.seed(note.txid, note.vout);
   const leafOutpoints = leaves.map((l) => live.seed(l.txid, l.vout));
-  const cxfers = await trace({ getCxferByOutput: live.getCxferByOutput, noteOutpoint, leafOutpoints, maxDepth });
+  // trace()'s own contract (dapp/burn-deposit-tracer.js, unit-tested against an in-memory mock) is a
+  // SYNCHRONOUS getCxferByOutput — tests/tac-bridge-bundle.mjs and tests/tac-bridge-provenance-dag.mjs already
+  // establish the pattern for a real, network-backed producer: resolve the whole DAG with the async fetcher
+  // first, then hand trace() a synchronous lookup over the already-resolved graph. live.getCxferByOutput does
+  // a real esplora round-trip per hop, so it cannot be passed to trace() directly.
+  const leafSet = new Set(leafOutpoints);
+  const graph = new Map();
+  const queue = [noteOutpoint];
+  const queued = new Set(queue);
+  let steps = 0;
+  while (queue.length) {
+    if (++steps > maxDepth) throw new Error('burn-deposit trace: provenance exceeded maxDepth (' + maxDepth + ')');
+    const op = queue.shift();
+    if (leafSet.has(op) || graph.has(op)) continue;
+    const cx = await live.getCxferByOutput(op);
+    graph.set(op, cx || null);
+    if (cx) {
+      for (const inp of cx.inputs) {
+        const inOp = outpointKey(inp.prevTxid, inp.prevVout);
+        if (!leafSet.has(inOp) && !queued.has(inOp)) { queue.push(inOp); queued.add(inOp); }
+      }
+    }
+  }
+  const cxfers = await trace({ getCxferByOutput: (op) => graph.get(op) || null, noteOutpoint, leafOutpoints, maxDepth });
   return { cxfers, live }; // `live` exposed so a caller can inspect its tx/block caches (e.g. for a local re-verify) without re-fetching
 }
