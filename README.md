@@ -259,8 +259,10 @@ assets under `dapp/`, so they deploy with the app and resolve at a stable URL fo
 ## TAC
 
 TAC is the protocol's native token: 21M fixed supply, issued on Bitcoin, bridged to Ethereum as an ERC-20.
-Holding it boosts points and lowers the dapp's private exit fee. TAC collected as relay fees is never sold,
-and a quarter of the relay's ETH surplus funds
+Verify the supply yourself, from Bitcoin and IPFS, at
+[tacit.finance/verify.html](https://tacit.finance/verify.html) — no server or indexer trusted, the page
+recomputes it in your browser. Holding TAC boosts points and lowers the dapp's private exit fee. TAC
+collected as relay fees is never sold, and a quarter of the relay's ETH surplus funds
 [TacBuyback](https://etherscan.io/address/0x6919cbEf0e70AFFA02Ae02c86c532A137154f250), which buys TAC on the
 open market for the protocol reserve.
 

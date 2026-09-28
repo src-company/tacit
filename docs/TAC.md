@@ -2,7 +2,9 @@
 
 TAC is Tacit's native token. It was issued once on Bitcoin with a fixed supply of 21,000,000 and no mint
 authority, and it is bridged to Ethereum as an ERC-20 minted only against a proven Bitcoin-side burn
-([SPEC §7.3](../SPEC.md#73-tac), [deployment details](./DEPLOYMENTS.md#tac)).
+([SPEC §7.3](../SPEC.md#73-tac), [deployment details](./DEPLOYMENTS.md#tac)). Verify the fixed supply
+yourself, from Bitcoin and IPFS, at [tacit.finance/verify.html](https://tacit.finance/verify.html) — no
+server or indexer trusted, the page recomputes it in your browser.
 
 ## Holding TAC
 
