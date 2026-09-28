@@ -221,10 +221,53 @@ export function makeTacAncestry({
     return _walk(env, txidHex, vout, network, memo, 0, opts.maxDepth ?? DEFAULT_MAX_DEPTH);
   }
 
+  // ---- persistent cache (env.REGISTRY_KV) ----
+  // A verified verdict for a specific (txid, vout) is an eternal fact about immutable Bitcoin history — once
+  // computed, it never needs recomputing, unlike xferseen's rolling recent-activity index (deliberately
+  // TTL'd, a different kind of data with a different lifetime). No expirationTtl here, same as holderseen.
+  // Never load-bearing: any read/write failure here just falls back to doing the real walk, exactly as if
+  // no KV were bound at all — caching is a pure optimization, and must stay one.
+  const _persistKey = (network, txidHex, vout) => `tacanc:${network}:${txidHex}:${vout}`;
+  async function _loadCached(env, network, txidHex, vout) {
+    if (!env?.REGISTRY_KV) return null;
+    try {
+      const v = await env.REGISTRY_KV.get(_persistKey(network, txidHex, vout), 'json');
+      if (!v) return null;
+      return v.commitment ? { ...v, commitment: hexToBytes(v.commitment) } : v;
+    } catch { return null; }
+  }
+  // Only a verdict that can never change is worth keeping forever: a real ok:true/false verifies against
+  // immutable bytes on chain, but "fetch failed" is a transient outage (must be retried, not entombed as a
+  // permanent no) and "ancestry deeper than N hops" is a fact about THIS CALL's maxDepth, not about the
+  // transaction — a future caller with a higher maxDepth deserves a fresh answer, not a stale cutoff.
+  function _isPermanent(result) {
+    if (result.ok) return true;
+    const reason = result.reason || '';
+    return !reason.startsWith('fetch ') && !reason.startsWith('ancestry deeper than');
+  }
+  async function _saveIfPermanent(env, network, txidHex, vout, result) {
+    if (!env?.REGISTRY_KV || !_isPermanent(result)) return;
+    try {
+      const stored = result.commitment ? { ...result, commitment: bytesToHex(result.commitment) } : result;
+      await env.REGISTRY_KV.put(_persistKey(network, txidHex, vout), JSON.stringify(stored));
+    } catch { /* best-effort — a failed write just means the next caller re-verifies */ }
+  }
+
   async function _walk(env, txidHex, vout, network, memo, depth, maxDepth) {
     const key = `${txidHex}:${vout}`;
     if (memo.has(key)) return memo.get(key);
     if (depth > maxDepth) return { ok: false, reason: `ancestry deeper than ${maxDepth} hops — not verified` };
+
+    const cached = await _loadCached(env, network, txidHex, vout);
+    if (cached) { memo.set(key, cached); return cached; }
+
+    const result = await _walkCompute(env, txidHex, vout, network, memo, depth, maxDepth);
+    await _saveIfPermanent(env, network, txidHex, vout, result);
+    return result;
+  }
+
+  async function _walkCompute(env, txidHex, vout, network, memo, depth, maxDepth) {
+    const key = `${txidHex}:${vout}`;
 
     let tx;
     try { tx = await apiJson(env, `/tx/${txidHex}`, {}, network); }
