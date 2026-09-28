@@ -918,9 +918,16 @@ A holder with no ETH can therefore complete the whole direction through the host
 
 For a reflected note, `buildBridgeBurnEnvelope({ asset, bitcoinPoolRoot, chainBinding, burned, fee, dest })`
 returns the 161-byte `0x2B` payload with the destination already net of the fee, the burned note's nullifier
-and the destination opening to keep for the mint. Pass `deriveDestBlinding: (nu) => deriveBridgeMintBlinding(priv, nu)`
-(from `confidential-recovery.js`) rather than a random `dest.blinding`, so the minted note is recoverable from the
-seed, with `dest.owner = nkToOwner(deriveNote(priv, asset, i).secret)` for a small index `i`. The seed walk finds a
+and the destination opening to keep for the mint. Pass a `deriveDestBlinding` built from
+`makeBridgeMintRecovery({ hmac, sha256, curveOrder })` (`bridge-mint-recovery.js`) rather than a random
+`dest.blinding`, so the minted note is recoverable from the seed:
+
+```js
+import { makeBridgeMintRecovery } from './bridge-mint-recovery.js';
+const { deriveBridgeMintBlinding } = makeBridgeMintRecovery({ hmac, sha256, curveOrder: secp.CURVE.n });
+```
+
+with `dest.owner = nkToOwner(deriveNote(priv, asset, i).secret)` for a small index `i`. The seed walk finds a
 minted note by trying round amounts and the values it is given, and a destination net of a fee is usually not round,
 so also seal a memo at mint time (`recovery: { ownerPub, secret }` below) whenever the fee is nonzero.
 
@@ -940,7 +947,7 @@ const b = await tacit.bridgeBurnToPool({
   notePriv,                                           // the key of the note's P2TR output (its auth key)
   fee: ladderFee(await tacit.quoteOpFee(ticker, 'bridgemint')), // or 0n to mint at no fee
   dest: { owner: destOwner },
-  deriveDestBlinding: (nu) => deriveBridgeMintBlinding(priv, nu),
+  deriveDestBlinding: (nu) => deriveBridgeMintBlinding({ privkey: priv, nullifier: nu }),
   isSpendable: (u) => isPlainSats(u),                 // required (or pass fundingUtxos): which UTXOs are plain sats
 });
 // b.revealTxid, b.burnId, b.dest (the destination opening), b.mintArgs
@@ -1051,9 +1058,12 @@ Submits are rate-limited per IP and the queue is bounded; a rejected submit is b
 relayed settles share a daily free budget (`429`, code `free_budget`) and prove-only jobs a daily prove budget (`429`,
 code `prove_budget`); past either, attach a fee above the floor or prove and settle locally.
 
-**Request bodies are capped** (`MAX_REQUEST_BYTES`, 32 MiB by default). Over that you get a `413` — on the
-declared `Content-Length` before the body is read, or mid-stream for a chunked body. Every real op is far
-below it; if you hit it, you are almost certainly sending something you did not mean to.
+**Request bodies are capped.** An unauthenticated call — every call this guide describes, including
+`/confidential/submit` from a browser — is capped at 1 MiB (`DEFAULT_MAX_ANON_REQUEST_BYTES`); the 32 MiB
+`MAX_REQUEST_BYTES` ceiling applies only to internal relay/prover traffic carrying the box token. Over the cap
+you get a `413` — on the declared `Content-Length` before the body is read, or mid-stream for a chunked body.
+Every real op is far below either number; if you hit one, you are almost certainly sending something you did
+not mean to.
 
 **What the relay sees.** It proves the op you hand it, so it receives that op's witness: for every spent note
 its commitment, owner, leaf index, membership path and its per-note nullifier key `nk` (which lets it compute
@@ -1105,7 +1115,7 @@ Two conventions to keep:
 | `MemoLeafMismatch` | memo count or order does not match `pv.leaves` |
 | settle says `failed` with a guest assert | the witness is malformed; the assert text names the field |
 | relay rejects the submit | fee below the floor, or the queue is full |
-| `413 request body exceeds …` | body over `MAX_REQUEST_BYTES` (32 MiB default) |
+| `413 request body exceeds …` | body over the 1 MiB anonymous-request cap |
 | farm `OverClaim` | harvest claimed more than the position's accrued reward; read `pending` at build time |
 | farm `NoLivePosition` | the receipt is not bonded (wrong nonce, shares or owner, or already unbonded) |
 | farm `WrongStakeAsset` | the note is not an LP-share asset the manager has a pool for |
