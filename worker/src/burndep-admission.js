@@ -105,11 +105,48 @@ export function makeBurndepAdmission({ env, api, apiRawBytes, network, kit, deps
   // heights the caller has already decided are safely below a real chain tip (a reorg below the anchor a
   // batch commits to would be a Bitcoin-consensus-breaking event, wildly out of scope here).
   const chunkKey = (chunkIndex) => `reflection:hdrs:${network}:${chunkIndex}`;
-  const HEIGHT_CONCURRENCY = 8;
-
-  async function fetchHeaderAt(height) {
-    const hash = (await api(env, `/block-height/${height}`, {}, network)).trim();
-    return '0x' + (await api(env, `/block/${hash}/header`, {}, network)).trim();
+  // A naive one-height-at-a-time fetch (two calls each: /block-height, then /block/<hash>/header) needs 2,000
+  // requests for a 1,000-header chunk — confirmed live against mempool.space to trigger a 429 within ~15s at
+  // even modest concurrency, long before a single chunk completes. esplora's bulk /blocks/:height instead
+  // returns 10 full block summaries (walking backward) per call, carrying every field a header needs, so this
+  // reconstructs the raw header locally instead — 100 calls per chunk, not 2,000. Byte-exact against
+  // /block/<hash>/header confirmed directly, and self-checking regardless (dsha of the reconstructed bytes
+  // must equal the block's own listed id, which the caller below verifies) since it's assembled from JSON
+  // fields rather than read as opaque bytes.
+  const WINDOW_CONCURRENCY = 3; // confirmed live: safe; 8-way concurrent hit a 429 in ~15s, this doesn't
+  const WINDOW_RETRIES = 3;
+  function headerFromBlockSummary(b) {
+    const buf = new Uint8Array(80);
+    const view = new DataView(buf.buffer);
+    view.setUint32(0, b.version >>> 0, true);
+    buf.set(reverseBytes(hexBytes(b.previousblockhash)), 4);
+    buf.set(reverseBytes(hexBytes(b.merkle_root)), 36);
+    view.setUint32(68, b.timestamp >>> 0, true);
+    view.setUint32(72, b.bits >>> 0, true);
+    view.setUint32(76, b.nonce >>> 0, true);
+    return buf;
+  }
+  async function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+  // One /blocks/<topHeight> call -> up to 10 real, PoW-self-checked headers for [topHeight-9..topHeight].
+  // Retries a transient failure (timeout/429/5xx) a few times with backoff, since one flaky call out of the
+  // ~100 a chunk needs must not sink the whole chunk (see ensureChunk's own per-window error handling too —
+  // this is the first line of defense, that's the second).
+  async function fetchHeaderWindow(topHeight) {
+    let lastErr;
+    for (let attempt = 0; attempt < WINDOW_RETRIES; attempt++) {
+      try {
+        const blocks = JSON.parse(await api(env, `/blocks/${topHeight}`, {}, network));
+        const out = new Map();
+        for (const b of blocks) {
+          const bytes = headerFromBlockSummary(b);
+          const hash = bareHex(reverseBytes(dsha(bytes)));
+          if (hash !== String(b.id).toLowerCase().replace(/^0x/, '')) throw new Error(`reconstructed header does not match block ${b.height}'s own id`);
+          out.set(b.height, bytesToHex(bytes));
+        }
+        return out;
+      } catch (e) { lastErr = e; if (attempt < WINDOW_RETRIES - 1) await sleep(500 * 2 ** attempt); }
+    }
+    throw lastErr;
   }
 
   // Returns { headers, complete } for one chunk, fetching whatever is fetchable up to maxTipHeight.
@@ -125,15 +162,27 @@ export function makeBurndepAdmission({ env, api, apiRawBytes, network, kit, deps
     const base = chunkIndex * headerChunk;
     const top = Math.min(base + headerChunk - 1, maxTipHeight);
     if (top < base) return { headers: [], complete: false }; // this chunk is entirely above what's safe to fetch right now
-    const heights = [];
-    for (let h = base; h <= top; h++) heights.push(h);
-    const headers = new Array(heights.length);
-    let i = 0;
-    const workers = Array.from({ length: Math.min(HEIGHT_CONCURRENCY, heights.length) }, async () => {
-      while (i < heights.length) { const idx = i++; headers[idx] = await fetchHeaderAt(heights[idx]); }
+    // headerChunk is always a multiple of 10 in production (1000) — base is therefore 10-aligned, so windows
+    // of exactly 10 tile it cleanly; a caller-supplied non-multiple-of-10 headerChunk (tests only) still works,
+    // it just leaves one small overlapping tail window, which is harmless (the map dedupes by height).
+    const windowTops = [];
+    for (let h = base + 9; h <= top; h += 10) windowTops.push(h);
+    if (!windowTops.length || windowTops[windowTops.length - 1] !== top) windowTops.push(top);
+    const byHeight = new Map();
+    let wi = 0;
+    let sawError = null;
+    const workers = Array.from({ length: Math.min(WINDOW_CONCURRENCY, windowTops.length) }, async () => {
+      while (wi < windowTops.length && !sawError) {
+        const t = windowTops[wi++];
+        try { for (const [h, hex] of await fetchHeaderWindow(t)) if (h >= base && h <= top) byHeight.set(h, hex); }
+        catch (e) { sawError = e; }
+      }
     });
     await Promise.all(workers);
-    const complete = headers.length === headerChunk;
+    if (sawError) throw sawError; // a chunk that couldn't be fully fetched this attempt is retried whole next tick/call — no partial write
+    const headers = [];
+    for (let h = base; h <= top; h++) headers.push(byHeight.get(h));
+    const complete = headers.length === headerChunk && headers.every(Boolean);
     if (complete) await env.REGISTRY_KV.put(key, JSON.stringify(headers));
     return { headers, complete };
   }

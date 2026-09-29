@@ -36,27 +36,39 @@ const headers = [];
 const hashAtHeight = (h) => bareHex(blockHashOf(headers[h - FLOOR]));
 const heightOfHash = new Map(headers.map((h, i) => [bareHex(blockHashOf(h)), FLOOR + i]));
 
+// Decode one of the fixture's raw 80-byte headers back into the /blocks/:height summary shape production
+// code reconstructs a header FROM (the reverse of burndep-admission.js's own headerFromBlockSummary) — real
+// esplora field names, so the stub below exercises the actual bulk-fetch parsing, not a shortcut around it.
+function summaryOf(height) {
+  const h = headers[height - FLOOR];
+  const prevHex = bareHex(Buffer.from(h.subarray(4, 36)).reverse());
+  const merkleHex = bareHex(Buffer.from(h.subarray(36, 68)).reverse());
+  return {
+    id: hashAtHeight(height), height,
+    version: h.readUInt32LE(0), previousblockhash: prevHex, merkle_root: merkleHex,
+    timestamp: h.readUInt32LE(68), bits: h.readUInt32LE(72), nonce: h.readUInt32LE(76),
+  };
+}
+
 function makeKv() {
   const m = new Map();
   return { get: async (k) => (m.has(k) ? m.get(k) : null), put: async (k, v) => { m.set(k, String(v)); }, _map: m };
 }
 
-// Fake esplora api(env, path, opts, network) over the chain above. Tracks header-hex fetch count so the
-// cache's actual effect (not just its correctness) is checked.
+// Fake esplora api(env, path, opts, network) over the chain above. Tracks /blocks bulk-call COUNT (not
+// per-height) so the cache's actual effect, and the real request-count savings the bulk rewrite exists for,
+// are both checked.
 function makeApi() {
-  let headerFetches = 0;
+  let blocksCalls = 0;
   const fn = async (_env, path, _opts, _network) => {
     let m;
-    if ((m = path.match(/^\/block-height\/(\d+)$/))) {
-      const h = Number(m[1]);
-      if (h < FLOOR || h >= FLOOR + N) throw new Error(`stub: no block at height ${h}`);
-      return hashAtHeight(h) + '\n';
-    }
-    if ((m = path.match(/^\/block\/([0-9a-fA-F]+)\/header$/))) {
-      const height = heightOfHash.get(m[1].toLowerCase());
-      if (height == null) throw new Error('stub: unknown hash (header)');
-      headerFetches++;
-      return Buffer.from(headers[height - FLOOR]).toString('hex') + '\n';
+    if ((m = path.match(/^\/blocks\/(\d+)$/))) {
+      blocksCalls++;
+      const top = Number(m[1]);
+      const out = [];
+      for (let h = top; h > top - 10 && h >= FLOOR; h--) { if (h < FLOOR + N) out.push(summaryOf(h)); }
+      if (!out.length) throw new Error(`stub: no blocks at or below height ${top}`);
+      return JSON.stringify(out);
     }
     if ((m = path.match(/^\/block\/([0-9a-fA-F]+)$/))) {
       const height = heightOfHash.get(m[1].toLowerCase());
@@ -65,7 +77,7 @@ function makeApi() {
     }
     throw new Error(`stub: unhandled path ${path}`);
   };
-  return { fn, count: () => headerFetches };
+  return { fn, count: () => blocksCalls };
 }
 
 function makeAdmission({ headerChunk = 4 } = {}) {
@@ -87,7 +99,7 @@ function makeAdmission({ headerChunk = 4 } = {}) {
   ok(got.length === N, 'range: returns every header in the range');
   ok(got.every((h, i) => h === bytesToHex(headers[i])), 'range: headers returned in height order, byte-exact');
   const fetchesAfterFirst = api.count();
-  ok(fetchesAfterFirst === N, `range: fetched exactly N headers once (got ${fetchesAfterFirst})`);
+  ok(fetchesAfterFirst === 3, `range: fetched via 3 bulk /blocks calls (one per 4-height chunk), not one per height (got ${fetchesAfterFirst})`);
 
   const got2 = await admission.getHeadersRangeCached(FLOOR + 1, FLOOR + 3); // fully inside the first cached chunk
   ok(got2.length === 3 && got2[0] === bytesToHex(headers[1]), 'range: narrower re-query slices the cache correctly');
@@ -98,24 +110,24 @@ function makeAdmission({ headerChunk = 4 } = {}) {
 }
 
 // ── warmHeaderChunks: fills only complete chunks, is budget-bounded and idempotent ──
-// FLOOR=500 is chunk-aligned at headerChunk=4: chunk125=[500-503], chunk126=[504-507], chunk127=[508-511] —
-// all 3 fully within the fake chain (heights 500-511), so tipHeight=511 makes every chunk completable.
+// FLOOR=480 is chunk-aligned at headerChunk=4: chunk120=[480-483], chunk121=[484-487], chunk122=[488-491] —
+// all 3 fully within the fake chain (heights 480-491), so tipHeight=491 makes every chunk completable.
 {
   const { env, api, admission } = makeAdmission({ headerChunk: 4 });
-  const TIP = FLOOR + N - 1; // 511 — exactly the top of the last chunk
+  const TIP = FLOOR + N - 1; // 491 — exactly the top of the last chunk
 
   const r1 = await admission.warmHeaderChunks(FLOOR, TIP, { budgetChunks: 1 });
   ok(r1.filled === 1, 'warm: fills exactly one chunk under a budget of 1');
   ok(env.REGISTRY_KV._map.size === 1, 'warm: exactly one chunk row written to KV');
-  ok(api.count() === 4, 'warm: fetched exactly the 4 headers of that one chunk');
+  ok(api.count() === 1, 'warm: one bulk /blocks call for that one (4-height) chunk, not 4 individual fetches');
 
   const r2 = await admission.warmHeaderChunks(FLOOR, TIP, { budgetChunks: 5 });
   ok(r2.filled === 2, 'warm: next call fills the 2 remaining chunks, stops there (budget was not the limiter)');
   ok(env.REGISTRY_KV._map.size === 3, 'warm: all 3 chunk rows now cached (12 heights / 4 per chunk)');
-  ok(api.count() === 12, 'warm: 12 total header fetches across all 3 chunks, never re-fetching chunk 1');
+  ok(api.count() === 3, 'warm: 3 total bulk calls across all 3 chunks (one each), never re-fetching chunk 1');
 
   const r3 = await admission.warmHeaderChunks(FLOOR, TIP, { budgetChunks: 5 });
-  ok(r3.filled === 0 && api.count() === 12, 'warm: idempotent — fully warmed range does no further work');
+  ok(r3.filled === 0 && api.count() === 3, 'warm: idempotent — fully warmed range does no further work');
 }
 
 // ── warmHeaderChunks: a chunk the tip falls inside stays incomplete — not cached, not counted as filled ──

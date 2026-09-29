@@ -29392,10 +29392,13 @@ export default {
               // the same target height the reflection is advancing to, so a bundle's chain is already cached
               // by the time a batch or a POST /reflection/burndep/check call needs it. No-op where no floor
               // is configured for this network (burndep-admission's chain-building itself stays functional
-              // either way — this only shortens how long a fresh chain build takes).
+              // either way — this only shortens how long a fresh chain build takes). 20 chunks (~20,000
+              // headers) measured live at ~8s/chunk via the bulk /blocks fetch, comfortably inside one 5-minute
+              // tick alongside the rest of this stage's work; the cron's own overlap guard (a tick already
+              // running skips the next) bounds the downside if a slower day pushes past that.
               const floor = burndepChainFloor(env, net);
               if (floor && Number.isInteger(target) && att.admission) {
-                await att.admission.warmHeaderChunks(floor, target, { budgetChunks: 2 }).catch((e) => _logCronError(env, 'burndepHeaderWarm', net, e));
+                await att.admission.warmHeaderChunks(floor, target, { budgetChunks: 20 }).catch((e) => _logCronError(env, 'burndepHeaderWarm', net, e));
               }
             } catch (e) { _logCronError(env, 'reflectionSetTip', net, e); return; }
             if (env.REFLECTION_PROVE_URL) {
