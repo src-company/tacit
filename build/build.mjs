@@ -156,6 +156,9 @@ const SATS_CB_FILES = ['sats/join-worker.js', 'sats/mix.js', 'sats/secret.js', '
 // dapp/weld/ is one page whose imports all sit in its inline module, so its tokens are rewritten before that
 // module's CSP hash is taken (updatePinnedCsp below).
 const WELD_CB_FILES = ['weld/index.html'];
+// dapp/tac/ is the shielded-TAC page: app.js lazy-imports sats.js, so sats.js is hashed first and the page
+// that loads app.js last, same importer-last order as the sats page above.
+const TAC_CB_FILES = ['tac/sats.js', 'tac/app.js', 'tac/index.html'];
 function pageCacheBust(files, write) {
   const drift = [];
   for (const rel of files) {
@@ -281,7 +284,7 @@ async function main() {
     if (gotCb !== wantCb) drift.push(`index.html tacit.js ?cb=${gotCb} but sha256(dapp/tacit.js)=${wantCb}`);
     if (gotPreboot !== wantPreboot) drift.push(`index.html preboot.js ?cb=${gotPreboot} but sha256(dapp/preboot.js)=${wantPreboot}`);
     if (gotSw !== wantSw) drift.push(`sw.js CACHE_VERSION suffix ${gotSw} but sha256(vendor‖prf-wallet)=${wantSw}`);
-    drift.push(...pageCacheBust(SATS_CB_FILES, false), ...pageCacheBust(WELD_CB_FILES, false));
+    drift.push(...pageCacheBust(SATS_CB_FILES, false), ...pageCacheBust(WELD_CB_FILES, false), ...pageCacheBust(TAC_CB_FILES, false));
     if (drift.length) {
       console.error('✗ cache-bust tokens are stale — run `npm run build` and commit the result:');
       for (const d of drift) console.error(`    ${d}`);
@@ -309,6 +312,8 @@ async function main() {
     console.log(`• sats page cache-bust: ${satsDrift.length ? `${satsDrift.length} token(s) updated` : 'unchanged'}`);
     const weldDrift = pageCacheBust(WELD_CB_FILES, true);
     console.log(`• weld page cache-bust: ${weldDrift.length ? `${weldDrift.length} token(s) updated` : 'unchanged'}`);
+    const tacDrift = pageCacheBust(TAC_CB_FILES, true);
+    console.log(`• tac page cache-bust: ${tacDrift.length ? `${tacDrift.length} token(s) updated` : 'unchanged'}`);
 
     for (const page of PINNED_PAGES) {
       if (!existsSync(page.file)) continue;

@@ -43,7 +43,7 @@ async function readWithProgress(resp, total, progress) {
 }
 
 // base: where pin.json and the artifacts are served. readFile(name) → bytes replaces fetch (Node).
-export function makePoolClient({ api = POOL_API, base = '/btc-pool/', fetchImpl = (...a) => globalThis.fetch(...a), readFile = null } = {}) {
+export function makePoolClient({ api = POOL_API, relayApi = null, base = '/btc-pool/', fetchImpl = (...a) => globalThis.fetch(...a), readFile = null } = {}) {
   const baseUrl = base.endsWith('/') ? base : base + '/';
   let pinP = null;
   const cache = new Map();
@@ -169,11 +169,14 @@ export function makePoolClient({ api = POOL_API, base = '/btc-pool/', fetchImpl 
     return { hAnchor, root, tip: s.height, notes: withPaths };
   }
 
-  // ── relayer (mounted on the replay service when configured) ──
-  const relayInfo = async () => { try { return await getJson(`${api}/btc-pool/relay/info`); } catch (e) { if (e.status === 404) return null; throw e; } };
-  const quote = (body) => getJson(`${api}/btc-pool/relay/quote`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const submit = (body) => getJson(`${api}/btc-pool/relay/submit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const relayStatus = (id) => getJson(`${api}/btc-pool/relay/status/${id}`);
+  // ── relayer ──
+  // The relayer can be mounted on the replay service, but both deployed networks run it as its own origin,
+  // so it gets its own base. Defaults to `api`, which is the mounted-together case.
+  const rApi = relayApi || api;
+  const relayInfo = async () => { try { return await getJson(`${rApi}/btc-pool/relay/info`); } catch (e) { if (e.status === 404) return null; throw e; } };
+  const quote = (body) => getJson(`${rApi}/btc-pool/relay/quote`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const submit = (body) => getJson(`${rApi}/btc-pool/relay/submit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const relayStatus = (id) => getJson(`${rApi}/btc-pool/relay/status/${id}`);
 
   return { pin, system, artifactBytes, artifactsCached, status, allNotes, path, nullifier, exit, walletNotes, anchorAndPaths, relayInfo, quote, submit, relayStatus, api };
 }
