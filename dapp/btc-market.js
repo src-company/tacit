@@ -138,7 +138,7 @@ function createMarket(host, ctx) {
   function shellHtml() {
     const a = asset0;
     const lanes = ctx.mountEth ? `
-      <div class="bm-lanes" role="tablist" aria-label="Where to trade">
+      <div class="bm-seg bm-lanes" role="tablist" aria-label="Where to trade">
         <button type="button" role="tab" data-act="lane" data-v="btc">${ctx.icons?.btc || ''}<span>Bitcoin</span></button>
         <button type="button" role="tab" data-act="lane" data-v="eth">${ctx.icons?.eth || ''}<span>Ethereum</span></button>
       </div>` : '';
@@ -157,11 +157,13 @@ function createMarket(host, ctx) {
         </div>
         <div class="bm-stats" data-k="stats"></div>
       </div>
-      <details class="bm-chart" data-k="chart-wrap"${LS.get('tacit-btc-market-chart-open', true) ? ' open' : ''}>
-        <summary><span>Price</span><span class="bm-chart-sum" data-k="chart-sum"></span></summary>
-        <div class="bm-chart-tf">${CHART_TFS.map(([tf, , label]) => `<button type="button" data-act="tf" data-v="${tf}">${label}</button>`).join('')}</div>
+      <div class="bm-chart" data-k="chart-wrap">
+        <div class="bm-chart-top">
+          <div class="bm-chart-sum" data-k="chart-sum"></div>
+          <div class="bm-seg bm-tf" role="group" aria-label="Chart range">${CHART_TFS.map(([tf, , label]) => `<button type="button" data-act="tf" data-v="${tf}">${label}</button>`).join('')}</div>
+        </div>
         <div class="bm-chart-body" data-k="chart"></div>
-      </details>
+      </div>
       ${lanes}
       <div class="bm-lane" data-lane="btc">
         <div class="bm-grid">
@@ -761,107 +763,155 @@ function createMarket(host, ctx) {
     }).filter((p) => p && p.u > 0 && p.ts > 0).sort((a, b) => a.ts - b.ts);
   }
 
+  // Prints far outside the typical range (fat fingers, dust trades) stay out of the line,
+  // the axis and the range; they're counted instead.
+  function chartBand(pts) {
+    const us = pts.map((p) => p.u).sort((a, b) => a - b);
+    const med = us[Math.floor(us.length / 2)];
+    return { lo: med * FAR_BELOW, hi: med * FAR_ABOVE };
+  }
+
+  // One volume-weighted price per time bucket: a smooth line that still follows every fill.
+  function chartBuckets(pts, t0, t1, n) {
+    const out = [];
+    const w = Math.max(1, (t1 - t0) / n);
+    for (const p of pts) {
+      const i = Math.min(n - 1, Math.floor((p.ts - t0) / w));
+      const b = out[i] || (out[i] = { t0: t0 + i * w, t1: t0 + (i + 1) * w, sats: 0, base: 0, n: 0, last: p.ts });
+      b.sats += p.sats; b.base += Number(p.amt); b.n++; b.last = Math.max(b.last, p.ts);
+    }
+    return out.filter(Boolean).map((b) => ({ ...b, u: (b.sats * Math.pow(10, dec)) / b.base, ts: b.n === 1 ? b.last : (b.t0 + b.t1) / 2 }));
+  }
+
+  function niceTicks(lo, hi, count) {
+    const raw = (hi - lo) / count;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((x) => x >= raw) || raw;
+    const out = [];
+    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(v);
+    return out;
+  }
+
   function paintChart() {
-    const pts = chartPoints();
+    const all = chartPoints();
     let tf = LS.get('tacit-btc-market-tf', '1M');
     if (!CHART_TFS.some(([k]) => k === tf)) tf = '1M';
-    // A quiet market: widen until there is something to draw.
     const span = (k) => CHART_TFS.find(([x]) => x === k)[1];
+    // A quiet market: widen until there is something to draw.
     let shownTf = tf;
     for (const [k] of CHART_TFS) {
       if (span(k) < span(tf)) continue;
       shownTf = k;
-      if (pts.filter((p) => p.ts >= nowSec() - span(k)).length >= 2) break;
+      if (all.filter((p) => p.ts >= nowSec() - span(k)).length >= 2) break;
     }
     $$('[data-act=tf]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === shownTf)));
-    const win = pts.filter((p) => p.ts >= nowSec() - span(shownTf));
-    // Summary in the (always visible) disclosure line.
-    let sum = '';
+    const inWin = all.filter((p) => p.ts >= nowSec() - span(shownTf));
+    const band = inWin.length ? chartBand(inWin) : null;
+    const win = band ? inWin.filter((p) => p.u >= band.lo && p.u <= band.hi) : [];
+    const outliers = inWin.length - win.length;
+    let sum = `<span class="bm-chart-title">Price</span>`;
     if (win.length >= 2) {
       const first = win[0].u, last = win[win.length - 1].u;
       const chg = ((last - first) / first) * 100;
       const lo = Math.min(...win.map((p) => p.u)), hi = Math.max(...win.map((p) => p.u));
-      sum = `<span class="${chg >= 0 ? 'up' : 'down'}">${chg >= 0 ? '▲' : '▼'} ${Math.abs(chg).toFixed(1)}%</span> <em>${shownTf === 'ALL' ? 'all time' : shownTf}</em> · <em>range</em> ${fmtUnit(lo)}–${fmtUnit(hi)}`;
+      const label = shownTf === 'ALL' ? 'all time' : `past ${{ '1D': 'day', '1W': 'week', '1M': 'month' }[shownTf]}`;
+      sum += `<span class="${chg >= 0 ? 'up' : 'down'}">${chg >= 0 ? '▲' : '▼'} ${Math.abs(chg).toFixed(1)}%</span><em>${label}</em>`
+        + `<span class="bm-chart-range"><em>low</em> ${fmtUnit(lo)} <em>high</em> ${fmtUnit(hi)}</span>`
+        + (outliers ? `<em class="bm-chart-out" title="Trades priced far outside the typical range (e.g. dust or mistyped fills) aren't drawn">${outliers} outlier${outliers === 1 ? '' : 's'} hidden</em>` : '');
     }
     if (el.chartSum.innerHTML !== sum) el.chartSum.innerHTML = sum;
-    if (!el.chartWrap.open) return;
-    const sig = shownTf + '|' + (el.chart.clientWidth || 0) + '|' + win.map((p) => p.ts + ':' + p.u).join(',') + '|' + (S.book?.bestBid ?? '') + '|' + (S.book?.bestAsk ?? '');
-    if (el.chart.__sig === sig) return;
-    el.chart.__sig = sig;
+    const sg = shownTf + '|' + (el.chart.clientWidth || 0) + '|' + win.map((p) => p.ts + ':' + p.u).join(',') + '|' + (S.book?.bestBid ?? '') + '|' + (S.book?.bestAsk ?? '');
+    if (el.chart.__sig === sg) return;
+    el.chart.__sig = sg;
     if (win.length < 2) { el.chart.innerHTML = `<div class="bm-empty">Not enough trades to chart yet.</div>`; return; }
     el.chart.innerHTML = chartSvg(win, shownTf);
-    wireChartHover(win);
+    wireChartHover();
   }
 
-  // Price line over time with volume underneath. The y-range ignores the most extreme
-  // 2% of prints on each side so one fat-finger fill can't flatten everything else;
-  // those points pin to the edge as hollow dots.
-  const PL = 8, PR = 56, PT = 12, PB = 36, VH = 22;
-  let CW = 640, CH = 220;
+  const PL = 10, PR = 70, PT = 14, PB = 42, VH = 24;
+  let CW = 640, CH = 240;
   function chartSvg(win, tf) {
     // Draw at the box's real width so text stays at its natural size on phones.
-    CW = Math.max(300, Math.min(760, Math.round(el.chart.clientWidth || 640)));
-    CH = CW < 480 ? 190 : 220;
-    const us = win.map((p) => p.u).slice().sort((a, b) => a - b);
-    const q = (f) => us[Math.min(us.length - 1, Math.max(0, Math.round(f * (us.length - 1))))];
-    let lo = us.length > 20 ? q(0.02) : us[0];
-    let hi = us.length > 20 ? q(0.98) : us[us.length - 1];
-    const bid = S.book?.bestBid, ask = S.book?.bestAsk;
-    for (const v of [bid, ask]) if (v && v > lo * 0.5 && v < hi * 2) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
-    if (hi <= lo) { hi = lo * 1.05; lo = lo * 0.95; }
-    const pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+    CW = Math.max(300, Math.min(900, Math.round(el.chart.clientWidth || 640)));
+    CH = CW < 480 ? 200 : 240;
     const t0 = win[0].ts, t1 = Math.max(nowSec(), win[win.length - 1].ts);
+    const nb = Math.max(12, Math.min(120, Math.floor((CW - PL - PR) / 6)));
+    const bk = chartBuckets(win, t0, t1 + 1, nb);
+    let lo = Math.min(...bk.map((b) => b.u)), hi = Math.max(...bk.map((b) => b.u));
+    const bid = S.book?.bestBid, ask = S.book?.bestAsk;
+    for (const v of [bid, ask]) if (v && v > lo * 0.7 && v < hi * 1.3) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    if (hi <= lo) { hi = lo * 1.05; lo = lo * 0.95; }
+    const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+    const plotB = CH - PB;
     const X = (t) => PL + ((t - t0) / Math.max(1, t1 - t0)) * (CW - PL - PR);
-    const Y = (u) => PT + (1 - (Math.min(hi, Math.max(lo, u)) - lo) / (hi - lo)) * (CH - PT - PB);
-    S.chartMap = { X, Y };
-    const line = win.map((p, i) => `${i ? 'L' : 'M'}${X(p.ts).toFixed(1)},${Y(p.u).toFixed(1)}`).join('') + `L${X(t1).toFixed(1)},${Y(win[win.length - 1].u).toFixed(1)}`;
-    const base = CH - PB;
-    const area = `${line}L${X(t1).toFixed(1)},${base}L${X(t0).toFixed(1)},${base}Z`;
-    const up = win[win.length - 1].u >= win[0].u;
-    // volume: 48 time buckets
-    const NB = 48; const bucket = new Array(NB).fill(0);
-    for (const p of win) bucket[Math.min(NB - 1, Math.floor(((p.ts - t0) / Math.max(1, t1 - t0)) * NB))] += p.sats;
-    const vmax = Math.max(...bucket, 1);
-    const bw = (CW - PL - PR) / NB;
-    const vb = CH - 12;
-    const vol = bucket.map((v, i) => v ? `<rect x="${(PL + i * bw + 0.5).toFixed(1)}" y="${(vb - v / vmax * VH).toFixed(1)}" width="${Math.max(1, bw - 1).toFixed(1)}" height="${(v / vmax * VH).toFixed(1)}"/>` : '').join('');
-    const ticks = [hi - pad, (hi + lo) / 2, lo + pad].map((u) => `<g><line x1="${PL}" x2="${CW - PR}" y1="${Y(u).toFixed(1)}" y2="${Y(u).toFixed(1)}"/><text x="${CW - PR + 6}" y="${(Y(u) + 3).toFixed(1)}">${fmtUnit(u)}</text></g>`).join('');
-    const refLine = (v, cls, label, above) => (v && v >= lo && v <= hi) ? `<g class="${cls}"><line x1="${PL}" x2="${CW - PR}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/><text x="${PL + 4}" y="${(Y(v) + (above ? -4 : 11)).toFixed(1)}">best ${label} ${fmtUnit(v)}</text></g>` : '';
-    const dots = win.map((p) => (p.u < lo || p.u > hi) ? `<circle class="out" cx="${X(p.ts).toFixed(1)}" cy="${Y(p.u).toFixed(1)}" r="3"/>` : '').join('');
-    const last = win[win.length - 1];
-    const fmtDate = (t) => { const d = new Date(t * 1000); return tf === '1D' ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' }); };
-    return `<div class="bm-chart-box"><svg viewBox="0 0 ${CW} ${CH}" class="bm-svg ${up ? 'up' : 'down'}" role="img" aria-label="Price history">
+    const Y = (u) => PT + (1 - (u - lo) / (hi - lo)) * (plotB - PT);
+    S.chartMap = { X, Y, bk };
+    const pts = bk.map((b) => [X(b.ts), Y(b.u)]);
+    pts.push([X(t1), Y(bk[bk.length - 1].u)]);
+    const line = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join('');
+    const area = `${line}L${X(t1).toFixed(1)},${plotB}L${X(t0).toFixed(1)},${plotB}Z`;
+    const up = bk[bk.length - 1].u >= bk[0].u;
+    const vmax = Math.max(...bk.map((b) => b.sats), 1);
+    const bw = Math.max(1.5, (CW - PL - PR) / nb - 1.5);
+    const vol = bk.map((b) => `<rect x="${(X(b.ts) - bw / 2).toFixed(1)}" y="${(plotB - (b.sats / vmax) * VH).toFixed(1)}" width="${bw.toFixed(1)}" height="${((b.sats / vmax) * VH).toFixed(1)}"/>`).join('');
+    // Right-axis tags for the live book; ticks that would sit under a tag are dropped.
+    const tags = [];
+    if (ask && ask >= lo && ask <= hi) tags.push({ v: ask, cls: 'ask', label: `ask ${fmtUnit(ask)}` });
+    if (bid && bid >= lo && bid <= hi) tags.push({ v: bid, cls: 'bid', label: `bid ${fmtUnit(bid)}` });
+    if (tags.length === 2 && Math.abs(Y(tags[0].v) - Y(tags[1].v)) < 16) {
+      const [a, b] = tags[0].v > tags[1].v ? [tags[0], tags[1]] : [tags[1], tags[0]];
+      a.dy = -8; b.dy = 8;
+    }
+    const ticks = niceTicks(lo, hi, CW < 480 ? 3 : 4)
+      .filter((v) => !tags.some((t) => Math.abs(Y(v) - (Y(t.v) + (t.dy || 0))) < 14))
+      .map((v) => `<line x1="${PL}" x2="${CW - PR}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/><text x="${CW - PR + 8}" y="${(Y(v) + 3.5).toFixed(1)}">${fmtUnit(v)}</text>`).join('');
+    const tagSvg = tags.map((t) => {
+      const y = Y(t.v), ty = y + (t.dy || 0);
+      return `<g class="tag ${t.cls}"><line x1="${PL}" x2="${CW - PR}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"/><rect x="${CW - PR + 3}" y="${(ty - 8).toFixed(1)}" width="${PR - 5}" height="16" rx="2"/><text x="${CW - PR + 7}" y="${(ty + 3.5).toFixed(1)}">${t.label}</text></g>`;
+    }).join('');
+    const nX = CW < 480 ? 3 : 5;
+    const fmtDate = (t) => {
+      const d = new Date(t * 1000);
+      if (tf === '1D') return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (t1 - t0 > 300 * 86400) return d.toLocaleDateString([], { month: 'short', year: '2-digit' });
+      return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    };
+    const xt = Array.from({ length: nX }, (_, i) => t0 + ((t1 - t0) * i) / (nX - 1))
+      .map((t, i) => `<text class="xl" x="${X(t).toFixed(1)}" y="${CH - 8}" text-anchor="${i === 0 ? 'start' : i === nX - 1 ? 'end' : 'middle'}">${i === nX - 1 ? 'now' : fmtDate(t)}</text>`).join('');
+    const last = bk[bk.length - 1];
+    return `<div class="bm-chart-box"><svg viewBox="0 0 ${CW} ${CH}" width="${CW}" height="${CH}" class="bm-svg ${up ? 'up' : 'down'}" role="img" aria-label="Price history">
       <g class="grid">${ticks}</g>
+      <g class="vol">${vol}</g>
       <path class="area" d="${area}"/><path class="line" d="${line}"/>
-      ${refLine(ask, 'ref ask', 'ask', !(bid > ask))}${refLine(bid, 'ref bid', 'bid', bid > ask)}
-      <g class="vol">${vol}</g>${dots}
+      ${tagSvg}
       <circle class="lastdot" cx="${X(t1).toFixed(1)}" cy="${Y(last.u).toFixed(1)}" r="3.5"/>
-      <text class="xl" x="${PL}" y="${CH - 2}">${fmtDate(t0)}</text><text class="xl" x="${CW - PR}" y="${CH - 2}" text-anchor="end">now</text>
-      <g class="cursor" hidden><line y1="${PT}" y2="${CH - PB}"/><circle r="4"/></g>
+      <line class="axis" x1="${PL}" x2="${CW - PR}" y1="${plotB}" y2="${plotB}"/>
+      ${xt}
+      <g class="cursor" hidden><line y1="${PT}" y2="${plotB}"/><circle r="4"/></g>
       <rect class="hit" x="${PL}" y="0" width="${CW - PL - PR}" height="${CH}"/>
     </svg><div class="bm-tip" hidden></div></div>`;
   }
 
-  function wireChartHover(win) {
+  function wireChartHover() {
     const svg = el.chart.querySelector('svg');
     const tip = el.chart.querySelector('.bm-tip');
     const cur = svg.querySelector('.cursor');
     const hit = svg.querySelector('.hit');
-    const { X: toX, Y: toY } = S.chartMap;
+    const { X: toX, Y: toY, bk } = S.chartMap;
     const move = (clientX) => {
       const r = svg.getBoundingClientRect();
       const x = ((clientX - r.left) / r.width) * CW;
-      let best = win[0];
-      for (const p of win) if (Math.abs(toX(p.ts) - x) < Math.abs(toX(best.ts) - x)) best = p;
-      const X = toX(best.ts);
-      const y = toY(best.u);
+      let best = bk[0];
+      for (const b of bk) if (Math.abs(toX(b.ts) - x) < Math.abs(toX(best.ts) - x)) best = b;
+      const X = toX(best.ts), y = toY(best.u);
       cur.hidden = false;
       cur.querySelector('line').setAttribute('x1', X); cur.querySelector('line').setAttribute('x2', X);
       cur.querySelector('circle').setAttribute('cx', X); cur.querySelector('circle').setAttribute('cy', y);
       tip.hidden = false;
-      tip.innerHTML = `<b>${fmtUnit(best.u)}</b> sats/${T}<br>${fmtAmount(best.amt, dec, 4)} ${T} · ${fmtSats(best.sats)} sats<br><em>${new Date(best.ts * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</em>`;
+      const when = new Date(best.ts * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      tip.innerHTML = `<b>${fmtUnit(best.u)}</b> sats/${T}${best.n > 1 ? ' <em>avg</em>' : ''}<br>${best.n} trade${best.n === 1 ? '' : 's'} · ${fmtSats(best.sats)} sats<br><em>${best.n > 1 ? 'around ' : ''}${when}</em>`;
       const px = (X / CW) * r.width;
-      tip.style.left = `${Math.min(Math.max(0, px - 70), r.width - 150)}px`;
+      tip.style.left = `${Math.min(Math.max(4, px + 12 > r.width - 188 ? px - 196 : px + 12), r.width - 188)}px`;
     };
     hit.addEventListener('pointermove', (e) => move(e.clientX), sig);
     hit.addEventListener('pointerdown', (e) => move(e.clientX), sig);
@@ -1458,7 +1508,6 @@ function createMarket(host, ctx) {
   S.syncTotal = syncTotal;
   el.amount.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !el.go.disabled) review(); }, sig);
   el.price2.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !el.go.disabled) review(); }, sig);
-  el.chartWrap.addEventListener('toggle', () => { LS.set('tacit-btc-market-chart-open', el.chartWrap.open); paintChart(); }, sig);
   let resizeT = null;
   window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(paintChart, 150); }, sig);
 
