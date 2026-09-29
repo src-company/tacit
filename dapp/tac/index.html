@@ -77,6 +77,12 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .fiat { font-size: 12px; color: var(--mute); margin-top: 5px; min-height: 17px; }
 .brand i { font: 500 10px/1 var(--mono); font-style: normal; letter-spacing: .16em; text-transform: uppercase; color: var(--mute);
   border: 1px solid var(--hair-2); padding: 4px 6px 3px; margin-left: 2px; }
+.px { margin-left: auto; margin-right: 12px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  font-size: 12px; color: var(--mute); }
+.px svg { width: 14px; height: 14px; opacity: .85; }
+.px b { font-weight: 400; color: var(--ink); }
+.px:empty { display: none; }
+@media (max-width: 420px) { .px { display: none; } }
 .chip { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; min-width: 0; padding: 0 14px; background: var(--card);
   border: 1px solid var(--hair-2); cursor: pointer; white-space: nowrap; }
 .chip:hover { border-color: var(--ink); }
@@ -208,6 +214,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 
   <header class="top">
     <a class="brand" href="/"><img class="tk" src="/tac-logo.png" alt=""><b>tacit</b><i>tac</i></a>
+    <span class="px" id="hdr-price" title="TAC mark price, from real trades"></span>
     <button class="chip" id="wallet-chip" type="button"><span class="dot" id="wallet-dot"></span><span id="wallet-label">Connect</span></button>
   </header>
 
@@ -220,7 +227,6 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
     <div><span class="v num" id="s-set">—</span><span class="k">Anonymity set</span></div>
     <div><span class="v num" id="s-spends">—</span><span class="k">Private spends</span></div>
     <div><span class="v num" id="s-height">—</span><span class="k">Indexed block</span></div>
-    <div><span class="uu"><svg class="tk sm" aria-hidden="true"><use href="#i-btc"/></svg><span class="v num" id="s-price">—</span></span><span class="k">TAC · market</span></div>
     <div><span class="v" id="s-proof">—</span><span class="k">Proof system</span></div>
   </div>
 
@@ -349,6 +355,6 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
   </form>
 </div>
 <div id="toast-container" aria-live="polite"></div>
-<script type="module" src="/tac/app.js?cb=0bbd5810"></script>
+<script type="module" src="/tac/app.js?cb=de39d759"></script>
 </body>
 </html>

@@ -91,15 +91,25 @@ async function loadPrice() {
     if (Number.isFinite(u) && u > 0) markSats = u;
   } catch { /* the page works priceless */ }
   try { btcUsd = await T.getBtcUsdPrice(); } catch { btcUsd = null; }
-  $('s-price').textContent = markSats == null ? '—' : `${markSats.toLocaleString('en-US')}`;
-  const tile = $('s-price')?.closest('div');
-  const k = tile?.querySelector('.k');
-  if (k) {
-    const oneTac = usdFor(BigInt(10 ** DECIMALS));
-    k.textContent = markSats == null ? 'TAC · market'
-      : oneTac == null ? 'sats per TAC' : `sats per TAC · ${usdText(oneTac)}`;
-  }
+  renderHeaderPrice();
   renderBalances(); renderAmountHints();
+}
+
+// The rate, stated once in the header rather than repeated beside every figure.
+function renderHeaderPrice() {
+  const el = $('hdr-price');
+  if (!el) return;
+  if (markSats == null) { el.replaceChildren(); return; }
+  const oneTac = usdFor(BigInt(10 ** DECIMALS));
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', '#i-btc');
+  svg.append(use); svg.setAttribute('aria-hidden', 'true');
+  const b = document.createElement('b');
+  b.textContent = `${markSats.toLocaleString('en-US')} sats`;
+  el.replaceChildren(svg, b);
+  if (oneTac != null) el.append(document.createTextNode(` · ${usdText(oneTac)}`));
+  el.append(document.createTextNode(' / TAC'));
 }
 
 // ── modules ──
@@ -216,6 +226,10 @@ function afterUnlock() {
   poolWallet = S.poolWalletFor(T.wallet.priv, 'mainnet');
   $('recv-addr').value = poolWallet.addressString;
   refreshChip(); renderKnownLine();
+  // One quiet pass so a stealth payment shows up without the owner knowing to go looking for it.
+  if (!stealthScanned) {
+    findStealth().then((n) => { if (n) say('st-recv', `Found ${n} stealth payment${n === 1 ? '' : 's'} paid to you.`); }).catch(() => {});
+  }
 }
 
 function lock() {
@@ -460,6 +474,45 @@ async function refreshAll() {
   await Promise.all([loadPublic(), loadShielded()]);
 }
 
+// TAC paid to a one-time stealth address does not sit at this wallet's own script, so a plain holdings scan
+// never sees it. The worker's transfer index is walked for receipts this key can claim; each one found is
+// persisted as a credit that scanHoldings rehydrates from then on. Runs once automatically after unlock and
+// on demand, because it is a multi-page walk rather than a single read.
+let stealthScanned = false;
+async function findStealth({ say: report } = {}) {
+  if (!unlocked()) return 0;
+  let found = 0;
+  try {
+    const r = await T.scanAssetForStealthReceipts(S.TAC_ASSET_MAINNET, {
+      onProgress: (pr) => report?.(`Checking transfers for payments to you… ${(pr.txsScanned + pr.txsSkipped).toLocaleString('en-US')} seen`),
+    });
+    found = r?.discovered?.length || 0;
+  } catch (e) {
+    report?.(`Could not check for stealth payments: ${e?.message || e}`);
+    return 0;
+  }
+  stealthScanned = true;
+  if (found) {
+    try { T.invalidateHoldingsCache?.(); } catch {}
+    await loadPublic();
+  }
+  return found;
+}
+
+// Everything this wallet can be paid by: shielded notes in the pool, plain TAC at its own address, and TAC
+// sent to a one-time stealth address.
+async function scanEverything(statusId = 'st-recv') {
+  await ensureKey();
+  say(statusId, 'Scanning…');
+  const [found] = await Promise.all([
+    findStealth({ say: (m) => say(statusId, m) }),
+    loadShielded(),
+  ]);
+  if (!found) await loadPublic();
+  const n = (shielded.notes || []).filter((x) => !x.spent && BigInt(x.value) > 0n).length;
+  say(statusId, `${n} shielded note${n === 1 ? '' : 's'}${found ? `, and ${found} stealth payment${found === 1 ? '' : 's'} added to your wallet balance` : ', no new stealth payments'}.`);
+}
+
 // ── boot ──
 (async function boot() {
   tabs(['tab-shield', 'tab-send', 'tab-withdraw', 'tab-receive'], ['pane-shield', 'pane-send', 'pane-withdraw', 'pane-receive'],
@@ -480,7 +533,7 @@ async function refreshAll() {
   $('btn-create').onclick = (e) => busy(e.currentTarget, 'st-connect', createWallet);
   $('btn-import').onclick = (e) => busy(e.currentTarget, 'st-connect', importKey);
   $('btn-key-copy').onclick = () => { navigator.clipboard?.writeText($('key-out').value); };
-  $('btn-refresh').onclick = () => refreshAll();
+  $('btn-refresh').onclick = (e) => busy(e.currentTarget, 'st-recv', () => scanEverything('st-recv'));
 
   $('btn-shield').onclick = (e) => busy(e.currentTarget, 'st-shield', doShield);
   $('btn-send').onclick = (e) => busy(e.currentTarget, 'st-send', () => doSend());
@@ -504,7 +557,7 @@ async function refreshAll() {
     navigator.clipboard?.writeText(poolWallet.addressString);
     say('st-recv', 'Address copied.');
   };
-  $('btn-scan').onclick = (e) => busy(e.currentTarget, 'st-recv', async () => { await ensureKey(); await loadShielded(); say('st-recv', 'Scanned.'); });
+  $('btn-scan').onclick = (e) => busy(e.currentTarget, 'st-recv', () => scanEverything('st-recv'));
 
   await loadTacit();
   // Show whichever identity this browser already has as connected-but-locked. Reading its pubkey needs no
