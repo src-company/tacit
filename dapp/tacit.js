@@ -69500,7 +69500,8 @@ function _btcMarketIdentityHtml(a, aid) {
     : a._tickerCollision === 'duplicate'
       ? `<span class="bm-warnbadge" title="Tickers are not unique. Another asset claimed this ticker first — check the id before trading.">DUP</span>`
       : verifiedBadgeHTML(a, { size: 'lg' });
-  const avatar = (a.image_uri || a.imageUri)
+  const brand = (String(a.ticker || '').toUpperCase() !== 'TAC' || aid === CANONICAL_TAC_ASSET_ID_HEX) && _dayOneLogoHtml(aid, a.ticker, 44);
+  const avatar = brand ? `<span class="bm-avatar">${brand}</span>` : (a.image_uri || a.imageUri)
     ? marketAssetImageHtml(a, 44, 'market-token-icon bm-avatar')
     : `<div class="bm-avatar bm-avatar--initial" aria-hidden="true">${escapeHtml((a.ticker || '?').charAt(0).toLowerCase())}</div>`;
   return `${avatar}<div class="bm-names">

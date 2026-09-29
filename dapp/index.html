@@ -107,7 +107,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=11e60d8e">
+<link rel="modulepreload" href="./tacit.js?cb=2aac0748">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -8651,9 +8651,16 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm-qr.big > span:last-child { font-size: 15px; }
 .bm-qr.muted { color: var(--ink-mid); font-size: 11px; }
 .bm-q { font-size: 11px; line-height: 1.5; margin: 6px 0 0; }
-.bm-q.muted { color: var(--ink-mid); }
-.bm-q.warn { color: var(--red-warn); }
-.bm-q.note { color: var(--amber); }
+.bm-q.bm-muted { color: var(--ink-mid); }
+.bm-q.bm-warn { color: var(--red-warn); }
+.bm-callout { margin-top: 8px; padding: 9px 10px; background: var(--bg); border: 1px solid var(--bm-line); border-left: 3px solid var(--amber); font-size: 11px; line-height: 1.5; }
+.bm-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.bm .bm-btn { background: var(--ink); color: var(--bg); border: 1px solid var(--ink); padding: 6px 11px; font-size: 11px; cursor: pointer; }
+.bm .bm-btn:hover { filter: brightness(1.25); }
+.bm .bm-btn.ghost { background: transparent; color: var(--ink); }
+.bm .bm-btn.ghost:hover { background: var(--bg-alt); filter: none; }
+.bm-avatar img, .bm-avatar > * { width: 44px !important; height: 44px !important; }
+.bm-q.bm-note { color: var(--amber); }
 .bm-check { display: flex; gap: 8px; align-items: flex-start; font-size: 11px; margin-top: 8px; line-height: 1.45; cursor: pointer; text-transform: none; letter-spacing: 0; font-weight: 400; }
 .bm-check > span { flex: 1; min-width: 0; }
 
@@ -8758,8 +8765,18 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm-mbody h2 { font-family: var(--serif); font-weight: 400; font-size: 24px; margin: 0 0 10px; line-height: 1.15; }
 .bm-mfoot { display: flex; gap: 8px; justify-content: flex-end; padding: 10px 18px 16px; }
 .bm-mfoot:empty { display: none; }
-.bm-mfoot button { background: transparent; border: 1px solid var(--ink); padding: 9px 14px; cursor: pointer; }
-.bm-mfoot .bm-go { width: auto; margin: 0; background: var(--ink); color: var(--bg); }
+.bm-card { border-top: 4px solid var(--ink); }
+.bm-card[data-side="buy"] { border-top-color: var(--buy); }
+.bm-card[data-side="sell"] { border-top-color: var(--sell); }
+.bm-mbody .bm-qr { padding: 4px 0; border-bottom: 1px dotted var(--bm-line); }
+.bm-mbody .bm-qr em { color: var(--ink-mid); font-style: normal; }
+.bm-mfoot button { font: inherit; font-size: 12px; text-transform: none; letter-spacing: 0; border-radius: 0; background: transparent; border: 1px solid var(--ink); color: var(--ink); padding: 10px 16px; cursor: pointer; }
+.bm-mfoot button:hover:not(:disabled) { background: var(--bg-alt); }
+.bm-mfoot button:disabled { opacity: 0.5; cursor: default; }
+.bm-mfoot .bm-go { width: auto; margin: 0; background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.bm-card[data-side="buy"] .bm-mfoot .bm-go { background: var(--buy); border-color: var(--buy); }
+.bm-card[data-side="sell"] .bm-mfoot .bm-go { background: var(--sell); border-color: var(--sell); }
+.bm-mfoot .bm-go:hover:not(:disabled) { filter: brightness(1.08); background: inherit; }
 .bm-steps { list-style: none; margin: 10px 0 4px; padding: 0; border-top: 1px solid var(--bm-line); }
 .bm-steps li { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--bm-line); line-height: 1.4; }
 .bm-steps .st { width: 14px; flex: 0 0 14px; text-align: center; }
@@ -11835,7 +11852,7 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=11e60d8e"></script>
+<script type="module" src="./tacit.js?cb=2aac0748"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for

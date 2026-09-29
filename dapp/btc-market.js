@@ -240,11 +240,15 @@ function createMarket(host, ctx) {
     const a = ctx.asset();
     return (S.side === 'buy' ? eligibleAsks()[0]?.unit : eligibleBids()[0]?.unit) || a.markUnit || null;
   };
+  // The price limit: a % from the best offer, unless the user picked an exact price
+  // from a suggestion (S.limitAt), which lasts until they change side or pick a %.
   const maxBuyUnit = () => {
+    if (S.limitAt?.side === 'buy') return S.limitAt.unit;
     const best = eligibleAsks()[0]?.unit;
     return best ? best * (1 + S.slip / 100) : Infinity;
   };
   const minSellUnit = () => {
+    if (S.limitAt?.side === 'sell') return S.limitAt.unit;
     const best = eligibleBids()[0]?.unit;
     return best ? best * (1 - S.slip / 100) : 0;
   };
@@ -429,7 +433,9 @@ function createMarket(host, ctx) {
     const sum = $('[data-k=opts-sum]');
     const exp = EXPIRY_CHOICES.find(([x]) => x === S.expirySec)?.[1] || '1 day';
     sum.innerHTML = S.type === 'market'
-      ? `${S.side === 'buy' ? 'Max price' : 'Min price'} <b>${S.side === 'buy' ? '+' : '−'}${S.slip}%</b> from best`
+      ? (S.limitAt?.side === S.side
+        ? `${S.side === 'buy' ? 'Max price' : 'Min price'} <b>${fmtUnit(S.limitAt.unit)}</b>`
+        : `${S.side === 'buy' ? 'Max price' : 'Min price'} <b>${S.side === 'buy' ? '+' : '−'}${S.slip}%</b> from best`)
       : `Order lasts <b>${exp}</b>`;
   }
 
@@ -553,11 +559,11 @@ function createMarket(host, ctx) {
     S.quote = q;
     const m = me();
     let html = '';
-    if (!S.book) { el.quote.innerHTML = '<div class="bm-q muted">Loading the book…</div>'; setGo('Loading…', false); return; }
+    if (!S.book) { el.quote.innerHTML = '<div class="bm-q bm-muted">Loading the book…</div>'; setGo('Loading…', false); return; }
     if (!q || q.empty) {
       const o = q?.order;
       if (o?.type === 'limit' && o.base && o.unit) html = '';
-      else if (o?.type === 'limit' && (o.base || o.unit)) html = `<div class="bm-q muted">Enter both a price and an amount.</div>`;
+      else if (o?.type === 'limit' && (o.base || o.unit)) html = `<div class="bm-q bm-muted">Enter both a price and an amount.</div>`;
       el.quote.innerHTML = html;
       setGo(S.type === 'limit' ? 'Enter price and amount' : 'Enter an amount', false);
       return;
@@ -573,7 +579,19 @@ function createMarket(host, ctx) {
         if (!S.book.asks.some((a) => !a.mine)) why = 'No one is selling right now.';
         else if (cheapBig && o.spendSats != null) why = `The cheapest offer is one piece of ${fmtAmount(cheapBig.ask.amount, dec, 4)} ${T} for ${fmtSats(cheapBig.ask.sats)} sats — more than you entered.`;
         else if (cheapBig) why = `Offers at this price come in larger pieces than you asked for (smallest: ${fmtAmount(cheapBig.ask.amount, dec, 4)} ${T}).`;
-        html = `<div class="bm-q warn">${why}</div><div class="bm-q muted">Switch to <button type="button" class="bm-link" data-act="to-limit">Limit</button> to place a bid sellers can fill.</div>`;
+        // What the same order could fill with no price limit, offered as a one-tap raise.
+        const wide = S.book.asks.some((a) => !a.mine) ? planBuy(S.book, { spendSats: o.spendSats ?? null, receiveBase: o.receiveBase ?? null, maxUnit: Infinity, includeIntents: S.includeMaker }) : null;
+        const best = eligibleAsks()[0]?.unit;
+        let offer = '';
+        if (wide && wide.fills.length && best) {
+          why = `Nothing fills within your price limit of ${fmtUnit(q.maxUnit)}.`;
+          const over = ((wide.worstUnit - best) / best) * 100;
+          offer = `<div class="bm-callout"><div>Your ${o.spendSats != null ? `${fmtSats(o.spendSats)} sats` : 'order'} can buy <b>${fmtAmount(wide.amount, dec, 4)} ${T}</b> at up to <b>${fmtUnit(wide.worstUnit)}</b> — ${over.toFixed(0)}% above the best offer.</div>
+            <div class="bm-actions"><button type="button" class="bm-btn" data-act="allow-price" data-v="${wide.worstUnit}">Allow up to ${fmtUnit(wide.worstUnit)}</button><button type="button" class="bm-btn ghost" data-act="to-limit">Bid at my price</button></div></div>`;
+        } else {
+          offer = `<div class="bm-actions"><button type="button" class="bm-btn" data-act="to-limit">Place a bid at my price</button></div>`;
+        }
+        html = `<div class="bm-q bm-warn">${why}</div>${offer}`;
         el.quote.innerHTML = html;
         setGo('No match at this price', false);
         return;
@@ -582,12 +600,12 @@ function createMarket(host, ctx) {
       html += row('You pay', `${fmtSats(p.sats)} sats${usd(p.sats)}`);
       html += row('Average price', `${fmtUnit(p.avgUnit)} sats/${T}`);
       html += row('Network fees', `≈ ${fmtSats(p.feesEst)} sats`, 'muted');
-      if (p.leftoverSats >= DUST && o.spendSats != null) html += `<div class="bm-q note">${fmtSats(p.leftoverSats)} sats can't fill at this price and stay in your wallet.</div>`;
-      if (p.shortBase > 0n) html += `<div class="bm-q note">Only ${fmtAmount(p.amount, dec, 4)} ${T} is for sale within your max price.</div>`;
-      if (p.overBase > 0n) html += `<div class="bm-q note">Includes ${fmtAmount(p.overBase, dec, 4)} ${T} extra — offers are sold in whole pieces.</div>`;
+      if (p.leftoverSats >= DUST && o.spendSats != null) html += `<div class="bm-q bm-note">${fmtSats(p.leftoverSats)} sats can't fill at this price and stay in your wallet.</div>`;
+      if (p.shortBase > 0n) html += `<div class="bm-q bm-note">Only ${fmtAmount(p.amount, dec, 4)} ${T} is for sale within your max price.</div>`;
+      if (p.overBase > 0n) html += `<div class="bm-q bm-note">Includes ${fmtAmount(p.overBase, dec, 4)} ${T} extra — offers are sold in whole pieces.</div>`;
       const big = p.skipped.find((s) => s.reason === 'too-big' && s.ask.unit < p.avgUnit);
-      if (big && o.spendSats != null) html += `<div class="bm-q muted">A cheaper piece (${fmtAmount(big.ask.amount, dec, 4)} ${T} at ${fmtUnit(big.ask.unit)}) needs ${fmtSats(big.ask.sats)} sats.</div>`;
-      if (p.needsMaker) html += `<div class="bm-q muted">Some of this fills from offers the seller confirms — usually seconds.</div>`;
+      if (big && o.spendSats != null) html += `<div class="bm-q bm-muted">A cheaper piece (${fmtAmount(big.ask.amount, dec, 4)} ${T} at ${fmtUnit(big.ask.unit)}) needs ${fmtSats(big.ask.sats)} sats.</div>`;
+      if (p.needsMaker) html += `<div class="bm-q bm-muted">Some of this fills from offers the seller confirms — usually seconds.</div>`;
       el.quote.innerHTML = html;
       if (m && m.unlocked && m.sats != null && m.sats < p.sats + p.feesEst) { setGo('Not enough sats', true, 'fund'); return; }
       setGo(`Review buy`, true, 'review');
@@ -596,16 +614,21 @@ function createMarket(host, ctx) {
     if (o.type === 'market' && o.side === 'sell') {
       const p = q.plan;
       if (m && m.unlocked && m.assetBase != null && o.sellBase > m.assetBase) {
-        el.quote.innerHTML = `<div class="bm-q warn">You have ${fmtAmount(m.assetBase, dec)} ${T}.</div>`;
+        el.quote.innerHTML = `<div class="bm-q bm-warn">You have ${fmtAmount(m.assetBase, dec)} ${T}.</div>`;
         setGo(`Not enough ${asset0.ticker}`, false);
         return;
       }
       if (!p.fills.length) {
         let why = 'No bids within your min price right now.';
         if (!S.book.bids.some((b) => !b.mine)) why = 'No one is bidding right now.';
-        else if (p.manualAvailable) why = `No auto-settling bids at this price. ${p.manualAvailable} bid${p.manualAvailable === 1 ? '' : 's'} need the bidder online — allow them in Settings, or list instead.`;
-        else if (p.skipped.some((s) => s.reason === 'too-big')) why = 'Bids here want more than you entered — try a larger amount, or list instead.';
-        html = `<div class="bm-q warn">${why}</div><div class="bm-q muted">Switch to <button type="button" class="bm-link" data-act="to-limit">Limit</button> to list at your price.</div>`;
+        else if (p.manualAvailable) why = `No bids that settle automatically. ${p.manualAvailable} bid${p.manualAvailable === 1 ? ' settles' : 's settle'} only while the bidder is online — it can take hours.`;
+        else if (p.skipped.some((s) => s.reason === 'too-big')) why = 'The bids here want more than you entered.';
+        const acts = [];
+        if (p.manualAvailable) acts.push(`<button type="button" class="bm-btn" data-act="inc-manual-now">Offer to online-only bids</button>`);
+        const wideBid = S.book.bids.find((b) => !b.mine && (S.includeManual || b.auto));
+        if (!p.manualAvailable && wideBid && wideBid.unit < minSellUnit()) acts.push(`<button type="button" class="bm-btn" data-act="allow-price" data-v="${wideBid.unit}">Allow down to ${fmtUnit(wideBid.unit)}</button>`);
+        acts.push(`<button type="button" class="bm-btn ${acts.length ? 'ghost' : ''}" data-act="to-limit">List at my price</button>`);
+        html = `<div class="bm-q bm-warn">${why}</div><div class="bm-actions">${acts.join('')}</div>`;
         el.quote.innerHTML = html;
         setGo('No match at this price', false);
         return;
@@ -614,8 +637,8 @@ function createMarket(host, ctx) {
       html += row('You sell', `${fmtAmount(p.amount, dec, 6)} ${T}`);
       html += row('Average price', `${fmtUnit(p.avgUnit)} sats/${T}`);
       html += row('Network fees', `≈ ${fmtSats(p.feesEst)} sats`, 'muted');
-      if (p.leftoverBase > 0n) html += `<div class="bm-q note">${fmtAmount(p.leftoverBase, dec, 4)} ${T} has no matching bid and stays in your wallet.</div>`;
-      html += `<div class="bm-q muted">${p.needsBidder ? 'Completes when each bidder\'s wallet settles — some may take hours.' : 'Completes in about a minute — keep this tab open until it does.'}</div>`;
+      if (p.leftoverBase > 0n) html += `<div class="bm-q bm-note">${fmtAmount(p.leftoverBase, dec, 4)} ${T} has no matching bid and stays in your wallet.</div>`;
+      html += `<div class="bm-q bm-muted">${p.needsBidder ? 'Completes when each bidder\'s wallet settles — some may take hours.' : 'Completes in about a minute — keep this tab open until it does.'}</div>`;
       el.quote.innerHTML = html;
       setGo('Review sell', true, 'review');
       return;
@@ -633,7 +656,7 @@ function createMarket(host, ctx) {
       const wt = watchtowerState(bidSats);
       if (bidBase > 0n) {
         html += `<label class="bm-check"><input type="checkbox" data-act="wt"${wt.on ? ' checked' : ''}${wt.ok ? '' : ' disabled'}><span>Fill it while I'm away <em>${wt.ok ? `— a watchtower completes fills; sets aside ${fmtSats(bidSats + 10000)} sats in a wallet only you can reclaim` : esc(wt.why)}</em></span></label>`;
-        if (!wt.on) html += `<div class="bm-q muted">Without it, fills complete only while this page is open.</div>`;
+        if (!wt.on) html += `<div class="bm-q bm-muted">Without it, fills complete only while this page is open.</div>`;
       }
       el.quote.innerHTML = html;
       if (m && m.unlocked && m.sats != null && m.sats < o.totalSats + (wt.on ? 10000 : 0) + 1000) { setGo('Not enough sats', true, 'fund'); return; }
@@ -643,13 +666,13 @@ function createMarket(host, ctx) {
     const sh = q.shape;
     html += row('You get', `<b>${fmtSats(sh.totalSats)} sats</b>${usd(sh.totalSats)}`, 'big');
     if (sh.k === 0) {
-      el.quote.innerHTML = html + `<div class="bm-q warn">Too small to list — a listing must be worth at least ${DUST} sats.</div>`;
+      el.quote.innerHTML = html + `<div class="bm-q bm-warn">Too small to list — a listing must be worth at least ${DUST} sats.</div>`;
       setGo('Too small', false);
       return;
     }
     html += row('Listed as', sh.k >= 2 ? `${sh.k} pieces of ${fmtAmount(sh.perLotBase, dec, 4)} ${T}` : 'one piece');
-    if (q.crosses) html += `<div class="bm-q note">Bids already pay ${fmtUnit(q.bestSellable)} or more — a <button type="button" class="bm-link" data-act="to-market">market sell</button> gets you that now.</div>`;
-    html += `<div class="bm-q muted">Buyers take it without you online. Cancel any time (one network fee).</div>`;
+    if (q.crosses) html += `<div class="bm-q bm-note">Bids already pay ${fmtUnit(q.bestSellable)} or more — a <button type="button" class="bm-link" data-act="to-market">market sell</button> gets you that now.</div>`;
+    html += `<div class="bm-q bm-muted">Buyers take it without you online. Cancel any time (one network fee).</div>`;
     el.quote.innerHTML = html;
     if (m && m.unlocked && m.assetBase != null && o.base > m.assetBase) { setGo(`Not enough ${asset0.ticker}`, false); return; }
     setGo('Review listing', true, 'review');
@@ -992,7 +1015,7 @@ function createMarket(host, ctx) {
     wrap.className = 'bm-modal';
     wrap.setAttribute('role', 'dialog');
     wrap.setAttribute('aria-modal', 'true');
-    wrap.innerHTML = `<div class="bm-card"><div class="bm-mbody"></div><div class="bm-mfoot"></div></div>`;
+    wrap.innerHTML = `<div class="bm-card" data-side="${S.side}"><div class="bm-mbody"></div><div class="bm-mfoot"></div></div>`;
     document.body.appendChild(wrap);
     const body = wrap.querySelector('.bm-mbody');
     const foot = wrap.querySelector('.bm-mfoot');
@@ -1048,10 +1071,12 @@ function createMarket(host, ctx) {
         : Math.max(p.sats, satsForAmount(o.receiveBase, maxUnit, dec));
       const bounds = { maxSats, maxUnit };
       md.set(`<h2>Buy ${fmtAmount(p.amount, dec, 6)} ${T}</h2>
-        ${row('You pay', `<b>${fmtSats(p.sats)} sats</b> + ≈ ${fmtSats(p.feesEst)} network fee`)}
+        ${row('You pay', `<b>${fmtSats(p.sats)} sats</b>`)}
+        ${row('Network fee', `≈ ${fmtSats(p.feesEst)} sats`)}
+        ${row('Total', `<b>≈ ${fmtSats(p.sats + p.feesEst)} sats</b>${usdOf(p.sats + p.feesEst) != null ? ` <em>${fmtUsd(usdOf(p.sats + p.feesEst))}</em>` : ''}`)}
         ${row('Average price', `${fmtUnit(p.avgUnit)} sats/${T}`)}
         ${row('Limits', `at most ${fmtUnit(maxUnit)} sats/${T} · ${fmtSats(maxSats)} sats`)}
-        <p class="bm-q muted">If an offer is taken before you, the page moves to the next one — only within these limits. Otherwise it stops and nothing more is spent.</p>
+        <p class="bm-q bm-muted">If an offer is taken before you, the page moves to the next one — only within these limits. Otherwise it stops and nothing more is spent.</p>
         ${stepsHtml(p.fills.map((f) => ({ status: 'queued', label: fillLabel(f), note: f.ask.instant ? '' : 'seller confirms' })))}`);
       md.buttons([{ label: 'Cancel', onClick: close }, { label: 'Buy now', primary: true, onClick: () => runBuy(md, p, bounds, o) }]);
       return;
@@ -1060,10 +1085,10 @@ function createMarket(host, ctx) {
       const p = q.plan;
       const bounds = { maxBase: p.amount, minUnit: q.minUnit || p.worstUnit };
       md.set(`<h2>Sell ${fmtAmount(p.amount, dec, 6)} ${T}</h2>
-        ${row('You get', `<b>${fmtSats(p.sats)} sats</b>`)}
+        ${row('You get', `<b>${fmtSats(p.sats)} sats</b>${usdOf(p.sats) != null ? ` <em>${fmtUsd(usdOf(p.sats))}</em>` : ''}`)}
         ${row('Average price', `${fmtUnit(p.avgUnit)} sats/${T}`)}
-        ${row('Network fees', `≈ ${fmtSats(p.feesEst)} sats`)}
-        <p class="bm-q muted">Each sale is offered to its bidder, whose wallet pays and settles it on Bitcoin. ${p.needsBidder ? 'Some of these bidders have to come online first — that can take hours; until then the tokens stay in your wallet.' : 'The watchtower does this within a minute or two.'} <b>Keep this tab open</b> — your wallet confirms each buyer's claim automatically.</p>
+        ${row('Network fees', `≈ ${fmtSats(p.feesEst)} sats, paid by you`)}
+        <p class="bm-q bm-muted">Each sale is offered to its bidder, whose wallet pays and settles it on Bitcoin. ${p.needsBidder ? 'Some of these bidders have to come online first — that can take hours; until then the tokens stay in your wallet.' : 'The watchtower does this within a minute or two.'} <b>Keep this tab open</b> — your wallet confirms each buyer's claim automatically.</p>
         ${stepsHtml(p.fills.map((f) => ({ status: 'queued', label: sellLabel(f), note: f.bid.auto ? 'auto-settles' : 'bidder must be online' })))}`);
       md.buttons([{ label: 'Cancel', onClick: close }, { label: 'Sell now', primary: true, onClick: () => runSell(md, p, bounds) }]);
       return;
@@ -1079,7 +1104,7 @@ function createMarket(host, ctx) {
         ${now ? row('Fills now', `${fmtAmount(now.amount, dec, 6)} ${T} for ${fmtSats(now.sats)} sats`) : ''}
         ${bidBase > 0n ? row('Bid', `${fmtAmount(bidBase, dec, 6)} ${T} for up to ${fmtSats(bidSats)} sats · lasts ${exp}`) : ''}
         ${bidBase > 0n && wt.on ? row('Watchtower', `moves ${fmtSats(bidSats + 10000)} sats into a bid wallet only you can reclaim (includes 10,000 for fees)`) : ''}
-        <p class="bm-q muted">${bidBase > 0n ? (wt.on ? 'Sellers can fill your bid while you\'re away; cancel any time from Your orders and reclaim what\'s left.' : 'Fills complete while this page is open. Cancel any time from Your orders.') : ''}</p>`);
+        <p class="bm-q bm-muted">${bidBase > 0n ? (wt.on ? 'Sellers can fill your bid while you\'re away; cancel any time from Your orders and reclaim what\'s left.' : 'Fills complete while this page is open. Cancel any time from Your orders.') : ''}</p>`);
       md.buttons([{ label: 'Cancel', onClick: close }, { label: 'Place order', primary: true, onClick: () => runLimitBuy(md, { order: o, now, bidBase, bidSats, watchtower: wt.on && bidBase > 0n }) }]);
       return;
     }
@@ -1089,7 +1114,7 @@ function createMarket(host, ctx) {
       ${row('You get', `<b>${fmtSats(sh.totalSats)} sats</b> when all of it sells`)}
       ${row('Listed as', sh.k >= 2 ? `${sh.k} pieces of ${fmtAmount(sh.perLotBase, dec, 6)} ${T} (${fmtSats(sh.perLotSats)} sats each)` : 'one piece')}
       ${row('Lasts', exp)}
-      <p class="bm-q muted">Buyers take pieces without you online. Setting this up is one or two Bitcoin transactions (network fees apply). Cancelling later costs one more.</p>`);
+      <p class="bm-q bm-muted">Buyers take pieces without you online. Setting this up is one or two Bitcoin transactions (network fees apply). Cancelling later costs one more.</p>`);
     md.buttons([{ label: 'Cancel', onClick: close }, { label: 'List for sale', primary: true, onClick: () => runList(md, { order: o, shape: sh }) }]);
     void cancelled;
   }
@@ -1342,7 +1367,7 @@ function createMarket(host, ctx) {
       step.status = 'done'; step.note = ''; step.txid = r?.txid || null;
       await ctx.after.listed?.({ amount: shape.listedBase, result: r });
     } catch (e) { step.status = 'failed'; step.note = ctx.friendlyError(e); err = e; }
-    md.set(`<h2>${err ? 'Listing not completed' : 'Listed'}</h2>${stepsHtml([step])}${err ? '' : '<p class="bm-q muted">It shows in the book within a few seconds. Cancel from Your orders.</p>'}`);
+    md.set(`<h2>${err ? 'Listing not completed' : 'Listed'}</h2>${stepsHtml([step])}${err ? '' : '<p class="bm-q bm-muted">It shows in the book within a few seconds. Cancel from Your orders.</p>'}`);
     md.buttons([{ label: 'Done', primary: true, onClick: () => md.close() }]);
     if (err) ctx.onError?.(err);
     endBusy();
@@ -1449,9 +1474,11 @@ function createMarket(host, ctx) {
     if (act === 'back') { e.preventDefault(); ctx.goBack(); return; }
     if (act === 'refresh') { refresh({ force: true }); return; }
     if (act === 'lane') { setLane(t.dataset.v); return; }
-    if (act === 'side') { if (S.side !== t.dataset.v) { S.side = t.dataset.v; el.amount.value = ''; el.total.value = ''; savePref(); paintTicketFrame(); paintAll(); } return; }
+    if (act === 'side') { if (S.side !== t.dataset.v) { S.side = t.dataset.v; S.limitAt = null; el.amount.value = ''; el.total.value = ''; savePref(); paintTicketFrame(); paintAll(); } return; }
     if (act === 'type') { S.type = t.dataset.v; savePref(); if (S.type === 'limit' && !el.price2.value) prime({ type: 'limit' }); paintTicketFrame(); paintAll(); return; }
     if (act === 'to-limit') { S.type = 'limit'; prime({ type: 'limit' }); return; }
+    if (act === 'allow-price') { S.limitAt = { side: S.side, unit: Number(t.dataset.v) }; paintOpts(); paintQuote(); return; }
+    if (act === 'inc-manual-now') { S.includeManual = true; savePref(); paintOpts(); paintQuote(); return; }
     if (act === 'to-market') { S.type = 'market'; prime({ type: 'market', sellBase: parseAmount(el.amount.value, dec) || undefined }); return; }
     if (act === 'unit') {
       if (S.side !== 'buy' || S.type !== 'market') return;
@@ -1482,7 +1509,7 @@ function createMarket(host, ctx) {
   host.addEventListener('change', (e) => {
     const t = e.target.closest('[data-act]');
     if (!t) return;
-    if (t.dataset.act === 'slip') { S.slip = Number(t.value); savePref(); paintQuote(); }
+    if (t.dataset.act === 'slip') { S.slip = Number(t.value); S.limitAt = null; savePref(); paintOpts(); paintQuote(); }
     if (t.dataset.act === 'inc-maker') { S.includeMaker = t.checked; savePref(); paintQuote(); }
     if (t.dataset.act === 'inc-manual') { S.includeManual = t.checked; savePref(); paintQuote(); }
     if (t.dataset.act === 'expiry') { S.expirySec = Number(t.value); savePref(); }

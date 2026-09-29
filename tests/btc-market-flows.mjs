@@ -115,6 +115,7 @@ async function fresh() {
   return page;
 }
 const mount = (page) => page.evaluate(() => { window.__ctl = window.__mount(document.getElementById('host'), window.__w.ctx()); });
+const shot = async (page, n) => { if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/${n}.png` }); };
 const calls = (page, name) => page.evaluate((n) => window.__w.calls.filter((c) => !n || c.name === n), name);
 const settle = (page, ms = 150) => page.waitForTimeout(ms);
 async function clickGo(page) { await page.click('[data-k=go]'); await settle(page); }
@@ -137,10 +138,12 @@ await test('market buy: two listings in one batch, then the seller-confirmed off
   const q = await page.textContent('[data-k=quote]');
   assert.match(q, /You pay32,150 sats/);
   await clickGo(page);
+  await shot(page, 'review-buy');
   const rv = await page.textContent('.bm-modal');
   assert.match(rv, /32,150 sats/);
   await modalPrimary(page);
   const done = await waitModal(page, /Bought/);
+  await shot(page, 'done-buy');
   assert.match(done, /Bought 160 TAC/);
   const batch = await calls(page, 'takePreauthBatch');
   assert.deepEqual(batch[0].args, ['p1', 'p2']);
@@ -204,6 +207,7 @@ await test('sell: only auto-settling bids by default; variable bids get an exact
   await page.evaluate(() => { window.__w.statuses['i' + 'b1'.padEnd(31, '0')] = 'settled'; });
   await page.evaluate(() => window.__ctl.refresh({ force: true }));
   await waitModal(page, /Sold 25 TAC/, 12000);
+  await shot(page, 'sold');
   const toasts = (await calls(page, 'toast')).map((c) => c.args.m);
   assert.ok(toasts.some((m) => /Sold 25 TAC for 5,250 sats/.test(m)));
 });
@@ -351,6 +355,18 @@ await test('at my price: any two of price, amount, total set the third; a row cl
   assert.equal(await page.inputValue('[data-k=limit-price]'), '190.00');
   assert.equal(await page.getAttribute('[data-act=type][data-v=limit]', 'aria-pressed'), 'true');
   assert.match(await page.textContent('[data-k=mode-note]'), /Name your price/);
+});
+
+await test('a buy that only fits above the price limit offers a one-tap raise, and the review keeps it', async (page) => {
+  await page.evaluate(() => { const W = window.__w; W.listings = [W.preauth('big', 5000, 1000000), W.preauth('p2', 100, 26500)]; });
+  await mount(page); await settle(page, 300);
+  await page.fill('[data-k=amount]', '60000'); await settle(page);
+  assert.equal(await page.isDisabled('[data-k=go]'), true);
+  await page.click('[data-act=allow-price]'); await settle(page);
+  assert.match(await page.textContent('[data-k=quote]'), /You pay26,500 sats/);
+  assert.match(await page.textContent('[data-k=opts-sum]'), /Max price 265\.00/);
+  await clickGo(page);
+  assert.match(await page.textContent('.bm-modal'), /at most 265\.00 sats\/TAC/);
 });
 
 await b.close();
