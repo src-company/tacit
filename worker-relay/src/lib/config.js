@@ -185,6 +185,11 @@ export const CFG = {
   // does not amortize, so the win flattens out — and a bigger batch means a longer proof and more ops lost
   // together if it fails. 1 disables batching.
   settleBatchMax: num('SETTLE_BATCH_MAX', 8),
+  // Resident-memory caps for a settle's prover child, in KB (lib/prover.js run). The container's ceiling is 2 GiB
+  // and the service itself needs some of it; a batch is held tighter, since a batch that cannot prove here just
+  // settles its members one at a time.
+  batchProverRssKB: num('BATCH_PROVER_RSS_KB', 1_300_000),
+  settleProverRssKB: num('SETTLE_PROVER_RSS_KB', 1_700_000),
   // Replenish from INSIDE the settle service, during idle time. The settle wallet earns the fees and holds
   // the only copy of SETTLE_KEY, so running the sweep here means the key never has to be copied to a cron.
   // It runs between cycles — never concurrently — because a swap and a settle from the same wallet would

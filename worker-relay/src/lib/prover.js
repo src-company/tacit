@@ -5,7 +5,7 @@
 // To prove locally instead, point BITCOIN_PROVE_BIN / EXEC_BIN at locally built GPU
 // binaries and unset SP1_PROVER.
 
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { readFile, mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { keccak256 } from 'viem';
@@ -32,19 +32,58 @@ function proverEnv(extra = {}) {
 // allocator failure (a normal, catchable non-zero exit) well before the container's shared cgroup memory
 // ceiling — otherwise the OOM killer can take out the whole container (parent Node process included), which
 // no try/catch around this call can ever observe.
-function run(bin, { env, cwd, timeoutMs, tag, memLimitKB }) {
+//
+// `rssLimitKB` watches the child's resident memory instead of capping its address space: a network-proving binary
+// reserves far more virtual memory than it touches, so a `ulimit -v` low enough to matter would fail it at start.
+// Past the limit the child is killed and the call rejects, a failure the caller can act on, before the container's
+// memory ceiling takes the service down with it. The peak is logged either way, so the limits can follow real use.
+function run(bin, { env, cwd, timeoutMs, tag, memLimitKB, rssLimitKB }) {
   return new Promise((resolve, reject) => {
     const child = memLimitKB
       ? spawn('sh', ['-c', 'ulimit -v "$1"; exec "$0"', bin, String(memLimitKB)], { env, cwd, stdio: ['ignore', 'pipe', 'pipe'] })
       : spawn(bin, [], { env, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '', err = '';
+    let out = '', err = '', peak = 0, reading = false;
     const timer = timeoutMs
       ? setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`${tag} timed out after ${timeoutMs}ms`)); }, timeoutMs)
       : null;
+    const watch = rssLimitKB ? setInterval(async () => {
+      if (reading) return;
+      reading = true;
+      const kb = await rssKB(child.pid);
+      reading = false;
+      if (kb == null) return;
+      if (kb > peak) peak = kb;
+      if (kb > rssLimitKB) {
+        clearInterval(watch);
+        child.kill('SIGKILL');
+        if (timer) clearTimeout(timer);
+        reject(new Error(`${tag} used ${Math.round(kb / 1024)}MB, over its ${Math.round(rssLimitKB / 1024)}MB memory cap, and was stopped`));
+      }
+    }, 250) : null;
+    const done = () => {
+      if (timer) clearTimeout(timer);
+      if (watch) clearInterval(watch);
+      if (peak) console.log(`[${tag}] peak memory ${Math.round(peak / 1024)}MB`);
+    };
     child.stdout.on('data', (d) => { out += d; process.stdout.write(`[${tag}] ${d}`); });
     child.stderr.on('data', (d) => { err += d; process.stderr.write(`[${tag}] ${d}`); });
-    child.on('error', (e) => { if (timer) clearTimeout(timer); reject(e); });
-    child.on('close', (code) => { if (timer) clearTimeout(timer); resolve({ code, out, err }); });
+    child.on('error', (e) => { done(); reject(e); });
+    child.on('close', (code) => { done(); resolve({ code, out, err }); });
+  });
+}
+
+// A process's resident memory in KB: /proc where there is one (the Linux image), else `ps`; null if unreadable.
+async function rssKB(pid) {
+  if (!pid) return null;
+  try {
+    const m = /VmRSS:\s+(\d+)\s+kB/.exec(await readFile(`/proc/${pid}/status`, 'utf8'));
+    if (m) return Number(m[1]);
+  } catch { /* no procfs: fall through to ps */ }
+  return new Promise((resolve) => {
+    execFile('ps', ['-o', 'rss=', '-p', String(pid)], (e, stdout) => {
+      const kb = Number(String(stdout || '').trim());
+      resolve(e || !Number.isFinite(kb) || kb <= 0 ? null : kb);
+    });
   });
 }
 
@@ -249,6 +288,9 @@ export async function proveSettle({ type, op, memos = [], timeoutMs }) {
     cwd,
     timeoutMs,
     tag: `exec:${type}`,
+    // A batch that cannot prove in this container fails on its own, so its members settle one by one; every other
+    // op keeps a last-resort cap under the container's ceiling.
+    rssLimitKB: type === 'batchtransfer' ? CFG.batchProverRssKB : CFG.settleProverRssKB,
   });
   try {
     const publicValues = await readHex(path.join(cwd, 'public_values.hex'));
