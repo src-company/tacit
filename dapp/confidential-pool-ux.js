@@ -47,7 +47,29 @@ import { makeCbtcNoteRecovery } from './cbtc-note-recovery.js';
 let _externalTacHolders = () => [];
 export function setExternalTacHolders(fn) { _externalTacHolders = typeof fn === 'function' ? fn : () => []; }
 
-export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, network } = {}) {
+// Where a pool's chain-final logs are kept between visits: IndexedDB in a browser, nothing elsewhere. Every call settles
+// (a failure reads as nothing kept), so a browser that refuses storage just reads the chain each visit as before.
+let _logDb = null;
+function browserLogStore() {
+  if (typeof indexedDB === 'undefined') return null;
+  const open = () => (_logDb ||= new Promise((res, rej) => {
+    const r = indexedDB.open('tacit-pool-logs', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('q');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.onblocked = () => rej(new Error('log store blocked'));
+  }));
+  const run = (mode, fn) => open().then((db) => new Promise((res, rej) => {
+    const t = db.transaction('q', mode), req = fn(t.objectStore('q'));
+    t.oncomplete = () => res(req.result);
+    t.onerror = t.onabort = () => rej(t.error);
+  }));
+  return { get: (k) => run('readonly', (st) => st.get(k)), put: (k, v) => run('readwrite', (st) => st.put(v, k)), del: (k) => run('readwrite', (st) => st.delete(k)) };
+}
+
+// `logStore` ({ get, put, del }, each returning a promise) replaces the browser's IndexedDB store for chain-final logs;
+// null keeps none.
+export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, network, logStore } = {}) {
   const cfg = getConfidentialDeployment(network);
   if (!cfg || !cfg.pool) throw new Error(`confidential pool not deployed on "${network || activeNetwork()}"`);
   const _fetch = fetchImpl || (typeof fetch !== 'undefined' ? fetch : null);
@@ -137,24 +159,37 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // unlinkable from the Bitcoin address). Used to sign wrap deposits + own confidential notes.
   function account(walletPriv) { return evm.deriveEvmAccount(walletPriv, cfg.evmNetwork); }
 
-  // Minimal JSON-RPC over the pool's RPC fallback list. Throws only if every endpoint fails.
-  // Every request has a timeout so one unresponsive RPC can't stall the whole call, and a
-  // failed pass over the list gets retried — a bare "Internal error" from eth_getLogs is often
-  // transient, so one bad pass shouldn't be the final word.
+  // JSON-RPC over the pool's endpoint list. Every request has a timeout, so one unresponsive endpoint can't stall a
+  // call, and a failed pass over the list is retried: a bare "Internal error" from eth_getLogs is often transient. An
+  // endpoint that doesn't answer (a timeout, a refused connection, an HTTP error, a rate limit) goes to the back of the
+  // list for a minute, so while it is down each call goes straight to one that works instead of waiting it out first.
+  // A JSON-RPC error is an answer (a revert, a range it won't serve) and sends nothing to the back.
+  const RPC_COOL_MS = 60000;
+  const _eps = cfg.rpcs.map((url) => ({ url, coolUntil: 0, span: Infinity }));
+  const _byHealth = () => { const now = Date.now(); return [..._eps.filter((e) => e.coolUntil <= now), ..._eps.filter((e) => e.coolUntil > now)]; };
+  async function _post(ep, method, params, ms = 10000) {
+    let r;
+    try {
+      r = await _fetch(ep.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: AbortSignal.timeout(ms) });
+    } catch (e) {
+      throw Object.assign(new Error((e && e.message) || String(e)), { kind: 'transport', timeout: !!e && (e.name === 'TimeoutError' || e.name === 'AbortError') });
+    }
+    let j = null;
+    try { j = await r.json(); } catch { /* not JSON */ }
+    if (j && j.error) {
+      const msg = String(j.error.message || 'rpc error');
+      throw Object.assign(new Error(msg), { kind: r.status === 429 || /rate limit|too many requests|usage limit|requests per/i.test(msg) ? 'busy' : 'rpc' });
+    }
+    if (!r.ok || !j) throw Object.assign(new Error(`rpc ${r.status}`), { kind: r.status === 429 ? 'busy' : 'http' });
+    return j.result;
+  }
   async function rpc(method, params, { retryPasses = 2 } = {}) {
     if (!_fetch) throw new Error('no fetch implementation');
     let lastErr;
-    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
     for (let pass = 0; pass < retryPasses; pass++) {
       if (pass > 0) await new Promise((res) => setTimeout(res, 400 * pass));
-      for (const url of cfg.rpcs) {
-        try {
-          const r = await _fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(10000) });
-          if (!r.ok) { lastErr = new Error(`rpc ${r.status}`); continue; }
-          const j = await r.json();
-          if (j && j.error) { lastErr = new Error(j.error.message || 'rpc error'); continue; }
-          return j ? j.result : undefined;
-        } catch (e) { lastErr = e; }
+      for (const ep of _byHealth()) {
+        try { return await _post(ep, method, params); } catch (e) { lastErr = e; if (e.kind !== 'rpc') ep.coolUntil = Date.now() + RPC_COOL_MS; }
       }
     }
     throw lastErr || new Error('all RPCs failed');
@@ -162,70 +197,125 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
 
   function ethCall(to, data) { return rpc('eth_call', [{ to: String(to).toLowerCase(), data }, 'latest']); }
 
-  // Fetch + decode the pool's confidential event stream (LeavesInserted + NullifiersSpent + LockLeavesInserted) in chain order
-  // from the pool's deploy block — exactly the stream the indexer folds into notes + the spent set.
-  // Public RPCs cap eth_getLogs by block range (and reject a full deploy-block→head span with "Internal
-  // error"/400), so the scan walks fixed windows and concatenates. Chain order is preserved (ascending
-  // windows, and each window's logs are already block+logIndex ordered). 500 stays under the tightest
-  // range cap seen across the configured mainnet RPCs (one enforces 800); 2000 fails on all of them.
-  const LOG_WINDOW = 500;
-  // Session-scoped raw-log cache, keyed by the exact (address, topics, from) a caller asked for. Every
-  // fetchEvents caller (balance, recover, and every deep-recovery walk) defaults `fromBlock` to the pool's
-  // deploy block, so without this every single one of them re-walks the pool's ENTIRE history in 500-block
-  // windows on every call — a cost that only grows as the live pool accumulates activity. Logs more than
-  // REORG_MARGIN blocks behind the previously-fetched tip are chain-final and reused as-is; only the
-  // trailing margin is re-walked each call, so a shallow reorg at the head can never leave a stale or
-  // missing log behind. Purely a fetch-path cache: the note-recovery logic below still runs over the full
-  // merged stream every time, so this can only make scanning faster, never change what it finds.
-  const REORG_MARGIN = 12;
-  const _logsCache = new Map(); // key -> { toBlock, logs }
-  async function getLogsChunked(params, from, to) {
-    const cacheKey = `${JSON.stringify(params.address)}|${JSON.stringify(params.topics)}|${from}`;
-    const cached = _logsCache.get(cacheKey);
-    // Zero-RPC reuse only once `to` sits behind the previously-fetched tip by more than the reorg
-    // margin — i.e. every block in [from, to] was already re-walked past REORG_MARGIN at least once
-    // and is provably final. A `to` still inside that margin (including an unchanged `to` from a
-    // fast repeat call) always falls through to the walk below, so a shallow reorg since the last
-    // fetch is never missed.
-    if (cached && to <= cached.toBlock - REORG_MARGIN) {
-      return cached.logs.filter((l) => Number(BigInt(l.blockNumber)) <= to);
-    }
-    const walkFrom = cached ? Math.max(from, cached.toBlock - REORG_MARGIN + 1) : from;
+  // eth_getLogs over [from, to] in as few requests as the endpoints allow. Each endpoint is asked for the whole remaining
+  // range first. One that won't serve a range that wide either names its cap ("max range: 800"), which it keeps for the
+  // session, or says the answer is too large, and the range halves until it fits. Endpoints with no known cap go first.
+  // Ranges are read in ascending order and each answer is in block and log order, so the result is in chain order.
+  function _narrower(e, span) {
+    if (e.kind === 'transport') return e.timeout && span > 2000 ? { span: Math.floor(span / 2) } : null;
+    if (e.kind !== 'rpc') return null;
+    const cap = e.message.match(/(?:max(?:imum)?\b\D{0,24}|\bover\s+|\bup to\s+|limited to\s+(?:a\s+)?)([\d,]{2,})/i);
+    if (cap) { const n = Number(cap[1].replace(/,/g, '')); return n < span ? { span: n, cap: n } : null; }
+    return /too (large|wide|big|many)|exceed|more than|response size/i.test(e.message) && span > 1 ? { span: Math.floor(span / 2) } : null;
+  }
+  async function _logsIn(params, from, to) {
     const out = [];
-    for (let start = walkFrom; start <= to; start += LOG_WINDOW) {
-      const end = Math.min(start + LOG_WINDOW - 1, to);
-      const logs = await rpc('eth_getLogs', [{ ...params, fromBlock: '0x' + start.toString(16), toBlock: '0x' + end.toString(16) }]);
-      if (logs && logs.length) out.push(...logs);
+    for (let start = from, lastErr = null; start <= to;) {
+      let got = null;
+      for (let pass = 0; pass < 2 && !got; pass++) {
+        if (pass > 0) await new Promise((res) => setTimeout(res, 400));
+        const now = Date.now();
+        const eps = _eps.map((e, i) => [e, i]).sort(([a, i], [b, j]) => (a.coolUntil > now) - (b.coolUntil > now) || (a.span < b.span) - (a.span > b.span) || i - j).map(([e]) => e);
+        for (const ep of eps) {
+          let span = Math.min(to - start + 1, ep.span);
+          for (let tries = 0; tries < 16 && !got; tries++) {
+            const end = start + span - 1;
+            try {
+              const logs = await _post(ep, 'eth_getLogs', [{ ...params, fromBlock: '0x' + start.toString(16), toBlock: '0x' + end.toString(16) }], 25000);
+              got = { logs: Array.isArray(logs) ? logs : [], end };
+            } catch (e) {
+              lastErr = e;
+              const n = _narrower(e, span);
+              if (!n) { if (e.kind !== 'rpc') ep.coolUntil = Date.now() + RPC_COOL_MS; break; }
+              if (n.cap) ep.span = Math.min(ep.span, n.cap);
+              span = n.span;
+            }
+          }
+          if (got) break;
+        }
+      }
+      if (!got) throw lastErr || new Error('eth_getLogs: no endpoint answered');
+      out.push(...got.logs);
+      start = got.end + 1;
     }
-    const merged = cached ? [...cached.logs.filter((l) => Number(BigInt(l.blockNumber)) < walkFrom), ...out] : out;
-    _logsCache.set(cacheKey, { toBlock: to, logs: merged });
-    return merged;
+    return out;
+  }
+
+  // Logs by query, kept for the session and, once FINAL blocks deep, across visits. Every scan (balance, recover and
+  // each deep-recovery walk) reads the pool's history from its deploy block, so without this each would re-read all of
+  // it. A query's logs up to FINAL blocks behind the last block read are chain-final and reused as they are; each read
+  // re-reads the rest, so neither a reorg nor an endpoint lagging behind the head can leave a log out for good. The kept
+  // logs are only a cache: scanning still runs over the whole stream every time, so this can make it faster but never
+  // change what it finds. A stream carried over from an earlier visit is checked against the chain before it is used:
+  // its LeavesInserted must follow on from one another and add up to the pool's leaf count, or it is read afresh.
+  const FINAL = 64;
+  const _logsCache = new Map(); // key -> { toBlock, logs, stored }
+  const _kept = logStore === undefined ? browserLogStore() : logStore;
+  const _keptAt = new Map();
+  const _qkey = (params, from) => `${cfg.chainId}|${String(cfg.pool).toLowerCase()}|${JSON.stringify(params.address)}|${JSON.stringify(params.topics)}|${from}`;
+  const _blockOf = (l) => Number(BigInt(l.blockNumber));
+  async function _leavesAddUp(params, from, logs, to) {
+    const T = String(evmLog.TOPIC0.LeavesInserted).toLowerCase(), pool = String(cfg.pool).toLowerCase();
+    const t0 = params.topics && params.topics[0];
+    if (t0 != null && !(Array.isArray(t0) ? t0 : [t0]).some((t) => String(t).toLowerCase() === T)) return null;
+    if (from > Number(cfg.deployBlock || 0)) return null;
+    let next = 0;
+    for (const l of logs) {
+      if (String((l.topics || [])[0] || '').toLowerCase() !== T || String(l.address || pool).toLowerCase() !== pool) continue;
+      const ev = evmLog.decodeLog(l);
+      if (!ev || Number(ev.firstLeafIndex) !== next) return false;
+      next += ev.leaves.length;
+    }
+    try { return next === Number(BigInt(await rpc('eth_call', [{ to: cfg.pool, data: '0x0be4f422' }, '0x' + to.toString(16)]))); } catch { return null; }
+  }
+  async function getLogsChunked(params, from, to) {
+    const key = _qkey(params, from);
+    let cached = _logsCache.get(key);
+    if (!cached && _kept) {
+      const rec = await _kept.get(key).catch(() => null);
+      if (rec && rec.v === 1 && Array.isArray(rec.logs) && Number.isFinite(rec.finalTo)) _logsCache.set(key, cached = { toBlock: rec.finalTo + FINAL, logs: rec.logs, stored: true });
+    }
+    if (cached && !cached.stored && to <= cached.toBlock - FINAL) return cached.logs.filter((l) => _blockOf(l) <= to);
+    const walkFrom = cached ? Math.max(from, cached.toBlock - FINAL + 1) : from;
+    let logs = [...(cached ? cached.logs.filter((l) => _blockOf(l) < walkFrom) : []), ...(await _logsIn(params, walkFrom, to))].filter((l) => _blockOf(l) <= to);
+    let sound = true;
+    if (cached && cached.stored && (await _leavesAddUp(params, from, logs, to)) === false) {
+      logs = await _logsIn(params, from, to);
+      sound = (await _leavesAddUp(params, from, logs, to)) !== false;
+      if (_kept) _kept.del(key).catch(() => {});
+    }
+    _logsCache.set(key, { toBlock: to, logs });
+    // Kept at most once a minute per query, and only what is final.
+    if (_kept && sound && Date.now() - (_keptAt.get(key) || 0) > 60000) {
+      _keptAt.set(key, Date.now());
+      _kept.put(key, { v: 1, finalTo: to - FINAL, logs: logs.filter((l) => _blockOf(l) <= to - FINAL) }).catch(() => {});
+    }
+    return logs;
   }
   async function headBlock() { return parseInt(await rpc('eth_blockNumber', []), 16); }
-  // `include` widens the stream for key-only recovery: 'wraps' (the pool's Wrap deposits), 'cdp' (position inserts),
-  // 'crossouts' (CrossOutRecorded) and 'bonds' (the farm manager's Bonded and Harvested events — a second contract, so the query
-  // names both addresses and each log is kept only if it came from the contract that owns its event). Left empty, the
-  // query is exactly the pool's three note-stream events.
+  // The pool's event stream, read as one query whatever a caller includes (so balance, recover and every other scan share
+  // one read), then narrowed to what the caller asked for: the note stream (LeavesInserted, NullifiersSpent,
+  // LockLeavesInserted), plus 'wraps' (Wrap deposits), 'cdp' (position inserts), 'crossouts' (CrossOutRecorded) and 'bonds'
+  // (the farm manager's Bonded and Harvested; a second contract, so each log is kept only if it came from the contract that
+  // owns its event).
   async function fetchEvents({ fromBlock = cfg.deployBlock, toBlock = 'latest', include = [] } = {}) {
     const from = typeof fromBlock === 'number' ? fromBlock : parseInt(String(fromBlock), 16);
     const to = toBlock === 'latest' ? await headBlock() : (typeof toBlock === 'number' ? toBlock : parseInt(String(toBlock), 16));
     const inc = new Set(include);
-    const topics0 = [evmLog.TOPIC0.LeavesInserted, evmLog.TOPIC0.NullifiersSpent, evmLog.TOPIC0.LockLeavesInserted];
-    if (inc.has('wraps')) topics0.push(evmLog.TOPIC0.Wrap);
-    if (inc.has('cdp')) topics0.push(evmLog.TOPIC0.CdpPositionInserted);
-    if (inc.has('crossouts')) topics0.push(evmLog.TOPIC0.CrossOutRecorded);
-    const manager = inc.has('bonds') && cfg.farm && cfg.farm.manager ? String(cfg.farm.manager).toLowerCase() : null;
-    if (manager) topics0.push(evmLog.TOPIC0.Bonded, evmLog.TOPIC0.Harvested);
-    let logs = await getLogsChunked({ address: manager ? [cfg.pool, cfg.farm.manager] : cfg.pool, topics: [topics0] }, from, to);
-    if (inc.size) {
-      const poolLc = String(cfg.pool).toLowerCase();
-      const managerTopics = new Set([evmLog.TOPIC0.Bonded, evmLog.TOPIC0.Harvested].map((t) => String(t).toLowerCase()));
-      logs = logs.filter((l) => {
-        const a = String(l.address || '').toLowerCase();
-        if (managerTopics.has(String((l.topics || [])[0] || '').toLowerCase())) return !!manager && a === manager;
-        return !a || a === poolLc;
-      });
-    }
+    const T = evmLog.TOPIC0;
+    const manager = cfg.farm && cfg.farm.manager ? String(cfg.farm.manager).toLowerCase() : null;
+    const all = [T.LeavesInserted, T.NullifiersSpent, T.LockLeavesInserted, T.Wrap, T.CdpPositionInserted, T.CrossOutRecorded, ...(manager ? [T.Bonded, T.Harvested] : [])];
+    const want = new Set([T.LeavesInserted, T.NullifiersSpent, T.LockLeavesInserted,
+      ...(inc.has('wraps') ? [T.Wrap] : []), ...(inc.has('cdp') ? [T.CdpPositionInserted] : []), ...(inc.has('crossouts') ? [T.CrossOutRecorded] : []),
+      ...(inc.has('bonds') && manager ? [T.Bonded, T.Harvested] : [])].map((t) => String(t).toLowerCase()));
+    const managerTopics = new Set([T.Bonded, T.Harvested].map((t) => String(t).toLowerCase()));
+    const poolLc = String(cfg.pool).toLowerCase();
+    const logs = (await getLogsChunked({ address: manager ? [cfg.pool, cfg.farm.manager] : cfg.pool, topics: [all] }, from, to)).filter((l) => {
+      const t = String((l.topics || [])[0] || '').toLowerCase(), a = String(l.address || '').toLowerCase();
+      if (!want.has(t)) return false;
+      if (managerTopics.has(t)) return !!manager && a === manager;
+      return !inc.size || !a || a === poolLc;
+    });
     return evmLog.decodeLogs(logs);
   }
 

@@ -48,28 +48,134 @@ test('account: deterministic, domain-separated Sepolia EVM derivation', () => {
   assert.notEqual(a1.priv.toLowerCase(), priv.toLowerCase(), 'EVM key is domain-separated, not the wallet key');
 });
 
-test('fetchEvents: pool-scoped LeavesInserted/NullifiersSpent/LockLeavesInserted filter from the deploy block', async () => {
+test('fetchEvents: one read of the pool\'s events from the deploy block serves every scan, each narrowed to what it asked for', async () => {
   const ev0 = makeConfidentialEvmLog({ keccak256: keccak_256 });
-  // fetchEvents resolves toBlock='latest' via eth_blockNumber before eth_getLogs; a mock that returns the
-  // same `{ result: [] }` for both makes parseInt(await rpc('eth_blockNumber'), 16) = NaN, so the log-window
-  // loop's `start <= to` is never true and eth_getLogs is never called — `captured` then holds the
-  // eth_blockNumber call instead of a log-window request.
-  let captured = null;
+  const head = Number(DEPLOY_BLOCK) + 1000;
+  const w = (v) => BigInt(v).toString(16).padStart(64, '0');
+  const wrapLog = { address: POOL, blockNumber: '0x' + (head - 700).toString(16), logIndex: '0x0', transactionHash: '0x' + '01'.repeat(32), topics: [ev0.TOPIC0.Wrap, '0x' + '0d'.repeat(32), '0x' + '0a'.repeat(32)], data: '0x' + w(5) };
+  const reads = [];
   const ux = makeConfidentialPoolUx({
     ...deps,
     fetchImpl: async (_url, opts) => {
       const body = JSON.parse(opts.body);
-      if (body.method === 'eth_blockNumber') return { ok: true, json: async () => ({ result: '0x' + Number(DEPLOY_BLOCK).toString(16) }) };
-      captured = body;
-      return { ok: true, json: async () => ({ result: [] }) };
+      if (body.method === 'eth_blockNumber') return { ok: true, json: async () => ({ result: '0x' + head.toString(16) }) };
+      reads.push(body);
+      if (body.method !== 'eth_getLogs') return { ok: true, json: async () => ({ result: '0x0' }) };
+      const { fromBlock, toBlock } = body.params[0], b = Number(BigInt(wrapLog.blockNumber));
+      return { ok: true, json: async () => ({ result: b >= Number(BigInt(fromBlock)) && b <= Number(BigInt(toBlock)) ? [wrapLog] : [] }) };
     },
   });
+  assert.deepEqual(await ux.fetchEvents(), [], 'the note stream alone leaves the deposit out');
+  const q = reads[0];
+  assert.equal(q.method, 'eth_getLogs');
+  assert.equal(q.params[0].address, POOL);
+  assert.equal(q.params[0].fromBlock, '0x' + (DEPLOY_BLOCK).toString(16));
+  assert.equal(q.params[0].toBlock, '0x' + head.toString(16), 'the whole range in one request');
+  for (const t of ['LeavesInserted', 'NullifiersSpent', 'LockLeavesInserted', 'Wrap', 'CdpPositionInserted', 'CrossOutRecorded']) {
+    assert.ok(q.params[0].topics[0].includes(ev0.TOPIC0[t]), `the one query reads ${t}`);
+  }
+  const withWraps = await ux.fetchEvents({ include: ['wraps'] });
+  assert.equal(withWraps.length, 1);
+  assert.equal(withWraps[0].type, 'Wrap', 'a scan that asks for deposits gets them');
+  const logReads = reads.filter((r) => r.method === 'eth_getLogs');
+  assert.equal(logReads.length, 2);
+  assert.equal(logReads[1].params[0].fromBlock, '0x' + (head - 63).toString(16), 'the second scan re-reads only the last 64 blocks, not the history');
+});
+
+// A chain of LeavesInserted logs (one leaf each, empty memos) at the given block offsets from the deploy block, served
+// per endpoint by `serve(url, from, to)`: a result, or { error } for a JSON-RPC error, or a thrown error for no answer.
+const LEAVES_T0 = makeConfidentialEvmLog({ keccak256: keccak_256 }).TOPIC0.LeavesInserted;
+const hexw = (v) => BigInt(v).toString(16).padStart(64, '0');
+const leafLog = (i, at) => ({
+  address: POOL, blockNumber: '0x' + (Number(DEPLOY_BLOCK) + at).toString(16), logIndex: '0x0', transactionHash: '0x' + hexw(i + 1),
+  topics: [LEAVES_T0, '0x' + hexw(i)], data: '0x' + hexw(0x40) + hexw(0x80) + hexw(1) + hexw(0xabc + i) + hexw(1) + hexw(0x20) + hexw(0),
+});
+function logChain({ logs, head, serve, leafCount = null }) {
+  const asked = [];
+  const within = (from, to) => logs.filter((l) => { const b = Number(BigInt(l.blockNumber)); return b >= from && b <= to; });
+  const fetchImpl = async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    const reply = (obj) => ({ ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: 1, ...obj }) });
+    if (body.method === 'eth_blockNumber') return reply({ result: '0x' + head().toString(16) });
+    if (body.method === 'eth_call' && body.params[0].data === '0x0be4f422') {
+      asked.push({ url, method: 'nextLeafIndex', block: Number(BigInt(body.params[1])) });
+      return reply({ result: '0x' + hexw(leafCount == null ? logs.length : leafCount) });
+    }
+    if (body.method !== 'eth_getLogs') return reply({ result: '0x0' });
+    const from = Number(BigInt(body.params[0].fromBlock)), to = Number(BigInt(body.params[0].toBlock));
+    asked.push({ url, method: 'eth_getLogs', from, to });
+    const r = serve(url, from, to);
+    if (r instanceof Error) throw r;
+    return reply(r && r.error ? { error: { code: -32000, message: r.error } } : { result: within(from, to) });
+  };
+  return { fetchImpl, asked };
+}
+
+test('log reads: the whole range where an endpoint allows it, within its cap where it names one, and an endpoint that does not answer goes to the back', async () => {
+  const d = Number(DEPLOY_BLOCK), head = d + 2000;
+  const logs = [leafLog(0, 5), leafLog(1, 900), leafLog(2, 1999)];
+  const [capped, ...dead] = SIGNET.rpcs;
+  const { fetchImpl, asked } = logChain({
+    logs, head: () => head,
+    serve: (url, from, to) => (url !== capped ? new Error('connect ECONNREFUSED')
+      : to - from + 1 > 800 ? { error: "Invalid eth_getLogs request. 'fromBlock'-'toBlock' range too large. Max range: 800" } : null),
+  });
+  const ux = makeConfidentialPoolUx({ ...deps, fetchImpl, logStore: null });
   const evs = await ux.fetchEvents();
-  assert.deepEqual(evs, []);
-  assert.equal(captured.method, 'eth_getLogs');
-  assert.equal(captured.params[0].address, POOL);
-  assert.equal(captured.params[0].fromBlock, '0x' + (DEPLOY_BLOCK).toString(16));
-  assert.deepEqual(captured.params[0].topics[0], [ev0.TOPIC0.LeavesInserted, ev0.TOPIC0.NullifiersSpent, ev0.TOPIC0.LockLeavesInserted], 'topic0 OR-filter = [LeavesInserted, NullifiersSpent, LockLeavesInserted]');
+  assert.deepEqual(evs.map((e) => e.firstLeafIndex), [0, 1, 2], 'every log, in chain order');
+  const served = asked.filter((a) => a.method === 'eth_getLogs' && a.url === capped && a.to - a.from + 1 <= 800);
+  assert.deepEqual(served.map((a) => [a.from - d, a.to - d]), [[0, 799], [800, 1599], [1600, 2000]], 'read in 800-block windows once the endpoint named its cap');
+  assert.equal(asked.filter((a) => a.url === capped && a.to - a.from + 1 > 800).length, 1, 'the cap is learned once, not re-discovered per window');
+  for (const u of dead) assert.equal(asked.filter((a) => a.url === u).length, 1, `${u} failed once, then waited at the back`);
+});
+
+test('log reads: an answer too large to return is split until it fits', async () => {
+  const d = Number(DEPLOY_BLOCK), head = d + 1000;
+  const logs = [leafLog(0, 10), leafLog(1, 400), leafLog(2, 990)];
+  const { fetchImpl, asked } = logChain({
+    logs, head: () => head, serve: (_url, from, to) => (to - from + 1 > 300 ? { error: 'query returned more than 10000 results' } : null),
+  });
+  const ux = makeConfidentialPoolUx({ ...deps, fetchImpl, logStore: null });
+  assert.deepEqual((await ux.fetchEvents()).map((e) => e.firstLeafIndex), [0, 1, 2]);
+  const ok = asked.filter((a) => a.method === 'eth_getLogs' && a.to - a.from + 1 <= 300).sort((a, b) => a.from - b.from);
+  assert.equal(ok[0].from, d, 'from the deploy block');
+  assert.equal(ok.at(-1).to, head, 'to the head');
+  ok.slice(1).forEach((a, i) => assert.equal(a.from, ok[i].to + 1, 'windows follow on with no gap or overlap'));
+});
+
+test('log reads: chain-final logs are kept between visits, checked against the pool\'s leaf count, and read again when they have a gap', async () => {
+  const d = Number(DEPLOY_BLOCK);
+  const kept = new Map();
+  const logStore = { get: async (k) => kept.get(k), put: async (k, v) => { kept.set(k, structuredClone(v)); }, del: async (k) => { kept.delete(k); } };
+  const logs = [leafLog(0, 5), leafLog(1, 100), leafLog(2, 450)];
+  let head = d + 500;
+  const first = logChain({ logs, head: () => head, serve: () => null });
+  const ux1 = makeConfidentialPoolUx({ ...deps, fetchImpl: first.fetchImpl, logStore });
+  assert.equal((await ux1.fetchEvents()).length, 3);
+  await new Promise((r) => setTimeout(r, 0));
+  const rec = [...kept.values()][0];
+  assert.equal(rec.finalTo, head - 64, 'kept up to 64 blocks behind the head');
+  assert.deepEqual(rec.logs.map((l) => Number(BigInt(l.topics[1]))), [0, 1], 'only what is final is kept');
+
+  // The next visit reads only what came after the kept part, and checks the whole stream against the pool.
+  head = d + 600;
+  logs.push(leafLog(3, 580));
+  const second = logChain({ logs, head: () => head, serve: () => null });
+  const ux2 = makeConfidentialPoolUx({ ...deps, fetchImpl: second.fetchImpl, logStore });
+  assert.deepEqual((await ux2.fetchEvents()).map((e) => e.firstLeafIndex), [0, 1, 2, 3]);
+  const reads = second.asked.filter((a) => a.method === 'eth_getLogs');
+  assert.deepEqual(reads.map((a) => [a.from - d, a.to - d]), [[500 - 64 + 1, 600]], 'one read of the unkept tail');
+  assert.deepEqual(second.asked.filter((a) => a.method === 'nextLeafIndex').map((a) => a.block), [head], 'checked at the block read to');
+
+  // A kept stream with a leaf missing does not add up: it is read again from the deploy block.
+  await new Promise((r) => setTimeout(r, 0));
+  for (const v of kept.values()) v.logs = v.logs.filter((l) => Number(BigInt(l.topics[1])) !== 1);
+  const third = logChain({ logs, head: () => head, serve: () => null });
+  const ux3 = makeConfidentialPoolUx({ ...deps, fetchImpl: third.fetchImpl, logStore });
+  assert.deepEqual((await ux3.fetchEvents()).map((e) => e.firstLeafIndex), [0, 1, 2, 3], 'the gap is filled');
+  assert.ok(third.asked.some((a) => a.method === 'eth_getLogs' && a.from === d), 'by reading from the deploy block');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual([...kept.values()][0].logs.map((l) => Number(BigInt(l.topics[1]))), [0, 1, 2], 'and what is kept is whole again');
 });
 
 test('balance: empty pool -> zero, no off-chain storage', async () => {
