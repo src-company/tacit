@@ -52,7 +52,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,mainbond,locks,repay,csend,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,activity,receipts,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,mainbond,locks,repay,csend,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -1319,6 +1319,136 @@ await step('receipts', async () => {
     ok(outs.length === 3 && five.some((x) => x.bad === 'Failed') && five.some((x) => /Done in/.test(x.text)) && outs.some((x) => /Make 3 TAC public/.test(x.text) && /Done in/.test(x.text)),
       `receipts: each attempt keeps its own receipt: the failed one, the retry done, the other note done (${outs.map((x) => x.text.slice(0, 36)).join(' | ')})`);
     if (r.errors.length) { fails++; console.log('FAIL receipts page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { await r.browser.close(); }
+});
+
+// The stats page reads the explorer, the chains and the relay's status. The explorer answers here from fixtures (a known
+// set of deposits, settles, attestations, bonds, loans, claims and device-pool moves); the chain reads come from the fork.
+// Every figure the fixtures decide is checked, and a second visit within ten minutes reads nothing again.
+await step('stats', async () => {
+  const lc = (x) => String(x || '').toLowerCase();
+  const w = (v) => (BigInt(v) < 0n ? (1n << 256n) + BigInt(v) : BigInt(v)).toString(16).padStart(64, '0');
+  const h = (n) => '0x' + n.toString(16);
+  const T = Math.floor(Date.now() / 1000) - 3 * 86400;
+  const TOPIC = {
+    wrap: '0xf5d1711d21af6f42622ab6237626933cefc42cc9f0663d81b7c4c7bc5ce99e44', leaves: '0x7783fb256f5b4e1d4d8b79583488756286326ae15d9997d4098ce5432ed2708b',
+    spent: '0x576d91547505afce99e7ebe2baf1a0948b5915598105a55f40ba72fea86e875e', asset: '0x2dcb7e1d588ab99cccaa0e9a2f69798e1e9ca87a30856228f895c2f6b34a905b',
+    posted: '0x0c008a699968f2a24063b7eb14d9239b2430c502fda280245345c78cbc47b7c1', cdpMinted: '0x232c7d098ca44092999087e6ee530a2171f95f9ecb1caa363f6dcf448fb7dd57',
+    cdpClosed: '0xc0ede5b75ee32986e50a2a39fa32dbf5e8eff1c91a46cd127591edebd91b4db9', claimed: '0x4ec90e965519d92681267467f775ada5bd214aa92c0dc93d90a5e880ce9ed026',
+    transact: '0xdf0ed29e998ac2f2ff0f0516cb9c1b95af189e00d55af3764b95bdd2a835e53a',
+  };
+  const POOLA = '0x000000000ed1eabd231be41d93b719056f7febfc', ENGINE = '0x000000003f608bddf0ca45934003ffb9dbdf70db', AIR = '0x4b4cb98d0c836c2783ac46f0078b904dab533ae8';
+  const EVMP = '0x000000c2a20657ce25f2ba99737933d031afbee9', TIP = '0x000000d218b03db5837943b0b05dea2965ae956e', ROUTER = '0x000000005da3e3b73726af3c774deeb9472d4992';
+  const CETH = '0x3cba71e1114af183cdeacc6b8457a474d17529fd28704480ca799d0d03126f34', TACID = '0xf0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b', USDC = '0x' + 'c5'.repeat(32), USDT = '0x' + 'c6'.repeat(32);
+  const tx = (c) => '0x' + c.repeat(64 / c.length);
+  let li = 0;
+  const log = (address, topics, data, txh, t) => ({ address, topics, data: '0x' + data, blockNumber: h(26000000 + li), timeStamp: h(t), transactionHash: txh, logIndex: h(li++) });
+  const str = (s) => { const b = Buffer.from(s); return w(b.length) + b.toString('hex').padEnd(64, '0'); };
+  const OUTPOINTS = ['0x' + 'b1'.repeat(32), '0x' + 'b2'.repeat(32)];              // bonded here, never recorded on the fork's pool
+  const W1 = '0x' + '1a'.repeat(20), W2 = '0x' + '2b'.repeat(20), CL1 = '0x' + '3c'.repeat(20), CL2 = '0x' + '4d'.repeat(20);
+  const poolLogs = [
+    log(POOLA, [TOPIC.asset, USDC, '0x' + '00'.repeat(12) + 'a0'.repeat(20)], w(1) + w(0x80) + w(0xc0) + w(6) + str('USD Coin') + str('USDC'), tx('e0'), T),
+    log(POOLA, [TOPIC.wrap, tx('d1'), CETH], w(10n ** 18n), tx('a1'), T),
+    log(POOLA, [TOPIC.wrap, tx('d2'), CETH], w(5n * 10n ** 17n), tx('a2'), T + 86400),
+    log(POOLA, [TOPIC.wrap, tx('d3'), TACID], w(100n * 10n ** 18n), tx('a3'), T + 86400),
+    log(POOLA, [TOPIC.wrap, tx('d4'), USDC], w(2500000), tx('a4'), T + 86400),
+    // Registered with no symbol: the page names it from its token (the real USDT contract on the fork).
+    log(POOLA, [TOPIC.asset, USDT, '0x' + '00'.repeat(12) + 'dac17f958d2ee523a2206206994597c13d831ec7'], w(1) + w(0x80) + w(0xc0) + w(6) + str('Tether') + str(''), tx('e1'), T),
+    log(POOLA, [TOPIC.wrap, tx('d5'), USDT], w(4630000), tx('a5'), T + 86400),
+    log(POOLA, [TOPIC.leaves, w(150)], w(0x40) + w(0xa0) + w(2) + tx('f1').slice(2) + tx('f2').slice(2) + w(0), tx('b1'), T + 86400),
+    log(POOLA, [TOPIC.spent], w(0x20) + w(1) + tx('91').slice(2), tx('b1'), T + 86400),
+    log(POOLA, [TOPIC.leaves, w(152)], w(0x40) + w(0x80) + w(1) + tx('f3').slice(2) + w(0), tx('b2'), T + 2 * 86400),
+    log(POOLA, [TOPIC.spent], w(0x20) + w(2) + tx('92').slice(2) + tx('93').slice(2), tx('b3'), T + 2 * 86400),
+  ];
+  const engineLogs = [
+    ...OUTPOINTS.map((o, i) => log(ENGINE, [TOPIC.posted, o, '0x' + '00'.repeat(12) + '5e'.repeat(20)], w(10n ** 15n), tx('7' + i), T)),
+    log(ENGINE, [TOPIC.cdpMinted, tx('81')], w(200000000) + w(0), tx('82'), T), log(ENGINE, [TOPIC.cdpMinted, tx('83')], w(150000000) + w(0), tx('84'), T + 86400),
+    log(ENGINE, [TOPIC.cdpClosed, tx('85')], w(100000000), tx('86'), T + 2 * 86400),
+  ];
+  const addr32 = (a) => '0x' + '00'.repeat(12) + a.slice(2);
+  const airLogs = [[CL1, 10], [CL1, 20], [CL2, 30]].map(([a, v], i) => log(AIR, [TOPIC.claimed, w(i), addr32(a)], w(BigInt(v) * 10n ** 18n), tx('c' + i), T));
+  const transact = (v, i, t) => log(EVMP, [TOPIC.transact, tx('e' + i), tx('e' + (i + 5))], [w(0), w(0), w(0), w(0), w(0), w(v), w(0), w(0), w(0x140), w(0x160), w(0), w(0)].join(''), tx('9' + i), t);
+  const devLogs = [transact(3n * 10n ** 17n, 1, T), transact(-(10n ** 17n), 2, T + 86400)];
+  const rhLogs = [transact(2n * 10n ** 17n, 3, T)];
+  const TXS = {
+    [POOLA]: [
+      { hash: tx('a2'), from: W2, to: POOLA, blockNumber: '26000001', timeStamp: String(T + 86400), isError: '0', methodId: '0x8be3ad21', value: '500000000000000000' },
+      { hash: tx('c1'), from: '0x68575b073de49a94e3e3acf6f3a0d6e3b66267c7', to: POOLA, blockNumber: '26000002', timeStamp: String(T + 86400), isError: '0', methodId: '0x0b36171c', value: '0' },
+      { hash: tx('c2'), from: '0x68575b073de49a94e3e3acf6f3a0d6e3b66267c7', to: POOLA, blockNumber: '26000003', timeStamp: String(T + 2 * 86400), isError: '0', methodId: '0x0b36171c', value: '0' },
+      { hash: tx('c3'), from: '0x68575b073de49a94e3e3acf6f3a0d6e3b66267c7', to: POOLA, blockNumber: '26000004', timeStamp: String(T + 2 * 86400), isError: '1', methodId: '0x0b36171c', value: '0' },
+    ],
+  };
+  const INTERNAL = [
+    { transactionHash: tx('a1'), index: '0', from: POOLA, to: '0x141e653de94438258fdab245896c189f56522554', value: '1000000000000000000', callType: 'delegatecall', isError: '0', timeStamp: String(T), blockNumber: '26000000' },
+    { transactionHash: tx('b2'), index: '1', from: POOLA, to: W1, value: '200000000000000000', callType: 'call', isError: '0', timeStamp: String(T + 2 * 86400), blockNumber: '26000005' },
+  ];
+  const r = await openPage({ account: A0, key: K0, viewport: { width: 1280, height: 1100 } });
+  const hits = [];
+  // Who sent each deposit comes from the chain in one batch: the fixtures' deposits answer here, the rest go to the fork.
+  const SENDERS = { [tx('a1')]: W1, [tx('a2')]: W2 };
+  for (const host of RPC_HOSTS) await r.ctx.route(`https://${host}/**`, (route) => {
+    const b = JSON.parse(route.request().postData() || 'null');
+    if (!Array.isArray(b) || !b.length || !b.every((x) => x.method === 'eth_getTransactionByHash')) return route.fallback();
+    return json(route, b.map((x) => ({ jsonrpc: '2.0', id: x.id, result: SENDERS[x.params[0]] ? { hash: x.params[0], from: SENDERS[x.params[0]] } : null })));
+  });
+  await r.ctx.route(/^https:\/\/(eth|base)\.blockscout\.com\/api\?/, (route) => {
+    const u = new URL(route.request().url()), q = u.searchParams, a = lc(q.get('address')), t0 = q.get('topic0');
+    hits.push(u.hostname + u.search);
+    let result = [];
+    if (q.get('module') === 'logs') result = (u.hostname.startsWith('base') ? [] : { [POOLA]: poolLogs, [ENGINE]: engineLogs, [AIR]: airLogs, [EVMP]: devLogs }[a] || []).filter((l) => !t0 || l.topics[0] === t0);
+    else if (q.get('action') === 'txlist') result = TXS[a] || [];
+    else if (q.get('action') === 'txlistinternal') result = a === POOLA ? INTERNAL : [];
+    return json(route, { status: result.length ? '1' : '0', message: result.length ? 'OK' : 'No records found', result });
+  });
+  await r.ctx.route(/^https:\/\/(mainnet\.base\.org|base\.drpc\.org|rpc\.mainnet\.chain\.robinhood\.com)\/?/, (route) => {
+    const b = JSON.parse(route.request().postData() || '{}'), base = /base/.test(route.request().url());
+    const res = b.method === 'eth_getBalance' ? (base ? h(5n * 10n ** 17n) : h(2n * 10n ** 17n)) : b.method === 'eth_getLogs' ? (base ? [] : rhLogs) : '0x0';
+    return json(route, { jsonrpc: '2.0', id: b.id, result: res });
+  });
+  await r.ctx.route(/^https:\/\/api\.tacit\.finance\/reflection\/status/, (route) => json(route, { attestedHeight: 969159, tipHeight: 969159, foldedCrossoutCount: 5, consumedCount: 2, liveNotes: 1234 }));
+  await r.ctx.route(/^https:\/\/(mempool\.space|blockstream\.info)\/api\/blocks\/tip\/height/, (route) => route.fulfill({ status: 200, contentType: 'text/plain', headers: { 'access-control-allow-origin': '*' }, body: '969200' }));
+  // A card as "key | value | context".
+  const card = async (k) => (await r.page.$$eval('.card', (cs) => cs.map((c) => ['.k', '.v', '.m'].map((x) => c.querySelector(x).textContent.replace(/\s+/g, ' ').trim()).join(' | ')))).find((t) => t.startsWith(k + ' |')) || '';
+  try {
+    await r.page.goto(r.url + 'stats/');
+    await until(r.page, () => /^Read /.test(document.querySelector('#asof')?.textContent || ''), null, 120000)
+      .catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | asof: ${await text(r.page, '#asof')} | errors: ${r.errors.slice(0, 2).join(' | ')}`); });
+    ok(!/could not be read/.test(await text(r.page, '#asof')), `stats: every part read (${await text(r.page, '#asof')})`);
+    const s = await card('Shielded in');
+    ok(/^Shielded in \| 1\.5ETH \| 2 deposits/.test(s), `stats: ETH shielded in is the sum of the pool's ETH wraps (${s})`);
+    ok(/^Depositing wallets \| 2 \|/.test(await card('Depositing wallets')), `stats: wallets are the senders of those wraps, however they reached the pool (${await card('Depositing wallets')})`);
+    ok(await r.page.$eval('#f-eth', (f) => !f.hidden), 'stats: the ETH-over-time chart is drawn');
+    const st = await card('Settles');
+    ok(/^Settles \| 3 \| .*3 spent/.test(st), `stats: settles are the transactions that inserted or spent notes, attestations apart (${st})`);
+    ok(/2 attestations/.test(await card('Bitcoin state proven')), `stats: only successful attestations count (${await card('Bitcoin state proven')})`);
+    const cu = await card('cUSD borrowed');
+    ok(/^cUSD borrowed \| 3\.5cUSD \| 2\.5 still out on 1 open loan, 1 repaid/.test(cu), `stats: cUSD borrowed, repaid and still out (${cu})`);
+    const ad = await card('Airdrop claimed');
+    ok(/^Airdrop claimed \| 60TAC \| 2 wallets, 3 claims/.test(ad), `stats: airdrop claims summed, claimers counted once (${ad})`);
+    ok(/^TAC shielded \| 100TAC \| 1 deposit/.test(await card('TAC shielded')), `stats: TAC shielded (${await card('TAC shielded')})`);
+    ok(/2\.5 USDC/.test(await card('Other assets shielded')) && /4\.63 USDT/.test(await card('Other assets shielded')), `stats: other assets are named from the pool's registry (${await card('Other assets shielded')})`);
+    const ac = await card('Across the chains');
+    ok(/\(5 folded into its state\)/.test(ac) && /1,234 Bitcoin notes in view/.test(ac), `stats: the reflection's folded moves and live notes are shown (${ac})`);
+    const bl = await card('BTC locked'), bh = await card('Bonds held');
+    ok(/^BTC locked \| 0BTC \| 0 locks recorded/.test(bl) && /behind 2 bonded locks/.test(bh), `stats: each bonded lock is read on the pool, and one never recorded counts toward none (${bl} | ${bh})`);
+    const rows = await r.page.$$eval('#c-dev tbody tr', (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent.replace(/\s+/g, ' ').trim())));
+    const row = Object.fromEntries(rows.map((c) => [c[0].replace(/ ↗$/, ''), c]));
+    ok(row.Ethereum?.[2] === '0.3 (1)' && row.Ethereum?.[3] === '0.1 (1)' && row.Ethereum?.[4] === '2' && row.Base?.[1] === '0.5' && row.Base?.[2] === '0 (0)'
+      && row.Robinhood?.[1] === '0.2' && row.Robinhood?.[2] === '0.2 (1)', `stats: device pools per chain, deposits and withdrawals from their Transact events (${JSON.stringify(rows)})`);
+    await shot(r.page, 'stats-desk');
+    await r.page.setViewportSize({ width: 390, height: 900 });
+    await r.page.emulateMedia({ colorScheme: 'dark' });
+    await sleep(300);
+    ok(await r.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'stats: nothing runs off the side of a phone screen');
+    await shot(r.page, 'stats-phone-dark');
+    await r.page.setViewportSize({ width: 1280, height: 1100 });
+    await r.page.emulateMedia({ colorScheme: 'light' });
+    const n = hits.length;
+    ok(n <= 7, `stats: one reading makes at most seven explorer calls, six on Ethereum and one on Base (${n})`);
+    await r.page.reload();
+    await until(r.page, () => /read again each hour/.test(document.querySelector('#asof')?.textContent || ''), null, 30000).catch(() => {});
+    ok(hits.length === n && /^Shielded in \| 1\.5ETH/.test(await card('Shielded in')), `stats: a second visit within the hour shows the last reading and asks the explorer nothing (${hits.length - n} calls)`);
+    if (r.errors.length) { fails++; console.log('FAIL stats page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   } finally { await r.browser.close(); }
 });
 
