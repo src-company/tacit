@@ -25,7 +25,13 @@ import { makeBtcWallet } from './bitcoin-taproot-wallet.js';
 import { makeBridgeMintRecovery } from './bridge-mint-recovery.js';
 
 export const BURNDEP_BETA_CAP_RAW = 100_000_000_000n; // 1,000 TAC at 8 decimals
-const MAX_HOPS = 63; // the migrate adds one hop; the registration door caps a bundle at 64 (worker/src/index.js)
+// The registration door (worker/src/index.js) caps a bundle's cxfers at 64 hops. The migrate itself adds one
+// of those hops, so the SOURCE note's own pre-migrate depth is checked against 63 (preflight, before anything
+// is signed), and the BURN-HOME's post-migrate depth — source hops + 1 — is checked separately against the
+// full 64 (once the migrate has confirmed). Kept as two named constants rather than one reused value, since
+// the two checks apply to different points in the hop count and must not collapse into the same number.
+const MAX_HOPS_SOURCE = 63;
+const MAX_HOPS_BURN_HOME = 64;
 const JOURNAL_PREFIX = 'tacit-burndep-bridge-v1';
 const LEASE_TTL_MS = 30_000;
 const DEST_INDEXES = 8; // matches confidential-recovery.js's walkBridgeMints default
@@ -210,7 +216,7 @@ export function makeBurnDepositUx(deps) {
     let traced;
     try { traced = await traceNote({ txid: note.txid, vout: note.vout, assetId: tacAssetId }); }
     catch (e) { step('trace', false, String(e.message || e)); return out; }
-    if (!step('trace', traced.hops <= MAX_HOPS, `${traced.hops} hop(s) to the etch (max ${MAX_HOPS})`)) return out;
+    if (!step('trace', traced.hops <= MAX_HOPS_SOURCE, `${traced.hops} hop(s) to the etch (max ${MAX_HOPS_SOURCE})`)) return out;
     out.bundle = traced.bundle;
     out.hops = traced.hops;
 
@@ -229,7 +235,10 @@ export function makeBurnDepositUx(deps) {
   }
 
   async function traceNote({ txid, vout, assetId }) {
-    const res = await callWorker('POST', '/reflection/burndep/trace', { note: { txid: stripHex(txid), vout }, assetId, maxDepth: MAX_HOPS + 1 });
+    // maxDepth is the walk's own budget, shared by both callers of traceNote (the source note in preflight,
+    // the burn-home after migrate) — set to the larger of the two limits so neither trace is cut short before
+    // the length check below gets a chance to run on the real hop count.
+    const res = await callWorker('POST', '/reflection/burndep/trace', { note: { txid: stripHex(txid), vout }, assetId, maxDepth: MAX_HOPS_BURN_HOME });
     if (!res.ok) throw new Error(res.error || 'trace failed');
     return { bundle: res.bundle, hops: res.hops };
   }
@@ -278,6 +287,12 @@ export function makeBurnDepositUx(deps) {
   }
 
   // ---- advance: drive a record forward one stage. walletPriv is required only at the two stages that sign. ----
+  // Tracks failures on the record itself (lastError, errorCount), not just in whatever caught the throw —
+  // the background poller (dapp/tacit.js) advances unattended and otherwise has nowhere to put a repeated
+  // failure, which would leave a permanently-stuck bridge (a hop-limit refusal, an unresolvable registration
+  // conflict, anything else that can never succeed on its own) showing the same "in progress" stage label
+  // forever with no sign anything is wrong. A caller still sees the thrown error immediately either way; this
+  // is for whoever looks at the record later, possibly a different tab, after the throw is long gone.
   async function advance(walletPub, id, { walletPriv = null } = {}) {
     const rec = getRecord(walletPub, id);
     if (!rec) throw new Error(`burndep-ux: no bridge record for ${id}`);
@@ -285,7 +300,11 @@ export function makeBurnDepositUx(deps) {
     try {
       const fn = STAGE_ADVANCE[rec.stage];
       if (!fn) return rec; // terminal ('minted') or unknown — nothing to do
-      return await fn(rec, { walletPriv });
+      const result = await fn(rec, { walletPriv });
+      return rec.lastError ? putRecord({ ...result, lastError: null, errorCount: 0 }) : result;
+    } catch (e) {
+      putRecord({ ...rec, lastError: { message: String((e && e.message) || e), at: now() }, errorCount: (rec.errorCount || 0) + 1 });
+      throw e;
     } finally { releaseLease(id); }
   }
 
@@ -308,7 +327,7 @@ export function makeBurnDepositUx(deps) {
     },
     'migrate-confirmed': async (rec) => {
       const traced = await traceNote({ txid: rec.burnHome.txid, vout: 0, assetId: tacAssetId });
-      if (traced.hops > MAX_HOPS) throw new Error(`burndep-ux: burn-home traces in ${traced.hops} hops, over the ${MAX_HOPS}-hop limit`);
+      if (traced.hops > MAX_HOPS_BURN_HOME) throw new Error(`burndep-ux: burn-home traces in ${traced.hops} hops, over the ${MAX_HOPS_BURN_HOME}-hop limit`);
       const bundle = { ...traced.bundle, burned: { cx: rec.burnHome.cx, cy: rec.burnHome.cy } };
       return putRecord({ ...rec, stage: 'traced', bundle, hops: traced.hops });
     },
@@ -359,13 +378,12 @@ export function makeBurnDepositUx(deps) {
       return putRecord({ ...rec, stage: 'burn-mined', burnMinedAt: now() });
     },
     'burn-mined': async (rec) => {
-      try {
-        await broadcaster.registerBurnDeposit({ burnTxidDisplay: rec.burn.txid, bundle: rec.bundle, network });
-      } catch (e) {
-        // A 409 with an identical bundle is a prior registration of this exact burn succeeding — fine.
-        // A 409 with a different bundle needs a human; anything else (network, 5xx) just retries next tick.
-        if (!/already registered|409/i.test(String(e.message || ''))) throw e;
-      }
+      // The worker's own registration door already tells an idempotent resubmission apart from a real
+      // conflict: an identical bundle resubmit returns 200 {ok:true} without ever throwing (first-writer-wins
+      // is a no-op on a byte-identical write), so registerBurnDeposit throwing here is always a genuine,
+      // first-writer-wins conflict against a DIFFERENT bundle already stored for this exact burn txid — never
+      // something safe to swallow and proceed past.
+      await broadcaster.registerBurnDeposit({ burnTxidDisplay: rec.burn.txid, bundle: rec.bundle, network });
       return putRecord({ ...rec, stage: 'registered', registeredAt: now() });
     },
     registered: async (rec) => {

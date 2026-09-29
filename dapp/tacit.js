@@ -22699,12 +22699,19 @@ function _renderHoldingsBurndepBridges(listEl) {
     const watchTxid = rec.burn?.txid || rec.migrate?.revealTxid;
     const watchLink = watchTxid ? ` · <a href="https://mempool.space/${NET.name === 'signet' ? 'signet/' : ''}tx/${escapeHtml(watchTxid)}" target="_blank" rel="noopener noreferrer">view ↗</a>` : '';
     const needsKey = rec.stage === 'traced' || rec.stage === 'folded';
-    const actLabel = rec.stage === 'traced' ? 'Burn' : rec.stage === 'folded' ? 'Mint' : 'Refresh';
+    const failing = !!rec.lastError;
+    const actLabel = rec.stage === 'traced' ? 'Burn' : rec.stage === 'folded' ? 'Mint' : failing ? 'Retry' : 'Refresh';
+    // A stage label alone can't distinguish "waiting normally" from "stuck on a repeating error" — this is the
+    // only place a background-poller failure (never seen by anyone unless they look here) becomes visible.
+    const errorHtml = failing
+      ? `<div style="color:var(--red-warn);margin-top:2px;">⚠ ${escapeHtml(rec.lastError.message)}${rec.errorCount > 1 ? ` (×${rec.errorCount})` : ''}</div>`
+      : '';
     return `
       <div data-burndep-row="${i}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;${i ? 'border-top:1px solid var(--ink-faint);' : ''}">
         <div style="font-size:11px;line-height:1.5;">
           <div><strong>${escapeHtml(amtStr)} ${escapeHtml(ticker)}</strong> — ${escapeHtml(label)}</div>
           <div class="muted">${shorten(rec.id.split(':')[0], 6)}:${rec.id.split(':')[1]}${watchLink}</div>
+          ${errorHtml}
         </div>
         <button data-burndep-act="${needsKey ? 'sign' : 'poll'}" data-burndep-id="${escapeHtml(rec.id)}" style="font-size:11px;padding:5px 10px;white-space:nowrap;">${actLabel}</button>
       </div>`;
@@ -22754,7 +22761,7 @@ function _startBurndepAutoRefresh() {
     for (const rec of records) {
       if (rec.stage === 'traced' || rec.stage === 'folded') continue; // needs the key — user-driven only
       try { const after = await ux.advance(bytesToHex(wallet.pub), rec.id); if (after.stage !== rec.stage) changed = true; }
-      catch { /* a poll failure just retries next tick */ }
+      catch { changed = true; /* the record's own lastError just moved even though its stage didn't — re-render so it shows */ }
     }
     if (changed && document.querySelector('.tab.active[data-tab="holdings"]')) renderHoldings();
   }, BURNDEP_POLL_INTERVAL_MS);

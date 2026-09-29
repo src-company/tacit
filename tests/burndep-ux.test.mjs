@@ -14,6 +14,7 @@ import * as secp from '../node_modules/@noble/secp256k1/index.js';
 import { makeConfidentialPool } from '../dapp/confidential-pool.js';
 import { makeBurnDepositUx, BURNDEP_BETA_CAP_RAW } from '../dapp/burndep-ux.js';
 import { makeBurnDepositKit } from '../dapp/burn-deposit-bitcoin.js';
+import { ripemd160 } from '../dapp/vendor/tacit-deps.min.js';
 
 let n = 0, failures = 0;
 const ok = (c, m) => { if (c) { console.log('  ok -', m); n++; } else { console.error('  FAIL -', m); failures++; } };
@@ -28,6 +29,10 @@ const revHex = (h) => stripHex(h).match(/../g).reverse().join('');
 const withHex = (h) => '0x' + stripHex(h);
 const hexToBytes = (h) => { const s = stripHex(h); const a = new Uint8Array(s.length / 2); for (let i = 0; i < a.length; i++) a[i] = parseInt(s.slice(2 * i, 2 * i + 2), 16); return a; };
 const bytesToHex = (b) => '0x' + Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+// The real hash160-based p2wpkh script, matching dapp/bitcoin-taproot-wallet.js exactly — needed only for the
+// preflight() ownership check, which (unlike the rest of this world's stubbed chain state) runs the app's
+// actual p2wpkhScript rather than a stand-in.
+const realWpkhSpkHexOf = (pub) => bytesToHex(new Uint8Array([0x00, 0x14, ...ripemd160(sha256(pub))]));
 
 // ---- load dapp/tacit.js under a DOM shim for the pure cxfer/BPP helpers only (see burn-deposit-reveal.js's
 // own header comment on why only these, never anything wallet-stateful, come from tacit.js) ----
@@ -55,6 +60,7 @@ function makeWorld() {
   const registered = [];
   let migrateConfirmed = false, burnSubmitted = null, burnConfirmed = false, burnFolded = false, burnRegistered = false;
   let submitStatus = 'success';
+  let registerConflict = false;
 
   const wpkhSpkOf = (pub) => bytesToHex(new Uint8Array([0x00, 0x14, ...ripemd160ish(pub)]));
   // A real HASH160 isn't needed for these tests — only byte-equality between "what the source pays" and
@@ -81,7 +87,13 @@ function makeWorld() {
       return json({ ok: true, hops: 1, bundle: { etch: { tx: '0x00', blockHash: 'aa'.repeat(32) }, cxfers: [{ tx: '0x00', txid: withHex('bb'.repeat(32)), inputs: [{ prevTxid: withHex(NOTE_TXID), prevVout: 0 }], outputs: [], rangeProof: '0x', kernelSig: '0x' }] } });
     }
     if (u.pathname === '/reflection/burndep/check') return json({ ok: true, admitted: true, reason: 'admitted' });
-    if (u.pathname === '/reflection/burndep') { registered.push(body); burnRegistered = true; return json({ ok: true, stored: 'k' }); }
+    if (u.pathname === '/reflection/burndep') {
+      // A first-writer-wins conflict against a DIFFERENT bundle already stored for this exact burn txid — an
+      // identical resubmission is never modeled here since the real door returns 200 {ok:true} for that case
+      // and this world's default (registerConflict=false) already does the same.
+      if (registerConflict) return json({ ok: false, error: 'a different bundle is already registered for this burn txid' }, 409);
+      registered.push(body); burnRegistered = true; return json({ ok: true, stored: 'k' });
+    }
     if (u.pathname === '/reflection/burndep/status') {
       const txid = u.searchParams.get('txid');
       if (txid === undefined) throw new Error('world: status needs txid');
@@ -123,6 +135,7 @@ function makeWorld() {
     setBurnFolded: (v) => { burnFolded = v; },
     setBurnHomeOnChain: (txid, spkHex) => chainTxs.set(stripHex(txid), { confirmed: true, vout: [{ scriptpubkey: stripHex(spkHex) }] }),
     setSubmitStatus: (s) => { submitStatus = s; },
+    setRegisterConflict: (v) => { registerConflict = v; },
   };
 }
 
@@ -265,14 +278,14 @@ let rec;
   ok(world.broadcasts.length > before, 'resuming an unconfirmed migrate re-sends the identical (already-journalled) bytes rather than rebuilding');
 }
 
-// ==== hop-limit refusal ====
+// ==== hop-limit refusal (post-migrate: the burn-home is always one hop deeper than its source) ====
 {
   const world = makeWorld();
   world.fetchImpl0 = world.fetchImpl;
   const overLimitFetch = async (url, opts) => {
     const u = new URL(url);
     if (u.pathname === '/reflection/burndep/trace') {
-      return { ok: true, json: async () => ({ ok: true, hops: 64, bundle: { etch: {}, cxfers: new Array(64).fill({ inputs: [{ prevTxid: withHex(NOTE_TXID), prevVout: 0 }] }) } }) };
+      return { ok: true, json: async () => ({ ok: true, hops: 65, bundle: { etch: {}, cxfers: new Array(65).fill({ inputs: [{ prevTxid: withHex(NOTE_TXID), prevVout: 0 }] }) } }) };
     }
     return world.fetchImpl0(url, opts);
   };
@@ -285,8 +298,44 @@ let rec;
   r = await ux.advance(r.walletPub, r.id);
   world.setMigrateConfirmed(true);
   r = await ux.advance(r.walletPub, r.id); // -> migrate-confirmed
-  await assert.rejects(() => ux.advance(r.walletPub, r.id), /over the 63-hop limit/, 'refuses a hop-limit violation');
+  await assert.rejects(() => ux.advance(r.walletPub, r.id), /over the 64-hop limit/, 'refuses a hop-limit violation');
   ok(true, 'a burn-home tracing over the hop limit is refused rather than silently proceeding');
+}
+
+// ==== hop-limit boundary: a source note at exactly the 63-hop preflight limit produces a burn-home at exactly
+// 64 hops (the migrate itself is one more hop), and neither check may reject the other's own limit ====
+{
+  const world = makeWorld();
+  world.setBurnHomeOnChain(NOTE_TXID, realWpkhSpkHexOf(WALLET_PUB)); // preflight's ownership check needs the real hash160, not the world's cheap stand-in
+  world.fetchImpl0 = world.fetchImpl;
+  let burnHomeTxidForMock = null;
+  const boundaryFetch = async (url, opts) => {
+    const u = new URL(url);
+    if (u.pathname === '/reflection/burndep/trace') {
+      const body = JSON.parse(opts.body);
+      const tracedTxid = stripHex(body.note.txid);
+      const hops = burnHomeTxidForMock && tracedTxid === stripHex(burnHomeTxidForMock) ? 64 : 63;
+      return { ok: true, json: async () => ({ ok: true, hops, bundle: { etch: {}, cxfers: new Array(hops).fill({ inputs: [{ prevTxid: withHex(NOTE_TXID), prevVout: 0 }] }) } }) };
+    }
+    return world.fetchImpl0(url, opts);
+  };
+  const storage = makeMemStorage();
+  const ux = makeUx({ ...world, fetchImpl: boundaryFetch }, storage);
+
+  const pf = await ux.preflight({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPub: WALLET_PUB });
+  const traceStep = pf.steps.find((s) => s.name === 'trace');
+  ok(!!traceStep && traceStep.ok, 'preflight accepts a source note at exactly the 63-hop limit');
+
+  let r = await ux.start({
+    note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING },
+    walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE,
+  });
+  burnHomeTxidForMock = r.burnHome.txid;
+  r = await ux.advance(r.walletPub, r.id); // migrate-sent
+  world.setMigrateConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id); // migrate-confirmed
+  r = await ux.advance(r.walletPub, r.id); // -> traced (must NOT be refused at exactly 64 hops)
+  ok(r.stage === 'traced' && r.hops === 64, "a 64-hop burn-home — one more than its source's own 63 — is accepted, not refused as if it shared the source's limit");
 }
 
 // ==== cap refusal in start() ====
@@ -323,6 +372,45 @@ let rec;
   await assert.rejects(() => ux.advance(r.walletPub, r.id), /slipstream submit refused/, 'a MARA status!==success response is surfaced as a real error, not treated as submitted');
   const stillAt = ux.list(r.walletPub).find((x) => x.id === r.id);
   ok(stillAt.stage === 'burn-signed', 'a refused MARA submission does not advance the stage');
+}
+
+// ==== a registration conflict against a DIFFERENT already-stored bundle propagates rather than being swallowed
+// (the worker's own door already treats an identical resubmission as a no-op 200, so anything advance() sees
+// thrown here is a genuine, unresolvable conflict) — and advance() records/clears lastError+errorCount so a
+// background poller has somewhere to surface a bridge that can never proceed on its own ====
+{
+  const world = makeWorld();
+  world.setRegisterConflict(true);
+  const storage = makeMemStorage();
+  const ux = makeUx(world, storage);
+  let r = await ux.start({
+    note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING },
+    walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE,
+  });
+  r = await ux.advance(r.walletPub, r.id); // migrate-sent
+  world.setMigrateConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id); // migrate-confirmed
+  r = await ux.advance(r.walletPub, r.id); // traced
+  world.setBurnHomeOnChain(r.burnHome.txid, r.burnHome.spk);
+  r = await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV }); // burn-signed
+  world.setBurnSubmitted(r.burn.txid);
+  r = await ux.advance(r.walletPub, r.id); // burn-submitted
+  world.setBurnConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id); // burn-mined
+
+  await assert.rejects(() => ux.advance(r.walletPub, r.id), /registration failed/, 'a registration conflict against a different stored bundle is thrown, not swallowed');
+  let stuck = ux.list(r.walletPub).find((x) => x.id === r.id);
+  ok(stuck.stage === 'burn-mined', 'the record stays at burn-mined rather than silently advancing past a failed registration');
+  ok(!!stuck.lastError && /registration failed/.test(stuck.lastError.message) && stuck.errorCount === 1, 'advance() records the failure on the record itself (lastError/errorCount)');
+
+  await assert.rejects(() => ux.advance(r.walletPub, r.id), /registration failed/, 'the same conflict is thrown again on a second attempt');
+  stuck = ux.list(r.walletPub).find((x) => x.id === r.id);
+  ok(stuck.errorCount === 2, 'a repeated failure increments errorCount rather than resetting it');
+
+  world.setRegisterConflict(false);
+  r = await ux.advance(r.walletPub, r.id); // registered, this time
+  ok(r.stage === 'registered', 'once the conflict clears, advance() proceeds normally');
+  ok(r.lastError === null && r.errorCount === 0, 'a subsequent success clears lastError/errorCount from the record');
 }
 
 // ==== cross-tab lease ====
