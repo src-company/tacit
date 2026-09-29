@@ -10,6 +10,7 @@
 
 const SATS_URL = '/tac/sats.js?cb=6655b51b';     // tokens rewritten by build/build.mjs (TAC_CB_FILES)
 const MARKET_URL = '/tac/market.js?cb=b5a39c64';
+const CLAIM_URL = '/tac/claim.js?cb=25c5f1f4';
 const WORKER = 'https://api.tacit.finance';
 const ASSET = 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
 
@@ -600,6 +601,11 @@ async function scanEverything(statusId = 'st-recv') {
     navigator.clipboard?.writeText(poolWallet.addressString);
     say('st-recv', 'Address copied.');
   };
+  $('btn-claim-make').onclick = (e) => busy(e.currentTarget, 'st-claim-make', makeClaimLink);
+  $('claim-amt').addEventListener('input', () => {
+    let u = 0n; try { u = parseUnits($('claim-amt').value); } catch {}
+    $('claim-sats').textContent = u > 0n ? satsText(u) : '';
+  });
   $('btn-scan').onclick = (e) => busy(e.currentTarget, 'st-recv', () => scanEverything('st-recv'));
 
   await loadTacit();
@@ -608,9 +614,103 @@ async function scanEverything(statusId = 'st-recv') {
   known = knownWallet();
   if (known && isPub(known.pubHex)) { try { T.wallet.pub = T.hexToBytes(known.pubHex); } catch {} }
   refreshChip(); renderBalances(); renderShieldPicker(); renderKnownLine();
+  // Also on hashchange: opening a claim link while this page is already loaded changes only the fragment,
+  // which is a same-document navigation — boot does not run again and the link would be ignored.
+  const openFrag = () => {
+    const frag = location.hash || '';
+    if (/tacclaim=/.test(frag)) showClaim(frag).catch((e) => console.warn('[tac] claim link', e));
+  };
+  window.addEventListener('hashchange', openFrag);
+  openFrag();
   await Promise.all([loadStats(), loadPrice()]);
   if (unlocked()) await refreshAll();
 })();
+
+// ── claim links ──
+// Handing shielded TAC to someone with no wallet: the link carries a throwaway pool wallet, and the
+// recipient sweeps it into their own. See tac/claim.js for the wire format and why it is bearer.
+let claimMod = null;
+const loadClaim = async () => (claimMod ||= await import(CLAIM_URL));
+
+async function makeClaimLink() {
+  await ensureKey();
+  const C = await loadClaim();
+  const amount = parseUnits($('claim-amt').value);
+  if (amount <= 0n) throw new Error('Enter an amount above zero.');
+  if (!shielded.notes.length) await loadShielded();
+  if (amount + relayFeeUnits() > shieldedTotal()) throw new Error('More than your shielded balance.');
+  const pin = $('claim-pin').value.trim();
+  const r = await C.createClaim(T, {
+    S, pool: S.pool, poolWallet, amount, asset: S.TAC_ASSET_MAINNET, pin, network: 'mainnet',
+    say: (m) => say('st-claim-make', m),
+  });
+  if (r.wait) return say('st-claim-make', `Your newest note needs ${r.wait} more Bitcoin block${r.wait === 1 ? '' : 's'} first.`);
+  $('claim-amt').value = ''; $('claim-pin').value = '';
+  const box = document.createElement('div');
+  const field = document.createElement('input');
+  field.readOnly = true; field.value = r.link;
+  field.style.cssText = 'width:100%;font:400 12px/1.4 var(--mono);color:var(--ink);background:var(--field);border:1px solid var(--hair);padding:10px;margin-top:8px';
+  const copy = document.createElement('button');
+  copy.className = 'btn ghost'; copy.textContent = 'Copy the link';
+  copy.onclick = () => { navigator.clipboard?.writeText(r.link); copy.textContent = 'Copied'; };
+  box.append(document.createTextNode(`${fmt(amount)} TAC is under this link. Anyone who opens it can take it${pin ? ', with the PIN' : ''}.`), field, copy);
+  say('st-claim-make', box);
+  await loadShielded();
+}
+
+// A link in the address bar takes over the top of the page.
+async function showClaim(payload) {
+  const host = $('claim-body'); const panel = $('claim-panel');
+  panel.hidden = false;
+  host.textContent = 'Reading the link…';
+  let C, parsed;
+  try { C = await loadClaim(); parsed = C.decodeClaim(payload); }
+  catch (e) { host.textContent = ''; return errSayInto(host, e); }
+  if (parsed.network !== 'mainnet') { host.textContent = 'That link is for another network.'; return; }
+
+  const pinField = document.createElement('input');
+  pinField.placeholder = 'PIN'; pinField.autocomplete = 'off'; pinField.inputMode = 'numeric';
+  pinField.style.cssText = 'width:100%;font:400 14px/1.4 var(--mono);color:var(--ink);background:var(--field);border:1px solid var(--hair);padding:12px';
+  const line = document.createElement('div'); line.className = 'kv';
+  const btn = document.createElement('button'); btn.className = 'btn'; btn.textContent = 'Claim into my wallet';
+  const st = document.createElement('div'); st.className = 'status';
+
+  async function refresh() {
+    line.replaceChildren(document.createTextNode('Checking…'));
+    try {
+      const r = await C.readClaim(S, S.pool, { secret32: parsed.secret32, pin: pinField.value.trim(), network: 'mainnet', asset: S.TAC_ASSET_MAINNET });
+      line.replaceChildren(
+        Object.assign(document.createElement('span'), { textContent: r.total > 0n ? 'Waiting for you' : 'Nothing under this link' }),
+        Object.assign(document.createElement('b'), { className: 'num', textContent: r.total > 0n ? `${fmt(r.total)} TAC${satsText(r.total) ? ' · ' + satsText(r.total) : ''}` : parsed.pinned ? 'check the PIN' : 'already claimed' }));
+      btn.disabled = r.total <= 0n;
+    } catch (e) { line.replaceChildren(); errSayInto(line, e); }
+  }
+
+  btn.onclick = () => busy(btn, 'st-claim', async () => {
+    await ensureKey();   // creates or unlocks a wallet, so a first-time recipient lands somewhere real
+    const r = await C.sweepClaim(T, {
+      S, pool: S.pool, secret32: parsed.secret32, pin: pinField.value.trim(), network: 'mainnet',
+      asset: S.TAC_ASSET_MAINNET, toAddress: poolWallet.addressString, say: (m) => { st.textContent = m; },
+    });
+    if (r.wait) { st.textContent = `The note needs ${r.wait} more Bitcoin block${r.wait === 1 ? '' : 's'} before it can move.`; return; }
+    st.replaceChildren(document.createTextNode('Claimed into your wallet in '), txLink(r.revealTxid), document.createTextNode(r.relayed ? ' — the fee came out of the TAC, so this cost you no bitcoin.' : '.'));
+    await refreshAll();
+    await refresh();
+  });
+
+  host.replaceChildren(
+    Object.assign(document.createElement('p'), { className: 'note', style: 'margin-top:0', textContent: parsed.pinned ? 'This link is PIN-protected. Enter the PIN you were given.' : 'This link holds shielded TAC. Claiming moves it into a wallet only you control.' }),
+    ...(parsed.pinned ? [pinField] : []), line, btn, st);
+  if (parsed.pinned) pinField.addEventListener('input', () => { clearTimeout(showClaim._t); showClaim._t = setTimeout(refresh, 400); });
+  await refresh();
+}
+
+function errSayInto(host, e) {
+  const span = document.createElement('span');
+  span.className = 'err'; span.setAttribute('role', 'alert');
+  span.textContent = String(e?.message || e);
+  host.append(span);
+}
 
 // ── market ──
 // Lazy: the Bitcoin book and an Ethereum pool read are both off this page's critical path.

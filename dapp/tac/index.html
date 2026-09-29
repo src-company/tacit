@@ -242,6 +242,11 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
     <div><span class="v" id="s-proof">—</span><span class="k">Proof system</span></div>
   </div>
 
+  <section class="panel" id="claim-panel" hidden>
+    <p class="eyebrow">Someone sent you TAC</p>
+    <div id="claim-body"></div>
+  </section>
+
   <section class="panel" id="main">
     <div class="seg" role="tablist" id="tabs">
       <button role="tab" id="tab-shield" aria-selected="true">Shield</button>
@@ -278,6 +283,16 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
       <p class="note">The amount and the recipient stay hidden. Send any part of your balance; the remainder stays in the pool as change.</p>
       <button class="btn" id="btn-send">Send privately</button>
       <div class="status" id="st-send"></div>
+
+      <div class="lbl sep"><span>Or send to someone with no wallet</span></div>
+      <p class="note" style="margin-top:0">Creates a link that holds the TAC. Whoever opens it can take it into a wallet of their own — they need no wallet now and no bitcoin ever, because the relayer takes its fee from the TAC itself. Anyone holding the link can spend it, so send it the way you would send cash, and add a PIN if the channel is not private.</p>
+      <div class="lbl"><label for="claim-amt">Amount</label></div>
+      <div class="amt"><input id="claim-amt" inputmode="decimal" autocomplete="off" placeholder="0.00"><span class="u"><img class="tk sm" src="/tac-logo.png" alt="">TAC</span></div>
+      <div class="fiat" id="claim-sats"></div>
+      <div class="lbl"><label for="claim-pin">PIN (optional, shared separately)</label></div>
+      <div class="amt text"><input id="claim-pin" autocomplete="off" inputmode="numeric" placeholder="leave blank for none"></div>
+      <button class="btn ghost" id="btn-claim-make">Create a claim link</button>
+      <div class="status" id="st-claim-make"></div>
     </div>
 
     <div id="pane-withdraw" hidden>
@@ -371,6 +386,6 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
   </form>
 </div>
 <div id="toast-container" aria-live="polite"></div>
-<script type="module" src="/tac/app.js?cb=ff5e6352"></script>
+<script type="module" src="/tac/app.js?cb=37d44190"></script>
 </body>
 </html>
