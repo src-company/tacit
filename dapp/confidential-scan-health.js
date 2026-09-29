@@ -137,9 +137,9 @@ export function notifyPendingWrapsOnce(diag, notify) {
   try { if (sessionStorage.getItem(FLAG)) return; sessionStorage.setItem(FLAG, '1'); } catch { /* fall through and notify anyway */ }
   const n = pending.length;
   notify(
-    `${n} confidential-pool deposit${n === 1 ? '' : 's'} ${n === 1 ? 'is' : 'are'} on-chain but not yet settled into a note — open the Pool tab and click Resume to finish.`,
+    `${n === 1 ? 'A deposit is' : `${n} deposits are`} waiting to become private. Open the Ethereum tab and press Resume to finish.`,
     '',
-    { title: 'Your funds are safe; this just needs the settle step to run again.', onClick: () => { location.hash = '#tab=confidential-pool'; } },
+    { title: 'The funds are safe in the pool; only the settle step still has to run.', onClick: () => { location.hash = '#tab=csend'; } },
   );
 }
 

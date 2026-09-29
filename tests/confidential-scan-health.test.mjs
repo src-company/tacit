@@ -97,7 +97,7 @@ test('notifyPendingWrapsOnce notifies only when something is pending', () => {
   assert.equal(calls.length, 0, 'nothing pending — no notification');
   notifyPendingWrapsOnce({ wrap: { pending: [{ index: 0 }] } }, notify);
   assert.equal(calls.length, 1);
-  assert.match(calls[0].msg, /1 confidential-pool deposit is on-chain/);
+  assert.match(calls[0].msg, /^A deposit is waiting to become private. Open the Ethereum tab and press Resume/);
   assert.equal(typeof calls[0].opts.onClick, 'function');
 });
 
