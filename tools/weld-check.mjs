@@ -24,6 +24,8 @@
 //            V1 through a keeper-relayed withdrawToV1 whose note settle is then submitted, and asks to bridge to Base
 //   pts      a listed address claims its points reward; a pasted key's Tacit account registers a .wei name through
 //            zRouter's commit and reveal and publishes its tacit1 address on it
+//   csend    the Borrow sheet's Send: private cUSD/cBTC (notes stubbed into the balance) go privately to a tacit1 address
+//            or out as tacUSD to an 0x… address, with fees shown first and an amount over the balance refused
 //   btc      a pasted key's Bitcoin sheet: balances read, BTC routes (tacit1 and sp1 as silent payments, bc1 plain), TAC
 //            routes refuse plain addresses, a tacit1's silent-payment keys are the ones this wallet scans, a payment link checks
 //   PLAYWRIGHT=<path to playwright-core> node tools/weld-check.mjs [scenario,…] [fork rpc]   (SHOTS=<dir> saves screenshots)
@@ -42,7 +44,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,mainbond,locks,repay,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,mainbond,locks,repay,csend,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -579,6 +581,59 @@ const toWallet = (p) => p.evaluate(() => { location.hash = ''; location.hash = '
 const shown = async (p) => { await toWallet(p); await p.waitForSelector('#wallet-body .who, #wallet-body [data-in]', { timeout: 60000 }); return walletText(p); };
 const lock = async (p) => { await toWallet(p); await p.waitForSelector('#w-lock', { timeout: 60000 }); await p.click('#w-lock'); await p.waitForSelector('#wallet-body [data-in]'); };
 const addrIn = (txt) => (txt.match(/tacit1[0-9a-z]{8}…[0-9a-z]{12}/) || [''])[0];
+
+await step('csend', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  const hex = 'c5e4d'.padEnd(64, '3');
+  // The page's pool module, with private cUSD and cBTC notes added to what the key's balance finds.
+  const CUSD = '0x8f4490dd3728b0ee904d7a67c11b37ffd463a5c7f08b79810006995ee8a9679d', CBTC = '0x62a20d98fc1cd20289621d1315294cb8772f934d822e404b71e1f471cf0679c8';
+  await r.page.route(/\/confidential-pool-ux\.js\?cb=/, (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: `
+    import * as real from '/confidential-pool-ux.js?stub=real';
+    export * from '/confidential-pool-ux.js?stub=real';
+    export function makeConfidentialPoolUx(o) {
+      const ux = real.makeConfidentialPoolUx(o), balance = ux.balance;
+      const note = (asset, value, i) => ({ asset, value: String(value), leafIndex: 900000 + i, cx: '0x' + String(i).repeat(64).slice(0, 64), cy: '0x01', owner: '0x02' });
+      const add = [note('${CUSD}', 2500000000n, 1), note('${CUSD}', 300000000n, 2), note('${CBTC}', 50000n, 3)];
+      ux.balance = async (priv) => {
+        const b = await balance(priv);
+        b.notes = [...b.notes, ...add];
+        for (const n of add) { const g = b.byAsset[n.asset] ||= { asset: n.asset, value: 0n, notes: [] }; g.value = BigInt(g.value) + BigInt(n.value); g.notes = [...g.notes, n]; }
+        return b;
+      };
+      return ux;
+    }` }));
+  try {
+    await r.page.goto(r.url + '#wallet');
+    await r.page.click('#wallet-body [data-in="paste"]');
+    await r.page.fill('#ws-hex', hex);
+    await r.page.click('#wallet-body [data-in="key"]');
+    await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+    await r.page.evaluate(() => { location.hash = ''; location.hash = '#borrow'; });
+    await r.page.waitForSelector('#bw-send:not([hidden]) #cs-to', { timeout: 240000 }).catch(async (e) => {
+      throw new Error(`${e.message.split('\n')[0]} | sheet: ${(await r.page.evaluate(() => (document.querySelector('#borrow-body')?.textContent || '').replace(/\s+/g, ' ').slice(-300)))} | errors: ${r.errors.slice(0, 2).join(' | ')}`);
+    });
+    const chips = await r.page.$$eval('#bw-send [data-cs]', (b) => b.map((x) => x.textContent));
+    ok(chips.join(',') === 'cBTC,cUSD', `csend: private cBTC and cUSD are both offered (${chips.join(', ')})`);
+    await r.page.click('#bw-send [data-cs="cusd"]');
+    await r.page.waitForSelector('#cs-max');
+    ok(/Private 28(\.00)? cUSD/.test(await text(r.page, '#cs-max')), `csend: the cUSD balance is the notes' sum (${await text(r.page, '#cs-max')})`);
+    await r.page.fill('#cs-to', tacit1('abc'.padEnd(64, '9')));
+    await r.page.fill('#cs-amt', '15');                           // clears the claim's relay fee at today's gas, and fits with a split
+    await until(r.page, () => /They get about/.test(document.querySelector('#cs-rcpt')?.textContent || '') && !document.querySelector('#cs-go').disabled, null, 60000)
+      .catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | preview: ${(await text(r.page, '#cs-rcpt')).replace(/\s+/g, ' ')} | status: ${await text(r.page, '#bw-status')} | errors: ${r.errors.slice(0, 2).join(' | ')}`); });
+    ok(true, `csend: a tacit1 recipient is quoted privately (${(await text(r.page, '#cs-rcpt')).replace(/\s+/g, ' ').trim()})`);
+    await r.page.fill('#cs-to', '0x000000000000000000000000000000000000dEaD');
+    await until(r.page, () => /Arrives[^]*tacUSD/.test(document.querySelector('#cs-rcpt')?.textContent || '') && !document.querySelector('#cs-go').disabled, null, 60000);
+    ok(/Relay fee/.test(await text(r.page, '#cs-rcpt')), `csend: an 0x recipient gets it as tacUSD, fee first (${(await text(r.page, '#cs-rcpt')).replace(/\s+/g, ' ').trim()})`);
+    await r.page.fill('#cs-amt', '100');
+    await until(r.page, () => /More than your private balance/.test(document.querySelector('#cs-rcpt')?.textContent || ''), null, 60000);
+    ok(await r.page.$eval('#cs-go', (b) => b.disabled), 'csend: more than the private balance is refused');
+    await r.page.click('#bw-send [data-cs="cbtc"]');
+    await until(r.page, () => /Private 0\.0005 cBTC/.test(document.querySelector('#cs-max')?.textContent || ''), null, 30000);
+    ok(true, `csend: switching to cBTC shows its balance (${await text(r.page, '#cs-max')})`);
+    if (r.errors.length) { fails++; console.log('FAIL csend page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { await r.browser.close(); }
+});
 
 await step('keys', async () => {
   const r = await openPage({ account: A0, key: K0 });

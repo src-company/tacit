@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-GefIem8BMGE0p+c9OfgQ5V1akykF9lhedxECx0gJ8RM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ldRgrPm9jluLpznT9jMZwYFkniQFL7+0gKJjmfK+wv8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -555,6 +555,8 @@ const ADDR = {
   escrow: '0x000000008eCD09f922C9FbbDD9ACA5aE8F0beBfA',              // CbtcEscrowHelper: ETH → wstETH bond
   wsteth: '0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0',
   tac: '0xA1313eb9f3A445606D9583bcAc3ebeB56a858279',
+  tacbtc: '0xdf1d99148bEb7a9AFf1d95C49B3d22b7ed90D696',              // cBTC withdrawn to an address, one for one
+  tacusd: '0x23cACFFAc2674514A6d4F6cD420B4cc2aC921564',              // cUSD withdrawn to an address, one for one
   multicall: '0xcA11bde05977b3631167028862bE2a173976CA11',
   precisionPool: '0x0155358241411dB868BA714aE7c83A27087e3D6E',       // TAC/ETH 0.30%, LP is the pool's own ERC-20
   precisionFarm: '0x0000003bF4BA0B21f5e0d35119b337F4d4CF82E0',       // stakes that LP, streams TAC
@@ -1605,19 +1607,20 @@ async function resolveTo(raw) {
   const local = (s) => { try { return { pubHex: names.decodeTacitAddress(s).key }; } catch (e) { return /^0x0[23][0-9a-fA-F]{64}$/.test(s) ? { pubHex: s } : { error: e.message }; } };
   return names.resolveRecipient(raw, { local });
 }
-// A private tETH spend draws on one note. When none fits, a relayed self-send first makes a note of exactly `amount`
+// A private spend draws on one note. When none fits, a relayed self-send first makes a note of exactly `amount`
 // (the rest comes back as change): from the smallest note that covers it and the fee, else from the largest notes
-// combined, at most 16 at a time.
-async function noteFor(t, priv, amount, fits, status) {
+// combined, at most 16 at a time. `k` names the private balance it draws on (P.scan.eth, .cusd, .cbtc).
+async function noteFor(t, priv, amount, fits, status, k = 'eth') {
   if (!P.scan) await scanPrivate();
   if (!P.scan) throw new Error('Your private balance is still loading. Try again in a moment.');
-  const ok = () => P.scan.eth.notes.some(fits);
+  const ok = () => P.scan[k].notes.some(fits);
   if (ok()) return;
-  const fee = BigInt(await t.quoteOpFee('cETH', 'transfer')), need = amount + fee;
-  const up = [...P.scan.eth.notes].sort((a, b) => (BigInt(a.value) > BigInt(b.value) ? 1 : -1));
+  const tk = tickerOf(t, P.scan[k].id) || 'cETH';
+  const fee = BigInt(await t.quoteOpFee(tk, 'transfer')), need = amount + fee;
+  const up = [...P.scan[k].notes].sort((a, b) => (BigInt(a.value) > BigInt(b.value) ? 1 : -1));
   let picked = up.filter((n) => BigInt(n.value) >= need).slice(0, 1), sum = picked.length ? BigInt(picked[0].value) : 0n;
   for (const n of picked.length ? [] : up.reverse()) { if (sum >= need || picked.length === 16) break; picked.push(n); sum += BigInt(n.value); }
-  if (sum < need) throw new Error(picked.length < up.length ? `At most ${fmt(sum - fee, 8, 6)} tETH moves in one go. Try that first.` : 'Your notes do not cover this and the relay fee. Try a little less.');
+  if (sum < need) throw new Error(picked.length < up.length ? `At most ${fmt(sum - fee, 8, 6)} ${shownAs(tk)} moves in one go. Try that first.` : 'Your notes do not cover this and the relay fee. Try a little less.');
   say(status, picked.length > 1 ? `Combining ${picked.length} notes first…` : 'Splitting a note to this amount first…');
   await t.transfer({ walletPriv: priv, notes: picked, recipientPubHex: t.identity(priv).pubHex, amount, fee, waitOpts: { timeoutMs: 15 * 60e3 } });
   await scanPrivate(true);
@@ -3293,6 +3296,7 @@ render.borrow = () => {
         <button class="btn ghost" type="button" data-reclaim="${i}">Take it back</button>`)}
       <p class="note">A bond comes back to the account that posted it while its lock has not been minted against, or once the lock is redeemed. Taking back the bond of a lock that is not minted yet means minting it waits for a new bond.</p>
     </div>` : ''}
+    <div class="blk" id="bw-send" hidden></div>
     <div class="status" role="status" id="bw-status"></div>`);
   const status = $('#bw-status');
   $$('[data-reclaim]', el).forEach((b) => b.onclick = () => busy(b, async () => {
@@ -3480,7 +3484,151 @@ render.borrow = () => {
       await loadBorrow(true); rerender('borrow'); say($('#bw-status'), html`<span class="ok">Withdrawn.</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
     } catch (e) { sayErr(status, e); }
   });
+  cSend($('#bw-send'), status);
 };
+
+// Send cBTC or cUSD. To a tacit1… address or a name it stays private: a stealth lock only the recipient can open, its
+// claim's relay fee coming out of the payment. To an 0x… address it arrives as public tacBTC or tacUSD, and whatever
+// is left of the note stays private. Both are relayed, so nothing public ties the payment to this wallet. Public
+// tacBTC and tacUSD held by the paying account are sent as plain token transfers.
+const CS_ASSETS = {
+  cbtc: { tk: 'cBTC', out: 'tacBTC', icon: 'cbtc', token: ADDR.tacbtc, dp: 8 },
+  cusd: { tk: 'cUSD', out: 'tacUSD', icon: 'cusd', token: ADDR.tacusd, dp: 2 },
+};
+const CSEND = { pick: null, pub: null, pubAt: 0, pubFor: null, reading: null };
+const privateOf = (k) => (P.scan?.[k]?.notes || []).reduce((s, n) => s + BigInt(n.value), 0n);
+// The paying account's public tacBTC and tacUSD, read at most every 30 seconds.
+function readPublicTac() {
+  const who = payer() === 'tacit' ? S.acct?.address : S.address;
+  if (!who) return Promise.resolve(null);
+  if (CSEND.pubFor === who && Date.now() - CSEND.pubAt < 30e3) return Promise.resolve(CSEND.pub);
+  if (CSEND.reading) return CSEND.reading;
+  return (CSEND.reading = multicall(Object.values(CS_ASSETS).map((a) => ({ to: a.token, data: SEL.balanceOf + addrWord(who) })))
+    .then((r) => { CSEND.pub = { cbtc: r[0] ? wordAt(r[0], 0) : 0n, cusd: r[1] ? wordAt(r[1], 0) : 0n }; CSEND.pubAt = Date.now(); CSEND.pubFor = who; return CSEND.pub; })
+    .finally(() => { CSEND.reading = null; }));
+}
+function cSend(el, status) {
+  if (!el) return;
+  if (!P.scan && !P.err) scanPrivate().then(() => rerender('borrow')).catch(() => {});
+  const who = payer() === 'tacit' ? S.acct?.address : S.address;
+  if (who && CSEND.pubFor !== who) readPublicTac().then((p) => { if (p && (p.cbtc || p.cusd)) rerender('borrow'); }).catch(() => {});
+  const sources = [
+    ...Object.entries(CS_ASSETS).map(([k, a]) => ({ id: k, k, a, pub: false, held: privateOf(k), unit: a.tk, dec: 8 })),
+    ...Object.entries(CS_ASSETS).map(([k, a]) => ({ id: `pub-${k}`, k, a, pub: true, held: CSEND.pubFor === who ? CSEND.pub?.[k] ?? 0n : 0n, unit: a.out, dec: 18 })),
+  ].filter((x) => x.held > 0n);
+  el.hidden = !sources.length;
+  if (!sources.length) return;
+  const src = sources.find((x) => x.id === CSEND.pick) || sources[0];
+  CSEND.pick = src.id;
+  const { k, a } = src, show = (v) => fmt(v, src.dec, a.dp);
+  mount(el, html`
+    <div class="lbl"><span>Send</span>${sources.length > 1 ? html`<span>${sources.map((x, i) => html`${i ? ' · ' : ''}<button type="button" data-cs="${x.id}" aria-pressed="${x.id === src.id}">${x.unit}</button>`)}</span>` : ''}</div>
+    <div class="amt text"><input id="cs-to" placeholder="${src.pub ? '0x…' : 'tacit1…, name.wei or 0x…'}" autocomplete="off" spellcheck="false" aria-label="Recipient"></div>
+    <div class="lbl"><span>Amount</span><button type="button" id="cs-max">${src.pub ? `Public in ${your()}` : 'Private'} ${show(src.held)} ${src.unit}</button></div>
+    <div class="amt"><input id="cs-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="${src.unit} to send"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-${src.pub ? `tac${k.slice(1)}` : a.icon}"/></svg>${src.unit}</span></div>
+    <div class="rcpt" id="cs-rcpt" hidden></div>
+    <button class="btn" type="button" id="cs-go" disabled>Send ${src.unit}</button>
+    <p class="note">${src.pub
+      ? `A plain token transfer from ${your()}, which pays the gas.`
+      : `To a Tacit address it stays private: they claim it in their Tacit wallet, the claim's relay fee coming out of the payment, and an unclaimed payment can be taken back after 90 days. To an 0x… address it arrives as ${a.out}.`}</p>`);
+  $$('[data-cs]', el).forEach((b) => b.onclick = () => { CSEND.pick = b.dataset.cs; rerender('borrow'); });
+  const to = $('#cs-to'), amt = $('#cs-amt'), go = $('#cs-go'), rc = $('#cs-rcpt');
+  let q = null, seq = 0;
+  $('#cs-max').onclick = () => { amt.value = plain(src.held, src.dec); amt.dispatchEvent(new Event('input')); };
+  const check = async (e) => {
+    q = null; go.disabled = true; if (e?.isTrusted) say(status, '');
+    const raw = to.value.trim(), units = parseUnits(amt.value, src.dec);
+    if (!raw || !units) { rc.hidden = true; return; }
+    const my = ++seq, stale = () => my !== seq || !amt.isConnected;
+    try {
+      if (src.pub || /^0x[0-9a-fA-F]{0,40}$/.test(raw)) {                                  // a pasted 0x02… key is a Tacit address
+        let recipient = null, bad = null;
+        try { recipient = recipientOf(raw); } catch (x) { bad = x; }
+        if (src.pub) {
+          q = recipient && { units, recipient };
+          mount(rc, html`<div class="kv"><span>Arrives</span><b>${show(units)} ${a.out}</b></div>`);
+        } else {
+          const t = await getUx(), tk = tickerOf(t, P.scan[k].id) || a.tk;
+          const minFee = await t.quoteOpFee(tk, 'sendunwrap');
+          const { fee } = t.quoteUnwrapFee(units, tk, { minFee });
+          // No single note this size: one is made first, at one more relay fee.
+          const size = P.scan[k].notes.some((n) => BigInt(n.value) >= units) ? 0n : BigInt(await t.quoteOpFee(tk, 'transfer'));
+          if (stale()) return;
+          q = recipient && { units, recipient, out: true };
+          mount(rc, html`<div class="kv"><span>Relay fee</span><b>${show(fee)} ${a.tk}</b></div>${size ? html`<div class="kv"><span>Relay fee to ${P.scan[k].notes.some((n) => BigInt(n.value) >= units + size) ? 'split a note' : 'combine notes'}</span><b>${show(size)} ${a.tk}</b></div>` : ''}<div class="kv"><span>Arrives</span><b>${show(units > fee ? units - fee : 0n)} ${a.out}</b></div>`);
+          if (units <= fee) { q = null; warn(rc, `Send more than the ${show(fee)} ${a.tk} relay fee.`); }
+          else if (units + size > src.held) { q = null; warn(rc, 'More than your private balance.'); }
+        }
+        rc.hidden = false;
+        if (src.pub && units > src.held) { q = null; warn(rc, `More than the ${a.out} in ${your()}.`); }
+        else if (bad && !/^0(x[0-9a-fA-F]{0,39})?$/.test(raw)) warn(rc, bad.message);           // not while an address is still being typed
+      } else {
+        const r = await resolveTo(raw);
+        if (stale()) return;
+        if (String(r.pubHex).replace(/^0x/, '').toLowerCase() === S.key.pubHex) throw new Error('That is your own Tacit address.');
+        const t = await getUx(), tk = tickerOf(t, P.scan[k].id) || a.tk;
+        const exact = P.scan[k].notes.some((n) => BigInt(n.value) === units);
+        // The recipient's claim is relayed too, its fee taken from the payment: a send must be worth well more than that.
+        const [split, claim] = await Promise.all([exact ? 0n : t.quoteOpFee(tk, 'transfer').then(BigInt), t.quoteOpFee(tk, 'stealthclaim').then(BigInt)]);
+        if (stale()) return;
+        mount(rc, html`
+          ${r.name ? html`<div class="kv"><span>${r.name}</span><b>${short(r.address || '', 10)}</b></div>` : html`<div class="kv"><span>Recipient</span><b>${short(raw, 10)}</b></div>`}
+          ${split ? html`<div class="kv"><span>Relay fee to ${P.scan[k].notes.some((n) => BigInt(n.value) >= units + split) ? 'split a note' : 'combine notes'}</span><b>${show(split)} ${a.tk}</b></div>` : ''}
+          <div class="kv"><span>They get about</span><b>${show(units > claim ? units - claim : 0n)} ${a.tk}</b></div>`);
+        rc.hidden = false;
+        q = { units, who: r };
+        if (units + split > src.held) { q = null; warn(rc, 'More than your private balance.'); }
+        else if (units <= claim * 2n) { q = null; warn(rc, `Send more than ${show(claim * 2n)} ${a.tk}: the recipient's claim costs a relay fee of about ${show(claim)}.`); }
+      }
+      go.disabled = !q;
+    } catch (x) { if (my === seq) quoteErr(rc, x); }
+  };
+  onEdit([to, amt], go, check);
+  go.onclick = () => busy(go, async () => {
+    const x = q;                                                  // the quote shown when pressed, whatever is typed after
+    if (!x) return;
+    try {
+      if (src.pub) {
+        const hash = await sendTx({ to: a.token, data: SEL.transfer + addrWord(x.recipient) + word(x.units) });
+        say(status, html`Sent ${txLink(hash)}. Waiting for it to land…`);
+        await waitTx(hash);
+        CSEND.pubAt = 0;
+        clearField(amt); rc.hidden = true;
+        toast(`Sent ${show(x.units)} ${a.out}`);
+        rerender('borrow'); say($('#bw-status'), html`<span class="ok">Sent.</span> ${txLink(hash)}`);
+        return;
+      }
+      const t = await getUx(), priv = walletPriv(), w = { timeoutMs: 15 * 60e3 };
+      let r;
+      if (x.out) {
+        await noteFor(t, priv, x.units, (n) => BigInt(n.value) >= x.units, status, k);
+        const note = P.scan[k].notes.filter((n) => BigInt(n.value) >= x.units).sort((m, n) => (BigInt(m.value) > BigInt(n.value) ? 1 : -1))[0];
+        say(status, `The relay is proving your transfer, which arrives as ${a.out}…`);
+        r = await t.sendUnwrap({ note, walletPriv: priv, recipient: x.recipient, amount: x.units, waitOpts: w });
+      } else {
+        await noteFor(t, priv, x.units, (n) => BigInt(n.value) === x.units, status, k);          // a lock spends a note of its exact size
+        const { makeStealthSendStore } = await import('/confidential-secret-store.js');
+        let built = null;
+        say(status, 'Locking it to a one-time address only they can open…');
+        r = await t.stealthSend({ walletPriv: priv, recipientPubHex: x.who.pubHex, notes: P.scan[k].notes, amount: x.units, onBuilt: (b) => { built = b; }, waitOpts: w });
+        if (built) {
+          await makeStealthSendStore({ sha256 }).add(priv, {
+            lockLeaf: built.lockLeaf, asset: built.asset, ticker: a.tk, dec: 8, amount: built.amount, deadline: built.deadline,
+            lCx: built.lCx, lCy: built.lCy, ownerPub: built.ownerPub, lBlinding: built.lBlinding,
+            refundPriv: built.refundPriv, refundPub: built.refundPub, recipientPubHex: built.recipientPubHex,
+            txHash: r?.txHash, createdAt: Date.now(), recipientName: x.who.name || undefined,
+          }).catch(() => {});
+        }
+      }
+      clearField(to); clearField(amt); rc.hidden = true;
+      toast(x.out ? `Sent ${show(x.units)} ${a.tk} as ${a.out}` : 'Sent privately');
+      await scanPrivate(true).catch(() => {});
+      rerender('borrow');
+      if (r?.memoCheck?.ok === false) say($('#bw-status'), html`<span class="err">Sent, but the relay published a different note than was built, so the recipient may not find it. If it goes unclaimed, take it back on tacit.finance after the deadline; its refund record is saved in this browser.</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
+      else say($('#bw-status'), html`<span class="ok">Sent.</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
+    } catch (e) { sayErr(status, e); }
+  });
+}
 // The Nth position key against this engine: the chain walk is the authority, and never a silent 0 (that would hand a new
 // position the key of a still-open one). A walk that could not read every loan transaction does not count. This
 // browser's own count, for this key only, covers a loan opened moments ago that the walk has not indexed yet; kept per
