@@ -153,6 +153,9 @@ export const CFG = {
   demandMaxGasGwei: num('DEMAND_MAX_GAS_GWEI', 5),
   // How far back a bond counts as a user waiting (about a day of blocks).
   demandLookbackBlocks: BigInt(opt('DEMAND_LOOKBACK_BLOCKS', '7200')),
+  // A bond younger than this (Ethereum blocks, about 3.5 hours) cannot have a foldable lock behind it yet: the lock
+  // needs its Bitcoin confirmations first, so there is no reason to pay for headers early.
+  demandGraceBlocks: num('DEMAND_GRACE_BLOCKS', 1050),
   // The bound on how far behind the relay is left. When > 0, a pending count at or above it is submitted even while
   // MAX_GAS_GWEI would hold it and even if it is below the minimum batch. 0 (default) disables the override.
   headerMaxStaleBlocks: num('HEADER_RELAY_MAX_STALE_BLOCKS', 0),

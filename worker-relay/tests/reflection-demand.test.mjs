@@ -13,7 +13,7 @@ const chain = (bonds, state, head = 10_000n) => ({
   getBlockNumber: async () => head,
   getLogs: async ({ address, fromBlock, toBlock }) => {
     assert.equal(address, HELPER);
-    return bonds.filter((b) => b.block >= fromBlock && b.block <= toBlock).map((b) => ({ args: { outpoint: b.outpoint } }));
+    return bonds.filter((b) => b.block >= fromBlock && b.block <= toBlock).map((b) => ({ blockNumber: b.block, args: { outpoint: b.outpoint } }));
   },
   readContract: async ({ address, functionName, args: [o] }) => {
     const s = state[o] || {};
@@ -24,23 +24,23 @@ const chain = (bonds, state, head = 10_000n) => ({
 });
 const run = (c, lookbackBlocks = 7200n) => cbtcLockDemand({ client: c, pool: POOL, helper: HELPER, engine: ENGINE, lookbackBlocks });
 
-await test('a bonded lock the pool has not recorded is someone waiting', async () => {
-  assert.deepEqual(await run(chain([{ block: 9_000n, outpoint: op(1) }], { [op(1)]: { bond: 5n } })), { waiting: 1, bonded: 1 });
+await test('a bonded lock the pool has not recorded is someone waiting, and how long it has waited is reported', async () => {
+  assert.deepEqual(await run(chain([{ block: 9_000n, outpoint: op(1) }], { [op(1)]: { bond: 5n } })), { waiting: 1, bonded: 1, oldestAgeBlocks: 1_000 });
 });
 
 await test('recorded, minted and reclaimed locks are not waiting', async () => {
   const bonds = [2, 3, 4].map((i) => ({ block: 9_500n, outpoint: op(i) }));
   const state = { [op(2)]: { vBtc: 2000n, bond: 5n }, [op(3)]: { minted: true, bond: 5n }, [op(4)]: { bond: 0n } };
-  assert.deepEqual(await run(chain(bonds, state)), { waiting: 0, bonded: 3 });
+  assert.deepEqual(await run(chain(bonds, state)), { waiting: 0, bonded: 3, oldestAgeBlocks: null });
 });
 
 await test('a bond older than the window no longer counts, so a lock that never confirms stops the spending', async () => {
-  assert.deepEqual(await run(chain([{ block: 1_000n, outpoint: op(5) }], { [op(5)]: { bond: 5n } })), { waiting: 0, bonded: 0 });
+  assert.deepEqual(await run(chain([{ block: 1_000n, outpoint: op(5) }], { [op(5)]: { bond: 5n } })), { waiting: 0, bonded: 0, oldestAgeBlocks: null });
 });
 
 await test('one lock bonded twice counts once', async () => {
   const bonds = [{ block: 9_100n, outpoint: op(6) }, { block: 9_900n, outpoint: op(6).toUpperCase().replace('0X', '0x') }];
-  assert.deepEqual(await run(chain(bonds, { [op(6)]: { bond: 7n } })), { waiting: 1, bonded: 1 });
+  assert.deepEqual(await run(chain(bonds, { [op(6)]: { bond: 7n } })), { waiting: 1, bonded: 1, oldestAgeBlocks: 900 });
 });
 
 console.log(`${n} passed`);

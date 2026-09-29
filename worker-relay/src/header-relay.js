@@ -191,13 +191,19 @@ async function cycle() {
   // difficulty-epoch boundary transparently within one submission. No special-casing needed here.
   const dear = await gasAboveCap();
   // A user waiting on the reflection (a bonded cBTC lock not recorded yet) outranks waiting for cheap gas, up to a
-  // ceiling: headers go out now, in whatever number is pending, so the reflection can fold the lock as soon as it has
-  // its confirmations.
+  // ceiling, once the wait is real: a lock cannot be folded before it has its confirmations (about four hours), so
+  // until the oldest such bond is DEMAND_GRACE_BLOCKS old the relay keeps to cheap gas and loses nothing by it.
+  // After that, headers go out now, in whatever number is pending, so the lock folds as soon as it can.
   const demand = await cbtcLockDemand({ client: publicClient, pool: ADDR.pool, helper: ADDR.cbtcEscrowHelper, engine: ADDR.collateralEngine, lookbackBlocks: CFG.demandLookbackBlocks })
     .catch((e) => { log(`demand check unavailable (${String(e.message).slice(0, 80)})`); return null; });
   const gwei = dear || null;
-  const urgent = !!demand?.waiting && !(gwei && gwei > CFG.demandMaxGasGwei);
-  if (demand?.waiting) log(`${demand.waiting} bonded cBTC lock(s) waiting on the reflection${urgent ? ' — advancing now' : ` — gas ${gwei.toFixed(2)} gwei is above the ${CFG.demandMaxGasGwei} gwei ceiling, waiting`}`);
+  const ripe = !!demand?.waiting && demand.oldestAgeBlocks >= CFG.demandGraceBlocks;
+  const urgent = ripe && !(gwei && gwei > CFG.demandMaxGasGwei);
+  if (demand?.waiting) {
+    const why = !ripe ? `bonded ${Math.round((demand.oldestAgeBlocks * 12) / 60)} min ago, before it can have its confirmations — keeping to cheap gas for now`
+      : urgent ? 'advancing now' : `gas ${gwei.toFixed(2)} gwei is above the ${CFG.demandMaxGasGwei} gwei ceiling, waiting`;
+    log(`${demand.waiting} bonded cBTC lock(s) waiting on the reflection — ${why}`);
+  }
   const plan = planHeaderAdvance({
     base, to, minBatch: urgent ? 1 : CFG.headerMinBatch, maxStale: CFG.headerMaxStaleBlocks, maxBatch: CFG.headerMaxBatch,
     gasDear: urgent ? false : !!dear, restore: depth > 0,
