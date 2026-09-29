@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-nDPm9U7QLACSuy0c+81lDCRbHVqCQad9DFNPZiwHRGw=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-NEzL10aItYSFc3FF816FjCRF+ooJhIGzSVCpk40BwzY=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -1855,7 +1855,10 @@ function deviceSync(fresh = false) {
   const p = DEV.syncing = prev.catch(() => {}).then(async () => {
     const W = await deviceWallet();
     const [s, q] = await Promise.all([W.sync(), W.quote().catch(() => null)]);
-    if (DEV.W === W) { DEV.bal = s.balance; DEV.quote = q; }                    // not a chain or key switched away from meanwhile
+    if (DEV.W === W) {                                                          // not a chain or key switched away from meanwhile
+      DEV.bal = s.balance; DEV.quote = q;
+      store.set(`tacit-lite-device-bal-v1:${DEV.chain.chainId}:${S.key.pubHex}`, { v: s.balance.toString(), at: Date.now() });
+    }
   }).finally(() => { if (DEV.syncing === p) DEV.syncing = null; });
   return p;
 }
@@ -1881,57 +1884,82 @@ function renderDevice(el) {
   const amountField = (id, label, extra = '') => html`
     <div class="lbl"><span>${label}</span>${extra}</div>
     <div class="amt"><input id="${id}" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="${label}"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>`;
-  const fee = DEV.quote?.fee ? html`<p class="note">Relay fee now ${fmt(BigInt(DEV.quote.fee), 18, 6)} ETH, taken from your private balance.</p>` : '';
   // Everything a send or withdrawal can take: the private balance less the relay fee.
   const maxPriv = DEV.bal != null ? html`<button type="button" id="d-maxp">Private ${fmt(DEV.bal, 18, 4)} ETH</button>` : '';
-  const wireMax = () => $('#d-maxp')?.addEventListener('click', () => { const fe = BigInt(DEV.quote?.fee || 0), v = DEV.bal > fe ? DEV.bal - fe : 0n; $('#d-amt').value = v ? plain(v, 18) : ''; });
+  const wireMax = () => $('#d-maxp')?.addEventListener('click', () => { const fe = BigInt(DEV.quote?.fee || 0), v = DEV.bal > fe ? DEV.bal - fe : 0n, amt = $('#d-amt'); amt.value = v ? plain(v, 18) : ''; amt.dispatchEvent(new Event('input')); });
   if (DEV.mode === 'deposit') {
     mount(f, html`${amountField('d-amt', 'Amount', html`<button type="button" id="d-max">${payName()} <span id="d-wb">…</span> ETH</button>`)}
-      <button class="btn" type="button" id="d-go">Deposit privately</button>
+      <div class="rcpt" id="d-rcpt" hidden></div>
+      <button class="btn" type="button" id="d-go" disabled>Deposit privately</button>
       <p class="note">Proved on this device, then sent from ${your()}: you pay the gas, no fee.</p>`);
     let wb = null;
+    const amt = $('#d-amt'), go = $('#d-go'), rc = $('#d-rcpt');
     const rpcOf = async () => (await getDeviceMods()).jsonRpc(c.rpc);
-    rpcOf().then((r) => r('eth_getBalance', [S.address, 'latest'])).then((b) => { wb = BigInt(b); $('#d-wb').textContent = fmt(wb, 18, 4); }).catch(() => {});
-    $('#d-max').onclick = () => { if (wb != null) { const v = wb > 3n * 10n ** 15n ? wb - 3n * 10n ** 15n : 0n; $('#d-amt').value = v ? plain(v, 18) : ''; } };
-    $('#d-amt').addEventListener('focus', warm, { once: true });
-    const go = $('#d-go');
+    rpcOf().then((r) => r('eth_getBalance', [S.address, 'latest'])).then((b) => { wb = BigInt(b); $('#d-wb').textContent = fmt(wb, 18, 4); check(); }).catch(() => {});
+    const check = () => {
+      const amount = parseUnits(amt.value);
+      go.disabled = true; rc.hidden = true;
+      if (!amount) return;
+      const over = wb != null && amount > wb;
+      go.disabled = over;
+      if (over) warn(rc, 'More than your wallet balance.'); else mount(rc, html``);
+    };
+    $('#d-max').onclick = () => { if (wb != null) { const v = wb > 3n * 10n ** 15n ? wb - 3n * 10n ** 15n : 0n; amt.value = v ? plain(v, 18) : ''; amt.dispatchEvent(new Event('input')); } };
+    amt.addEventListener('input', check); check();                              // synchronous: no network in this check
+    amt.addEventListener('focus', warm, { once: true });
     go.onclick = () => busy(go, async () => {
       try {
-        const amount = parseUnits($('#d-amt').value);
+        const amount = parseUnits(amt.value);
         if (!amount) throw new Error('Enter an amount.');
         const W2 = await deviceWallet();
         await payingAccount(); W2.connect(payFrom(c.chainId));
         const h = await W2.deposit({ amount, onStep: step });
-        clearField($('#d-amt'));
+        clearField(amt); rc.hidden = true;
         await deviceSync(true); rerender('eth'); say($('#d-status'), html`<span class="ok">Deposited.</span> ${explorer(h)}`);
       } catch (e) { sayErr(status, e); }
     });
   } else if (DEV.mode === 'send') {
     // One field for either: a bp1… pool address is paid inside the pool, an 0x… address by a withdrawal to it.
+    // A bp1 address is this pool's own, not the Tacit pool's tacit1 address; the two are not interchangeable.
     const kind = (v) => (/^0x[0-9a-fA-F]{40}$/.test(v) ? 'addr' : /^bp1/i.test(v) ? 'pool' : '');
     mount(f, html`<div class="lbl"><span>To</span></div>
       <div class="amt text"><input id="d-to" placeholder="bp1… pool address, or 0x…" autocomplete="off" spellcheck="false" aria-label="Recipient"></div>
       <p class="note" id="d-to-note"></p>
       ${amountField('d-amt', 'Amount', maxPriv)}
-      <button class="btn" type="button" id="d-go">Send privately</button>${fee}`);
+      <div class="rcpt" id="d-rcpt" hidden></div>
+      <button class="btn" type="button" id="d-go" disabled>Send privately</button>`);
     wireMax();
-    const toEl = $('#d-to'), note = $('#d-to-note'), go = $('#d-go');
-    const label = () => {
-      const k = kind(toEl.value.trim());
+    const toEl = $('#d-to'), amt = $('#d-amt'), note = $('#d-to-note'), go = $('#d-go'), rc = $('#d-rcpt');
+    const check = () => {
+      const raw = toEl.value.trim(), k = kind(raw), amount = parseUnits(amt.value);
       go.textContent = k === 'addr' ? 'Send to this address' : 'Send privately';
       note.textContent = k === 'addr' ? 'This leaves the pool: the amount and the address show on chain; which note paid does not.'
         : k === 'pool' ? 'It stays inside the pool. Nothing on chain links the payment to either of you.'
-        : 'A bp1… pool address is paid inside the pool, unlinked. An 0x… address is paid by a withdrawal to it.';
+        : 'A bp1… pool address (not a tacit1 address) is paid inside the pool, unlinked. An 0x… address is paid by a withdrawal to it.';
+      go.disabled = true; mount(rc, html``); rc.hidden = true;
+      if (!raw || !amount) return;
+      let bad = null;
+      if (k === 'addr') { try { recipientOf(raw); } catch (x) { bad = x; } }
+      const relayFee = k === 'addr' && DEV.quote?.fee ? BigInt(DEV.quote.fee) : 0n;
+      if (relayFee) mount(rc, html`<div class="kv"><span>Relay fee</span><b>${fmt(relayFee, 18, 6)} ETH</b></div><div class="kv"><span>Arrives</span><b>${fmt(amount > relayFee ? amount - relayFee : 0n, 18, 6)} ETH</b></div>`);
+      const over = DEV.bal != null && amount + relayFee > DEV.bal;
+      go.disabled = !k || !!bad || over || (k === 'addr' && amount <= relayFee);
+      if (!k) { if (!/^(0x[0-9a-fA-F]{0,39}|bp1[a-z0-9]*)$/i.test(raw)) warn(rc, 'Not a bp1 pool address or an 0x address.'); }        // not while one is still being typed
+      else if (bad) warn(rc, bad.message);
+      else if (over) warn(rc, 'More than your private balance.');
+      else if (k === 'addr' && amount <= relayFee) warn(rc, 'Send more than the relay fee.');
+      else rc.hidden = !relayFee;
     };
-    toEl.addEventListener('input', label); setTimeout(label);
+    for (const el of [toEl, amt]) el.addEventListener('input', check);          // synchronous: no network in this check
+    check();
     for (const id of ['d-to', 'd-amt']) $('#' + id).addEventListener('focus', warm, { once: true });
     go.onclick = () => busy(go, async () => {
       try {
-        const amount = parseUnits($('#d-amt').value), to = toEl.value.trim(), k = kind(to);
+        const amount = parseUnits(amt.value), to = toEl.value.trim(), k = kind(to);
         if (!amount) throw new Error('Enter an amount.');
         const W2 = await deviceWallet();
         const h = k === 'addr' ? await W2.withdraw({ to: recipientOf(to), amount, onStep: step }) : await W2.send({ to, amount, onStep: step });
-        clearField($('#d-amt'));
+        clearField(amt); rc.hidden = true;
         await deviceSync(true); rerender('eth'); say($('#d-status'), html`<span class="ok">${k === 'addr' ? 'Sent to the address.' : 'Sent privately.'}</span> ${explorer(h)}`);
       } catch (e) { sayErr(status, e); }
     });
@@ -1942,28 +1970,54 @@ function renderDevice(el) {
       ${dest === 'addr' ? html`<div class="lbl"><span>To</span><button type="button" id="d-me">${mine()}</button></div>
         <div class="amt text"><input id="d-to" placeholder="0x… (a fresh address keeps it unlinked)" autocomplete="off" spellcheck="false" aria-label="Recipient address"></div>` : ''}
       ${amountField('d-amt', 'Amount', maxPriv)}
-      <button class="btn" type="button" id="d-go">${dest === 'addr' ? 'Withdraw' : dest === 'v1' ? 'Move to the Tacit pool' : `Move to ${l2.name}`}</button>
-      ${dest === 'addr' ? fee : html`<p class="note">${dest === 'v1' ? 'Arrives as tETH in the Tacit pool in the same transaction, with no address in between. The amount shows on Ethereum; which note paid does not.'
+      <div class="rcpt" id="d-rcpt" hidden></div>
+      <button class="btn" type="button" id="d-go" disabled>${dest === 'addr' ? 'Withdraw' : dest === 'v1' ? 'Move to the Tacit pool' : `Move to ${l2.name}`}</button>
+      ${dest === 'addr' ? '' : html`<p class="note">${dest === 'v1' ? 'Arrives as tETH in the Tacit pool in the same transaction, with no address in between. The amount shows on Ethereum; which note paid does not.'
         : `Arrives in your private balance on ${l2.name} within minutes. The amount shows on Ethereum; which note paid does not.`} The relay fee comes out of your private balance.</p>`}`);
     wireMax();
     wireSub(f, 'dest', (d) => { DEV.dest = d; keep($('#sheet-eth'), render.eth); });
-    $('#d-me')?.addEventListener('click', () => { $('#d-to').value = S.address; });
+    const toEl = $('#d-to'), amt = $('#d-amt'), go = $('#d-go'), rc = $('#d-rcpt');
+    $('#d-me')?.addEventListener('click', () => { toEl.value = S.address; toEl.dispatchEvent(new Event('input')); });
     for (const id of ['d-to', 'd-amt']) $('#' + id)?.addEventListener('focus', warm, { once: true });
-    const go = $('#d-go');
+    const check = () => {
+      const amount = parseUnits(amt.value);
+      go.disabled = true; mount(rc, html``); rc.hidden = true;
+      if (!amount) return;
+      if (dest === 'addr') {
+        const raw = toEl.value.trim();
+        let bad = null;
+        if (raw) { try { recipientOf(raw); } catch (x) { bad = x; } }
+        const relayFee = DEV.quote?.fee ? BigInt(DEV.quote.fee) : 0n;
+        if (relayFee) mount(rc, html`<div class="kv"><span>Relay fee</span><b>${fmt(relayFee, 18, 6)} ETH</b></div><div class="kv"><span>Arrives</span><b>${fmt(amount > relayFee ? amount - relayFee : 0n, 18, 6)} ETH</b></div>`);
+        const over = DEV.bal != null && amount + relayFee > DEV.bal;
+        go.disabled = !raw || !!bad || over || amount <= relayFee;
+        if (!raw) {}
+        else if (bad && !/^0(x[0-9a-fA-F]{0,39})?$/i.test(raw)) warn(rc, bad.message);            // not while an address is still being typed
+        else if (over) warn(rc, 'More than your private balance.');
+        else if (amount <= relayFee) warn(rc, 'Send more than the relay fee.');
+        else rc.hidden = !relayFee;
+      } else {
+        const over = DEV.bal != null && amount > DEV.bal;
+        go.disabled = over;
+        if (over) warn(rc, 'More than your private balance.');
+      }
+    };
+    for (const el of dest === 'addr' ? [toEl, amt] : [amt]) el.addEventListener('input', check);   // synchronous: no network in this check
+    check();
     go.onclick = () => busy(go, async () => {
       try {
-        const amount = parseUnits($('#d-amt').value);
+        const amount = parseUnits(amt.value);
         if (!amount) throw new Error('Enter an amount.');
         const W2 = await deviceWallet();
         let h, done;
-        if (dest === 'addr') { h = await W2.withdraw({ to: recipientOf($('#d-to').value), amount, onStep: step }); done = 'Withdrawn.'; }
+        if (dest === 'addr') { h = await W2.withdraw({ to: recipientOf(toEl.value), amount, onStep: step }); done = 'Withdrawn.'; }
         else if (dest === 'v1') { h = await moveToV1(W2, amount, step); done = 'Moved into the Tacit pool as tETH.'; }
         else {
           h = await W2.bridgeOut({ toChainId: l2.chainId, amount, l2Rpc: (await getDeviceMods()).jsonRpc(l2.rpc), onStep: step });
           devWalletOn(l2.chainId).then((w) => w.watchReceive()).catch(() => {});   // that chain's keeper sweeps the arrival in
           done = `On its way to ${l2.name}.`;
         }
-        clearField($('#d-amt'));
+        clearField(amt); rc.hidden = true;
         await deviceSync(true); rerender('eth'); say($('#d-status'), html`<span class="ok">${done}</span> ${explorer(h)}`);
       } catch (e) { sayErr(status, e); }
     });
@@ -3439,7 +3493,20 @@ async function nextKeyNonce(t, priv, controller, ps, ownerOf) {
 // ── tile footers for the private panes ───────────────────────────────────────────────────────────────────
 async function paintPrivateFeet() {
   if (!S.key) { setFoot('eth', 'Proved for you, or on this device'); setFoot('borrow', 'No custodian, no bridge signers'); return; }
-  const foot = (s) => setFoot('eth', `${fmt(s.eth.value, 8, 4)} tETH private${s.pending.length ? ` · ${s.pending.length} to finish` : ''}${LK.pub === S.key?.pubHex && LK.mine.length ? ` · ${LK.mine.length} to claim` : ''}`, s.eth.value > 0n || LK.mine.length ? 'on' : '');
+  const foot = (s) => {
+    const bits = [];
+    if (s.eth.value > 0n) bits.push(`${fmt(s.eth.value, 8, 4)} tETH private`);
+    if (s.pending.length) bits.push(`${s.pending.length} to finish`);
+    if (LK.pub === S.key?.pubHex && LK.mine.length) bits.push(`${LK.mine.length} to claim`);
+    if (!bits.length) {
+      // No live scan yet of the on-device pool (it is not synced until that tab is opened): a balance last seen in
+      // this browser still says so, rather than showing the static default while private ETH sits there unseen.
+      let dev = 0n;
+      for (const c of DEVICE_CHAINS) { const cached = store.get(`tacit-lite-device-bal-v1:${c.chainId}:${S.key.pubHex}`); if (cached?.v) try { dev += BigInt(cached.v); } catch {} }
+      bits.push(dev > 0n ? 'Private ETH on this device too' : 'Proved for you, or on this device');
+    }
+    setFoot('eth', bits.join(' · '), s.eth.value > 0n || LK.mine.length ? 'on' : '');
+  };
   scanPrivate().then((s) => { if (!s) return; foot(s); return loadLocks().then(() => foot(s)); }).catch(() => {});
   // The tile names the next step of the lock the sheet would open on, so a returning holder sees what to do before opening it.
   const lockFoot = (rec) => setFoot('borrow', rec.borrowed ? `${fmt(BigInt(rec.borrowed), 8, 2)} cUSD borrowed` : rec.minted ? 'cBTC minted · borrow next'
