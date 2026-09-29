@@ -107,17 +107,43 @@ async function resumeHeight(rtip, btip) {
   return r;
 }
 
+// A node refuses a send whose gas limit times fee cap is more than the wallet holds, so on a thin wallet a full
+// batch is refused outright while a shorter one would land. The cap is set here, at twice the base fee plus the
+// tip (a three-minute cron never outgrows it), rather than left to the client, whose default reserves several
+// times what an advance costs; and the batch is cut to what the wallet covers. The next run carries on from
+// wherever this one stops. Returns the transaction and the height it advanced to.
+const MIN_TIP_WEI = 50_000_000n; // 0.05 gwei: a zero tip is accepted and then never included
+const eth = (wei) => (Number(wei) / 1e18).toFixed(4);
 async function submitAdvance(from, to) {
-  let hex = '';
-  for (let h = from; h <= to; h++) hex += await headerHex(h);
-  const advanceCall = { address: HEADER_RELAY, abi: RELAY_ABI, functionName: 'advanceTip', args: [`0x${hex}`] };
-  const advanceGas = await publicClient.estimateContractGas({ ...advanceCall, account: relayWallet.account });
-  // Same shared-key nonce race as the reflection attest (see lib/nonce-retry.js). Cheap to lose here — the
-  // next cron run is three minutes away — but retrying keeps the relay's pacing steady under load.
-  const txHash = await withNonceRetry('advanceTip', () => relayWallet.writeContract({ ...advanceCall, gas: (advanceGas * 125n) / 100n }), { log });
-  const rcpt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-  if (rcpt.status !== 'success') throw new Error(`advanceTip reverted ${txHash}`);
-  return txHash;
+  const [blk, prio, have] = await Promise.all([
+    publicClient.getBlock({ blockTag: 'latest' }),
+    publicClient.estimateMaxPriorityFeePerGas().catch(() => MIN_TIP_WEI),
+    publicClient.getBalance({ address: relayWallet.account.address }),
+  ]);
+  const maxPriorityFeePerGas = prio > MIN_TIP_WEI ? prio : MIN_TIP_WEI;
+  const maxFeePerGas = (blk.baseFeePerGas ?? 0n) * 2n + maxPriorityFeePerGas;
+  const headers = [];
+  for (let h = from; h <= to; h++) headers.push(await headerHex(h));
+  for (;;) {
+    const advanceCall = { address: HEADER_RELAY, abi: RELAY_ABI, functionName: 'advanceTip', args: [`0x${headers.slice(0, to - from + 1).join('')}`] };
+    const gas = ((await publicClient.estimateContractGas({ ...advanceCall, account: relayWallet.account })) * 125n) / 100n;
+    const need = gas * maxFeePerGas;
+    if (need > have) {
+      // Gas is close to linear in the header count; one header of margin covers the fixed part.
+      const n = to - from + 1;
+      const fits = Math.floor((n * Number(have)) / Number(need)) - 1;
+      if (fits < 1) throw new Error(`relay wallet holds ${eth(have)} ETH, under what one header costs at today's gas (${eth(need / BigInt(n))} ETH): top it up`);
+      log(`relay wallet holds ${eth(have)} ETH, enough for ${fits} of ${n} headers at today's gas — advancing to ${from + fits - 1}`);
+      to = from + fits - 1;
+      continue;
+    }
+    // Same shared-key nonce race as the reflection attest (see lib/nonce-retry.js). Cheap to lose here — the
+    // next cron run is three minutes away — but retrying keeps the relay's pacing steady under load.
+    const txHash = await withNonceRetry('advanceTip', () => relayWallet.writeContract({ ...advanceCall, gas, maxFeePerGas, maxPriorityFeePerGas }), { log });
+    const rcpt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+    if (rcpt.status !== 'success') throw new Error(`advanceTip reverted ${txHash}`);
+    return { txHash, to };
+  }
 }
 
 // Reflection's attested height from the control plane (lightweight KV read, no assembly). Null if the
@@ -163,8 +189,8 @@ async function cycle() {
   }
   if (plan.forced && dear) log(`gas ${dear.toFixed(3)} gwei is above MAX_GAS_GWEI=${CFG.maxGasGwei} but the relay is at its staleness bound — advancing`);
   log(`advancing relay ${plan.from}..${plan.to} (btc=${btip} refl=${refl ?? '?'} lead-cap=${paceCap})`);
-  const tx = await submitAdvance(plan.from, plan.to);
-  log(`relay advanced to ${plan.to} tx=${tx}`);
+  const { txHash: tx, to: reached } = await submitAdvance(plan.from, plan.to);
+  log(`relay advanced to ${reached} tx=${tx}`);
   return true;
 }
 
