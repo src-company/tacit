@@ -540,9 +540,12 @@ services:
         value: /var/lib/tacit-btc-pool/btc-pool-relay-mainnet-halo2-969026.db
       - key: BTC_POOL_RELAYER_MEMPOOL
         value: esplora
-      # <asset hex>:<fee units>, comma-separated. TAC — placeholder fee, tune before enabling.
+      # <asset hex>:<fee units>, comma-separated. TAC, in the asset's own base units (8 decimals).
+      # A relayed carrier costs the relayer roughly 1,400 sats (commit ~500 + reveal ~900) at ordinary fee
+      # rates; TAC marks around 200 sats, so break-even is about 7 TAC and this leaves headroom for a
+      # busier mempool. The relayer earns TAC and spends sats, so its sats balance only ever falls.
       - key: BTC_POOL_RELAYER_FEES
-        value: "f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b:1000"
+        value: "f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b:1000000000"
       - key: BTC_POOL_RELAYER_ENABLE_MAINNET
         value: "1"
       - key: BTC_POOL_RELAYER_BTC_KEY      # mainnet P2WPKH key, hex — generate offline, set in the Render dashboard
