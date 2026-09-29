@@ -87,5 +87,25 @@ export function makeBtcHistoryProvider({ fetchImpl, sha256, bases = ESPLORA_BASE
     return { anchors, lockOutputs, txCount: seen.size };
   }
 
-  return { history, txsOf, walletScripts };
+  // The wallet's cBTC locks, oldest first: each output paying its lock script above the dust band (cbtc-lock-mint.js's
+  // DUST_FLOOR; the band below carries Tacit notes), with the note's blinding anchor, the first input of the commit
+  // that the lock's reveal spends. Whether a lock is recorded, minted or retired is the pool's to say; the caller reads it.
+  async function locks(priv) {
+    const spk = walletScripts(priv).lock, want = bytesToHex(spk), out = [];
+    for (const t of await txsOf(spk)) {
+      const vout = (t.vout || []).findIndex((o) => String(o.scriptpubkey || '').toLowerCase() === want && Number(o.value) > LOCK_FLOOR);
+      if (vout < 0 || !t.vin || !t.vin[0]) continue;
+      const commit = await getJson(`/tx/${t.vin[0].txid}`);
+      if (!commit || !commit.vin || !commit.vin[0]) continue;
+      out.push({
+        lockTxid: t.txid, lockVout: vout, vBtc: String(t.vout[vout].value),
+        anchor: { txid: commit.vin[0].txid, vout: commit.vin[0].vout }, at: ((t.status && t.status.block_time) || Date.now() / 1000) * 1000,
+      });
+    }
+    return out.reverse();
+  }
+
+  return { history, txsOf, walletScripts, locks };
 }
+
+const LOCK_FLOOR = 546;

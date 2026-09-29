@@ -42,7 +42,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,mainbond,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,mainbond,locks,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -401,7 +401,7 @@ await step('borrow', async () => {
   await page.waitForSelector('#bw-lock, #borrow-body [data-in="eth"]', { timeout: 60000 });
   if (await page.$('#borrow-body [data-in="eth"]')) { await page.click('#borrow-body [data-in="eth"]'); await page.waitForSelector('#bw-lock', { timeout: 120000 }); }
   ok(/^bc1q/.test(await page.$eval('#borrow-body [data-copy]', (b) => b.dataset.copy)), 'borrow: the Bitcoin deposit address renders');
-  const lag = await page.$eval('#borrow-body', (e) => (e.textContent.match(/It is at block [\d,]+, [\d,]+ behind Bitcoin \(about \d+ hours\)/) || [''])[0]);
+  const lag = await page.$eval('#borrow-body', (e) => (e.textContent.match(/It is at block [\d,]+, [\d,]+ behind Bitcoin( and catching up)?\./) || [''])[0]);
   ok(/at block [\d,]+, [\d,]+ behind Bitcoin/.test(lag), `borrow: before a lock, it says how far behind Bitcoin's proof is (${lag.slice(0, 90)})`);
   const pub = await page.evaluate(() => localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('tacit-eth-identity-anchor:'))));
   await page.evaluate((p) => localStorage.setItem(`tacit-lite-cbtc-v1:${p}`, JSON.stringify({ lockTxid: 'aa'.repeat(32), lockVout: 1, vBtc: '20000', anchor: { txid: 'bb'.repeat(32), vout: 0 }, at: Date.now() })), pub);
@@ -492,6 +492,45 @@ await step('mainbond', async () => {
       status: document.querySelector('#cdp-cbtc-status')?.textContent.slice(0, 160),
       cdpTail: (document.querySelector('#cdp-body')?.textContent || '').replace(/\s+/g, ' ').slice(-260) })).catch(() => null);
     throw new Error(`${e.message.split('\n')[0]} | page ${JSON.stringify(at)} | errors ${r.errors.slice(0, 2).join(' | ')}`);
+  } finally { await r.browser.close(); }
+});
+
+// Weld follows every lock a key made, found from its Bitcoin history alone (so a lock made on tacit.finance or another
+// device counts): the tile names the next step, the sheet opens on the oldest lock still to mint, lists the others, and
+// can make another. Esplora is stubbed to show two locks paying the key's lock script.
+const { makeBtcHistoryProvider } = await import(new URL('../dapp/confidential-recovery-btc.js', import.meta.url));
+await step('locks', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  const hex = 'feed'.padEnd(64, '9');
+  const spk = makeBtcHistoryProvider({ sha256, fetchImpl: async () => ({ ok: false }) }).walletScripts(hex).lock;
+  const lockHex = Buffer.from(spk).toString('hex'), sh = Buffer.from(sha256(spk)).toString('hex');
+  const lockTx = (id, commit, value, time) => ({ txid: id.repeat(32), vin: [{ txid: commit.repeat(32), vout: 0 }], status: { confirmed: true, block_time: time, block_height: 968900 },
+    vout: [{ scriptpubkey: '0014' + '00'.repeat(20), value: 1000 }, { scriptpubkey: lockHex, value }] });
+  const history = [lockTx('b2', 'c2', 30000, 1_790_600_000), lockTx('b1', 'c1', 20000, 1_790_500_000)];     // newest first, as esplora serves
+  for (const base of ['https://mempool.space/api', 'https://blockstream.info/api', 'https://mempool.emzy.de/api']) {
+    await r.ctx.route(`${base}/scripthash/${sh}/txs**`, (route) => json(route, route.request().url().includes('/chain/') ? [] : history));
+    for (const c of ['c1', 'c2']) await r.ctx.route(`${base}/tx/${c.repeat(32)}`, (route) => json(route, { txid: c.repeat(32), vin: [{ txid: `a${c[1]}`.repeat(32), vout: 0 }] }));
+  }
+  const body = () => r.page.evaluate(() => (document.querySelector('#borrow-body')?.textContent || '').replace(/\s+/g, ' '));
+  try {
+    await r.page.goto(r.url + '#wallet');
+    await r.page.click('#wallet-body [data-in="paste"]');
+    await r.page.fill('#ws-hex', hex);
+    await r.page.click('#wallet-body [data-in="key"]');
+    await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+    await until(r.page, () => /BTC locked · post its bond/.test(document.querySelector('[data-foot="borrow"]')?.textContent || ''), null, 120000).catch(() => {});
+    const foot = await text(r.page, '[data-foot="borrow"]');
+    ok(/0\.0002\d* BTC locked · post its bond/.test(foot), `locks: the Borrow tile names the next step (${foot})`);
+    await r.page.evaluate(() => { location.hash = ''; location.hash = '#borrow'; });
+    await r.page.waitForSelector('#borrow-body [data-pick]', { timeout: 120000 });
+    const b = await body();
+    ok(/0\.0002\d* BTC in your own output/.test(b) && /Your locks/.test(b) && /post its bond · shown above/.test(b), `locks: the sheet opens on the oldest lock still to mint and lists the others (${b.slice(0, 120)})`);
+    ok(!!(await r.page.$('#borrow-body details.lockmore #bw-lock')), 'locks: another lock can be made from the sheet');
+    ok(!!(await r.page.$('#bw-bond')), 'locks: the lock it follows offers its bond');
+    await r.page.click('#borrow-body [data-pick]');
+    await until(r.page, () => /0\.0003\d* BTC in your own output/.test((document.querySelector('#borrow-body')?.textContent || '').replace(/\s+/g, ' ')), null, 60000).catch(() => {});
+    ok(/0\.0003\d* BTC in your own output/.test(await body()), 'locks: Show opens the other lock');
+    if (r.errors.length) { fails++; console.log('FAIL locks page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   } finally { await r.browser.close(); }
 });
 

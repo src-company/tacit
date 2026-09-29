@@ -15,6 +15,8 @@ import { makeConfidentialFarm } from './confidential-farm.js';
 import { makeConfidentialDefiActions } from './confidential-defi-actions.js';
 import { signSchnorr, G } from './bulletproofs.js';
 import { makeCbtcLockMint } from './cbtc-lock-mint.js';
+import { makeCbtcNoteRecovery } from './cbtc-note-recovery.js';
+import { makeBtcHistoryProvider } from './confidential-recovery-btc.js';
 import { makeCdpPositionStore } from './confidential-secret-store.js';
 import { scanHealth, scanHealthHtml, inboundBadgeHtml, inboundSummaryHtml } from './confidential-scan-health.js';
 import { parseUnits, formatUnits } from './confidential-payout.js';
@@ -373,6 +375,25 @@ function wireCbtc(wallet, ux) {
   // a second device, a private window or a cleared cache still knows which outputs must never be spent.
   if (wallet && wallet.priv) {
     ux.syncCbtcLockReservations(wallet.priv).then(renderReservedCbtcLocks).catch(() => {});
+    recoverLocks().catch(() => {});
+  }
+
+  // Locks this key made that this browser holds no record of (another device, cleared storage, or a lock made on weld)
+  // come back from its Bitcoin history, each note's blinding re-derived from the lock's anchor the way the lock itself
+  // derived it, so every lock can still be bonded and minted here.
+  async function recoverLocks() {
+    const found = await makeBtcHistoryProvider({ sha256, hrp: Number(ux.cfg.chainId) === 1 ? 'bc' : 'tb' }).locks(wallet.priv);
+    const have = new Set(loadPendingCbtcLocks().map((r) => `${r.lockTxid}:${r.lockVout}`));
+    const rec = makeCbtcNoteRecovery({ hmac, sha256, curveOrder: secp.CURVE.n });
+    let added = 0;
+    for (const l of found.filter((x) => !have.has(`${x.lockTxid}:${x.lockVout}`))) {
+      const pr = await cbtcLockProgress(ux, l);
+      if (pr.minted || pr.retired) continue;
+      const blinding = rec.deriveCbtcNoteBlinding({ privkey: wallet.priv, anchorOutpoint: rec.anchorBytes(l.anchor.txid, l.anchor.vout), outputIndex: 0 });
+      addPendingCbtcLock({ lockTxid: l.lockTxid, lockVout: l.lockVout, vBtc: l.vBtc, blinding: '0x' + BigInt(blinding).toString(16).padStart(64, '0') });
+      added++;
+    }
+    if (added) refreshPending();
   }
 
   function makeDefi() {
