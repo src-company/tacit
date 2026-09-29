@@ -25,6 +25,7 @@ import { confidentialJob, confidentialBatch, confidentialAck, confidentialActiva
 import { proveSettle } from './lib/prover.js';
 import { assertMemosMatchProof } from './lib/memo-root.js';
 import { consumedInputs } from './lib/spent-precheck.js';
+import { cbtcMintBlocker } from './lib/cbtc-mint-precheck.js';
 import { settleWallet, settleWallets, publicClient, ethUsdPrice, POOL, POOL_ABI, ROUTER } from './lib/chain.js';
 import { ROUTER_EXIT_ABI, recipeArgs, exitCheck, activationCover } from './lib/exit-activate.js';
 import { quoteRelayFee, provePriceUsd, replenishOnce, drainToSink } from './replenish.js';
@@ -342,6 +343,15 @@ async function skipConsumed(job) {
   return true;
 }
 
+// A cBTC mint the pool's lock gate would refuse can only revert, so it is acked failed without paying for a proof.
+async function skipBlockedMint(job) {
+  const why = await cbtcMintBlocker(job, { client: publicClient, pool: POOL });
+  if (!why) return false;
+  log(`job ${job.jobId} type=${job.type} not proved: ${why}`);
+  await confidentialAck({ jobId: job.jobId, error: `cBTC mint not proved: ${why}` });
+  return true;
+}
+
 // Prove and settle one claimed job on the ordinary single-op path, carrying it to a terminal ack either way.
 async function settleOne(j) {
   if (await skipConsumed(j)) return;
@@ -448,7 +458,7 @@ async function cycle() {
     return true;
   }
 
-  if (mode !== 'preproven' && await skipConsumed(job)) return true;
+  if (mode !== 'preproven' && (await skipConsumed(job) || await skipBlockedMint(job))) return true;
 
   log(`job ${jobId} type=${type} mode=${mode} — proving (network groth16). ${gate.reason} [gas ${gasGwei.toFixed(4)} gwei, ETH $${Number(ethPx).toFixed(2)}, PROVE $${Number(provePx).toFixed(4)}]`);
   await heartbeat('settle', `proving ${jobId} ${type}`);
