@@ -1,0 +1,1281 @@
+// The market page for one asset: header, live order book, trade ticket, your orders and
+// recent trades. Planning is btc-book.js; settlement is the audited executors in tacit.js,
+// reached only through `ctx` (see _btcMarketCtx there), so this module never builds a
+// transaction itself.
+//
+// Rendering: the shell is written once per asset. Inputs are never re-rendered — refreshes
+// patch the text of output nodes and swap the ladder rows, so typing, focus and scroll
+// survive every update. A 10 s loop (visible tab only) keeps the book, quote and your
+// orders live; a trade you make refreshes immediately.
+//
+// Safety: what the review screen shows is what runs. After you confirm, the page may
+// re-route around an offer someone else took, but only inside the bounds you confirmed
+// (never more sats, never a worse price — withinBounds in btc-book.js); anything else
+// stops and says so.
+
+import {
+  DUST, buildBook, planBuy, planSell, withinBounds, ladderLevels, listingShape,
+  parseAmount, fmtAmount, fmtUnit, fmtSats, amountForSats, satsForAmount,
+} from './btc-book.js';
+
+const REFRESH_MS = 10_000;
+// A refresh that hasn't answered by then counts as failed, so one hung request can't
+// freeze the page; the next tick tries again.
+const REFRESH_TIMEOUT_MS = 15_000;
+const STATS_REFRESH_MS = 60_000;
+const SELL_TRACK_MS = 8_000;
+const MAX_REROUTES = 3;
+const LADDER_ROWS = 8;
+const SLIPPAGE_CHOICES = [1, 2, 5, 10, 25];
+const EXPIRY_CHOICES = [[86400, '1 day'], [3 * 86400, '3 days'], [7 * 86400, '7 days'], [30 * 86400, '30 days']];
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const nowSec = () => Math.floor(Date.now() / 1000);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms))]);
+
+function ago(ts) {
+  const s = Math.max(0, nowSec() - Number(ts || 0));
+  if (!ts) return '';
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+}
+
+// A unit price as the ticket's price box shows it: display precision, no separators.
+function plainUnit(u) {
+  return fmtUnit(u).replace(/,/g, '');
+}
+
+function fmtUsd(v) {
+  if (v == null || !Number.isFinite(v)) return '';
+  if (v >= 1_000_000) return '$' + (v / 1_000_000).toFixed(2) + 'M';
+  if (v >= 10_000) return '$' + Math.round(v).toLocaleString('en-US');
+  if (v >= 1) return '$' + v.toFixed(2);
+  if (v > 0) return '$' + v.toPrecision(3);
+  return '$0';
+}
+
+// Errors that mean "that offer is gone or moved" and nothing of yours was spent on it.
+// A message carrying a commit/recovery marker means sats are in flight — never retried.
+export function isRerouteable(err) {
+  if (err && typeof err === 'object' && err.noReroute) return false;
+  const s = String((err && typeof err === 'object' ? err.message : err) || '');
+  if (/Commit tx broadcast|locked at|recovery record/i.test(s)) return false;
+  return /already spent|expired|stale|changed since|refresh listings|preauth sale not found|just got taken|intent not found|no such (intent|bid|sale)|claim.*expired|did ?n.t fulfil|already claimed|already pledged|exceeds bid\.remaining|bid expired|\b409\b/i.test(s);
+}
+
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+export function mountBtcMarket(host, ctx) {
+  if (host.__btcMarket && host.__btcMarket.aid === ctx.aid) {
+    host.__btcMarket.refresh({ soft: true });
+    return host.__btcMarket;
+  }
+  if (host.__btcMarket) host.__btcMarket.destroy();
+  const ctl = createMarket(host, ctx);
+  host.__btcMarket = ctl;
+  return ctl;
+}
+
+function createMarket(host, ctx) {
+  const aid = ctx.aid;
+  const asset0 = ctx.asset();
+  const dec = asset0.decimals | 0;
+  const T = esc(asset0.ticker || 'token');
+  const prefKey = `tacit-btc-market-v1:${aid}`;
+  const pref = LS.get(prefKey, {});
+  const S = {
+    book: null, bookSig: '', levelsSig: '',
+    bids: [], stats: null, loadedOnce: false,
+    side: pref.side === 'sell' ? 'sell' : 'buy',
+    type: pref.type === 'limit' ? 'limit' : 'market',
+    buyIn: pref.buyIn === 'token' ? 'token' : 'sats',
+    slip: SLIPPAGE_CHOICES.includes(pref.slip) ? pref.slip : 5,
+    includeMaker: pref.includeMaker !== false,
+    includeManual: pref.includeManual === true,
+    expirySec: EXPIRY_CHOICES.some(([s]) => s === pref.expirySec) ? pref.expirySec : 86400,
+    watchtower: pref.watchtower !== false,
+    showAllAsks: false, showAllBids: false,
+    busy: false, destroyed: false,
+    lastOk: 0, lastErr: null, timer: null, statsAt: 0,
+    lane: ctx.initialLane === 'eth' && ctx.mountEth ? 'eth' : 'btc',
+    quote: null,
+    sells: new Map(Object.entries(LS.get(`tacit-btc-market-sells-v1:${aid}`, {}))),
+  };
+  const savePref = () => LS.set(prefKey, {
+    side: S.side, type: S.type, buyIn: S.buyIn, slip: S.slip, includeMaker: S.includeMaker,
+    includeManual: S.includeManual, expirySec: S.expirySec, watchtower: S.watchtower,
+  });
+  const saveSells = () => LS.set(`tacit-btc-market-sells-v1:${aid}`, Object.fromEntries(S.sells));
+
+  host.innerHTML = shellHtml();
+  const ac = new AbortController();
+  const sig = { signal: ac.signal };
+  const $ = (sel) => host.querySelector(sel);
+  const $$ = (sel) => Array.from(host.querySelectorAll(sel));
+  const el = {
+    live: $('[data-k=live]'), price: $('[data-k=price]'), usd: $('[data-k=usd]'), chg: $('[data-k=chg]'),
+    stats: $('[data-k=stats]'), chart: $('[data-k=chart]'), chartWrap: $('[data-k=chart-wrap]'),
+    asks: $('[data-k=asks]'), bids: $('[data-k=bids]'), spread: $('[data-k=spread]'), bookNote: $('[data-k=book-note]'),
+    askMore: $('[data-k=ask-more]'), bidMore: $('[data-k=bid-more]'),
+    ticket: $('[data-k=ticket]'), amount: $('[data-k=amount]'), price2: $('[data-k=limit-price]'),
+    unitBtn: $('[data-k=unit]'), chips: $('[data-k=chips]'), bal: $('[data-k=bal]'), quote: $('[data-k=quote]'),
+    go: $('[data-k=go]'), fine: $('[data-k=fine]'), opts: $('[data-k=opts]'),
+    orders: $('[data-k=orders]'), trades: $('[data-k=trades]'),
+    laneBtc: $('[data-lane=btc]'), laneEth: $('[data-lane=eth]'), ethHost: $('[data-k=eth-host]'),
+  };
+
+  function shellHtml() {
+    const a = asset0;
+    const lanes = ctx.mountEth ? `
+      <div class="bm-lanes" role="tablist" aria-label="Where to trade">
+        <button type="button" role="tab" data-act="lane" data-v="btc">${ctx.icons?.btc || ''}<span>Bitcoin</span></button>
+        <button type="button" role="tab" data-act="lane" data-v="eth">${ctx.icons?.eth || ''}<span>Ethereum</span></button>
+      </div>` : '';
+    return `
+    <section class="bm" data-aid="${esc(aid)}">
+      <div class="bm-top">
+        <a href="#" class="bm-back" data-act="back">&larr; All markets</a>
+        <span class="bm-live" data-k="live" aria-live="polite">connecting…</span>
+      </div>
+      <div class="bm-head">
+        <div class="bm-id">${a.identityHtml || `<strong>${T}</strong>`}</div>
+        <div class="bm-quoteline">
+          <span class="bm-price" data-k="price">—</span><span class="bm-price-unit">sats/${T}</span>
+          <span class="bm-usd" data-k="usd"></span>
+          <span class="bm-chg" data-k="chg"></span>
+        </div>
+        <div class="bm-stats" data-k="stats"></div>
+      </div>
+      <details class="bm-chart" data-k="chart-wrap"${LS.get('tacit-btc-market-chart-open', true) ? ' open' : ''}>
+        <summary>Chart</summary>
+        <div class="bm-chart-tf">${['1D', '1W', 'ALL'].map((tf) => `<button type="button" data-act="tf" data-v="${tf}">${tf === 'ALL' ? 'All' : tf}</button>`).join('')}</div>
+        <div class="bm-chart-body" data-k="chart"></div>
+      </details>
+      ${lanes}
+      <div class="bm-lane" data-lane="btc">
+        <div class="bm-grid">
+          <div class="bm-ticket" data-k="ticket">
+            <div class="bm-sides" role="tablist">
+              <button type="button" role="tab" data-act="side" data-v="buy">Buy</button>
+              <button type="button" role="tab" data-act="side" data-v="sell">Sell</button>
+            </div>
+            <div class="bm-types">
+              <button type="button" data-act="type" data-v="market">Market</button>
+              <button type="button" data-act="type" data-v="limit">Limit</button>
+            </div>
+            <label class="bm-field bm-field-price" data-show="limit">
+              <span class="bm-label">Price <em>sats per ${T}</em></span>
+              <span class="bm-inputrow"><input data-k="limit-price" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="Limit price in sats per ${T}"></span>
+              <span class="bm-pricechips" data-k="pricechips"></span>
+            </label>
+            <label class="bm-field">
+              <span class="bm-label" data-k="amount-label">Amount</span>
+              <span class="bm-inputrow">
+                <input data-k="amount" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="Amount">
+                <button type="button" class="bm-unit" data-k="unit" data-act="unit"></button>
+              </span>
+            </label>
+            <div class="bm-chips" data-k="chips"></div>
+            <div class="bm-bal" data-k="bal"></div>
+            <div class="bm-quote" data-k="quote" aria-live="polite"></div>
+            <details class="bm-opts" data-k="opts"><summary>Settings</summary><div data-k="opts-body"></div></details>
+            <button type="button" class="bm-go" data-k="go" data-act="go" disabled>Enter an amount</button>
+            <p class="bm-fine" data-k="fine"></p>
+          </div>
+          <div class="bm-book">
+            <div class="bm-book-head"><span>Price <em>sats</em></span><span>Amount <em>${T}</em></span><span>Total <em>sats</em></span></div>
+            <button type="button" class="bm-more" data-k="ask-more" data-act="more-asks" hidden></button>
+            <div class="bm-asks" data-k="asks"></div>
+            <div class="bm-spread" data-k="spread"></div>
+            <div class="bm-bids" data-k="bids"></div>
+            <button type="button" class="bm-more" data-k="bid-more" data-act="more-bids" hidden></button>
+            <div class="bm-book-note" data-k="book-note"></div>
+          </div>
+        </div>
+        <div class="bm-orders" data-k="orders" hidden></div>
+        <div class="bm-trades" data-k="trades"></div>
+      </div>
+      ${ctx.mountEth ? `<div class="bm-lane" data-lane="eth" hidden><div data-k="eth-host"></div></div>` : ''}
+    </section>`;
+  }
+
+  // ── derived data ──────────────────────────────────────────────────────────
+  const me = () => ctx.me() || null;
+
+  function rebuildBook() {
+    const m = me();
+    S.book = buildBook({
+      assetId: aid, decimals: dec,
+      listings: ctx.listings(),
+      bids: S.bids,
+      myPubHex: m?.pubHex || null, myH160: m?.h160 || null,
+      varIntents: !!ctx.flags?.varIntents,
+      takenIds: ctx.takenIds ? ctx.takenIds() : null,
+    });
+  }
+
+  const eligibleAsks = () => S.book.asks.filter((a) => !a.mine && (S.includeMaker || a.instant));
+  const eligibleBids = () => S.book.bids.filter((b) => !b.mine && (S.includeManual || b.auto));
+  const refUnit = () => {
+    const a = ctx.asset();
+    return (S.side === 'buy' ? eligibleAsks()[0]?.unit : eligibleBids()[0]?.unit) || a.markUnit || null;
+  };
+  const maxBuyUnit = () => {
+    const best = eligibleAsks()[0]?.unit;
+    return best ? best * (1 + S.slip / 100) : Infinity;
+  };
+  const minSellUnit = () => {
+    const best = eligibleBids()[0]?.unit;
+    return best ? best * (1 - S.slip / 100) : 0;
+  };
+  const usdOf = (sats) => {
+    const px = ctx.btcUsd();
+    return px > 0 && Number.isFinite(sats) ? (sats / 1e8) * px : null;
+  };
+
+  // ── header ────────────────────────────────────────────────────────────────
+  let lastPrice = null;
+  function paintHeader() {
+    const a = ctx.asset();
+    const idEl = $('.bm-id');
+    if (a.identityHtml && idEl.__html !== a.identityHtml) { idEl.innerHTML = a.identityHtml; idEl.__html = a.identityHtml; }
+    const u = a.markUnit;
+    if (u > 0) {
+      const txt = fmtUnit(u);
+      if (el.price.textContent !== txt) {
+        if (lastPrice != null && u !== lastPrice) flash(el.price, u > lastPrice ? 'up' : 'down');
+        el.price.textContent = txt;
+      }
+      lastPrice = u;
+      const usd = usdOf(u);
+      el.usd.textContent = usd != null ? fmtUsd(usd) : '';
+    } else {
+      el.price.textContent = 'no trades yet';
+      el.usd.textContent = '';
+    }
+    const c = a.change24h;
+    if (Number.isFinite(c) && u > 0 && (c !== 0 || a.vol24Sats > 0)) {
+      el.chg.textContent = `${c >= 0 ? '▲' : '▼'} ${Math.abs(c).toFixed(1)}% 24h`;
+      el.chg.className = 'bm-chg ' + (c >= 0 ? 'up' : 'down');
+    } else { el.chg.textContent = ''; el.chg.className = 'bm-chg'; }
+    const bits = [];
+    if (a.lastTradeTs) bits.push(`<span>Last trade <b>${ago(a.lastTradeTs)} ago</b></span>`);
+    if (a.vol24Sats != null) bits.push(`<span>24h volume <b>${usdOf(a.vol24Sats) != null ? fmtUsd(usdOf(a.vol24Sats)) : fmtSats(a.vol24Sats) + ' sats'}</b></span>`);
+    if (a.mcapSats != null) bits.push(`<span>Market cap <b>${usdOf(a.mcapSats) != null ? fmtUsd(usdOf(a.mcapSats)) : fmtSats(a.mcapSats) + ' sats'}</b></span>`);
+    if (a.holders != null) bits.push(`<span>Holders <b>${Number(a.holders).toLocaleString('en-US')}</b></span>`);
+    const html = bits.join('');
+    if (el.stats.innerHTML !== html) el.stats.innerHTML = html;
+  }
+
+  function paintLive() {
+    if (S.lastErr && (!S.lastOk || Date.now() - S.lastOk > 45_000)) {
+      el.live.className = 'bm-live bad';
+      el.live.innerHTML = `offline — retrying <button type="button" data-act="refresh">retry now</button>`;
+      return;
+    }
+    if (!S.lastOk) { el.live.className = 'bm-live'; el.live.textContent = 'connecting…'; return; }
+    const s = Math.floor((Date.now() - S.lastOk) / 1000);
+    el.live.className = 'bm-live ok';
+    el.live.textContent = s < 3 ? 'live' : `live · ${s}s ago`;
+  }
+
+  function flash(node, dir) {
+    node.classList.remove('bm-flash-up', 'bm-flash-down');
+    node.classList.add(dir === 'up' ? 'bm-flash-up' : 'bm-flash-down');
+    clearTimeout(node.__flashT);
+    node.__flashT = setTimeout(() => node.classList.remove('bm-flash-up', 'bm-flash-down'), 1500);
+  }
+
+  // ── book ──────────────────────────────────────────────────────────────────
+  function rowHtml(lv, side, maxSats) {
+    const w = maxSats > 0 ? Math.max(2, Math.round((lv.sats / maxSats) * 100)) : 0;
+    const tags = [];
+    if (lv.flag === 'mine') tags.push('<i class="bm-tag you">you</i>');
+    else if (side === 'ask' && lv.flag === 'maker') tags.push(`<i class="bm-tag wait" title="The seller's wallet confirms your claim (usually seconds). If they're offline the page moves on and nothing is spent.">confirm</i>`);
+    else if (side === 'bid' && lv.flag === 'auto') tags.push(`<i class="bm-tag auto" title="A watchtower completes this bid for the bidder — sells settle in about a minute">auto</i>`);
+    const cnt = lv.count > 1 ? `<i class="bm-cnt">×${lv.count}</i>` : '';
+    return `<button type="button" class="bm-row ${side}" data-act="row" data-side="${side}" data-key="${esc(lv.key)}" style="--w:${w}%">
+      <span class="p">${fmtUnit(lv.unit)}${cnt}</span><span class="a">${fmtAmount(lv.amount, dec, 4)}${tags.join('')}</span><span class="t">${fmtSats(lv.sats)}</span></button>`;
+  }
+
+  function paintBook() {
+    const b = S.book;
+    const askLv = ladderLevels(b.asks, 'ask');
+    const bidLv = ladderLevels(b.bids, 'bid');
+    const askShown = S.showAllAsks ? askLv : askLv.slice(0, LADDER_ROWS);
+    const bidShown = S.showAllBids ? bidLv : bidLv.slice(0, LADDER_ROWS);
+    const maxSats = [...askShown, ...bidShown].reduce((m, l) => Math.max(m, l.sats), 0);
+    const sig = [askShown, bidShown].map((ls) => ls.map((l) => l.key + ':' + l.amount + ':' + l.count).join(',')).join('|') + S.showAllAsks + S.showAllBids;
+    if (sig !== S.levelsSig) {
+      S.levelsSig = sig;
+      el.asks.innerHTML = askShown.length
+        ? askShown.slice().reverse().map((l) => rowHtml(l, 'ask', maxSats)).join('')
+        : `<div class="bm-empty">No one is selling right now.${S.side === 'buy' ? ' Place a limit bid and sellers can fill it.' : ''}</div>`;
+      el.bids.innerHTML = bidShown.length
+        ? bidShown.map((l) => rowHtml(l, 'bid', maxSats)).join('')
+        : `<div class="bm-empty">No one is bidding right now.${S.side === 'sell' ? ' List at your price and buyers can take it.' : ''}</div>`;
+      S.ladder = { ask: new Map(askLv.map((l) => [l.key, l])), bid: new Map(bidLv.map((l) => [l.key, l])) };
+    }
+    el.askMore.hidden = askLv.length <= LADDER_ROWS;
+    el.askMore.textContent = S.showAllAsks ? 'Show fewer asks' : `Show all ${askLv.length} asks`;
+    el.bidMore.hidden = bidLv.length <= LADDER_ROWS;
+    el.bidMore.textContent = S.showAllBids ? 'Show fewer bids' : `Show all ${bidLv.length} bids`;
+    const a = ctx.asset();
+    let sp = '';
+    if (b.bestAsk != null && b.bestBid != null) {
+      const pct = ((b.bestAsk - b.bestBid) / b.bestAsk) * 100;
+      sp = b.overlap
+        ? `<span>Bids above asks by ${fmtUnit(b.bestBid - b.bestAsk)} — buy from ${fmtUnit(b.bestAsk)}, or sell for up to ${fmtUnit(b.bestBid)}</span>`
+        : `<span>Spread ${fmtUnit(b.bestAsk - b.bestBid)} <em>(${pct.toFixed(pct < 1 ? 2 : 1)}%)</em></span>`;
+    }
+    if (a.markUnit > 0) sp = `<b>${fmtUnit(a.markUnit)}</b><em>last</em>` + sp;
+    if (el.spread.innerHTML !== sp) el.spread.innerHTML = sp;
+    const ex = b.excluded;
+    const hid = (ex.asks.otc || 0);
+    const notes = [];
+    if (hid) notes.push(`${hid} OTC offer${hid === 1 ? '' : 's'} that need${hid === 1 ? 's' : ''} trust in the seller ${hid === 1 ? 'isn\'t' : 'aren\'t'} shown`);
+    const stale = (ex.asks.stale || 0) + (ex.asks.claimed || 0);
+    if (stale) notes.push(`${stale} offer${stale === 1 ? ' is' : 's are'} busy or inactive and hidden`);
+    const manual = b.bids.some((x) => !x.mine && !x.auto);
+    if (manual) notes.unshift('Bids without “auto” settle only while the bidder is online');
+    if (b.asks.some((x) => !x.mine && x.whole)) notes.unshift('Asks sell in whole pieces');
+    const nb = notes.join(' · ');
+    if (el.bookNote.textContent !== nb) el.bookNote.textContent = nb;
+  }
+
+  // ── ticket ────────────────────────────────────────────────────────────────
+  function paintTicketFrame() {
+    $$('[data-act=side]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.v === S.side)));
+    $$('[data-act=type]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === S.type)));
+    el.ticket.dataset.side = S.side;
+    el.ticket.dataset.type = S.type;
+    $$('[data-show=limit]').forEach((n) => { n.hidden = S.type !== 'limit'; });
+    const lbl = $('[data-k=amount-label]');
+    if (S.type === 'limit') {
+      lbl.innerHTML = `Amount <em>${T}</em>`;
+      el.unitBtn.hidden = true;
+    } else if (S.side === 'buy') {
+      lbl.innerHTML = S.buyIn === 'sats' ? 'You spend' : 'You get';
+      el.unitBtn.hidden = false;
+      el.unitBtn.innerHTML = `${S.buyIn === 'sats' ? 'sats' : T} <span aria-hidden="true">⇄</span>`;
+      el.unitBtn.title = S.buyIn === 'sats' ? `Enter how many ${asset0.ticker} you want instead` : 'Enter how many sats to spend instead';
+    } else {
+      lbl.innerHTML = 'You sell';
+      el.unitBtn.hidden = false;
+      el.unitBtn.innerHTML = T;
+      el.unitBtn.title = '';
+    }
+    paintOpts();
+    el.fine.innerHTML = S.side === 'buy'
+      ? 'Settles on Bitcoin, peer to peer. No custodian, no wrapped coins.'
+      : 'Settles on Bitcoin, peer to peer. You keep your tokens until a buyer pays.';
+  }
+
+  function paintOpts() {
+    const body = $('[data-k=opts-body]');
+    const slip = `<label class="bm-opt"><span>${S.side === 'buy' ? 'Max price' : 'Min price'}</span>
+      <select data-act="slip">${SLIPPAGE_CHOICES.map((p) => `<option value="${p}"${p === S.slip ? ' selected' : ''}>${S.side === 'buy' ? '+' : '−'}${p}% from best</option>`).join('')}</select></label>`;
+    const flag = S.side === 'buy'
+      ? `<label class="bm-check"><input type="checkbox" data-act="inc-maker"${S.includeMaker ? ' checked' : ''}> Include offers the seller confirms <em>(adds a few seconds; skipped if they're offline)</em></label>`
+      : `<label class="bm-check"><input type="checkbox" data-act="inc-manual"${S.includeManual ? ' checked' : ''}> Include bids without auto-settle <em>(they complete only when the bidder is online — could be hours)</em></label>`;
+    const expiry = `<label class="bm-opt"><span>Order lasts</span><select data-act="expiry">${EXPIRY_CHOICES.map(([s, l]) => `<option value="${s}"${s === S.expirySec ? ' selected' : ''}>${l}</option>`).join('')}</select></label>`;
+    const html = S.type === 'market' ? slip + flag : expiry;
+    if (body.innerHTML !== html) body.innerHTML = html;
+  }
+
+  function paintBalance() {
+    const m = me();
+    const chips = [];
+    let bal = '';
+    if (!m) {
+      bal = `<button type="button" class="bm-link" data-act="unlock">Connect a wallet</button> to see your balance`;
+    } else if (!m.unlocked) {
+      bal = `<button type="button" class="bm-link" data-act="unlock">Unlock</button> to see your balance`;
+    } else if (S.side === 'buy') {
+      bal = m.sats == null ? 'Balance: checking…' : `Balance: <b>${fmtSats(m.sats)}</b> sats${m.sats < 2000 ? ` · <button type="button" class="bm-link" data-act="fund">add sats</button>` : ''}`;
+      if (m.sats > 0 && S.type === 'market' && S.buyIn === 'sats') {
+        const spendable = Math.max(0, m.sats - reserveSats());
+        for (const p of [25, 50, 100]) {
+          const v = Math.floor(spendable * p / 100);
+          if (v >= DUST) chips.push(`<button type="button" data-act="chip" data-v="${v}">${p === 100 ? 'Max' : p + '%'}</button>`);
+        }
+      }
+    } else {
+      bal = m.assetBase == null ? `Balance: checking…` : `Balance: <b>${fmtAmount(m.assetBase, dec)}</b> ${T}`;
+      if (m.assetBase > 0n) {
+        for (const p of [25, 50, 100]) {
+          const v = (m.assetBase * BigInt(p)) / 100n;
+          if (v > 0n) chips.push(`<button type="button" data-act="chip" data-v="${fmtAmount(v, dec).replace(/,/g, '')}">${p === 100 ? 'Max' : p + '%'}</button>`);
+        }
+      }
+    }
+    if (el.bal.innerHTML !== bal) el.bal.innerHTML = bal;
+    const ch = chips.join('');
+    if (el.chips.innerHTML !== ch) el.chips.innerHTML = ch;
+    const pc = $('[data-k=pricechips]');
+    if (S.type === 'limit' && S.book) {
+      const pcs = [];
+      const b = S.book;
+      if (b.bestBid) pcs.push(`<button type="button" data-act="pchip" data-v="${b.bestBid}">best bid ${fmtUnit(b.bestBid)}</button>`);
+      if (b.bestAsk) pcs.push(`<button type="button" data-act="pchip" data-v="${b.bestAsk}">best ask ${fmtUnit(b.bestAsk)}</button>`);
+      if (ctx.asset().markUnit > 0) pcs.push(`<button type="button" data-act="pchip" data-v="${ctx.asset().markUnit}">last ${fmtUnit(ctx.asset().markUnit)}</button>`);
+      const h = pcs.join('');
+      if (pc.innerHTML !== h) pc.innerHTML = h;
+    }
+  }
+
+  // Sats a buy keeps back for network fees.
+  const reserveSats = () => 3000;
+
+  // Parse the ticket into an order description (no network).
+  function readOrder() {
+    const amtTxt = el.amount.value;
+    if (S.type === 'market') {
+      if (S.side === 'buy') {
+        if (S.buyIn === 'sats') {
+          const v = Number(String(amtTxt).replace(/[,_\s]/g, ''));
+          return Number.isFinite(v) && v > 0 ? { side: 'buy', type: 'market', spendSats: Math.floor(v) } : null;
+        }
+        const base = parseAmount(amtTxt, dec);
+        return base && base > 0n ? { side: 'buy', type: 'market', receiveBase: base } : null;
+      }
+      const base = parseAmount(amtTxt, dec);
+      return base && base > 0n ? { side: 'sell', type: 'market', sellBase: base } : null;
+    }
+    const unit = Number(String(el.price2.value).replace(/[,_\s]/g, ''));
+    const base = parseAmount(amtTxt, dec);
+    if (!(unit > 0) || !base || base <= 0n) return { side: S.side, type: 'limit', unit: unit > 0 ? unit : null, base: base || null, incomplete: true };
+    return { side: S.side, type: 'limit', unit, base, totalSats: satsForAmount(base, unit, dec) };
+  }
+
+  function computeQuote() {
+    if (!S.book) return null;
+    const o = readOrder();
+    if (!o || o.incomplete) return { order: o, empty: true };
+    if (o.type === 'market' && o.side === 'buy') {
+      const maxUnit = maxBuyUnit();
+      const plan = planBuy(S.book, { spendSats: o.spendSats ?? null, receiveBase: o.receiveBase ?? null, maxUnit, includeIntents: S.includeMaker });
+      return { order: o, plan, maxUnit };
+    }
+    if (o.type === 'market' && o.side === 'sell') {
+      const minUnit = minSellUnit();
+      const plan = planSell(S.book, { sellBase: o.sellBase, minUnit, includeManual: S.includeManual });
+      return { order: o, plan, minUnit };
+    }
+    if (o.side === 'buy') {
+      const now = planBuy(S.book, { spendSats: o.totalSats, maxUnit: o.unit, includeIntents: S.includeMaker });
+      return { order: o, plan: now, limit: true };
+    }
+    const bestSellable = eligibleBids()[0]?.unit;
+    return { order: o, limit: true, shape: listingShape(o.base, o.unit, dec), crosses: bestSellable != null && bestSellable >= o.unit, bestSellable };
+  }
+
+  function setGo(text, enabled, kind = '') {
+    el.go.textContent = text;
+    el.go.disabled = !enabled;
+    el.go.dataset.kind = kind;
+  }
+
+  function paintQuote() {
+    if (S.busy) return;
+    const q = computeQuote();
+    S.quote = q;
+    const m = me();
+    let html = '';
+    if (!S.book) { el.quote.innerHTML = '<div class="bm-q muted">Loading the book…</div>'; setGo('Loading…', false); return; }
+    if (!q || q.empty) {
+      const o = q?.order;
+      if (o?.type === 'limit' && o.base && o.unit) html = '';
+      else if (o?.type === 'limit' && (o.base || o.unit)) html = `<div class="bm-q muted">Enter both a price and an amount.</div>`;
+      el.quote.innerHTML = html;
+      setGo(S.type === 'limit' ? 'Enter price and amount' : 'Enter an amount', false);
+      return;
+    }
+    const o = q.order;
+    const row = (k, v, cls = '') => `<div class="bm-qr ${cls}"><span>${k}</span><span>${v}</span></div>`;
+    const usd = (s) => { const u = usdOf(s); return u != null ? ` <em>${fmtUsd(u)}</em>` : ''; };
+    if (o.type === 'market' && o.side === 'buy') {
+      const p = q.plan;
+      if (!p.fills.length) {
+        const cheapBig = p.skipped.find((s) => s.reason === 'too-big');
+        let why = 'No sell offers within your max price right now.';
+        if (!S.book.asks.some((a) => !a.mine)) why = 'No one is selling right now.';
+        else if (cheapBig && o.spendSats != null) why = `The cheapest offer is one piece of ${fmtAmount(cheapBig.ask.amount, dec, 4)} ${T} for ${fmtSats(cheapBig.ask.sats)} sats — more than you entered.`;
+        else if (cheapBig) why = `Offers at this price come in larger pieces than you asked for (smallest: ${fmtAmount(cheapBig.ask.amount, dec, 4)} ${T}).`;
+        html = `<div class="bm-q warn">${why}</div><div class="bm-q muted">Switch to <button type="button" class="bm-link" data-act="to-limit">Limit</button> to place a bid sellers can fill.</div>`;
+        el.quote.innerHTML = html;
+        setGo('No match at this price', false);
+        return;
+      }
+      html += row('You get', `<b>${fmtAmount(p.amount, dec, 6)} ${T}</b>`, 'big');
+      html += row('You pay', `${fmtSats(p.sats)} sats${usd(p.sats)}`);
+      html += row('Average price', `${fmtUnit(p.avgUnit)} sats/${T}`);
+      html += row('Network fees', `≈ ${fmtSats(p.feesEst)} sats`, 'muted');
+      if (p.leftoverSats >= DUST && o.spendSats != null) html += `<div class="bm-q note">${fmtSats(p.leftoverSats)} sats can't fill at this price and stay in your wallet.</div>`;
+      if (p.shortBase > 0n) html += `<div class="bm-q note">Only ${fmtAmount(p.amount, dec, 4)} ${T} is for sale within your max price.</div>`;
+      if (p.overBase > 0n) html += `<div class="bm-q note">Includes ${fmtAmount(p.overBase, dec, 4)} ${T} extra — offers are sold in whole pieces.</div>`;
+      const big = p.skipped.find((s) => s.reason === 'too-big' && s.ask.unit < p.avgUnit);
+      if (big && o.spendSats != null) html += `<div class="bm-q muted">A cheaper piece (${fmtAmount(big.ask.amount, dec, 4)} ${T} at ${fmtUnit(big.ask.unit)}) needs ${fmtSats(big.ask.sats)} sats.</div>`;
+      if (p.needsMaker) html += `<div class="bm-q muted">Some of this fills from offers the seller confirms — usually seconds.</div>`;
+      el.quote.innerHTML = html;
+      if (m && m.unlocked && m.sats != null && m.sats < p.sats + p.feesEst) { setGo('Not enough sats', true, 'fund'); return; }
+      setGo(`Review buy`, true, 'review');
+      return;
+    }
+    if (o.type === 'market' && o.side === 'sell') {
+      const p = q.plan;
+      if (m && m.unlocked && m.assetBase != null && o.sellBase > m.assetBase) {
+        el.quote.innerHTML = `<div class="bm-q warn">You have ${fmtAmount(m.assetBase, dec)} ${T}.</div>`;
+        setGo(`Not enough ${asset0.ticker}`, false);
+        return;
+      }
+      if (!p.fills.length) {
+        let why = 'No bids within your min price right now.';
+        if (!S.book.bids.some((b) => !b.mine)) why = 'No one is bidding right now.';
+        else if (p.manualAvailable) why = `No auto-settling bids at this price. ${p.manualAvailable} bid${p.manualAvailable === 1 ? '' : 's'} need the bidder online — allow them in Settings, or list instead.`;
+        else if (p.skipped.some((s) => s.reason === 'too-big')) why = 'Bids here want more than you entered — try a larger amount, or list instead.';
+        html = `<div class="bm-q warn">${why}</div><div class="bm-q muted">Switch to <button type="button" class="bm-link" data-act="to-limit">Limit</button> to list at your price.</div>`;
+        el.quote.innerHTML = html;
+        setGo('No match at this price', false);
+        return;
+      }
+      html += row('You get', `<b>${fmtSats(p.sats)} sats</b>${usd(p.sats)}`, 'big');
+      html += row('You sell', `${fmtAmount(p.amount, dec, 6)} ${T}`);
+      html += row('Average price', `${fmtUnit(p.avgUnit)} sats/${T}`);
+      html += row('Network fees', `≈ ${fmtSats(p.feesEst)} sats`, 'muted');
+      if (p.leftoverBase > 0n) html += `<div class="bm-q note">${fmtAmount(p.leftoverBase, dec, 4)} ${T} has no matching bid and stays in your wallet.</div>`;
+      html += `<div class="bm-q muted">${p.needsBidder ? 'Completes when each bidder\'s wallet settles — some may take hours.' : 'Completes in about a minute — keep this tab open until it does.'}</div>`;
+      el.quote.innerHTML = html;
+      setGo('Review sell', true, 'review');
+      return;
+    }
+    // limit
+    if (o.side === 'buy') {
+      const p = q.plan;
+      const nowFill = p.fills.length ? p : null;
+      const restSats = o.totalSats - (nowFill ? nowFill.sats : 0);
+      const bidBase = limitBidBase(o, nowFill, restSats);
+      html += row('Total', `<b>up to ${fmtSats(o.totalSats)} sats</b>${usd(o.totalSats)}`, 'big');
+      if (nowFill) html += row('Fills now', `${fmtAmount(nowFill.amount, dec, 4)} ${T} for ${fmtSats(nowFill.sats)} sats`);
+      if (bidBase > 0n) html += row(nowFill ? 'Rest becomes a bid' : 'Your bid', `${fmtAmount(bidBase, dec, 4)} ${T} at ${fmtUnit(o.unit)}`);
+      const bidSats = bidBase > 0n ? satsForAmount(bidBase, o.unit, dec) : 0;
+      const wt = watchtowerState(bidSats);
+      if (bidBase > 0n) {
+        html += `<label class="bm-check"><input type="checkbox" data-act="wt"${wt.on ? ' checked' : ''}${wt.ok ? '' : ' disabled'}> Fill it while I'm away <em>${wt.ok ? `(a watchtower completes fills; sets aside ${fmtSats(bidSats + 10000)} sats in a wallet only you can reclaim)` : esc(wt.why)}</em></label>`;
+        if (!wt.on) html += `<div class="bm-q muted">Without it, fills complete only while this page is open.</div>`;
+      }
+      el.quote.innerHTML = html;
+      if (m && m.unlocked && m.sats != null && m.sats < o.totalSats + (wt.on ? 10000 : 0) + 1000) { setGo('Not enough sats', true, 'fund'); return; }
+      setGo(nowFill ? 'Review order' : 'Review bid', true, 'review');
+      return;
+    }
+    const sh = q.shape;
+    html += row('You get', `<b>${fmtSats(sh.totalSats)} sats</b>${usd(sh.totalSats)}`, 'big');
+    if (sh.k === 0) {
+      el.quote.innerHTML = html + `<div class="bm-q warn">Too small to list — a listing must be worth at least ${DUST} sats.</div>`;
+      setGo('Too small', false);
+      return;
+    }
+    html += row('Listed as', sh.k >= 2 ? `${sh.k} pieces of ${fmtAmount(sh.perLotBase, dec, 4)} ${T}` : 'one piece');
+    if (q.crosses) html += `<div class="bm-q note">Bids already pay ${fmtUnit(q.bestSellable)} or more — a <button type="button" class="bm-link" data-act="to-market">market sell</button> gets you that now.</div>`;
+    html += `<div class="bm-q muted">Buyers take it without you online. Cancel any time (one network fee).</div>`;
+    el.quote.innerHTML = html;
+    if (m && m.unlocked && m.assetBase != null && o.base > m.assetBase) { setGo(`Not enough ${asset0.ticker}`, false); return; }
+    setGo('Review listing', true, 'review');
+  }
+
+  // A limit buy's resting bid: what the remaining sats buy at the limit, never more than
+  // the amount asked for minus what already filled.
+  function limitBidBase(o, nowFill, restSats) {
+    if (restSats < DUST) return 0n;
+    let base = amountForSats(restSats, o.unit, dec);
+    const want = o.base - (nowFill ? nowFill.amount : 0n);
+    if (base > want) base = want > 0n ? want : 0n;
+    return satsForAmount(base, o.unit, dec) >= DUST ? base : 0n;
+  }
+
+  function watchtowerState(restSats) {
+    const w = ctx.flags?.watchtower;
+    if (!w || !w.enabled) return { ok: false, on: false, why: '(not available on this network)' };
+    if (restSats > w.maxSats) return { ok: false, on: false, why: `(watchtower handles bids up to ${fmtSats(w.maxSats)} sats)` };
+    return { ok: true, on: S.watchtower };
+  }
+
+  function paintAll() {
+    if (S.destroyed) return;
+    paintHeader();
+    if (S.book) paintBook();
+    paintBalance();
+    paintQuote();
+    paintOrders();
+    paintLive();
+  }
+
+  // ── your orders ───────────────────────────────────────────────────────────
+  function paintOrders() {
+    if (!S.book) return;
+    const m = me();
+    const mine = [];
+    for (const a of S.book.asks.filter((x) => x.mine)) {
+      const sale = S.sells.get(a.raw.intent_id || '');
+      mine.push({
+        id: a.id, side: 'sell', amount: a.amount, unit: a.unit, sats: a.sats,
+        status: sale ? sellStatusText(sale) : a.kind === 'preauth' ? 'listed' : 'listed · you confirm claims',
+        action: !sale || sale.state === 'posted' ? 'cancel' : null, kind: sale ? 'sale' : a.kind, raw: a.raw,
+      });
+    }
+    for (const b of S.book.bids.filter((x) => x.mine)) {
+      mine.push({
+        id: b.id, side: 'buy', amount: b.amount, unit: b.unit, sats: b.sats,
+        status: b.auto ? 'bid · auto-settles' : 'bid · fills while you\'re online', action: 'cancel', kind: b.kind, raw: b.raw,
+      });
+    }
+    for (const [iid, sale] of S.sells) {
+      if (mine.some((r) => r.raw?.intent_id === iid)) continue;
+      if (sale.state === 'settled' || sale.state === 'closed' || sale.state === 'gone') continue;
+      mine.push({ id: 'sell:' + iid, side: 'sell', amount: BigInt(sale.amount), unit: sale.unit, sats: sale.sats, status: sellStatusText(sale), action: sale.state === 'posted' ? 'cancel' : null, kind: 'sale', raw: { intent_id: iid } });
+    }
+    if (!mine.length || !m) { el.orders.hidden = true; el.orders.innerHTML = ''; return; }
+    el.orders.hidden = false;
+    const html = `<h3>Your orders <em>${mine.length}</em></h3><div class="bm-otable">${mine.map((r) => `
+      <div class="bm-orow ${r.side}"><span class="s">${r.side === 'buy' ? 'Buy' : 'Sell'}</span>
+      <span>${fmtAmount(r.amount, dec, 4)} ${T}</span><span>@ ${fmtUnit(r.unit)}</span><span class="muted">${esc(r.status)}</span>
+      <span>${r.action === 'cancel' ? `<button type="button" data-act="cancel" data-id="${esc(r.id)}">Cancel</button>` : ''}</span></div>`).join('')}</div>`;
+    if (el.orders.__html !== html) { el.orders.innerHTML = html; el.orders.__html = html; }
+    S.myRows = new Map(mine.map((r) => [r.id, r]));
+  }
+
+  function sellStatusText(s) {
+    return {
+      posted: 'waiting for the buyer',
+      claimed: 'buyer claimed — confirming',
+      confirmed: 'confirmed — buyer settling',
+      settled: 'sold',
+      closed: 'offer closed — the tokens stayed in your wallet',
+      gone: 'no longer listed — check your balance',
+    }[s.state] || 'waiting for the buyer';
+  }
+
+  // ── recent trades ─────────────────────────────────────────────────────────
+  function paintTrades() {
+    const trades = (S.stats?.trades || []).slice(0, 12);
+    if (!trades.length) { el.trades.innerHTML = ''; return; }
+    let prev = null;
+    const rows = trades.slice().reverse().map((t) => {
+      const amt = BigInt(t.amount || 0);
+      const u = amt > 0n ? (Number(t.price_sats) * Math.pow(10, dec)) / Number(amt) : null;
+      const dir = prev == null || u == null ? '' : u > prev ? 'up' : u < prev ? 'down' : '';
+      prev = u ?? prev;
+      return { t, amt, u, dir };
+    }).reverse();
+    const link = (txid) => ctx.txUrl ? ctx.txUrl(txid) : null;
+    el.trades.innerHTML = `<h3>Recent trades</h3><div class="bm-ttable"><div class="bm-trow bm-thead"><span>Price <em>sats</em></span><span>Amount <em>${T}</em></span><span>Total <em>sats</em></span><span>When</span></div>${rows.map(({ t, amt, u, dir }) => {
+      const href = t.txid ? link(t.txid) : null;
+      const time = `${ago(t.ts)} ago`;
+      return `<div class="bm-trow"><span class="p ${dir}">${fmtUnit(u)}</span><span>${fmtAmount(amt, dec, 4)}</span><span>${fmtSats(Number(t.price_sats))}</span><span class="muted">${href ? `<a href="${esc(href)}" target="_blank" rel="noopener" title="View on mempool.space">${time}</a>` : time}</span></div>`;
+    }).join('')}</div>`;
+  }
+
+  // ── chart ─────────────────────────────────────────────────────────────────
+  function paintChart() {
+    if (!el.chartWrap.open || !ctx.paintChart) return;
+    const tf = LS.get('tacit-btc-market-tf', 'ALL');
+    $$('[data-act=tf]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === tf)));
+    try { ctx.paintChart(el.chart, { tf, stats: S.stats, bestBid: S.book?.bestBid ?? null, bestAsk: S.book?.bestAsk ?? null }); } catch {}
+  }
+
+  // ── refresh loop ──────────────────────────────────────────────────────────
+  let inflight = null;
+  async function refresh({ force = false, soft = false } = {}) {
+    if (S.destroyed) return;
+    if (soft && S.loadedOnce) { rebuildBook(); paintAll(); return; }
+    if (inflight) return inflight;
+    inflight = (async () => {
+      try {
+        const [, bids] = await withTimeout(Promise.all([ctx.loadListings({ force }), ctx.loadBids({ force })]), REFRESH_TIMEOUT_MS);
+        S.bids = Array.isArray(bids) ? bids : S.bids;
+        S.lastOk = Date.now(); S.lastErr = null;
+      } catch (e) {
+        S.lastErr = e;
+      }
+      if (force || !S.stats || Date.now() - S.statsAt > STATS_REFRESH_MS) {
+        try { S.stats = await withTimeout(ctx.loadStats({ force }), REFRESH_TIMEOUT_MS); S.statsAt = Date.now(); paintTrades(); paintChart(); } catch {}
+      }
+      S.loadedOnce = true;
+      rebuildBook();
+      paintAll();
+      paintChart();
+    })().finally(() => { inflight = null; });
+    return inflight;
+  }
+
+  function schedule() {
+    clearTimeout(S.timer);
+    if (S.destroyed) return;
+    S.timer = setTimeout(async () => {
+      if (!host.isConnected) { destroy(); return; }
+      if (!document.hidden && S.lane === 'btc') await refresh({ force: true });
+      else paintLive();
+      trackSells();
+      schedule();
+    }, REFRESH_MS);
+  }
+  const onVis = () => { if (!document.hidden && !S.destroyed && host.isConnected) { refresh({ force: true }); schedule(); } };
+  document.addEventListener('visibilitychange', onVis, sig);
+  const liveTick = setInterval(() => { if (!S.destroyed) paintLive(); }, 1000);
+
+  // ── pending sells: follow each offer until the buyer settles ──────────────
+  let tracking = false;
+  async function trackSells() {
+    if (tracking || !S.sells.size || !ctx.exec?.offerStatus) return;
+    tracking = true;
+    try {
+      let changed = false;
+      for (const [iid, sale] of S.sells) {
+        const final = sale.state === 'settled' || sale.state === 'gone' || (sale.state === 'closed' && nowSec() - (sale.doneAt || 0) > 600);
+        if (final) {
+          if (nowSec() - (sale.doneAt || 0) > 3600) { S.sells.delete(iid); changed = true; }
+          continue;
+        }
+        let st;
+        const hadUtxo = !!sale.raw?.asset_utxo;
+        try { st = await ctx.exec.offerStatus({ intentId: iid, raw: sale.raw }); } catch { continue; }
+        if (!hadUtxo && sale.raw?.asset_utxo) changed = true;
+        if (st && st !== sale.state) {
+          sale.state = st; changed = true;
+          if ((st === 'settled' || st === 'closed' || st === 'gone') && !sale.doneAt) sale.doneAt = nowSec();
+          if (st === 'posted' || st === 'claimed' || st === 'confirmed') sale.doneAt = 0;
+          if (st === 'settled') ctx.toast?.(`Sold ${fmtAmount(BigInt(sale.amount), dec, 4)} ${asset0.ticker} for ${fmtSats(sale.sats)} sats ✓`, 'success', 8000);
+        }
+      }
+      if (changed) { saveSells(); paintOrders(); S.onSellsChanged?.(); }
+    } finally { tracking = false; }
+  }
+
+  // ── review + execute ──────────────────────────────────────────────────────
+  function modal() {
+    const wrap = document.createElement('div');
+    wrap.className = 'bm-modal';
+    wrap.setAttribute('role', 'dialog');
+    wrap.setAttribute('aria-modal', 'true');
+    wrap.innerHTML = `<div class="bm-card"><div class="bm-mbody"></div><div class="bm-mfoot"></div></div>`;
+    document.body.appendChild(wrap);
+    const body = wrap.querySelector('.bm-mbody');
+    const foot = wrap.querySelector('.bm-mfoot');
+    let onKey = null;
+    let escLocked = false;
+    const api = {
+      body, foot,
+      set(html) { body.innerHTML = html; },
+      buttons(btns) {
+        foot.innerHTML = btns.map((b, i) => `<button type="button" data-i="${i}" class="${b.primary ? 'bm-go' : ''}"${b.disabled ? ' disabled' : ''}>${esc(b.label)}</button>`).join('');
+        foot.querySelectorAll('button').forEach((n) => {
+          n.onclick = () => {
+            if (btns[+n.dataset.i].once !== false) foot.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+            btns[+n.dataset.i].onClick();
+          };
+        });
+        const primary = foot.querySelector('.bm-go');
+        if (primary) primary.focus();
+      },
+      close() { if (onKey) document.removeEventListener('keydown', onKey); wrap.remove(); },
+      onEscape(fn) { onKey = (e) => { if (e.key === 'Escape' && !escLocked) fn(); }; document.addEventListener('keydown', onKey); },
+      lockEscape() { escLocked = true; },
+    };
+    return api;
+  }
+
+  function stepsHtml(steps) {
+    return `<ol class="bm-steps">${steps.map((s) => `<li class="${s.status}"><span class="st">${{
+      queued: '○', working: '◐', waiting: '◔', done: '✓', failed: '✕', skipped: '–',
+    }[s.status] || '○'}</span><span class="lb">${s.label}${s.note ? `<em>${esc(s.note)}</em>` : ''}${s.txid && ctx.txUrl ? ` <a href="${esc(ctx.txUrl(s.txid))}" target="_blank" rel="noopener">tx</a>` : ''}</span></li>`).join('')}</ol>`;
+  }
+
+  async function review() {
+    if (S.busy || S.destroyed) return;
+    const m = me();
+    if (!m) { await ctx.unlock(); refresh({ soft: true }); return; }
+    const q = computeQuote();
+    if (!q || q.empty) return;
+    if (el.go.dataset.kind === 'fund') { ctx.fundSats(); return; }
+    const o = q.order;
+    const md = modal();
+    let cancelled = false;
+    const close = () => { cancelled = true; md.close(); };
+    md.onEscape(close);
+    const row = (k, v) => `<div class="bm-qr"><span>${k}</span><span>${v}</span></div>`;
+    if (o.type === 'market' && o.side === 'buy') {
+      const p = q.plan;
+      const maxUnit = q.maxUnit === Infinity ? p.worstUnit : q.maxUnit;
+      // Spend orders are capped at what was typed; buy-an-amount orders at that amount
+      // priced at the limit (whole pieces can round it up, never past the plan itself).
+      const maxSats = o.spendSats != null
+        ? o.spendSats
+        : Math.max(p.sats, satsForAmount(o.receiveBase, maxUnit, dec));
+      const bounds = { maxSats, maxUnit };
+      md.set(`<h2>Buy ${fmtAmount(p.amount, dec, 6)} ${T}</h2>
+        ${row('You pay', `<b>${fmtSats(p.sats)} sats</b> + ≈ ${fmtSats(p.feesEst)} network fee`)}
+        ${row('Average price', `${fmtUnit(p.avgUnit)} sats/${T}`)}
+        ${row('Limits', `at most ${fmtUnit(maxUnit)} sats/${T} · ${fmtSats(maxSats)} sats`)}
+        <p class="bm-q muted">If an offer is taken before you, the page moves to the next one — only within these limits. Otherwise it stops and nothing more is spent.</p>
+        ${stepsHtml(p.fills.map((f) => ({ status: 'queued', label: fillLabel(f), note: f.ask.instant ? '' : 'seller confirms' })))}`);
+      md.buttons([{ label: 'Cancel', onClick: close }, { label: 'Buy now', primary: true, onClick: () => runBuy(md, p, bounds, o) }]);
+      return;
+    }
+    if (o.type === 'market' && o.side === 'sell') {
+      const p = q.plan;
+      const bounds = { maxBase: p.amount, minUnit: q.minUnit || p.worstUnit };
+      md.set(`<h2>Sell ${fmtAmount(p.amount, dec, 6)} ${T}</h2>
+        ${row('You get', `<b>${fmtSats(p.sats)} sats</b>`)}
+        ${row('Average price', `${fmtUnit(p.avgUnit)} sats/${T}`)}
+        ${row('Network fees', `≈ ${fmtSats(p.feesEst)} sats`)}
+        <p class="bm-q muted">Each sale is offered to its bidder, whose wallet pays and settles it on Bitcoin. ${p.needsBidder ? 'Some of these bidders have to come online first — that can take hours; until then the tokens stay in your wallet.' : 'The watchtower does this within a minute or two.'} <b>Keep this tab open</b> — your wallet confirms each buyer's claim automatically.</p>
+        ${stepsHtml(p.fills.map((f) => ({ status: 'queued', label: sellLabel(f), note: f.bid.auto ? 'auto-settles' : 'bidder must be online' })))}`);
+      md.buttons([{ label: 'Cancel', onClick: close }, { label: 'Sell now', primary: true, onClick: () => runSell(md, p, bounds) }]);
+      return;
+    }
+    if (o.side === 'buy') {
+      const now = q.plan.fills.length ? q.plan : null;
+      const restSats = o.totalSats - (now ? now.sats : 0);
+      const bidBase = limitBidBase(o, now, restSats);
+      const bidSats = bidBase > 0n ? satsForAmount(bidBase, o.unit, dec) : 0;
+      const wt = watchtowerState(bidSats);
+      const exp = EXPIRY_CHOICES.find(([s]) => s === S.expirySec)?.[1] || '1 day';
+      md.set(`<h2>Limit buy ${fmtAmount(o.base, dec, 6)} ${T} at ${fmtUnit(o.unit)}</h2>
+        ${now ? row('Fills now', `${fmtAmount(now.amount, dec, 6)} ${T} for ${fmtSats(now.sats)} sats`) : ''}
+        ${bidBase > 0n ? row('Bid', `${fmtAmount(bidBase, dec, 6)} ${T} for up to ${fmtSats(bidSats)} sats · lasts ${exp}`) : ''}
+        ${bidBase > 0n && wt.on ? row('Watchtower', `moves ${fmtSats(bidSats + 10000)} sats into a bid wallet only you can reclaim (includes 10,000 for fees)`) : ''}
+        <p class="bm-q muted">${bidBase > 0n ? (wt.on ? 'Sellers can fill your bid while you\'re away; cancel any time from Your orders and reclaim what\'s left.' : 'Fills complete while this page is open. Cancel any time from Your orders.') : ''}</p>`);
+      md.buttons([{ label: 'Cancel', onClick: close }, { label: 'Place order', primary: true, onClick: () => runLimitBuy(md, { order: o, now, bidBase, bidSats, watchtower: wt.on && bidBase > 0n }) }]);
+      return;
+    }
+    const sh = q.shape;
+    const exp = EXPIRY_CHOICES.find(([s]) => s === S.expirySec)?.[1] || '1 day';
+    md.set(`<h2>List ${fmtAmount(sh.listedBase, dec, 6)} ${T} at ${fmtUnit(o.unit)}</h2>
+      ${row('You get', `<b>${fmtSats(sh.totalSats)} sats</b> when all of it sells`)}
+      ${row('Listed as', sh.k >= 2 ? `${sh.k} pieces of ${fmtAmount(sh.perLotBase, dec, 6)} ${T} (${fmtSats(sh.perLotSats)} sats each)` : 'one piece')}
+      ${row('Lasts', exp)}
+      <p class="bm-q muted">Buyers take pieces without you online. Setting this up is one or two Bitcoin transactions (network fees apply). Cancelling later costs one more.</p>`);
+    md.buttons([{ label: 'Cancel', onClick: close }, { label: 'List for sale', primary: true, onClick: () => runList(md, { order: o, shape: sh }) }]);
+    void cancelled;
+  }
+
+  const fillLabel = (f) => `${fmtAmount(f.amount, dec, 4)} ${T} at ${fmtUnit(f.unit)} — ${fmtSats(f.sats)} sats`;
+  const sellLabel = (f) => `${fmtAmount(f.amount, dec, 4)} ${T} at ${fmtUnit(f.unit)} — ${fmtSats(f.sats)} sats`;
+
+  function beginBusy(md) {
+    if (S.destroyed) { md.close(); return false; }
+    if (S.busy) { md.set('<h2>Another order is still running</h2><p class="bm-q">Wait for it to finish, then try again.</p>'); md.buttons([{ label: 'Close', primary: true, onClick: () => md.close() }]); return false; }
+    S.busy = true; el.go.disabled = true; el.go.textContent = 'Working…';
+    return true;
+  }
+  function endBusy() { S.busy = false; refresh({ force: true }); }
+
+  // Buy: preauth listings together in one transaction where possible, then offers that
+  // need their seller to confirm, one at a time. Re-route only inside `bounds`.
+  async function runBuy(md, plan0, bounds, order) {
+    try { await ctx.unlock(); } catch (e) { md.close(); ctx.toast?.(ctx.friendlyError(e), 'error'); return; }
+    if (!beginBusy(md)) return;
+    md.lockEscape();
+    const steps = [];
+    const stepFor = (f) => { const s = { status: 'queued', label: fillLabel(f), fill: f }; steps.push(s); return s; };
+    plan0.fills.forEach(stepFor);
+    let stop = false;
+    const paint = (title) => {
+      md.set(`<h2>${title}</h2>${stepsHtml(steps)}`);
+    };
+    md.buttons([{ label: 'Stop after this step', onClick: () => { stop = true; md.foot.querySelector('button').disabled = true; } }]);
+    let spent = 0; let got = 0n; let reroutes = 0; let err = null;
+    const tried = new Set();
+    let queue = steps.slice();
+    paint('Buying…');
+    while (queue.length && !stop) {
+      const pre = queue.filter((s) => s.fill.ask.kind === 'preauth');
+      const rest = queue.filter((s) => s.fill.ask.kind !== 'preauth');
+      queue = [];
+      let stale = [];
+      if (pre.length >= 2) {
+        pre.forEach((s) => { s.status = 'working'; });
+        paint('Buying…');
+        let r = null;
+        try {
+          r = await ctx.exec.takePreauthBatch(pre.map((s) => s.fill.ask.raw));
+        } catch (e) {
+          const msg = ctx.friendlyError(e);
+          if (isRerouteable(e)) {
+            // One of them moved; take the rest one by one so only the stale one fails.
+            pre.forEach((s) => { s.status = 'queued'; });
+            rest.unshift(...pre);
+          } else {
+            pre.forEach((s) => { s.status = 'failed'; s.note = msg; });
+            err = e; break;
+          }
+        }
+        if (r) {
+          for (const s of pre) { s.status = 'done'; s.txid = r.reveal_txid || r.commit_txid || r.txid; tried.add(s.fill.ask.id); }
+          const amt = pre.reduce((t, s) => t + s.fill.amount, 0n);
+          spent += pre.reduce((t, s) => t + s.fill.sats, 0); got += amt;
+          try { await ctx.after.bought({ amount: amt, result: r, ids: pre.map((s) => s.fill.ask.id) }); } catch {}
+        }
+      } else rest.unshift(...pre);
+      for (const s of rest) {
+        if (stop) { s.status = 'skipped'; continue; }
+        const f = s.fill;
+        tried.add(f.ask.id);
+        s.status = 'working'; paint('Buying…');
+        let r = null;
+        try {
+          r = await ctx.exec.takeAsk(f.ask.raw, f.ask.kind, f.amount, {
+            onClaimed: () => { s.status = 'waiting'; s.note = 'waiting for the seller to confirm'; paint('Buying…'); },
+          });
+        } catch (e) {
+          if (isRerouteable(e)) { s.status = 'failed'; s.note = 'taken by someone else'; stale.push(s); }
+          else { s.status = 'failed'; s.note = ctx.friendlyError(e); err = e; }
+        }
+        if (r) {
+          s.status = 'done'; s.note = s.rerouted ? 're-routed' : ''; s.txid = r.reveal_txid || r.commit_txid || r.txid;
+          spent += f.sats; got += f.amount;
+          try { await ctx.after.bought({ amount: f.amount, result: r, ids: f.ask.whole ? [f.ask.id] : [] }); } catch {}
+        }
+        paint('Buying…');
+        if (err) break;
+      }
+      if (err || stop || !stale.length) break;
+      if (++reroutes > MAX_REROUTES) break;
+      // Re-plan what's left against a fresh book, inside the confirmed bounds.
+      await refresh({ force: true });
+      const left = order.spendSats != null
+        ? { spendSats: Math.min(order.spendSats, bounds.maxSats) - spent }
+        : { receiveBase: order.receiveBase - got };
+      if ((left.spendSats != null && left.spendSats < DUST) || (left.receiveBase != null && left.receiveBase <= 0n)) break;
+      const np = planBuy(S.book, { ...left, maxUnit: bounds.maxUnit, includeIntents: S.includeMaker, excludeIds: tried });
+      const ok = np.fills.length && withinBounds(np, { maxSats: bounds.maxSats - spent, maxUnit: bounds.maxUnit });
+      if (!ok) { steps.push({ status: 'skipped', label: 'No other offers within your price limit — stopped here' }); break; }
+      np.fills.forEach((f) => { const s = stepFor(f); s.note = 're-routed'; s.rerouted = true; queue.push(s); });
+    }
+    const title = got > 0n ? `Bought ${fmtAmount(got, dec, 6)} ${T}` : 'Nothing bought';
+    const summary = got > 0n
+      ? `<p class="bm-q">Paid ${fmtSats(spent)} sats${got > 0n ? ` · average ${fmtUnit((spent * Math.pow(10, dec)) / Number(got))} sats/${T}` : ''}. It shows in your wallet now and confirms with the next Bitcoin block.</p>`
+      : `<p class="bm-q">${err ? esc(ctx.friendlyError(err)) : 'The offers were taken before you — nothing was spent.'}</p>`;
+    const leftover = order.spendSats != null ? order.spendSats - spent : 0;
+    md.set(`<h2>${title}</h2>${summary}${stepsHtml(steps)}`);
+    const btns = [{ label: 'Done', primary: true, onClick: () => md.close() }];
+    if (leftover >= 5000 && !err) btns.unshift({ label: `Bid with the other ${fmtSats(leftover)} sats`, onClick: () => { md.close(); prime({ side: 'buy', type: 'limit', totalSats: leftover }); } });
+    md.buttons(btns);
+    if (err) ctx.onError?.(err);
+    endBusy();
+  }
+
+  // Sell: offer tokens to each bid (the bidder's wallet or watchtower settles), then
+  // follow each offer until it settles.
+  async function runSell(md, plan0, bounds) {
+    try { await ctx.unlock(); } catch (e) { md.close(); ctx.toast?.(ctx.friendlyError(e), 'error'); return; }
+    if (!beginBusy(md)) return;
+    md.lockEscape();
+    ctx.exec.ensureAutoConfirm?.();
+    const steps = plan0.fills.map((f) => ({ status: 'queued', label: sellLabel(f), fill: f }));
+    let stop = false; let err = null; let offered = 0n; let reroutes = 0;
+    const tried = new Set();
+    const paint = (t) => md.set(`<h2>${t}</h2>${stepsHtml(steps)}`);
+    md.buttons([{ label: 'Stop after this step', onClick: () => { stop = true; md.foot.querySelector('button').disabled = true; } }]);
+    let queue = steps.slice();
+    const runIds = new Set();
+    while (queue.length && !stop) {
+      const stale = [];
+      for (const s of queue) {
+        if (stop) { s.status = 'skipped'; continue; }
+        const f = s.fill;
+        tried.add(f.bid.id);
+        s.status = 'working'; paint('Selling…');
+        let r = null;
+        try {
+          r = await ctx.exec.sellToBid(f.bid.raw, f.bid.kind === 'bid-var' ? f.amount : null);
+        } catch (e) {
+          if (isRerouteable(e)) { s.status = 'failed'; s.note = 'bid filled by someone else'; stale.push(s); }
+          else { s.status = 'failed'; s.note = ctx.friendlyError(e); err = e; }
+        }
+        if (r) {
+          s.status = 'done'; s.note = 'offered — waiting for the buyer'; s.txid = r.commit_txid;
+          offered += f.amount;
+          const iid = r.offer?.intent_id;
+          if (iid) {
+            runIds.add(iid);
+            S.sells.set(iid, { state: 'posted', amount: f.amount.toString(), sats: f.sats, unit: f.unit, bidId: f.bid.raw.bid_id, at: nowSec(), raw: { asset_utxo: r.offer?.asset_utxo || null, maker_address: r.offer?.maker_address || null, price_sats: f.sats } });
+            saveSells();
+          }
+          try { await ctx.after.sold({ amount: f.amount, result: r, ids: f.bid.kind === 'bid' ? [f.bid.id] : [] }); } catch {}
+        }
+        paint('Selling…');
+        if (err) break;
+      }
+      queue = [];
+      if (err || stop || !stale.length || ++reroutes > MAX_REROUTES) break;
+      await refresh({ force: true });
+      const left = bounds.maxBase - offered;
+      if (left <= 0n) break;
+      const np = planSell(S.book, { sellBase: left, minUnit: bounds.minUnit, includeManual: S.includeManual, excludeIds: tried });
+      if (!np.fills.length || !withinBounds(np, { maxBase: left, minUnit: bounds.minUnit })) { steps.push({ status: 'skipped', label: 'No other bids within your price limit — stopped here' }); break; }
+      np.fills.forEach((f) => { const s = { status: 'queued', label: sellLabel(f), fill: f, note: 're-routed' }; steps.push(s); queue.push(s); });
+    }
+    endBusy();
+    if (offered === 0n) {
+      md.set(`<h2>Nothing sold</h2><p class="bm-q">${err ? esc(ctx.friendlyError(err)) : 'The bids were filled before you — nothing was spent.'}</p>${stepsHtml(steps)}`);
+      md.buttons([{ label: 'Done', primary: true, onClick: () => md.close() }]);
+      if (err) ctx.onError?.(err);
+      return;
+    }
+    // Follow the offers live inside the dialog; closing it keeps tracking in Your orders.
+    const paintTrack = () => {
+      const mineNow = [...runIds].map((id) => S.sells.get(id)).filter(Boolean);
+      const settled = mineNow.filter((x) => x.state === 'settled');
+      const allSold = mineNow.length > 0 && settled.length === mineNow.length;
+      md.set(`<h2>${allSold ? `Sold ${fmtAmount(offered, dec, 6)} ${T}` : 'Waiting for buyers to settle'}</h2>
+        <p class="bm-q">${allSold ? 'Paid in full.' : 'Keep this tab open. Your wallet confirms each buyer\'s claim, then the buyer\'s payment settles it on Bitcoin. Closing this dialog is fine — progress stays under Your orders.'}</p>
+        <ol class="bm-steps">${mineNow.map((x) => `<li class="${x.state === 'settled' ? 'done' : x.state === 'closed' || x.state === 'gone' ? 'failed' : 'waiting'}"><span class="st">${x.state === 'settled' ? '✓' : x.state === 'closed' || x.state === 'gone' ? '✕' : '◔'}</span><span class="lb">${fmtAmount(BigInt(x.amount), dec, 4)} ${T} for ${fmtSats(x.sats)} sats<em>${sellStatusText(x)}</em></span></li>`).join('')}</ol>`);
+    };
+    paintTrack();
+    S.onSellsChanged = () => { if (document.body.contains(md.body)) paintTrack(); };
+    md.buttons([{ label: 'Close', primary: true, onClick: () => { S.onSellsChanged = null; md.close(); } }]);
+    if (err) ctx.onError?.(err);
+    const pump = async () => { for (let i = 0; i < 40 && document.body.contains(md.body); i++) { await trackSells(); await sleep(SELL_TRACK_MS); } };
+    pump();
+  }
+
+  async function runLimitBuy(md, { order, now, bidBase, bidSats, watchtower }) {
+    try { await ctx.unlock(); } catch (e) { md.close(); ctx.toast?.(ctx.friendlyError(e), 'error'); return; }
+    if (!beginBusy(md)) return;
+    md.lockEscape();
+    const steps = [];
+    if (now) now.fills.forEach((f) => steps.push({ status: 'queued', label: fillLabel(f), fill: f }));
+    const bidStep = bidBase > 0n ? { status: 'queued', label: `Bid ${fmtAmount(bidBase, dec, 4)} ${T} at ${fmtUnit(order.unit)}` } : null;
+    const wtStep = watchtower ? { status: 'queued', label: 'Hand the bid to the watchtower' } : null;
+    if (bidStep) steps.push(bidStep);
+    if (wtStep) steps.push(wtStep);
+    const paint = (t) => md.set(`<h2>${t}</h2>${stepsHtml(steps)}`);
+    md.buttons([]);
+    let spent = 0; let got = 0n; let err = null;
+    for (const s of steps.filter((x) => x.fill)) {
+      s.status = 'working'; paint('Placing your order…');
+      try {
+        const r = await ctx.exec.takeAsk(s.fill.ask.raw, s.fill.ask.kind, s.fill.amount, { onClaimed: () => { s.status = 'waiting'; s.note = 'waiting for the seller to confirm'; paint('Placing your order…'); } });
+        s.status = 'done'; s.note = ''; s.txid = r?.reveal_txid || r?.commit_txid || r?.txid; spent += s.fill.sats; got += s.fill.amount;
+        try { await ctx.after.bought({ amount: s.fill.amount, result: r, ids: s.fill.ask.whole ? [s.fill.ask.id] : [] }); } catch {}
+      } catch (e) {
+        if (isRerouteable(e)) { s.status = 'failed'; s.note = 'taken by someone else — your bid covers it'; }
+        else { s.status = 'failed'; s.note = ctx.friendlyError(e); err = e; break; }
+      }
+    }
+    // The bid covers whatever didn't fill now, at the same price.
+    let bidId = null;
+    if (!err && bidStep) {
+      const restSats = order.totalSats - spent;
+      let base = restSats >= DUST ? amountForSats(restSats, order.unit, dec) : 0n;
+      if (base > order.base - got) base = order.base > got ? order.base - got : 0n;
+      const sats = satsForAmount(base, order.unit, dec);
+      if (base > 0n && sats >= DUST) {
+        bidStep.label = `Bid ${fmtAmount(base, dec, 4)} ${T} at ${fmtUnit(order.unit)}`;
+        bidStep.status = 'working'; paint('Placing your order…');
+        try {
+          const r = await ctx.exec.placeBid({ amountBase: base, priceSats: sats, expirySec: S.expirySec });
+          bidId = r?.bid_id || null;
+          bidStep.status = 'done';
+          if (wtStep && bidId) {
+            wtStep.status = 'working'; paint('Placing your order…');
+            try {
+              await ctx.exec.registerWatchtower({ bidId, amountBase: base, priceSats: sats, expirySec: S.expirySec, expiry: r.expiry });
+              wtStep.status = 'done';
+            } catch (e) { wtStep.status = 'failed'; wtStep.note = `${ctx.friendlyError(e)} — your bid is live; fills complete while this page is open`; }
+          }
+        } catch (e) { bidStep.status = 'failed'; bidStep.note = ctx.friendlyError(e); err = e; if (wtStep) wtStep.status = 'skipped'; }
+      } else { bidStep.status = 'skipped'; bidStep.note = 'everything filled'; if (wtStep) wtStep.status = 'skipped'; }
+    }
+    paint(err ? 'Order not completed' : bidId ? 'Your bid is live' : 'Done');
+    md.buttons([{ label: 'Done', primary: true, onClick: () => md.close() }]);
+    if (err) ctx.onError?.(err);
+    endBusy();
+  }
+
+  async function runList(md, { order, shape }) {
+    try { await ctx.unlock(); } catch (e) { md.close(); ctx.toast?.(ctx.friendlyError(e), 'error'); return; }
+    if (!beginBusy(md)) return;
+    md.lockEscape();
+    const step = { status: 'working', label: shape.k >= 2 ? `Split into ${shape.k} pieces and list them` : 'List for sale' };
+    md.set(`<h2>Listing…</h2>${stepsHtml([step])}`);
+    md.buttons([]);
+    let err = null;
+    try {
+      const r = await ctx.exec.listForSale({ amountBase: shape.listedBase, shape, unit: order.unit, expirySec: S.expirySec, onStage: (t) => { step.note = t; md.set(`<h2>Listing…</h2>${stepsHtml([step])}`); } });
+      step.status = 'done'; step.note = ''; step.txid = r?.txid || null;
+      await ctx.after.listed?.({ amount: shape.listedBase, result: r });
+    } catch (e) { step.status = 'failed'; step.note = ctx.friendlyError(e); err = e; }
+    md.set(`<h2>${err ? 'Listing not completed' : 'Listed'}</h2>${stepsHtml([step])}${err ? '' : '<p class="bm-q muted">It shows in the book within a few seconds. Cancel from Your orders.</p>'}`);
+    md.buttons([{ label: 'Done', primary: true, onClick: () => md.close() }]);
+    if (err) ctx.onError?.(err);
+    endBusy();
+  }
+
+  async function cancelOrder(id) {
+    const r = S.myRows?.get(id);
+    if (!r) return;
+    const what = `${r.side === 'buy' ? 'bid for' : r.kind === 'sale' ? 'offer of' : 'listing of'} ${fmtAmount(r.amount, dec, 4)} ${asset0.ticker} at ${fmtUnit(r.unit)}`;
+    const onchain = r.kind === 'preauth';
+    const ok = await ctx.confirm({
+      title: `Cancel ${r.side === 'buy' ? 'bid' : 'listing'}?`,
+      body: onchain
+        ? `Cancels your ${what}. This spends the listed coins back to your own wallet so the listing can never be filled — one network fee (about 800 sats).`
+        : `Cancels your ${what}.${r.raw?.watchtower ? ' The watchtower stops too, and whatever is left in the bid wallet comes back to you.' : ''}`,
+      confirmLabel: 'Cancel order', cancelLabel: 'Keep it',
+    });
+    if (!ok) return;
+    try {
+      await ctx.unlock();
+      if (r.kind === 'preauth') await ctx.exec.cancelListing(r.raw);
+      else if (r.kind === 'intent' || r.kind === 'intent-var') await ctx.exec.cancelOffer(r.raw);
+      else if (r.kind === 'sale') {
+        await ctx.exec.cancelOffer(r.raw);
+        const sale = S.sells.get(r.raw.intent_id);
+        if (sale) { sale.state = 'closed'; sale.doneAt = nowSec(); saveSells(); }
+      } else await ctx.exec.cancelBid(r.raw);
+      ctx.toast?.('Order cancelled', 'success');
+    } catch (e) { ctx.toast?.(`Cancel failed: ${ctx.friendlyError(e)}`, 'error', 9000); ctx.onError?.(e); }
+    refresh({ force: true });
+  }
+
+  // Load a book row into the ticket: an ask → buy it, a bid → sell into it.
+  function primeFromRow(side, key) {
+    const lv = S.ladder?.[side]?.get(key);
+    if (!lv) return;
+    if (lv.flag === 'mine') { el.orders.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return; }
+    if (side === 'ask') {
+      // Everything up to and including this level, at this level's price.
+      const upTo = S.book.asks.filter((a) => !a.mine && a.unit <= lv.unit * (1 + 1e-9));
+      const need = upTo.reduce((t, a) => t + a.amount, 0n);
+      const best = eligibleAsks()[0]?.unit || lv.unit;
+      if (!lv.rows[0].instant) S.includeMaker = true;
+      S.slip = SLIPPAGE_CHOICES.find((p) => best * (1 + p / 100) >= lv.unit) ?? SLIPPAGE_CHOICES[SLIPPAGE_CHOICES.length - 1];
+      prime({ side: 'buy', type: 'market', receiveBase: need });
+    } else {
+      const upTo = S.book.bids.filter((b) => !b.mine && b.unit >= lv.unit * (1 - 1e-9));
+      const need = upTo.reduce((t, b) => t + b.amount, 0n);
+      const m = me();
+      const give = m?.assetBase != null && m.assetBase > 0n && m.assetBase < need ? m.assetBase : need;
+      if (lv.flag === 'manual') S.includeManual = true;
+      const best = eligibleBids()[0]?.unit || lv.unit;
+      S.slip = SLIPPAGE_CHOICES.find((p) => best * (1 - p / 100) <= lv.unit) ?? SLIPPAGE_CHOICES[SLIPPAGE_CHOICES.length - 1];
+      prime({ side: 'sell', type: 'market', sellBase: give });
+    }
+  }
+
+  // Set the ticket from outside (book rows, Holdings "sell", the post-buy "bid the rest").
+  function prime({ side, type, spendSats, receiveBase, sellBase, totalSats, unit } = {}) {
+    if (side) S.side = side;
+    if (type) S.type = type;
+    if (S.lane !== 'btc') setLane('btc');
+    if (S.type === 'market' && S.side === 'buy') {
+      if (receiveBase != null) { S.buyIn = 'token'; el.amount.value = fmtAmount(receiveBase, dec).replace(/,/g, ''); }
+      else if (spendSats != null) { S.buyIn = 'sats'; el.amount.value = String(spendSats); }
+    } else if (S.type === 'market') {
+      if (sellBase != null) el.amount.value = fmtAmount(sellBase, dec).replace(/,/g, '');
+    } else {
+      const u = unit || (S.side === 'buy' ? S.book?.bestBid || ctx.asset().markUnit : S.book?.bestAsk || ctx.asset().markUnit);
+      if (u) el.price2.value = plainUnit(u);
+      if (totalSats != null && u) el.amount.value = fmtAmount(amountForSats(totalSats, u, dec), dec).replace(/,/g, '');
+      else if (sellBase != null) el.amount.value = fmtAmount(sellBase, dec).replace(/,/g, '');
+    }
+    savePref();
+    paintTicketFrame();
+    paintAll();
+    el.ticket.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    el.amount.focus({ preventScroll: true });
+  }
+
+  function setLane(lane) {
+    S.lane = lane;
+    $$('[data-act=lane]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.v === lane)));
+    if (el.laneBtc) el.laneBtc.hidden = lane !== 'btc';
+    if (el.laneEth) el.laneEth.hidden = lane !== 'eth';
+    if (lane === 'eth' && ctx.mountEth && el.ethHost) ctx.mountEth(el.ethHost);
+    ctx.onLane?.(lane);
+    if (lane === 'btc') refresh({ force: true });
+  }
+
+  // ── events ────────────────────────────────────────────────────────────────
+  host.addEventListener('click', (e) => {
+    if (S.destroyed) return;
+    const t = e.target.closest('[data-act]');
+    if (!t || !host.contains(t)) return;
+    const act = t.dataset.act;
+    if (act === 'back') { e.preventDefault(); ctx.goBack(); return; }
+    if (act === 'refresh') { refresh({ force: true }); return; }
+    if (act === 'lane') { setLane(t.dataset.v); return; }
+    if (act === 'side') { if (S.side !== t.dataset.v) { S.side = t.dataset.v; el.amount.value = ''; savePref(); paintTicketFrame(); paintAll(); } return; }
+    if (act === 'type') { S.type = t.dataset.v; savePref(); if (S.type === 'limit' && !el.price2.value) prime({ type: 'limit' }); paintTicketFrame(); paintAll(); return; }
+    if (act === 'to-limit') { S.type = 'limit'; prime({ type: 'limit' }); return; }
+    if (act === 'to-market') { S.type = 'market'; prime({ type: 'market', sellBase: parseAmount(el.amount.value, dec) || undefined }); return; }
+    if (act === 'unit') {
+      if (S.side !== 'buy' || S.type !== 'market') return;
+      const q = S.quote;
+      if (S.buyIn === 'sats') { S.buyIn = 'token'; el.amount.value = q?.plan?.amount > 0n ? fmtAmount(q.plan.amount, dec).replace(/,/g, '') : ''; }
+      else { S.buyIn = 'sats'; el.amount.value = q?.plan?.sats > 0 ? String(q.plan.sats) : ''; }
+      savePref(); paintTicketFrame(); paintAll(); return;
+    }
+    if (act === 'chip') { el.amount.value = t.dataset.v; paintQuote(); return; }
+    if (act === 'pchip') { el.price2.value = plainUnit(Number(t.dataset.v)); paintQuote(); return; }
+    if (act === 'go') { review(); return; }
+    if (act === 'unlock') { ctx.unlock().then(() => refresh({ soft: true })).catch(() => {}); return; }
+    if (act === 'fund') { ctx.fundSats(); return; }
+    if (act === 'row') { primeFromRow(t.dataset.side, t.dataset.key); return; }
+    if (act === 'more-asks') { S.showAllAsks = !S.showAllAsks; paintBook(); return; }
+    if (act === 'more-bids') { S.showAllBids = !S.showAllBids; paintBook(); return; }
+    if (act === 'cancel') { cancelOrder(t.dataset.id); return; }
+    if (act === 'tf') { LS.set('tacit-btc-market-tf', t.dataset.v); paintChart(); return; }
+    ctx.onAct?.(act, t);
+  }, sig);
+  host.addEventListener('change', (e) => {
+    const t = e.target.closest('[data-act]');
+    if (!t) return;
+    if (t.dataset.act === 'slip') { S.slip = Number(t.value); savePref(); paintQuote(); }
+    if (t.dataset.act === 'inc-maker') { S.includeMaker = t.checked; savePref(); paintQuote(); }
+    if (t.dataset.act === 'inc-manual') { S.includeManual = t.checked; savePref(); paintQuote(); }
+    if (t.dataset.act === 'expiry') { S.expirySec = Number(t.value); savePref(); }
+    if (t.dataset.act === 'wt') { S.watchtower = t.checked; savePref(); paintQuote(); }
+  }, sig);
+  let debounce = null;
+  const onInput = () => { clearTimeout(debounce); debounce = setTimeout(paintQuote, 60); };
+  el.amount.addEventListener('input', onInput, sig);
+  el.price2.addEventListener('input', onInput, sig);
+  el.amount.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !el.go.disabled) review(); }, sig);
+  el.price2.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !el.go.disabled) review(); }, sig);
+  el.chartWrap.addEventListener('toggle', () => { LS.set('tacit-btc-market-chart-open', el.chartWrap.open); paintChart(); }, sig);
+
+  function destroy() {
+    S.destroyed = true;
+    clearTimeout(S.timer);
+    clearInterval(liveTick);
+    clearTimeout(debounce);
+    ac.abort();
+  }
+
+  // first paint
+  paintTicketFrame();
+  if (ctx.mountEth) setLane(S.lane); else S.lane = 'btc';
+  rebuildBook();
+  paintAll();
+  paintChart();
+  refresh({ force: false }).then(() => { if (!S.stats) refresh({ force: true }); });
+  schedule();
+
+  return {
+    aid,
+    refresh,
+    prime,
+    destroy,
+    get state() { return S; },
+  };
+}

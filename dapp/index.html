@@ -107,7 +107,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=9a08fa34">
+<link rel="modulepreload" href="./tacit.js?cb=81843ac1">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -8514,6 +8514,189 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   color: var(--ink); font-weight: 700; border-bottom-color: var(--orange);
 }
 
+/* ── Market page (btc-market.js) ────────────────────────────────────────────
+   One asset: header, live order book beside the trade ticket, your orders,
+   recent trades. Two columns from 820px, stacked below. Live updates only
+   recolour the number that changed — no panel flashes. */
+body[data-market-mode="asset"] #market-list > [data-btc-market] { padding: 0; }
+body[data-market-mode="asset"] .market-intro-note { display: none; }
+.bm [hidden] { display: none !important; }
+.bm { --buy: var(--green); --sell: var(--red); --bm-line: var(--hairline); font-size: 12px; color: var(--ink); }
+.bm em { font-style: normal; color: var(--ink-mid); }
+.bm button { font: inherit; }
+.bm-loading { padding: 28px 16px; color: var(--ink-mid); font-size: 12px; }
+.bm-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 16px 6px; font-size: 11px; }
+.bm-back { color: var(--ink-mid); text-decoration: none; }
+.bm-back:hover { color: var(--ink); }
+.bm-live { color: var(--ink-mid); display: inline-flex; align-items: center; gap: 6px; }
+.bm-live::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--ink-faint); }
+.bm-live.ok::before { background: var(--green); }
+.bm-live.bad { color: var(--red); }
+.bm-live.bad::before { background: var(--red); }
+.bm-live button { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; }
+
+.bm-head { margin: 0 16px; border: 1px solid var(--ink); background: var(--bg-card, var(--bg)); padding: 14px 16px 12px; }
+.bm-id { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.bm-avatar { width: 44px; height: 44px; flex: 0 0 44px; border-radius: 50%; }
+.bm-avatar--initial { display: grid; place-items: center; border: 1px solid var(--ink); font-family: var(--serif); font-size: 24px; }
+.bm-names { min-width: 0; }
+.bm-nameline { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.bm-fullname { font-weight: 700; font-size: 15px; }
+.bm-ticker { font-size: 13px; color: var(--ink-mid); letter-spacing: 0.04em; }
+.bm-fullname + .bm-ticker { font-size: 12px; }
+.bm-nameline .bm-ticker:first-child { color: var(--ink); font-weight: 700; font-size: 15px; }
+.bm-warnbadge { background: var(--red); color: #fff; font-size: 10px; padding: 2px 7px; font-weight: 700; cursor: help; }
+.bm-metaline { margin-top: 3px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 11px; }
+.bm-idchip { background: none; border: 1px dashed currentColor; padding: 1px 6px; cursor: pointer; font-size: 11px; }
+.bm-ext { color: var(--ink-mid); }
+.bm-quoteline { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin-top: 12px; }
+.bm-price { font-size: 30px; font-weight: 600; letter-spacing: -0.01em; transition: color 1.2s ease-out; }
+.bm-price-unit { color: var(--ink-mid); font-size: 12px; margin-left: -4px; }
+.bm-usd { color: var(--ink-mid); font-size: 13px; }
+.bm-chg { font-size: 12px; font-weight: 600; }
+.bm-chg.up, .bm-trow .p.up { color: var(--buy); }
+.bm-chg.down, .bm-trow .p.down { color: var(--sell); }
+.bm-flash-up { color: var(--buy) !important; }
+.bm-flash-down { color: var(--sell) !important; }
+.bm-stats { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 8px; color: var(--ink-mid); font-size: 11px; }
+.bm-stats b { color: var(--ink); font-weight: 600; }
+
+.bm-chart { margin: 10px 16px 0; }
+.bm-chart > summary { cursor: pointer; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-mid); padding: 6px 0; }
+.bm-chart-tf { display: flex; gap: 4px; margin: 2px 0 6px; }
+.bm-chart-tf button, .bm-chips button, .bm-pricechips button { background: transparent; border: 1px solid var(--ink-faint); padding: 3px 9px; font-size: 11px; cursor: pointer; color: var(--ink-mid); }
+.bm-chart-tf button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.bm-chart-body { min-height: 120px; }
+
+.bm-lanes { display: inline-flex; margin: 14px 16px 0; border: 1px solid var(--ink); }
+.bm-lanes button { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 0; padding: 7px 14px; cursor: pointer; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-mid); }
+.bm-lanes button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
+.bm-lane { padding: 12px 16px 16px; }
+
+.bm-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 820px) { .bm-grid { grid-template-columns: minmax(300px, 5fr) 6fr; align-items: start; } }
+
+/* ticket */
+.bm-ticket { border: 1px solid var(--ink); background: var(--bg-warm); padding: 12px 14px 14px; }
+.bm-sides { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--ink); }
+.bm-sides button { background: transparent; border: 0; padding: 9px 0; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; color: var(--ink-mid); }
+.bm-sides button[data-v="buy"][aria-selected="true"] { background: var(--buy); color: #fff; }
+.bm-sides button[data-v="sell"][aria-selected="true"] { background: var(--sell); color: #fff; }
+.bm-types { display: flex; gap: 14px; margin: 10px 0 6px; }
+.bm-types button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 2px 0; cursor: pointer; color: var(--ink-mid); font-size: 12px; }
+.bm-types button[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--ink); font-weight: 700; }
+.bm-field { display: block; margin-top: 8px; }
+.bm-label { display: block; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-mid); margin-bottom: 4px; }
+.bm-label em { text-transform: none; letter-spacing: 0; }
+.bm-inputrow { display: flex; border: 1px solid var(--ink); background: var(--bg); }
+.bm-inputrow input { flex: 1; min-width: 0; border: 0 !important; background: transparent; font: inherit; font-size: 20px; padding: 8px 10px; outline: none; }
+.bm-inputrow:focus-within { outline: 2px solid var(--orange); outline-offset: -1px; }
+.bm-unit { background: transparent; border: 0; border-left: 1px solid var(--ink-faint); padding: 0 12px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.bm-unit:hover { background: var(--bg-alt); }
+.bm-chips, .bm-pricechips { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+.bm-chips:empty, .bm-pricechips:empty { display: none; }
+.bm-bal { font-size: 11px; color: var(--ink-mid); margin-top: 6px; }
+.bm-bal b { color: var(--ink); }
+.bm-link { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font-size: inherit; }
+.bm-quote { margin-top: 10px; border-top: 1px solid var(--bm-line); padding-top: 8px; min-height: 22px; }
+.bm-quote:empty { display: none; }
+.bm-qr { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+.bm-qr > span:first-child { color: var(--ink-mid); }
+.bm-qr > span:last-child { text-align: right; }
+.bm-qr.big > span:last-child { font-size: 15px; }
+.bm-qr.muted { color: var(--ink-mid); font-size: 11px; }
+.bm-q { font-size: 11px; line-height: 1.5; margin: 6px 0 0; }
+.bm-q.muted { color: var(--ink-mid); }
+.bm-q.warn { color: var(--red-warn); }
+.bm-q.note { color: var(--amber); }
+.bm-check { display: flex; gap: 8px; align-items: flex-start; font-size: 11px; margin-top: 8px; line-height: 1.45; cursor: pointer; }
+.bm-check input { margin-top: 2px; }
+.bm-opts { margin-top: 10px; font-size: 11px; }
+.bm-opts > summary { cursor: pointer; color: var(--ink-mid); }
+.bm-opt { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 8px; }
+.bm-opt select { font: inherit; font-size: 11px; padding: 3px 6px; }
+.bm-go { display: block; width: 100%; margin-top: 12px; padding: 12px; border: 0; background: var(--ink); color: var(--bg); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
+.bm-ticket[data-side="buy"] .bm-go:not(:disabled) { background: var(--buy); }
+.bm-ticket[data-side="sell"] .bm-go:not(:disabled) { background: var(--sell); }
+.bm-go[data-kind="fund"]:not(:disabled) { background: var(--ink) !important; }
+.bm-go:disabled { opacity: 0.45; cursor: default; }
+.bm-fine { margin: 8px 0 0; font-size: 10px; color: var(--ink-mid); text-align: center; }
+
+/* book */
+.bm-book { border: 1px solid var(--ink); background: var(--bg); }
+.bm-book-head, .bm-row { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 8px; padding: 0 12px; }
+.bm-book-head { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-mid); padding-top: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--bm-line); }
+.bm-book-head > span:not(:first-child), .bm-row > span:not(:first-child) { text-align: right; }
+.bm-row { position: relative; width: 100%; background: transparent; border: 0; text-align: left; padding-top: 4px; padding-bottom: 4px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.bm-row::before { content: ''; position: absolute; right: 0; top: 1px; bottom: 1px; width: var(--w, 0%); opacity: 0.12; pointer-events: none; }
+.bm-row.ask::before { background: var(--sell); }
+.bm-row.bid::before { background: var(--buy); }
+.bm-row:hover, .bm-row:focus-visible { background: var(--bg-alt); outline: none; }
+.bm-row.ask .p { color: var(--sell); font-weight: 600; }
+.bm-row.bid .p { color: var(--buy); font-weight: 600; }
+.bm-cnt { color: var(--ink-faint); font-size: 10px; margin-left: 4px; font-weight: 400; }
+.bm-tag { font-style: normal; font-size: 9px; letter-spacing: 0.04em; border: 1px solid var(--ink-faint); color: var(--ink-mid); padding: 0 4px; margin-left: 5px; vertical-align: 1px; }
+.bm-tag.you { border-color: var(--orange); color: var(--orange); }
+.bm-tag.auto { border-color: var(--green); color: var(--green); }
+.bm-tag.wait { border-style: dashed; }
+.bm-spread { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 7px 12px; border-top: 1px solid var(--bm-line); border-bottom: 1px solid var(--bm-line); background: var(--bg-warm); font-size: 11px; color: var(--ink-mid); }
+.bm-spread b { font-size: 15px; color: var(--ink); }
+.bm-spread:empty { display: none; }
+.bm-more { display: block; width: 100%; background: none; border: 0; padding: 5px; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-mid); cursor: pointer; }
+.bm-more:hover { color: var(--ink); }
+.bm-empty { padding: 14px 12px; color: var(--ink-mid); font-size: 11px; }
+.bm-book-note { padding: 6px 12px 8px; font-size: 10px; color: var(--ink-faint); }
+.bm-book-note:empty { display: none; }
+
+/* orders + trades */
+.bm-orders, .bm-trades { margin-top: 14px; }
+.bm-orders h3, .bm-trades h3 { font: inherit; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 6px; }
+.bm-orders h3 em, .bm-trades h3 em { color: var(--ink-mid); }
+.bm-otable, .bm-ttable { border: 1px solid var(--ink); background: var(--bg); }
+.bm-orow { display: grid; grid-template-columns: 44px 1.3fr 1fr 2fr auto; gap: 8px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--bm-line); }
+.bm-orow:first-child { border-top: 0; }
+.bm-orow .s { font-weight: 700; }
+.bm-orow.buy .s { color: var(--buy); }
+.bm-orow.sell .s { color: var(--sell); }
+.bm-orow button { background: transparent; border: 1px solid var(--ink); padding: 3px 10px; font-size: 11px; cursor: pointer; }
+.bm-orow button:hover { background: var(--ink); color: var(--bg); }
+.bm-trow { display: grid; grid-template-columns: 1fr 1.3fr 1fr 0.8fr; gap: 8px; padding: 4px 12px; border-top: 1px solid var(--bm-line); font-variant-numeric: tabular-nums; }
+.bm-trow:first-child { border-top: 0; }
+.bm-trow > span:not(:first-child) { text-align: right; }
+.bm-trow a { color: inherit; }
+.bm-thead { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-mid); padding-top: 7px; padding-bottom: 5px; }
+@media (max-width: 480px) {
+  .bm-trow { grid-template-columns: 1fr 1.3fr 0.9fr; }
+  .bm-trow > span:nth-child(3) { display: none; }
+}
+@media (max-width: 560px) {
+  .bm-orow { grid-template-columns: 40px 1fr 1fr auto; }
+  .bm-orow > span:nth-child(4) { grid-column: 1 / -1; order: 5; font-size: 10px; }
+  .bm-price { font-size: 26px; }
+  .bm-head { margin: 0 12px; padding: 12px; }
+  .bm-top, .bm-lane { padding-left: 12px; padding-right: 12px; }
+  .bm-chart, .bm-lanes { margin-left: 12px; margin-right: 12px; }
+}
+
+/* review / progress dialog */
+.bm-modal { position: fixed; inset: 0; z-index: 1005; background: rgba(10,10,10,0.45); display: grid; place-items: center; padding: 16px; }
+.bm-card { width: min(460px, 100%); max-height: calc(100vh - 32px); overflow: auto; background: var(--bg); border: 1px solid var(--ink); box-shadow: 6px 6px 0 rgba(10,10,10,0.18); font-size: 12px; }
+.bm-mbody { padding: 16px 18px 6px; }
+.bm-mbody h2 { font-family: var(--serif); font-weight: 400; font-size: 24px; margin: 0 0 10px; line-height: 1.15; }
+.bm-mfoot { display: flex; gap: 8px; justify-content: flex-end; padding: 10px 18px 16px; }
+.bm-mfoot:empty { display: none; }
+.bm-mfoot button { background: transparent; border: 1px solid var(--ink); padding: 9px 14px; cursor: pointer; }
+.bm-mfoot .bm-go { width: auto; margin: 0; background: var(--ink); color: var(--bg); }
+.bm-steps { list-style: none; margin: 10px 0 4px; padding: 0; border-top: 1px solid var(--bm-line); }
+.bm-steps li { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--bm-line); line-height: 1.4; }
+.bm-steps .st { width: 14px; flex: 0 0 14px; text-align: center; }
+.bm-steps .lb em { display: block; font-size: 10px; color: var(--ink-mid); }
+.bm-steps li.done .st { color: var(--green); }
+.bm-steps li.failed .st, .bm-steps li.failed .lb em { color: var(--red); }
+.bm-steps li.working .st, .bm-steps li.waiting .st { color: var(--amber); }
+.bm-steps li.skipped { color: var(--ink-faint); }
+.bm-steps a { color: var(--ink-mid); font-size: 10px; }
+
 /* ── TAC's Ethereum trading lane (evm-trade-tile.js) ─────────────────────
    TAC's asset page carries a second lane alongside its Bitcoin order book —
    the public ETH/TAC market on Ethereum mainnet. `.tac-lane-switch` is a
@@ -11579,7 +11762,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=9a08fa34"></script>
+<script type="module" src="./tacit.js?cb=81843ac1"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for

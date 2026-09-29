@@ -21216,7 +21216,7 @@ async function handleBidIntentList(assetIdHex, env, network, cors) {
   await Promise.all(active.map(async v => {
     const isVar = !!(v.min_fill_amount && v.min_fill_amount !== '0');
     if (isVar) {
-      const partials = await env.REGISTRY_KV.list({ prefix: bidPartialClaimPrefix(network, assetIdHex, v.bid_id), limit: 200 });
+      const partials = await env.REGISTRY_KV.list({ prefix: bidPartialClaimPrefix(network, assetIdHex, v.bid_id), limit: 1000 });
       if (partials.keys.length) {
         const claims = await Promise.all(partials.keys.map(k => env.REGISTRY_KV.get(k.name, 'json')));
         v.partial_claims = claims.filter(c => c && c.expires_at > now);
@@ -21224,10 +21224,24 @@ async function handleBidIntentList(assetIdHex, env, network, cors) {
       // Authoritative remaining: durable settled_amount + live claims, so a
       // settled chunk whose bidpclaim has TTL'd out can't re-open capacity.
       v.remaining_amount = _projectBidRemaining(BigInt(v.amount || '0'), BigInt(v.settled_amount || '0'), v.partial_claims || [], now).toString();
+      // `state` is written at claim time; once those claims lapse the bid is
+      // claimable again, so report the state the projection implies.
+      const openAgain = BigInt(v.remaining_amount) >= BigInt(v.min_fill_amount);
+      if (v.state === 'CLOSED' && openAgain) v.state = (v.partial_claims || []).length ? 'PARTIALLY_RESERVED' : 'OPEN';
+      else if (v.state !== 'CLOSED' && !openAgain) v.state = 'CLOSED';
     } else {
       const claim = await env.REGISTRY_KV.get(bidClaimKey(network, assetIdHex, v.bid_id), 'json');
       if (claim && claim.expires_at > now) v.claim = claim;
     }
+    // Bids a watchtower settles on the buyer's behalf fill without the buyer
+    // online; sellers can tell them apart from bids that wait for the buyer.
+    try {
+      if (/^0[23][0-9a-f]{64}$/.test(String(v.buyer_pubkey || ''))) {
+        const h160 = bytesToHex(hash160(hexToBytes(v.buyer_pubkey)));
+        const wt = await env.REGISTRY_KV.get(watchtowerBidKey(network, h160, v.bid_id), 'json');
+        if (wt && wt.status === 'active' && Number(wt.expiry || 0) > now) v.watchtower = true;
+      }
+    } catch {}
   }));
   active.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   return jsonResponse({ asset_id: assetIdHex, count: active.length, intents: active }, 200, cors);
@@ -21642,12 +21656,18 @@ async function handleBidIntentClaim(assetIdHex, bidIdHex, req, env, network, cor
 
   if (isVariableFill) {
     const minFillBI = BigInt(intent.min_fill_amount);
-    const remainingBI = BigInt(intent.remaining_amount || intent.amount || '0');
+    // Same projection the list endpoint serves: the stored remaining_amount is
+    // a snapshot from the last claim write and stays low after those claims
+    // lapse. The post-write overshoot resolver below still bounds the total.
+    const livePartials = await env.REGISTRY_KV.list({ prefix: bidPartialClaimPrefix(network, assetIdHex, bidIdHex), limit: 1000 });
+    const liveClaims = (await Promise.all(livePartials.keys.map(k => env.REGISTRY_KV.get(k.name, 'json'))))
+      .filter(c => c && c.expires_at > now && c.axintent_id !== axintentIdHex);
+    const remainingBI = _projectBidRemaining(intentAmtBI, BigInt(intent.settled_amount || '0'), liveClaims, now);
     if (fillBI < minFillBI) {
       return jsonResponse({ error: `fill_amount ${fillAmountStr} below bid.min_fill_amount ${intent.min_fill_amount}` }, 400, cors);
     }
     if (fillBI > remainingBI) {
-      return jsonResponse({ error: `fill_amount ${fillAmountStr} exceeds bid.remaining_amount ${intent.remaining_amount || intent.amount}` }, 409, cors);
+      return jsonResponse({ error: `fill_amount ${fillAmountStr} exceeds bid.remaining_amount ${remainingBI}` }, 409, cors);
     }
     // Reject duplicate claims for the same linked axintent. A seller who
     // re-POSTs the same claim hits this; we surface idempotently rather
