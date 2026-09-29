@@ -573,6 +573,35 @@ export const CFG = {
   // Re-enable once the backfill is confirmed to actually complete and save its cursor.
   weinameEnabled: opt('WEINAME_ENABLED', '0') === '1',
 
+  // ── Bitcoin shielded pool shields (src/points-indexer.js's scanBtcPoolCycle) ──
+  // A seventh way to earn: moving TAC into the Bitcoin-native shielded pool (SPEC §3.10, tacit.finance/tac).
+  // Every other category is an EVM event credited to the sender's own address; this one cannot be, because
+  // the pool is Bitcoin-only and its participants are secp256k1 keys and bp1… addresses. Two consequences
+  // shape the design:
+  //
+  //   Scored on the SHIELD, not on holdings. Who owns which leaf is exactly what the pool hides, so
+  //   "how much has this person kept in the pool, and for how long" is not derivable from public data at
+  //   all — only the owner can identify their own notes. Rewarding it would mean asking users to hand over
+  //   their viewing key, i.e. paying them to surrender the privacy they came for. A shield is already
+  //   public and already attributable to the key whose notes it spends, so scoring it leaks nothing new.
+  //
+  //   Amount comes from a disclosed opening. Leaf and boundary values are Pedersen commitments, so the
+  //   size of a shield is not readable from the chain. The claimant supplies (amount, blinding) and the
+  //   service checks it against the on-chain boundary commitment — knowing that opening is itself the
+  //   evidence of having made the shield. Without it there is no honest way to weight by size, and an
+  //   unweighted count would just pay for dust.
+  //
+  // Opt-in and self-directed: nothing is scored until a claim arrives, and the claim names the EVM address
+  // to credit, which need not be the shielding key's own EVM twin. A user who wants the points without
+  // publishing a link between their Bitcoin identity and their main address can point them elsewhere.
+  btcPoolPointsApi: opt('BTC_POOL_POINTS_API', 'https://tacit-btc-pool-mainnet.onrender.com'),
+  // Dormant until set, matching evmPoolPointsStartBlocks: a height, so shields before the campaign opened
+  // are out of scope and enabling it later cannot silently backdate the program.
+  btcPoolPointsStartHeight: opt('BTC_POOL_POINTS_START_HEIGHT', ''),
+  // Points per whole TAC shielded. TAC's pool-side amounts are 8-decimal fixed point.
+  pointsBasePerBtcPoolTac: num('POINTS_BASE_PER_BTC_POOL_TAC', 1),
+  btcPoolPointsAsset: opt('BTC_POOL_POINTS_ASSET', 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b'),
+
   // ── TAC-holder boost (src/lib/tac-holder-boost.js) ──
   // Every activity's points are multiplied by the depositor's TAC tier: "whole TAC:multiplier" pairs, judged
   // on the lowest public TAC balance held over the trailing tacBoostWindowBlocks (7200 ≈ 24h). Empty tiers
