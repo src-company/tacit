@@ -22667,8 +22667,15 @@ function _renderHoldingsBurndepBridges(listEl) {
     const ticker = meta.ticker || 'TAC';
     const amtStr = fmtAssetAmount(BigInt(rec.source.amount), decimals);
     const label = _BURNDEP_STAGE_LABEL[rec.stage] || rec.stage;
-    const watchTxid = rec.burn?.txid || rec.migrate?.revealTxid;
-    const watchLink = watchTxid ? ` · <a href="https://mempool.space/${NET.name === 'signet' ? 'signet/' : ''}tx/${escapeHtml(watchTxid)}" target="_blank" rel="noopener noreferrer">view ↗</a>` : '';
+    // The burn's witness envelope is too large for ordinary relay (dapp/burndep-broadcast.js's own header
+    // comment) — MARA Slipstream takes it straight into a miner's queue, so mempool.space/blockstream.info
+    // have never heard of it until it's actually mined. Linking there during burn-signed/burn-submitted would
+    // show "transaction not found" for however long MARA takes, at exactly the point a user is most likely to
+    // anxiously check on it. Link the migrate instead until the burn is confirmed and indexed.
+    const preMinedBurn = rec.stage === 'burn-signed' || rec.stage === 'burn-submitted';
+    const watchTxid = (!preMinedBurn && rec.burn?.txid) || rec.migrate?.revealTxid;
+    const watchNote = preMinedBurn ? ` · <span title="MARA Slipstream submits straight to a miner — this won't appear on mempool.space until it's mined">not on public explorers yet</span>` : '';
+    const watchLink = watchTxid ? ` · <a href="https://mempool.space/${NET.name === 'signet' ? 'signet/' : ''}tx/${escapeHtml(watchTxid)}" target="_blank" rel="noopener noreferrer">view ↗</a>${watchNote}` : '';
     const needsKey = rec.stage === 'traced' || rec.stage === 'folded';
     const failing = !!rec.lastError;
     const actLabel = rec.stage === 'traced' ? 'Burn' : rec.stage === 'folded' ? 'Mint' : failing ? 'Retry' : 'Refresh';
@@ -22702,7 +22709,16 @@ function _renderHoldingsBurndepBridges(listEl) {
       btn.textContent = '…';
       try {
         if (btn.dataset.burndepAct === 'sign') await ensurePrivkey();
-        await ux.advance(bytesToHex(wallet.pub), id, { walletPriv: wallet.priv });
+        const after = await ux.advance(bytesToHex(wallet.pub), id, { walletPriv: wallet.priv });
+        // The row disappears the instant this hits 'minted' (records filter it out as terminal) — this toast
+        // is the ONLY confirmation the user ever gets that the bridge actually finished, since nothing else
+        // announces it (no activity-log entry either — that one's deliberately move-only, see ACTIVITY_VERBS).
+        if (after.stage === 'minted') {
+          const meta = getAssetMeta(after.source.assetId) || {};
+          const decimals = Number.isInteger(meta.decimals) ? meta.decimals : 8;
+          const amtStr = fmtAssetAmount(BigInt(after.source.amount), decimals);
+          toast(`${amtStr} ${meta.ticker || 'TAC'} minted — now in your private Ethereum balance.`, 'success', 8000);
+        }
         renderHoldings();
       } catch (e) {
         if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = e?.message || String(e); }

@@ -234,6 +234,31 @@ async function main() {
   const bridgeSection = await page.evaluate(() => document.querySelector('.burndep-bridge-holdings')?.textContent.replace(/\s+/g, ' ').slice(0, 200));
   ok(!!bridgeSection && /900/.test(bridgeSection), `persistent section: the new bridge shows in "Bridges to Ethereum" (${bridgeSection})`);
 
+  // A second, injected record at burn-submitted: MARA Slipstream never puts this on public relay, so
+  // mempool.space won't have heard of it until it's mined — the row must not link there and claim otherwise.
+  await page.evaluate(([walletPubHex, network]) => {
+    const key = `tacit-burndep-bridge-v1:${network}:${walletPubHex.toLowerCase()}`;
+    const existing = JSON.parse(localStorage.getItem(key) || '[]');
+    existing.push({
+      id: 'fa'.repeat(31) + 'fb:0', network, walletPub: walletPubHex, stage: 'burn-submitted',
+      source: { assetId: 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b', amount: '50000000000' },
+      migrate: { revealTxid: 'aa'.repeat(32) },
+      burn: { txid: 'bb'.repeat(32) },
+    });
+    localStorage.setItem(key, JSON.stringify(existing));
+  }, [hex(WALLET_PUB), 'signet']);
+  await page.click('.tab[data-tab="wallet"]');
+  await page.click('.tab[data-tab="holdings"]');
+  await sleep(500);
+  const secondRow = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('[data-burndep-row]')];
+    const row = rows.find((r) => r.textContent.includes('500 TAC'));
+    return row ? row.innerHTML : null;
+  });
+  ok(!!secondRow && /not on public explorers yet/.test(secondRow) && new RegExp(`tx/${'aa'.repeat(32)}`).test(secondRow) && !secondRow.includes('bb'.repeat(32)),
+    `pre-mined burn: the row links the confirmed move, not the unmined burn, and says why (${secondRow ? 'found' : 'row missing'})`);
+  await shot('pre-mined-burn');
+
   if (errors.length) { fails++; console.log('FAIL page errors:\n  ' + errors.slice(0, 8).join('\n  ')); }
   console.log(fails ? `${fails} failed` : 'all passed');
   await browser.close();
