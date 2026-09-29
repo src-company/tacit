@@ -59796,6 +59796,28 @@ function parseAssetAmount(input, decimals) {
   return BigInt(whole) * (10n ** BigInt(decimals)) + (padded ? BigInt(padded) : 0n);
 }
 
+// Pre-fills Send Privately as a self-send: same asset, your own pubkey as recipient, the given (display-unit,
+// plain-decimal-string) amount. A self-send of less than the full balance leaves a change output too, so this
+// is the whole mechanism behind "split a note into two" — no separate split primitive exists or is needed.
+// Shared by the "Split into a smaller note" action (any asset) and the bridge note-picker's over-cap shortcut.
+// Mirrors the OTC "deliver-to-taker" pre-fill exactly, just with your own pubkey instead of a counterparty's.
+async function _prefillSelfSend({ aid, amount }) {
+  $('.tab[data-tab="transfer"]').click();
+  try { await refreshAssetSelect(); } catch {}
+  const sel = $('#x-asset');
+  if (sel) { sel.value = aid; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+  const recipEl = $('#x-recipient-pub');
+  if (recipEl) {
+    recipEl.value = wallet.pubHex();
+    recipEl.dispatchEvent(new Event('input', { bubbles: true }));
+    recipEl.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  const amtEl = $('#x-amount');
+  if (amtEl) { amtEl.value = amount; amtEl.dispatchEvent(new Event('input', { bubbles: true })); }
+  toast('Pre-filled Send Privately to your own pubkey — review the amount, then Preview → Confirm to split off a new note.', 'success', 8000);
+  try { recipEl?.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch {}
+}
+
 // ============== HOLDINGS UI ==============
 async function renderHoldings() {
   const list = $('#holdings-list');
@@ -60315,6 +60337,11 @@ async function renderHoldings() {
       const canMarket = WORKER_BASE && h.utxos.length && !h.unknownAsset;
       const primaryButtons = [
         h.balance > 0n && !h.unknownAsset ? `<button class="primary" data-act="send" data-aid="${h.assetIdHex}">Send privately</button>` : '',
+        // A self-send that spends less than the full balance naturally leaves a change output too — one note
+        // becomes two, both still yours. Surfaced as its own action (rather than making users realize Send
+        // Privately-to-self already does this) since the main reason to reach for it is external and specific:
+        // fitting under the Bitcoin bridge's 1,000 TAC cap, or sizing a market listing.
+        h.balance > 0n && !h.unknownAsset ? `<button data-act="split" data-aid="${h.assetIdHex}" title="Carve a smaller note off this balance — useful for the Bitcoin bridge's 1,000 TAC cap or a specific listing size.">Split into a smaller note</button>` : '',
         !h.unknownAsset ? `<button data-act="show-receive" data-aid="${h.assetIdHex}">Receive</button>` : '',
         isMintAuthority ? `<button data-act="mint" data-aid="${h.assetIdHex}">Mint more</button>` : '',
         // Jump straight to this asset's Market view (live listings, bids,
@@ -60619,6 +60646,27 @@ async function renderHoldings() {
           $('#x-asset').value = b.dataset.aid;
           $('.tab[data-tab="transfer"]').click();
           refreshAssetSelect().then(() => $('#x-asset').value = b.dataset.aid);
+        } else if (b.dataset.act === 'split') {
+          const aid = b.dataset.aid;
+          const target = holdings.get(aid);
+          if (!target) return;
+          const balanceStr = fmtAssetAmountPlain(target.balance, target.decimals);
+          openInlineForm(b, {
+            submitLabel: 'Continue to Send',
+            content: `
+              <label>Split off how much ${escapeHtml(target.ticker)} into a new note?</label>
+              <div class="muted" style="font-size:11px;margin:2px 0 6px;">Sends this amount to your own pubkey. The rest comes back to you too, as its own separate note — nothing leaves your balance.</div>
+              <input type="text" inputmode="decimal" data-field="amount" placeholder="e.g. 1000" style="width:100%;">
+              <div class="muted" style="font-size:11px;margin-top:4px;">Balance: ${escapeHtml(balanceStr)} ${escapeHtml(target.ticker)}</div>`,
+            onSubmit: async ({ host, errEl }) => {
+              const raw = host.querySelector('[data-field="amount"]')?.value.trim().replace(/,/g, '');
+              const amt = Number(raw);
+              const balanceNum = Number(balanceStr.replace(/,/g, ''));
+              if (!raw || !Number.isFinite(amt) || amt <= 0) { errEl.textContent = 'enter an amount greater than 0'; return false; }
+              if (amt >= balanceNum) { errEl.textContent = `must be less than your full balance (${balanceStr}) — sending all of it isn't a split`; return false; }
+              await _prefillSelfSend({ aid, amount: raw });
+            },
+          });
         } else if (b.dataset.act === 'open-market-asset') {
           // Switch to the Markets tab AND focus the asset-detail view for
           // this asset. goToMarketAsset writes the #market=<aid> hash so the
@@ -60919,11 +60967,17 @@ async function renderHoldings() {
             content: `
               <label>Choose a note to bridge (beta, capped at 1,000 TAC)</label>
               <div style="display:flex;flex-direction:column;gap:6px;margin:6px 0 4px;max-height:240px;overflow-y:auto;">
-                ${eligible.map((n, i) => `
+                ${eligible.map((n, i) => {
+                  const overCap = !n.eligible && /beta limit/.test(n.reason || '');
+                  const reasonHtml = overCap
+                    ? `over the 1,000 TAC beta limit · <a href="#" data-split-shortcut="${i}" style="text-decoration:underline;">split off 1,000 now →</a>`
+                    : escapeHtml(n.reason || '');
+                  return `
                   <label style="display:flex;align-items:flex-start;gap:8px;padding:4px 0;font-size:12px;${n.eligible ? 'cursor:pointer;' : 'opacity:.55;'}">
                     <input type="radio" name="bridge-note" value="${i}" ${n.eligible ? '' : 'disabled'} style="margin-top:2px;">
-                    <span>${shorten(n.txid, 6)}:${n.vout} · ${escapeHtml(fmtAssetAmount(n.amount, target.decimals))} ${escapeHtml(target.ticker)}${n.eligible ? '' : `<br><span style="color:var(--ink-mid);">${escapeHtml(n.reason)}</span>`}</span>
-                  </label>`).join('')}
+                    <span>${shorten(n.txid, 6)}:${n.vout} · ${escapeHtml(fmtAssetAmount(n.amount, target.decimals))} ${escapeHtml(target.ticker)}${n.eligible ? '' : `<br><span style="color:var(--ink-mid);">${reasonHtml}</span>`}</span>
+                  </label>`;
+                }).join('')}
               </div>
               <div data-bridge-body></div>
               <div class="progress-strip" style="display:none;margin-top:10px;" aria-live="polite">
@@ -60990,6 +61044,20 @@ async function renderHoldings() {
                 throw e;
               }
             },
+          });
+          // "split off 1,000 now →" on an over-cap note: closes this form and pre-fills Send Privately as a
+          // self-send of exactly the cap, rather than making the user read the reason, find Send themselves,
+          // and work out the right amount. The form host is the button's own next sibling (openInlineForm's
+          // own convention), queried fresh since it didn't exist until the call above mounted it.
+          b.nextElementSibling?.querySelectorAll('[data-split-shortcut]').forEach((link) => {
+            link.addEventListener('click', async (e) => {
+              e.preventDefault();
+              const i = Number(link.dataset.splitShortcut);
+              const note = eligible[i];
+              if (!note) return;
+              openInlineForm(b, {}); // re-invoking with no content just closes the existing form (openInlineForm's own toggle-on-same-trigger rule)
+              await _prefillSelfSend({ aid, amount: fmtAssetAmountPlain(ux.BURNDEP_BETA_CAP_RAW, target.decimals) });
+            });
           });
         } else if (b.dataset.act === 'mint') {
           const aid = b.dataset.aid;

@@ -210,6 +210,74 @@ async function main() {
   ok(notes.some((n) => n.disabled && /beta limit/.test(n.label)), `picker: the 2,000 TAC note is disabled with the over-cap reason (${JSON.stringify(notes[1])})`);
   await shot('picker');
 
+  // "split off 1,000 now →" on the over-cap note: closes the picker and pre-fills Send Privately as a
+  // self-send of exactly the beta cap, to your own pubkey.
+  await page.click('[data-split-shortcut="1"]');
+  // Not '.tab.active[data-tab="transfer"]': the primary "Send" nav tab and its "Bitcoin" subtab share that
+  // exact data-tab value, so the selector matches two elements — wait on the actual field instead.
+  await page.waitForSelector('#x-recipient-pub', { state: 'visible', timeout: 10000 });
+  const splitFromPicker = await page.evaluate(() => ({
+    asset: document.getElementById('x-asset')?.value,
+    recipient: (document.getElementById('x-recipient-pub')?.value || '').replace(/^0x/i, '').toLowerCase(),
+    amount: document.getElementById('x-amount')?.value,
+  }));
+  ok(splitFromPicker.amount === '1000' && splitFromPicker.recipient === hex(WALLET_PUB).toLowerCase() && splitFromPicker.asset === TAC_ASSET,
+    `split shortcut: pre-fills Send Privately with the cap amount to your own pubkey (${JSON.stringify(splitFromPicker)})`);
+  await shot('split-shortcut');
+
+  // The general "Split into a smaller note" action on the asset card itself (any asset, any amount). Some
+  // background refresh re-renders the Holdings list on a short cycle, which detaches an already-open inline
+  // form out from under a multi-step fill — open, fill and submit inside one synchronous evaluate instead of
+  // three separate awaited calls, so nothing async can interleave and tear the form down mid-interaction.
+  await page.click('.tab[data-tab="wallet"]');
+  await page.click('.tab[data-tab="holdings"]');
+  await page.waitForSelector('[data-act="split"]', { timeout: 10000 });
+  const splitFormResult = await page.evaluate(() => {
+    // openInlineForm builds its DOM synchronously on click — no await between opening the form and the field
+    // existing, so nothing async gets a chance to re-render Holdings out from under this single JS turn.
+    document.querySelector('[data-act="split"]').click();
+    const field = document.querySelector('.inline-form-host [data-field="amount"]');
+    if (!field) return 'no amount field';
+    field.value = '300';
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    const btn = [...document.querySelectorAll('.inline-form-host button')].find((b) => /continue/i.test(b.textContent));
+    if (!btn) return 'no continue button';
+    btn.click();
+    return 'ok';
+  });
+  if (splitFormResult !== 'ok') throw new Error('split form: ' + splitFormResult);
+  await page.waitForSelector('#x-recipient-pub', { state: 'visible', timeout: 10000 });
+  const splitGeneral = await page.evaluate(() => ({
+    asset: document.getElementById('x-asset')?.value,
+    recipient: (document.getElementById('x-recipient-pub')?.value || '').replace(/^0x/i, '').toLowerCase(),
+    amount: document.getElementById('x-amount')?.value,
+  }));
+  ok(splitGeneral.amount === '300' && splitGeneral.recipient === hex(WALLET_PUB).toLowerCase() && splitGeneral.asset === TAC_ASSET,
+    `split (general): the asset-card action pre-fills Send Privately with a chosen amount to your own pubkey (${JSON.stringify(splitGeneral)})`);
+
+  // Back to Holdings and re-open the bridge form to continue the real flow below with the eligible note.
+  // The Holdings subtab only renders while its parent "Wallet" section is the active primary tab. Something
+  // re-renders #holdings-list at least once shortly after the tab activates (a trailing async holdings/tip
+  // refresh, not a tight loop — a 3s idle sample earlier saw only one mutation) — wait for it to go quiet
+  // before opening the details and clicking, rather than racing it like the earlier multi-step fill did.
+  await page.click('.tab[data-tab="wallet"]');
+  await page.click('.tab[data-tab="holdings"]');
+  await page.evaluate(() => new Promise((resolve) => {
+    const el = document.getElementById('holdings-list');
+    let t = setTimeout(resolve, 600);
+    new MutationObserver(() => { clearTimeout(t); t = setTimeout(resolve, 600); }).observe(el, { childList: true, subtree: true });
+    setTimeout(resolve, 4000); // hard cap regardless
+  }));
+  const reopened = await page.evaluate(() => {
+    const btn = document.querySelector('[data-act="bridge-eth"]');
+    if (!btn) return 'no bridge-eth button';
+    const d = btn.closest('details'); if (d) d.open = true;
+    btn.click();
+    return 'ok';
+  });
+  if (reopened !== 'ok') throw new Error('re-open bridge form: ' + reopened);
+  await page.waitForSelector('input[name="bridge-note"]', { timeout: 10000 });
+
   await page.check('input[name="bridge-note"][value="0"]');
   await page.click('.inline-form-host button.primary, .inline-form-host [data-submit], .inline-form-host button[type="submit"]').catch(() => {});
   // openInlineForm's own submit button — find it generically since its exact class isn't yet confirmed.
