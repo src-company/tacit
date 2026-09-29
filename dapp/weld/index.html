@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-sX6Bh8cfbd9YCvrfgnNOjQLgx24ph3D+fyR+SkqAMd8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ZjhV7aYJNQg554ak2ZRceoki5y1aOEVTOe7tgd+JDfg=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -2547,7 +2547,7 @@ async function loadPoints(force = false) {
 load.pts = () => loadPoints();
 function paintPointsFoot() {
   const rows = PTS.key && PTS.key === pointsWho().map(([a]) => a).join() ? PTS.rows : null;
-  if (!rows) { setFoot('pts', '100,000 TAC over 90 days'); return; }
+  if (!rows || !rows.some((r) => r.read)) { setFoot('pts', '100,000 TAC over 90 days'); return; }
   const pts = rows.reduce((s, r) => s + r.points, 0), owed = rows.reduce((s, r) => s + r.owed, 0n);
   setFoot('pts', owed > 0n ? `${fmt(owed, 18, 2)} TAC to claim` : `${ptsFmt(pts)} points`, owed > 0n ? 'live' : pts ? 'on' : '');
 }
@@ -2742,6 +2742,7 @@ async function loadFarms() {
   if (x && (x.staked > 0n || x.earned > 0n)) setFoot('farm', `Farming · ${fmt(x.earned, 18, 2)} TAC earned`, 'on');
   else if (mine) setFoot('farm', `${mine} shielded position${mine === 1 ? '' : 's'} earning`, 'on');
   else if (total) setFoot('farm', `${total.toLocaleString('en-US')} TAC a day across ${1 + (prog?.pools?.length || 0)} farms`, 'live');
+  else if (!x && !prog) setFoot('farm', 'Reading farms…');            // both reads failed; a real "between periods" claim needs at least one to answer
   else setFoot('farm', 'Farms are between reward periods');
 }
 load.farm = () => loadFarms();
@@ -2835,7 +2836,11 @@ function renderFarmNotes(el) {
       if (bal > 0n) { const h = await sendTx({ to: WTAC, data: SEL.wtacWithdraw + word(bal) + addrWord(to) }); say(status, html`Turning wTAC into TAC… ${txLink(h)}`); await waitTx(h); }
       toast('Rewards turned into TAC');
       await done(`Your rewards are TAC in ${your()}.`);
-    } catch (e) { sayErr(status, e); }
+    } catch (e) {
+      sayErr(status, e);
+      // A note may have redeemed before the failure; resync so a retry does not repeat it against an already-spent note.
+      await Promise.allSettled([scanPrivate(true), loadFarms()]); rerender('farm');
+    }
   });
   $$('[data-lprm]', el).forEach((b) => b.onclick = () => busy(b, async () => {
     const x = lps.find((l) => String(l.p.pid) === b.dataset.lprm), r = x.p.reserves || {};
@@ -2847,7 +2852,11 @@ function renderFarmNotes(el) {
       }
       toast('Liquidity taken out');
       await done('Taken out: both assets are private notes again.');
-    } catch (e) { sayErr(status, /not covered by this withdrawal/.test(e?.message || '') ? new Error('This liquidity is worth less than the relay fee to take it out.') : e); }
+    } catch (e) {
+      sayErr(status, /not covered by this withdrawal/.test(e?.message || '') ? new Error('This liquidity is worth less than the relay fee to take it out.') : e);
+      // A note may have come out before the failure; resync so a retry does not repeat it against an already-spent note.
+      await Promise.allSettled([scanPrivate(true), loadFarms()]); rerender('farm');
+    }
   }));
 }
 
