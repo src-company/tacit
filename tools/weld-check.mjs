@@ -42,7 +42,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,mainbond,locks,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,mainbond,locks,repay,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -531,6 +531,32 @@ await step('locks', async () => {
     await until(r.page, () => /0\.0003\d* BTC in your own output/.test((document.querySelector('#borrow-body')?.textContent || '').replace(/\s+/g, ' ')), null, 60000).catch(() => {});
     ok(/0\.0003\d* BTC in your own output/.test(await body()), 'locks: Show opens the other lock');
     if (r.errors.length) { fails++; console.log('FAIL locks page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { await r.browser.close(); }
+});
+
+// A loan taken against a lock is repaid from weld itself: the step shows what repaying burns and offers Repay and close,
+// which says so plainly when the loan is not on chain yet (here: a record of a loan the fork has never seen).
+await step('repay', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  const hex = 'be11'.padEnd(64, '7'), pub = Buffer.from(secp.getPublicKey(hex, true)).toString('hex');
+  try {
+    await r.page.goto(r.url + '#wallet');
+    await r.page.click('#wallet-body [data-in="paste"]');
+    await r.page.fill('#ws-hex', hex);
+    await r.page.click('#wallet-body [data-in="key"]');
+    await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+    await r.page.evaluate((p) => localStorage.setItem(`tacit-lite-cbtc-v1:${p}`, JSON.stringify({ lockTxid: 'ab'.repeat(32), lockVout: 1, vBtc: '20000',
+      anchor: { txid: 'cd'.repeat(32), vout: 0 }, at: Date.now(), minted: true, borrowed: '800000000', borrowedAt: Date.now() })), pub);
+    await r.page.evaluate(() => { location.hash = ''; location.hash = '#borrow'; });
+    await r.page.waitForSelector('#bw-repay', { timeout: 240000 }).catch(async (e) => {
+      throw new Error(`${e.message.split('\n')[0]} | sheet: ${(await r.page.evaluate(() => (document.querySelector('#borrow-body')?.textContent || '').replace(/\s+/g, ' ').slice(0, 260)))} | errors: ${r.errors.slice(0, 2).join(' | ')}`);
+    });
+    const note = await r.page.evaluate(() => (document.querySelector('#borrow-body')?.textContent || '').replace(/\s+/g, ' '));
+    ok(/Repaying burns 8(\.00)? cUSD you hold privately and returns the cBTC/.test(note), `repay: the loan step says what repaying burns (${(note.match(/Repaying burns[^.]*\./) || [''])[0]})`);
+    await r.page.click('#bw-repay');
+    await until(r.page, () => /not visible on chain yet|not on chain yet/.test(document.querySelector('#bw-status')?.textContent || ''), null, 60000).catch(() => {});
+    ok(/not visible on chain yet|not on chain yet/.test(await text(r.page, '#bw-status')), `repay: before the loan is on chain it says so (${await text(r.page, '#bw-status')})`);
+    if (r.errors.length) { fails++; console.log('FAIL repay page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   } finally { await r.browser.close(); }
 });
 
