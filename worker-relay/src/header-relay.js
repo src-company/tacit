@@ -115,9 +115,10 @@ async function resumeHeight(rtip, btip) {
 // wherever this one stops. Returns the transaction and the height it advanced to.
 //
 // The wallet also pays for users' settles and the reflection's attests, so headers never spend into what those
-// need: a couple of settles and an attest at today's fee cap stay behind (RESERVE_GAS).
+// need: one settle and one attest, each at the fee cap its own service sends with, stay behind.
 const MIN_TIP_WEI = 50_000_000n; // 0.05 gwei: a zero tip is accepted and then never included
-const RESERVE_GAS = BigInt(process.env.HEADER_RELAY_RESERVE_GAS || '2000000');
+const SETTLE_RESERVE_GAS = BigInt(process.env.SETTLE_FUNDS_GAS || '720000');             // settle-relay's fee cap: 3x base
+const ATTEST_RESERVE_GAS = BigInt(process.env.REFLECTION_ATTEST_GAS_BUDGET || '700000'); // reflection's fee cap: 2x base
 const eth = (wei) => (Number(wei) / 1e18).toFixed(4);
 async function submitAdvance(from, to) {
   const [blk, prio, have] = await Promise.all([
@@ -127,7 +128,8 @@ async function submitAdvance(from, to) {
   ]);
   const maxPriorityFeePerGas = prio > MIN_TIP_WEI ? prio : MIN_TIP_WEI;
   const maxFeePerGas = (blk.baseFeePerGas ?? 0n) * 2n + maxPriorityFeePerGas;
-  const reserve = RESERVE_GAS * ((blk.baseFeePerGas ?? 0n) * 3n + maxPriorityFeePerGas);
+  const base = blk.baseFeePerGas ?? 0n;
+  const reserve = SETTLE_RESERVE_GAS * (base * 3n + maxPriorityFeePerGas) + ATTEST_RESERVE_GAS * (base * 2n + maxPriorityFeePerGas);
   const budget = have > reserve ? have - reserve : 0n;
   const headers = [];
   for (let h = from; h <= to; h++) headers.push(await headerHex(h));
