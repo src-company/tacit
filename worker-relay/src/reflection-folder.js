@@ -24,7 +24,7 @@
 
 import { CFG } from './lib/config.js';
 import { isMatured } from './lib/maturity.js';
-import { reflectionJob, reflectionAck, reflectionPending, reflectionAttestState, reflectionSubmitted, heartbeat, heartbeatIdle } from './lib/worker-client.js';
+import { reflectionJob, reflectionAck, reflectionPending, reflectionAttestState, reflectionSubmitted, reflectionEthState, heartbeat, heartbeatIdle } from './lib/worker-client.js';
 import { awaitAttestLanding, digestDeepEnough } from './lib/attest-wait.js';
 import { recoverLostAck } from './lib/reflection-reconcile.js';
 import { proveReflection } from './lib/prover.js';
@@ -93,7 +93,7 @@ async function cycle() {
       const st = await txStatus(sub.txHash);
       if (st.state === 'pending') {
         log(`attest ${sub.txHash} for this batch was submitted earlier and is still pending — waiting on it instead of re-proving`);
-        return await settleSubmitted({ txHash: sub.txHash, newDigest, attestedTo });
+        return await settleSubmitted({ txHash: sub.txHash, newDigest, attestedTo, nonce: await nonceOf(sub.txHash) });
       }
       log(`earlier attest ${sub.txHash} is ${st.state} and the digest has not moved — proving again`);
     }
@@ -127,14 +127,29 @@ async function cycle() {
   // A bare estimate leaves no headroom if state moves between estimating and inclusion, and a revert here costs the
   // whole proof. Unused gas is refunded, so the pad only insures.
   const attestCall = { address: POOL, abi: POOL_ABI, functionName: 'attestBitcoinStateProven', args: [publicValues, proofBytes] };
-  const attestGas = await publicClient.estimateContractGas({ ...attestCall, account: relayWallet.account });
   // The proof above is already paid for. SETTLE_KEY is unset in production, so the settle service, the
   // header cron and this one all sign from RELAY_KEY — and settles go out privately, so a public RPC's
   // pending nonce does not see one in flight and a collision here is routine. A bare write throws the whole
-  // proof away and re-proves next cycle; retrying the submission costs a few seconds.
-  const txHash = await withNonceRetry('attest', () => relayWallet.writeContract({ ...attestCall, gas: (attestGas * 125n) / 100n }), { log });
-  await reflectionSubmitted({ newDigest, txHash, attestedTo });
-  return await settleSubmitted({ txHash, newDigest, attestedTo });
+  // proof away and re-proves next cycle; retrying the submission costs a few seconds. The same holds after
+  // submission: a tx whose nonce a private settle took is dropped, and the proof is simply sent again, for as
+  // long as the estimate says it still lands (the pool still sits on this batch's prior).
+  for (let attempt = 1; ; attempt++) {
+    const attestGas = await publicClient.estimateContractGas({ ...attestCall, account: relayWallet.account });
+    const txHash = await withNonceRetry('attest', () => relayWallet.writeContract({ ...attestCall, gas: (attestGas * 125n) / 100n }), { log });
+    await reflectionSubmitted({ newDigest, txHash, attestedTo });
+    const outcome = await landAttest({ txHash, newDigest, attestedTo, nonce: await nonceOf(txHash) });
+    if (outcome !== 'dropped') return outcome === 'acked';
+    if (attempt >= CFG.reflectionResubmits) return false;
+    log(`sending the same proof again (${attempt + 1}/${CFG.reflectionResubmits})`);
+  }
+}
+
+// The nonce a just-sent tx took, read back while the node still holds it; null when it cannot be read.
+async function nonceOf(hash) {
+  for (let i = 0; i < 4; i++) {
+    try { return (await publicClient.getTransaction({ hash })).nonce; } catch { await sleep(2); }
+  }
+  return null;
 }
 
 // Where a submitted attest tx stands, from the chain alone.
@@ -155,24 +170,30 @@ async function txStatus(hash) {
 // The wait polls the pool's digest instead of blocking on one receipt call, because a receipt wait that times out
 // tells us nothing about the tx: it can still land minutes later. Running out of time here is therefore not an error —
 // the tx is left alone and the next run finds it through the recorded submission.
-async function settleSubmitted({ txHash, newDigest, attestedTo }) {
+const settleSubmitted = async (args) => (await landAttest(args)) === 'acked';
+
+// -> 'acked' | 'dropped' | 'pending' | 'reverted' | 'unverified'. `nonce` (the tx's own, when known) lets a tx whose
+// nonce another sender took count as dropped within a couple of polls instead of after the long miss window.
+async function landAttest({ txHash, newDigest, attestedTo, nonce = null }) {
+  const nonceSpent = nonce == null ? null
+    : async () => (await publicClient.getTransactionCount({ address: relayWallet.account.address, blockTag: 'latest' })) > nonce;
   const res = await awaitAttestLanding({
-    newDigest, txHash, readDigest: () => readReflectionDigest(), txStatus, deepEnough: () => landedDeep(newDigest),
+    newDigest, txHash, readDigest: () => readReflectionDigest(), txStatus, deepEnough: () => landedDeep(newDigest), nonceSpent,
     windowSecs: CFG.reflectionAttestWaitSecs, pollSecs: CFG.reflectionAttestPollSecs, confirmations: ATTEST_CONFIRMATIONS,
   });
   if (res.outcome === 'timeout') {
     log(`attest ${txHash} is still not landed after ${CFG.reflectionAttestWaitSecs}s — leaving it; the next run waits on it rather than re-proving`);
     await heartbeat('reflection', `attest ${txHash} pending past ${CFG.reflectionAttestWaitSecs}s`);
-    return false;
+    return 'pending';
   }
   if (res.outcome === 'reverted') {
     // A revert here is almost always "already attested" (digest-chain), which the poll would have seen as landed.
     log(`attest tx reverted (${txHash}) — will retry job next cycle`);
-    return false;
+    return 'reverted';
   }
   if (res.outcome === 'dropped') {
-    log(`attest ${txHash} was dropped from the mempool without landing — will retry job next cycle`);
-    return false;
+    log(`attest ${txHash} was dropped without landing (its nonce went to another transaction)`);
+    return 'dropped';
   }
 
   // A confirmed receipt from publicClient is not yet grounds to ack. publicClient sticks with the FIRST
@@ -184,13 +205,24 @@ async function settleSubmitted({ txHash, newDigest, attestedTo }) {
       + `endpoint does not see digest ${newDigest} on-chain — NOT acking (refusing to trust a single endpoint's `
       + `receipt for an unrewindable cursor advance). Will retry next cycle.`);
     await heartbeat('reflection', `unverified attest ${txHash} — primary RPC disagrees with independent read`);
-    return false;
+    return 'unverified';
   }
 
   log(`attested: tx=${txHash} attestedTo=${attestedTo}`);
   await reflectionAck({ attestedTo, txHash, jobId: newDigest });
   await heartbeat('reflection', `attested ${newDigest}`);
-  return true;
+  return 'acked';
+}
+
+// After a batch lands, the next Mode-B batch waits only on the eth-state sidecar publishing a fresh candidate (a
+// minute or two). -> true once one is live, false when none appears within reflectionNextJobWaitSecs.
+async function nextCandidate() {
+  const until = Date.now() + CFG.reflectionNextJobWaitSecs * 1000;
+  while (Date.now() < until) {
+    try { if ((await reflectionEthState())?.pending) return true; } catch { return false; }
+    await sleep(15);
+  }
+  return false;
 }
 
 // The digest still holds ATTEST_CONFIRMATIONS blocks behind the head, on the primary endpoint.
@@ -220,15 +252,21 @@ async function main() {
     throw new Error('SP1_PROVER=network but NETWORK_PRIVATE_KEY unset — cannot prove');
   }
   // Cron mode: drain any pending batches (usually 0–1, since a 5-min cron keeps pace with
-  // Bitcoin's ~10-min blocks) then exit. Bounded by cronMaxCycles + cronBudgetSecs.
+  // Bitcoin's ~10-min blocks) then exit. Bounded by cronMaxCycles + cronBudgetSecs. A run that has landed a
+  // batch is catching up: it waits for the next eth-state candidate rather than exiting, so a backlog closes
+  // batch after batch instead of one batch per cron interval, within reflectionRunBudgetSecs.
   if (CFG.runMode === 'cron') {
     const t0 = Date.now();
+    let landed = 0, waited = false;
     for (let i = 0; i < CFG.cronMaxCycles; i++) {
-      if ((Date.now() - t0) / 1000 > CFG.cronBudgetSecs) { log('cron budget reached — exiting'); break; }
+      const budget = landed ? CFG.reflectionRunBudgetSecs : CFG.cronBudgetSecs;
+      if ((Date.now() - t0) / 1000 > budget) { log('cron budget reached — exiting'); break; }
       let worked;
       try { worked = await cycle(); }
       catch (e) { log('cycle error — exiting cron run:', e.message); await heartbeat('reflection', `error ${safeErr(e)}`); break; }
-      if (!worked) { log('caught up — cron run done'); await heartbeat('reflection', 'caught up'); break; }
+      if (worked) { landed++; waited = false; continue; }
+      if (landed && !waited && await nextCandidate()) { waited = true; continue; }
+      log('caught up — cron run done'); await heartbeat('reflection', 'caught up'); break;
     }
     return;
   }

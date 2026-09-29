@@ -11,15 +11,17 @@
 //   readDigest()  the pool's attested digest, or null when the endpoint could not answer
 //   txStatus(h)   { state: 'mined' | 'reverted' | 'pending' | 'missing', confirmations? }
 //   dropMisses    consecutive polls a tx may be missing (no receipt, unknown to the node) before it counts as dropped
+//   nonceSpent()  optional: whether the sender's mined nonce has moved past the tx's own. A missing tx whose nonce
+//                 another tx has taken can never land, so two such polls in a row end the wait without dropMisses
 //   deepEnough()  whether the digest still equals newDigest `confirmations` blocks back; it stands in for the receipt's
 //                 depth when there is no receipt to count, so a digest seen only at the head is never enough
 export async function awaitAttestLanding({
-  newDigest, txHash, readDigest, txStatus, windowSecs, pollSecs, confirmations = 1, dropMisses = 20, deepEnough = async () => true,
-  sleep = (s) => new Promise((r) => setTimeout(r, s * 1000)), now = () => Date.now(),
+  newDigest, txHash, readDigest, txStatus, windowSecs, pollSecs, confirmations = 1, dropMisses = 20, nonceSpent = null,
+  deepEnough = async () => true, sleep = (s) => new Promise((r) => setTimeout(r, s * 1000)), now = () => Date.now(),
 }) {
   const want = String(newDigest).toLowerCase();
   const deadline = now() + windowSecs * 1000;
-  let misses = 0;
+  let misses = 0, taken = 0;
   for (;;) {
     let digest = null;
     try { digest = await readDigest(); } catch { /* endpoint hiccup — the next poll retries */ }
@@ -39,8 +41,10 @@ export async function awaitAttestLanding({
       return { outcome: again && String(again).toLowerCase() === want && await safely(deepEnough) ? 'landed' : 'reverted' };
     } else if (st.state === 'missing') {
       if (++misses >= dropMisses) return { outcome: 'dropped' };
+      taken = nonceSpent && await safely(nonceSpent) ? taken + 1 : 0;
+      if (taken >= 2) return { outcome: 'dropped' };
     }
-    if (st.state !== 'missing') misses = 0;
+    if (st.state !== 'missing') { misses = 0; taken = 0; }
 
     if (now() >= deadline) return { outcome: 'timeout' };
     await sleep(pollSecs);

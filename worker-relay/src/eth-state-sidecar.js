@@ -173,9 +173,9 @@ async function cycle() {
 
   // Free local dry-run first: catches a bad witness or a
   // digest-chain mismatch via a low, early-panic cycle count before spending a real network prove on it.
-  await heartbeat('eth-state', 'execute preflight');
-  let pre;
-  try {
+  let pre = null;
+  if (CFG.ethStatePreflight) try {
+    await heartbeat('eth-state', 'execute preflight');
     pre = await proveEthState({ mode: 'execute', timeoutMs: CFG.ethProveTimeoutSecs * 1000 });
   } catch (e) {
     // SP1's local CPU execute() for this guest is unreliable on this host's container — its spawned child

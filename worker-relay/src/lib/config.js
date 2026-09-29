@@ -232,6 +232,13 @@ export const CFG = {
   // connection (it restarts while building a large job); a real 404 is never retried.
   ethProofWaitSecs: num('REFLECTION_ETH_PROOF_WAIT_SECS', 240),
   reflectionAttestPollSecs: num('REFLECTION_ATTEST_POLL_SECS', 15),
+  // How many times a proof already paid for is sent again after its attest tx was dropped (another sender on the
+  // shared key took its nonce) before the batch is left to the next run.
+  reflectionResubmits: num('REFLECTION_RESUBMITS', 3),
+  // A cron run that has landed a batch is catching up: it waits up to reflectionNextJobWaitSecs for the next eth-state
+  // candidate instead of exiting, and runs for up to reflectionRunBudgetSecs in all.
+  reflectionNextJobWaitSecs: num('REFLECTION_NEXT_JOB_WAIT_SECS', 300),
+  reflectionRunBudgetSecs: num('REFLECTION_RUN_BUDGET_SECS', 2700),
   settlePollSecs: num('SETTLE_POLL_SECS', 15),
 
   // RUN_MODE=cron ⇒ drain pending work once and exit (Render Cron Job — billed per-run, cheap).
@@ -264,6 +271,10 @@ export const CFG = {
   // proving cadence, just how often the sidecar looks for "no pending candidate live" (see that file's
   // header for why that, not crossOutCount, is the real trigger). Cheap enough to poll often.
   ethStatePollSecs: num('ETH_STATE_POLL_SECS', 60),
+  // ETH_STATE_PREFLIGHT=0 skips the local execute before each network prove. On a host whose local executor cannot
+  // run this guest the preflight only ever fails and is skipped anyway, after spending half a minute; the resume
+  // check before it already catches the digest-chain mismatch it exists for.
+  ethStatePreflight: opt('ETH_STATE_PREFLIGHT', '1') !== '0',
   // Hard ceiling on a single eth_prove run. Without one, a network prove that never returns blocks the only
   // producer of Mode-B fuel — and once the pool's crossOutCount has passed 0 that is the ONLY way any
   // Bitcoin-side attest can land, so a single hung child process silently halts the whole Bitcoin->Ethereum

@@ -62,6 +62,20 @@ const wait = (c, o = {}) => awaitAttestLanding({ newDigest: D1, txHash: TX, read
   ok('a replaced tx whose batch landed counts as landed', (await wait(c, { dropMisses: 20 })).outcome === 'landed');
 }
 {
+  // Another sender on the shared key took the tx's nonce: it can never land, so the wait ends in two polls, not twenty.
+  const c = chain({ tx: () => ({ state: 'missing' }) });
+  const t0 = c.now();
+  const r = await wait(c, { dropMisses: 20, nonceSpent: async () => true });
+  ok('a missing tx whose nonce is taken is dropped within two polls', r.outcome === 'dropped' && c.now() - t0 <= 30_000, `${r.outcome} after ${(c.now() - t0) / 1000}s`);
+  let n = 0;
+  const c2 = chain({ digestAt: 120, tx: () => ({ state: n++ < 1 ? 'missing' : 'pending' }) });
+  ok('one missing poll with a moved nonce is not yet a drop', (await wait(c2, { dropMisses: 20, nonceSpent: async () => true })).outcome === 'landed');
+  const c3 = chain({ digestAt: 10, tx: () => ({ state: 'missing' }) });
+  ok('a batch seen landed wins over a taken nonce', (await wait(c3, { dropMisses: 20, nonceSpent: async () => true })).outcome === 'landed');
+  const c4 = chain({ tx: () => ({ state: 'missing' }) });
+  ok('a nonce check that fails leaves the long drop window in charge', (await wait(c4, { dropMisses: 4, windowSecs: 600, nonceSpent: async () => { throw new Error('rpc down'); } })).outcome === 'dropped' && c4.now() >= 45_000);
+}
+{
   let n = 0;
   const c = chain({ digestAt: 60 });
   c.readDigest = async () => { if (n++ < 2) throw new Error('rpc down'); return c.now() >= 60_000 ? D1 : D2; };
