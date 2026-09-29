@@ -37,25 +37,25 @@ on-chain — the "single-use candidate" trap the file's own header explains.
 
 The gap: that confirmation is matched against `sidecar-inflight.json`, a third local file. **If
 `sidecar-inflight.json` is lost while a candidate is pending, and that candidate then lands, the commit
-never happens.** Every later `eth_prove` chains off the stale committed root. Each cycle then *succeeds*
-individually — a candidate is produced and published — and only the on-chain attest reverts, which this
-service never observes. Nothing in its own logs says anything is wrong.
+never happens.** Every later `eth_prove` would chain off the stale committed root: each candidate proves
+and publishes normally, and only the Bitcoin-side batch built from it fails.
 
 Causes seen or plausible: an ephemeral disk or a disk replacement, `RESET_ETH_PROVE_STATE=1` left set, or a
 first run after the service is recreated.
 
 ### Detecting it
 
-The signal is **the same `contentHash` reappearing cycle after cycle** while wall-clock time moves on. A
-fresh candidate is deterministic from (pool, prior roots, prior counts) — `last_block` is not an input — so
-an unchanging prior reproduces a byte-identical candidate forever. The sidecar tracks this itself in
-`sidecar-stall-watch.json` and escalates a `STALL:` note at `repeatCount == 6`.
+Before it builds a candidate, the sidecar compares its committed file with the worker's `confirmed`
+candidate: the same cumulative cross-outs and consumes, through the same `last_block`. On a mismatch it
+builds nothing and reports `STALE RESUME STATE`. The pool's `crossOutCount`/`bitcoinConsumedCount` are not
+the reference for this. They include what Ethereum has recorded but no candidate has folded yet, which is
+the normal state between two folds.
 
 Corroborate before acting:
 
 ```sh
-curl -s "$WORKER_BASE/prover-health?kind=eth-state"     # note beginning "STALL:"
-# and: attests stop landing on-chain while the sidecar keeps logging successful cycles
+curl -s "$WORKER_BASE/prover-health?kind=eth-state"     # note containing "STALE RESUME STATE"
+curl -s -H "Authorization: Bearer $BOX_TOKEN" "$WORKER_BASE/reflection/eth-state?network=mainnet"  # confirmed
 cast call "$POOL" "attestedReflectionDigest()(bytes32)" # frozen across several sidecar cycles
 ```
 
@@ -64,19 +64,26 @@ cast call "$POOL" "attestedReflectionDigest()(bytes32)" # frozen across several 
 Two options, cheapest first.
 
 1. **Rebuild the committed state from the confirmed candidate.** `GET /reflection/eth-state` returns the
-   `confirmed` candidate the chain actually folded. Reconstruct `eth_set_state.json` to match it
-   (`last_block`, `crossouts`, `consumeds`), place it in `ETH_PROVE_OUT_DIR`, delete
-   `sidecar-inflight.json` and `sidecar-stall-watch.json`, and restart. The next cycle chains correctly.
-   Note that `proveEthState` deletes `eth_set_state.pending.json` before every network run, so if a run has
-   happened since the loss, that file is gone and this reconstruction is by hand.
+   `confirmed` candidate the chain actually folded. Reconstruct `eth_set_state.json` to match it:
+   `last_block` = its `lastBlock`, the same `crossouts` and `consumeds` in the same order, and
+   `bootstrap_slot` = the finalized slot in its `ethPv` (the low 8 bytes of word 5). The published record
+   carries only `claimId`/`destCommitment`/`asset` per cross-out, so take each one's `dest_chain` and
+   `nullifier` from the pool's own cross-out records. Place the file in `ETH_PROVE_OUT_DIR`, delete
+   `sidecar-inflight.json` and `sidecar-stall-watch.json`, and restart. The sidecar compares the file with
+   the confirmed candidate before every cycle and builds nothing until they match. Note that
+   `proveEthState` deletes `eth_set_state.pending.json` before every network run, so if a run has happened
+   since the loss, that file is gone and this reconstruction is by hand.
 
 2. **Full reset.** Set `RESET_ETH_PROVE_STATE=1`, restart once, then unset it. `eth_prove` rescans from
-   `DEPLOY_BLOCK` at `SCAN_CHUNK`/`SCAN_DELAY_MS`. Cost grows with wall-clock time since deploy, not with
-   volume — roughly 90 minutes per year of chain — so it is cheap today and gets worse every month. It is
-   the safe option when reconstruction is uncertain: correctness comes from a full rescan rather than from
-   a hand-written file.
+   `DEPLOY_BLOCK` at `SCAN_CHUNK`/`SCAN_DELAY_MS`. **Only for a pool that has never landed a Mode-B batch,
+   or a move to a successor deployment** (clear the worker's pending and confirmed records with it). A
+   rescan from zero emits a candidate whose prior is the empty genesis accumulator, while the Bitcoin guest
+   requires every candidate after the first Mode-B batch to continue the eth digest it committed
+   (`reflect.rs`, "eth-reflection prior must continue the committed chain"). On a live pool, every batch
+   built from it would panic.
 
-Prefer (2) if there is any doubt about (1). A wrong `eth_set_state.json` reproduces the same silent stall.
+On a live pool, (1) is the recovery. A wrong `eth_set_state.json` reproduces the same stall, which the
+sidecar's check reports instead of publishing.
 
 ## Other states, and what they are not
 
