@@ -26,6 +26,11 @@ const STATS_REFRESH_MS = 60_000;
 const SELL_TRACK_MS = 8_000;
 const MAX_REROUTES = 3;
 const LADDER_ROWS = 8;
+// Orders this far from the last trade are folded away until "show all" (fat-finger
+// bids at a fraction of a sat, asks at many times the price).
+const FAR_BELOW = 0.2;
+const FAR_ABOVE = 5;
+const CHART_TFS = [['1D', 86400, '1D'], ['1W', 7 * 86400, '1W'], ['1M', 30 * 86400, '1M'], ['ALL', Infinity, 'All']];
 const SLIPPAGE_CHOICES = [1, 2, 5, 10, 25];
 const EXPIRY_CHOICES = [[86400, '1 day'], [3 * 86400, '3 days'], [7 * 86400, '7 days'], [30 * 86400, '30 days']];
 
@@ -120,7 +125,7 @@ function createMarket(host, ctx) {
   const $$ = (sel) => Array.from(host.querySelectorAll(sel));
   const el = {
     live: $('[data-k=live]'), price: $('[data-k=price]'), usd: $('[data-k=usd]'), chg: $('[data-k=chg]'),
-    stats: $('[data-k=stats]'), chart: $('[data-k=chart]'), chartWrap: $('[data-k=chart-wrap]'),
+    stats: $('[data-k=stats]'), chart: $('[data-k=chart]'), chartWrap: $('[data-k=chart-wrap]'), chartSum: $('[data-k=chart-sum]'), avail: $('[data-k=avail]'),
     asks: $('[data-k=asks]'), bids: $('[data-k=bids]'), spread: $('[data-k=spread]'), bookNote: $('[data-k=book-note]'),
     askMore: $('[data-k=ask-more]'), bidMore: $('[data-k=bid-more]'),
     ticket: $('[data-k=ticket]'), amount: $('[data-k=amount]'), price2: $('[data-k=limit-price]'),
@@ -153,13 +158,14 @@ function createMarket(host, ctx) {
         <div class="bm-stats" data-k="stats"></div>
       </div>
       <details class="bm-chart" data-k="chart-wrap"${LS.get('tacit-btc-market-chart-open', true) ? ' open' : ''}>
-        <summary>Chart</summary>
-        <div class="bm-chart-tf">${['1D', '1W', 'ALL'].map((tf) => `<button type="button" data-act="tf" data-v="${tf}">${tf === 'ALL' ? 'All' : tf}</button>`).join('')}</div>
+        <summary><span>Price</span><span class="bm-chart-sum" data-k="chart-sum"></span></summary>
+        <div class="bm-chart-tf">${CHART_TFS.map(([tf, , label]) => `<button type="button" data-act="tf" data-v="${tf}">${label}</button>`).join('')}</div>
         <div class="bm-chart-body" data-k="chart"></div>
       </details>
       ${lanes}
       <div class="bm-lane" data-lane="btc">
         <div class="bm-grid">
+          <div class="bm-left">
           <div class="bm-ticket" data-k="ticket">
             <div class="bm-sides" role="tablist">
               <button type="button" role="tab" data-act="side" data-v="buy">Buy</button>
@@ -183,10 +189,13 @@ function createMarket(host, ctx) {
             </label>
             <div class="bm-chips" data-k="chips"></div>
             <div class="bm-bal" data-k="bal"></div>
+            <div class="bm-avail" data-k="avail"></div>
             <div class="bm-quote" data-k="quote" aria-live="polite"></div>
             <details class="bm-opts" data-k="opts"><summary>Settings</summary><div data-k="opts-body"></div></details>
             <button type="button" class="bm-go" data-k="go" data-act="go" disabled>Enter an amount</button>
             <p class="bm-fine" data-k="fine"></p>
+          </div>
+          <div class="bm-trades" data-k="trades"></div>
           </div>
           <div class="bm-book">
             <div class="bm-book-head"><span>Price <em>sats</em></span><span>Amount <em>${T}</em></span><span>Total <em>sats</em></span></div>
@@ -199,7 +208,6 @@ function createMarket(host, ctx) {
           </div>
         </div>
         <div class="bm-orders" data-k="orders" hidden></div>
-        <div class="bm-trades" data-k="trades"></div>
       </div>
       ${ctx.mountEth ? `<div class="bm-lane" data-lane="eth" hidden><div data-k="eth-host"></div></div>` : ''}
     </section>`;
@@ -306,8 +314,12 @@ function createMarket(host, ctx) {
 
   function paintBook() {
     const b = S.book;
-    const askLv = ladderLevels(b.asks, 'ask');
-    const bidLv = ladderLevels(b.bids, 'bid');
+    const ref = ctx.asset().markUnit || (b.bestAsk && b.bestBid ? (b.bestAsk + b.bestBid) / 2 : b.bestAsk || b.bestBid);
+    const near = (r) => r.mine || !ref || (r.unit >= ref * FAR_BELOW && r.unit <= ref * FAR_ABOVE);
+    const askLv = ladderLevels(S.showAllAsks ? b.asks : b.asks.filter(near), 'ask');
+    const bidLv = ladderLevels(S.showAllBids ? b.bids : b.bids.filter(near), 'bid');
+    const farAsks = b.asks.length - b.asks.filter(near).length;
+    const farBids = b.bids.length - b.bids.filter(near).length;
     const askShown = S.showAllAsks ? askLv : askLv.slice(0, LADDER_ROWS);
     const bidShown = S.showAllBids ? bidLv : bidLv.slice(0, LADDER_ROWS);
     const maxSats = [...askShown, ...bidShown].reduce((m, l) => Math.max(m, l.sats), 0);
@@ -322,19 +334,26 @@ function createMarket(host, ctx) {
         : `<div class="bm-empty">No one is bidding right now.${S.side === 'sell' ? ' List at your price and buyers can take it.' : ''}</div>`;
       S.ladder = { ask: new Map(askLv.map((l) => [l.key, l])), bid: new Map(bidLv.map((l) => [l.key, l])) };
     }
-    el.askMore.hidden = askLv.length <= LADDER_ROWS;
-    el.askMore.textContent = S.showAllAsks ? 'Show fewer asks' : `Show all ${askLv.length} asks`;
-    el.bidMore.hidden = bidLv.length <= LADDER_ROWS;
-    el.bidMore.textContent = S.showAllBids ? 'Show fewer bids' : `Show all ${bidLv.length} bids`;
+    const allAskLv = ladderLevels(b.asks, 'ask').length;
+    const allBidLv = ladderLevels(b.bids, 'bid').length;
+    el.askMore.hidden = !S.showAllAsks && allAskLv <= LADDER_ROWS && !farAsks;
+    el.askMore.textContent = S.showAllAsks ? '▾ fewer asks' : `▴ all ${allAskLv} asks`;
+    el.askMore.title = farAsks ? `Includes ${farAsks} priced far from the market` : '';
+    el.bidMore.hidden = !S.showAllBids && allBidLv <= LADDER_ROWS && !farBids;
+    el.bidMore.textContent = S.showAllBids ? '▴ fewer bids' : `▾ all ${allBidLv} bids`;
+    el.bidMore.title = farBids ? `Includes ${farBids} priced far from the market` : '';
     const a = ctx.asset();
     let sp = '';
+    if (a.markUnit > 0) sp += `<span class="bm-sp-last"><b>${fmtUnit(a.markUnit)}</b> <em>last trade</em></span>`;
     if (b.bestAsk != null && b.bestBid != null) {
-      const pct = ((b.bestAsk - b.bestBid) / b.bestAsk) * 100;
-      sp = b.overlap
-        ? `<span>Bids above asks by ${fmtUnit(b.bestBid - b.bestAsk)} — buy from ${fmtUnit(b.bestAsk)}, or sell for up to ${fmtUnit(b.bestBid)}</span>`
-        : `<span>Spread ${fmtUnit(b.bestAsk - b.bestBid)} <em>(${pct.toFixed(pct < 1 ? 2 : 1)}%)</em></span>`;
+      if (b.overlap) {
+        const autoAbove = b.bids.some((x) => !x.mine && x.auto && x.unit > b.bestAsk);
+        sp += `<span class="bm-sp-note">Bids above the best ask${autoAbove ? '' : ' — their bidders settle only when online'}</span>`;
+      } else {
+        const pct = ((b.bestAsk - b.bestBid) / b.bestAsk) * 100;
+        sp += `<span class="bm-sp-note">spread ${fmtUnit(b.bestAsk - b.bestBid)} <em>(${pct.toFixed(pct < 1 ? 2 : 1)}%)</em></span>`;
+      }
     }
-    if (a.markUnit > 0) sp = `<b>${fmtUnit(a.markUnit)}</b><em>last</em>` + sp;
     if (el.spread.innerHTML !== sp) el.spread.innerHTML = sp;
     const ex = b.excluded;
     const hid = (ex.asks.otc || 0);
@@ -482,9 +501,30 @@ function createMarket(host, ctx) {
     el.go.dataset.kind = kind;
   }
 
+  function paintAvail(q) {
+    let h = '';
+    if (S.book && (!q || q.empty) && S.type === 'market') {
+      if (S.side === 'buy') {
+        const asks = eligibleAsks();
+        if (asks.length) {
+          const smallest = asks.reduce((m, a) => (a.sats < m.sats ? a : m), asks[0]);
+          h = `Best offer <b>${fmtUnit(asks[0].unit)}</b> sats/${T} · smallest piece ${fmtAmount(smallest.amount, dec, 4)} ${T} for ${fmtSats(smallest.sats)} sats`;
+        } else h = 'No one is selling right now.';
+      } else {
+        const bids = eligibleBids();
+        const manual = S.book.bids.filter((b) => !b.mine && !b.auto).length;
+        if (bids.length) h = `Best bid <b>${fmtUnit(bids[0].unit)}</b> sats/${T} · ${bids.length} bid${bids.length === 1 ? '' : 's'} you can sell into now`;
+        else if (manual) h = `No auto-settling bids. ${manual} bid${manual === 1 ? ' settles' : 's settle'} only when the bidder is online — allow them in Settings, or <button type="button" class="bm-link" data-act="to-limit">list at your price</button>.`;
+        else h = 'No one is bidding right now.';
+      }
+    }
+    if (el.avail.innerHTML !== h) el.avail.innerHTML = h;
+  }
+
   function paintQuote() {
     if (S.busy) return;
     const q = computeQuote();
+    paintAvail(q);
     S.quote = q;
     const m = me();
     let html = '';
@@ -664,30 +704,145 @@ function createMarket(host, ctx) {
 
   // ── recent trades ─────────────────────────────────────────────────────────
   function paintTrades() {
-    const trades = (S.stats?.trades || []).slice(0, 12);
-    if (!trades.length) { el.trades.innerHTML = ''; return; }
+    const all = S.stats?.trades || [];
+    if (!all.length) { el.trades.innerHTML = ''; return; }
+    // Oldest first so each print's arrow compares with the one before it.
     let prev = null;
-    const rows = trades.slice().reverse().map((t) => {
+    const rows = all.slice(0, 40).reverse().map((t) => {
       const amt = BigInt(t.amount || 0);
       const u = amt > 0n ? (Number(t.price_sats) * Math.pow(10, dec)) / Number(amt) : null;
-      const dir = prev == null || u == null ? '' : u > prev ? 'up' : u < prev ? 'down' : '';
+      const dir = prev == null || u == null ? '' : u > prev * (1 + 1e-9) ? 'up' : u < prev * (1 - 1e-9) ? 'down' : '';
       prev = u ?? prev;
-      return { t, amt, u, dir };
+      return { t, amt, u, dir, n: 1 };
     }).reverse();
+    const grouped = [];
+    for (const r of rows) {
+      const g = grouped[grouped.length - 1];
+      if (g && g.amt === r.amt && Number(g.t.price_sats) === Number(r.t.price_sats) && ago(g.t.ts) === ago(r.t.ts)) { g.n++; continue; }
+      grouped.push({ ...r });
+    }
     const link = (txid) => ctx.txUrl ? ctx.txUrl(txid) : null;
-    el.trades.innerHTML = `<h3>Recent trades</h3><div class="bm-ttable"><div class="bm-trow bm-thead"><span>Price <em>sats</em></span><span>Amount <em>${T}</em></span><span>Total <em>sats</em></span><span>When</span></div>${rows.map(({ t, amt, u, dir }) => {
+    const html = `<h3>Recent trades</h3><div class="bm-ttable"><div class="bm-trow bm-thead"><span>Price</span><span>${T}</span><span>When</span></div>${grouped.slice(0, 10).map(({ t, amt, u, dir, n }) => {
       const href = t.txid ? link(t.txid) : null;
-      const time = `${ago(t.ts)} ago`;
-      return `<div class="bm-trow"><span class="p ${dir}">${fmtUnit(u)}</span><span>${fmtAmount(amt, dec, 4)}</span><span>${fmtSats(Number(t.price_sats))}</span><span class="muted">${href ? `<a href="${esc(href)}" target="_blank" rel="noopener" title="View on mempool.space">${time}</a>` : time}</span></div>`;
+      const time = `${ago(t.ts)}`;
+      return `<div class="bm-trow" title="${esc(fmtSats(Number(t.price_sats) * n))} sats${n > 1 ? ` across ${n} fills` : ''}"><span class="p ${dir}">${dir === 'up' ? '▲' : dir === 'down' ? '▼' : ''}${fmtUnit(u)}</span><span>${fmtAmount(amt, dec, 2)}${n > 1 ? `<i class="bm-cnt">×${n}</i>` : ''}</span><span class="muted">${href ? `<a href="${esc(href)}" target="_blank" rel="noopener" title="View on mempool.space">${time}</a>` : time}</span></div>`;
     }).join('')}</div>`;
+    if (el.trades.__html !== html) { el.trades.innerHTML = html; el.trades.__html = html; }
   }
 
   // ── chart ─────────────────────────────────────────────────────────────────
+  function chartPoints() {
+    return (S.stats?.trades || []).map((t) => {
+      const amt = BigInt(t.amount || 0);
+      return amt > 0n ? { ts: Number(t.ts), u: (Number(t.price_sats) * Math.pow(10, dec)) / Number(amt), amt, sats: Number(t.price_sats) } : null;
+    }).filter((p) => p && p.u > 0 && p.ts > 0).sort((a, b) => a.ts - b.ts);
+  }
+
   function paintChart() {
-    if (!el.chartWrap.open || !ctx.paintChart) return;
-    const tf = LS.get('tacit-btc-market-tf', 'ALL');
-    $$('[data-act=tf]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === tf)));
-    try { ctx.paintChart(el.chart, { tf, stats: S.stats, bestBid: S.book?.bestBid ?? null, bestAsk: S.book?.bestAsk ?? null }); } catch {}
+    const pts = chartPoints();
+    let tf = LS.get('tacit-btc-market-tf', '1M');
+    if (!CHART_TFS.some(([k]) => k === tf)) tf = '1M';
+    // A quiet market: widen until there is something to draw.
+    const span = (k) => CHART_TFS.find(([x]) => x === k)[1];
+    let shownTf = tf;
+    for (const [k] of CHART_TFS) {
+      if (span(k) < span(tf)) continue;
+      shownTf = k;
+      if (pts.filter((p) => p.ts >= nowSec() - span(k)).length >= 2) break;
+    }
+    $$('[data-act=tf]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === shownTf)));
+    const win = pts.filter((p) => p.ts >= nowSec() - span(shownTf));
+    // Summary in the (always visible) disclosure line.
+    let sum = '';
+    if (win.length >= 2) {
+      const first = win[0].u, last = win[win.length - 1].u;
+      const chg = ((last - first) / first) * 100;
+      const lo = Math.min(...win.map((p) => p.u)), hi = Math.max(...win.map((p) => p.u));
+      sum = `<span class="${chg >= 0 ? 'up' : 'down'}">${chg >= 0 ? '▲' : '▼'} ${Math.abs(chg).toFixed(1)}%</span> <em>${shownTf === 'ALL' ? 'all time' : shownTf}</em> · <em>range</em> ${fmtUnit(lo)}–${fmtUnit(hi)}`;
+    }
+    if (el.chartSum.innerHTML !== sum) el.chartSum.innerHTML = sum;
+    if (!el.chartWrap.open) return;
+    const sig = shownTf + '|' + (el.chart.clientWidth || 0) + '|' + win.map((p) => p.ts + ':' + p.u).join(',') + '|' + (S.book?.bestBid ?? '') + '|' + (S.book?.bestAsk ?? '');
+    if (el.chart.__sig === sig) return;
+    el.chart.__sig = sig;
+    if (win.length < 2) { el.chart.innerHTML = `<div class="bm-empty">Not enough trades to chart yet.</div>`; return; }
+    el.chart.innerHTML = chartSvg(win, shownTf);
+    wireChartHover(win);
+  }
+
+  // Price line over time with volume underneath. The y-range ignores the most extreme
+  // 2% of prints on each side so one fat-finger fill can't flatten everything else;
+  // those points pin to the edge as hollow dots.
+  const PL = 8, PR = 56, PT = 12, PB = 36, VH = 22;
+  let CW = 640, CH = 220;
+  function chartSvg(win, tf) {
+    // Draw at the box's real width so text stays at its natural size on phones.
+    CW = Math.max(300, Math.min(760, Math.round(el.chart.clientWidth || 640)));
+    CH = CW < 480 ? 190 : 220;
+    const us = win.map((p) => p.u).slice().sort((a, b) => a - b);
+    const q = (f) => us[Math.min(us.length - 1, Math.max(0, Math.round(f * (us.length - 1))))];
+    let lo = us.length > 20 ? q(0.02) : us[0];
+    let hi = us.length > 20 ? q(0.98) : us[us.length - 1];
+    const bid = S.book?.bestBid, ask = S.book?.bestAsk;
+    for (const v of [bid, ask]) if (v && v > lo * 0.5 && v < hi * 2) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    if (hi <= lo) { hi = lo * 1.05; lo = lo * 0.95; }
+    const pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+    const t0 = win[0].ts, t1 = Math.max(nowSec(), win[win.length - 1].ts);
+    const X = (t) => PL + ((t - t0) / Math.max(1, t1 - t0)) * (CW - PL - PR);
+    const Y = (u) => PT + (1 - (Math.min(hi, Math.max(lo, u)) - lo) / (hi - lo)) * (CH - PT - PB);
+    S.chartMap = { X, Y };
+    const line = win.map((p, i) => `${i ? 'L' : 'M'}${X(p.ts).toFixed(1)},${Y(p.u).toFixed(1)}`).join('') + `L${X(t1).toFixed(1)},${Y(win[win.length - 1].u).toFixed(1)}`;
+    const base = CH - PB;
+    const area = `${line}L${X(t1).toFixed(1)},${base}L${X(t0).toFixed(1)},${base}Z`;
+    const up = win[win.length - 1].u >= win[0].u;
+    // volume: 48 time buckets
+    const NB = 48; const bucket = new Array(NB).fill(0);
+    for (const p of win) bucket[Math.min(NB - 1, Math.floor(((p.ts - t0) / Math.max(1, t1 - t0)) * NB))] += p.sats;
+    const vmax = Math.max(...bucket, 1);
+    const bw = (CW - PL - PR) / NB;
+    const vb = CH - 12;
+    const vol = bucket.map((v, i) => v ? `<rect x="${(PL + i * bw + 0.5).toFixed(1)}" y="${(vb - v / vmax * VH).toFixed(1)}" width="${Math.max(1, bw - 1).toFixed(1)}" height="${(v / vmax * VH).toFixed(1)}"/>` : '').join('');
+    const ticks = [hi - pad, (hi + lo) / 2, lo + pad].map((u) => `<g><line x1="${PL}" x2="${CW - PR}" y1="${Y(u).toFixed(1)}" y2="${Y(u).toFixed(1)}"/><text x="${CW - PR + 6}" y="${(Y(u) + 3).toFixed(1)}">${fmtUnit(u)}</text></g>`).join('');
+    const refLine = (v, cls, label, above) => (v && v >= lo && v <= hi) ? `<g class="${cls}"><line x1="${PL}" x2="${CW - PR}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/><text x="${PL + 4}" y="${(Y(v) + (above ? -4 : 11)).toFixed(1)}">best ${label} ${fmtUnit(v)}</text></g>` : '';
+    const dots = win.map((p) => (p.u < lo || p.u > hi) ? `<circle class="out" cx="${X(p.ts).toFixed(1)}" cy="${Y(p.u).toFixed(1)}" r="3"/>` : '').join('');
+    const last = win[win.length - 1];
+    const fmtDate = (t) => { const d = new Date(t * 1000); return tf === '1D' ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' }); };
+    return `<div class="bm-chart-box"><svg viewBox="0 0 ${CW} ${CH}" class="bm-svg ${up ? 'up' : 'down'}" role="img" aria-label="Price history">
+      <g class="grid">${ticks}</g>
+      <path class="area" d="${area}"/><path class="line" d="${line}"/>
+      ${refLine(ask, 'ref ask', 'ask', !(bid > ask))}${refLine(bid, 'ref bid', 'bid', bid > ask)}
+      <g class="vol">${vol}</g>${dots}
+      <circle class="lastdot" cx="${X(t1).toFixed(1)}" cy="${Y(last.u).toFixed(1)}" r="3.5"/>
+      <text class="xl" x="${PL}" y="${CH - 2}">${fmtDate(t0)}</text><text class="xl" x="${CW - PR}" y="${CH - 2}" text-anchor="end">now</text>
+      <g class="cursor" hidden><line y1="${PT}" y2="${CH - PB}"/><circle r="4"/></g>
+      <rect class="hit" x="${PL}" y="0" width="${CW - PL - PR}" height="${CH}"/>
+    </svg><div class="bm-tip" hidden></div></div>`;
+  }
+
+  function wireChartHover(win) {
+    const svg = el.chart.querySelector('svg');
+    const tip = el.chart.querySelector('.bm-tip');
+    const cur = svg.querySelector('.cursor');
+    const hit = svg.querySelector('.hit');
+    const { X: toX, Y: toY } = S.chartMap;
+    const move = (clientX) => {
+      const r = svg.getBoundingClientRect();
+      const x = ((clientX - r.left) / r.width) * CW;
+      let best = win[0];
+      for (const p of win) if (Math.abs(toX(p.ts) - x) < Math.abs(toX(best.ts) - x)) best = p;
+      const X = toX(best.ts);
+      const y = toY(best.u);
+      cur.hidden = false;
+      cur.querySelector('line').setAttribute('x1', X); cur.querySelector('line').setAttribute('x2', X);
+      cur.querySelector('circle').setAttribute('cx', X); cur.querySelector('circle').setAttribute('cy', y);
+      tip.hidden = false;
+      tip.innerHTML = `<b>${fmtUnit(best.u)}</b> sats/${T}<br>${fmtAmount(best.amt, dec, 4)} ${T} · ${fmtSats(best.sats)} sats<br><em>${new Date(best.ts * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</em>`;
+      const px = (X / CW) * r.width;
+      tip.style.left = `${Math.min(Math.max(0, px - 70), r.width - 150)}px`;
+    };
+    hit.addEventListener('pointermove', (e) => move(e.clientX), sig);
+    hit.addEventListener('pointerdown', (e) => move(e.clientX), sig);
+    hit.addEventListener('pointerleave', () => { cur.hidden = true; tip.hidden = true; }, sig);
   }
 
   // ── refresh loop ──────────────────────────────────────────────────────────
@@ -1253,6 +1408,8 @@ function createMarket(host, ctx) {
   el.amount.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !el.go.disabled) review(); }, sig);
   el.price2.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !el.go.disabled) review(); }, sig);
   el.chartWrap.addEventListener('toggle', () => { LS.set('tacit-btc-market-chart-open', el.chartWrap.open); paintChart(); }, sig);
+  let resizeT = null;
+  window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(paintChart, 150); }, sig);
 
   function destroy() {
     S.destroyed = true;

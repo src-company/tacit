@@ -107,7 +107,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=81843ac1">
+<link rel="modulepreload" href="./tacit.js?cb=a4f6a19a">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -8562,7 +8562,30 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm-stats b { color: var(--ink); font-weight: 600; }
 
 .bm-chart { margin: 10px 16px 0; }
-.bm-chart > summary { cursor: pointer; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-mid); padding: 6px 0; }
+.bm-chart > summary { cursor: pointer; font-size: 11px; color: var(--ink-mid); padding: 6px 0; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.bm-chart > summary > span:first-child { letter-spacing: 0.06em; text-transform: uppercase; }
+.bm-chart-sum { color: var(--ink); }
+.bm-chart-sum .up { color: var(--buy); font-weight: 600; }
+.bm-chart-sum .down { color: var(--sell); font-weight: 600; }
+.bm-chart-box { position: relative; border: 1px solid var(--ink); background: var(--bg); }
+.bm-svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+.bm-svg .grid line { stroke: var(--bm-line); stroke-width: 1; }
+.bm-svg text { font: 10px var(--mono); fill: var(--ink-mid); }
+.bm-svg .line { fill: none; stroke-width: 1.75; stroke-linejoin: round; }
+.bm-svg.up .line { stroke: var(--buy); } .bm-svg.down .line { stroke: var(--sell); }
+.bm-svg .area { opacity: 0.08; } .bm-svg.up .area { fill: var(--buy); } .bm-svg.down .area { fill: var(--sell); }
+.bm-svg .vol rect { fill: var(--ink-faint); opacity: 0.45; }
+.bm-svg .ref line { stroke-dasharray: 3 3; stroke-width: 1; }
+.bm-svg .ref.ask line { stroke: var(--sell); } .bm-svg .ref.ask text { fill: var(--sell); }
+.bm-svg .ref.bid line { stroke: var(--buy); } .bm-svg .ref.bid text { fill: var(--buy); }
+.bm-svg .out { fill: var(--bg); stroke: var(--ink-mid); stroke-width: 1; }
+.bm-svg .lastdot { fill: var(--ink); }
+.bm-svg .cursor line { stroke: var(--ink-mid); stroke-dasharray: 2 2; }
+.bm-svg .cursor circle { fill: var(--bg); stroke: var(--ink); stroke-width: 1.5; }
+.bm-svg .hit { fill: transparent; cursor: crosshair; }
+.bm-svg .xl { font-size: 9px; fill: var(--ink-faint); }
+.bm-tip { position: absolute; top: 6px; width: 150px; background: var(--bg-warm); border: 1px solid var(--ink); padding: 5px 8px; font-size: 11px; line-height: 1.45; pointer-events: none; }
+.bm-tip em { font-size: 10px; }
 .bm-chart-tf { display: flex; gap: 4px; margin: 2px 0 6px; }
 .bm-chart-tf button, .bm-chips button, .bm-pricechips button { background: transparent; border: 1px solid var(--ink-faint); padding: 3px 9px; font-size: 11px; cursor: pointer; color: var(--ink-mid); }
 .bm-chart-tf button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
@@ -8574,7 +8597,13 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm-lane { padding: 12px 16px 16px; }
 
 .bm-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
-@media (min-width: 820px) { .bm-grid { grid-template-columns: minmax(300px, 5fr) 6fr; align-items: start; } }
+.bm-left { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.bm-grid > * { min-width: 0; }
+.bm-svg .area { pointer-events: none; }
+@media (min-width: 640px) { .bm-grid { grid-template-columns: minmax(250px, 5fr) 6fr; align-items: start; } }
+.bm-avail { font-size: 11px; color: var(--ink-mid); margin-top: 8px; line-height: 1.5; }
+.bm-avail:empty { display: none; }
+.bm-avail b { color: var(--ink); }
 
 /* ticket */
 .bm-ticket { border: 1px solid var(--ink); background: var(--bg-warm); padding: 12px 14px 14px; }
@@ -8639,8 +8668,9 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm-tag.you { border-color: var(--orange); color: var(--orange); }
 .bm-tag.auto { border-color: var(--green); color: var(--green); }
 .bm-tag.wait { border-style: dashed; }
-.bm-spread { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 7px 12px; border-top: 1px solid var(--bm-line); border-bottom: 1px solid var(--bm-line); background: var(--bg-warm); font-size: 11px; color: var(--ink-mid); }
-.bm-spread b { font-size: 15px; color: var(--ink); }
+.bm-spread { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; padding: 6px 12px; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); background: var(--bg-warm); font-size: 10px; color: var(--ink-mid); }
+.bm-spread b { font-size: 14px; color: var(--ink); }
+.bm-sp-note { text-align: right; }
 .bm-spread:empty { display: none; }
 .bm-more { display: block; width: 100%; background: none; border: 0; padding: 5px; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-mid); cursor: pointer; }
 .bm-more:hover { color: var(--ink); }
@@ -8649,7 +8679,7 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm-book-note:empty { display: none; }
 
 /* orders + trades */
-.bm-orders, .bm-trades { margin-top: 14px; }
+.bm-orders { margin-top: 14px; }
 .bm-orders h3, .bm-trades h3 { font: inherit; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 6px; }
 .bm-orders h3 em, .bm-trades h3 em { color: var(--ink-mid); }
 .bm-otable, .bm-ttable { border: 1px solid var(--ink); background: var(--bg); }
@@ -8660,14 +8690,20 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm-orow.sell .s { color: var(--sell); }
 .bm-orow button { background: transparent; border: 1px solid var(--ink); padding: 3px 10px; font-size: 11px; cursor: pointer; }
 .bm-orow button:hover { background: var(--ink); color: var(--bg); }
-.bm-trow { display: grid; grid-template-columns: 1fr 1.3fr 1fr 0.8fr; gap: 8px; padding: 4px 12px; border-top: 1px solid var(--bm-line); font-variant-numeric: tabular-nums; }
+.bm-trow { display: grid; grid-template-columns: 1.1fr 1.1fr 0.6fr; gap: 8px; padding: 3px 12px; border-top: 1px solid var(--bm-line); font-variant-numeric: tabular-nums; font-size: 11px; }
+.bm-trow .p.up::first-letter, .bm-trow .p.down::first-letter { font-size: 8px; }
 .bm-trow:first-child { border-top: 0; }
 .bm-trow > span:not(:first-child) { text-align: right; }
 .bm-trow a { color: inherit; }
 .bm-thead { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-mid); padding-top: 7px; padding-bottom: 5px; }
+@media (max-width: 639px) {
+  .bm-left { display: contents; }
+  .bm-ticket { order: 1; } .bm-book { order: 2; } .bm-trades { order: 3; }
+}
 @media (max-width: 480px) {
-  .bm-trow { grid-template-columns: 1fr 1.3fr 0.9fr; }
-  .bm-trow > span:nth-child(3) { display: none; }
+  .bm-book-head, .bm-row { padding-left: 8px; padding-right: 8px; gap: 6px; }
+  .bm-row { font-size: 11px; }
+  .bm-row .bm-tag:not(.you) { display: none; }
 }
 @media (max-width: 560px) {
   .bm-orow { grid-template-columns: 40px 1fr 1fr auto; }
@@ -11762,7 +11798,7 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=81843ac1"></script>
+<script type="module" src="./tacit.js?cb=a4f6a19a"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for
