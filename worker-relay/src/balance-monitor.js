@@ -5,7 +5,8 @@
 //
 // Alerts (log always; POST to ALERT_WEBHOOK_URL if set) when:
 //   * PROVE balance (relay wallet's undeposited PROVE) < floor
-//   * gas runway (days of this wallet's actual burn at the live gas price) < N days
+//   * a wallet with the settle role cannot pay for the next settle (critical: relayed jobs wait in the queue); the
+//     relay wallet cannot pay for an attest, or a settle wallet has under N days of runway (warnings)
 //   * reflection lag (relay tip - attested Bitcoin height) > N blocks
 //   * reflection snapshot size > warn threshold — the one cumulative resource
 //   * reflection stalled: no successful attest for REFLECTION_STALL_HOURS with blocks waiting, or the API's cursor
@@ -71,50 +72,53 @@ async function checkProve() {
 
 // Check EVERY wallet the relay spends from, not just RELAY_KEY.
 //
-// On a split-key deployment the settle wallet is msg.sender on every settle, so it burns gas per op and can
-// run low while the relay wallet looks fine.
+// It pages (critical) only where users wait on a wallet: one with the settle role that cannot pay for the next settle
+// at today's gas, the test the settle relay itself makes before taking a job, so a critical here means relayed jobs are
+// sitting in the queue. Everything else about gas is a warning. The relay role (headers, attests) waits out a short
+// balance by design: the header relay sizes its batches to what the wallet holds, and the reflection waits rather than
+// buy a proof it cannot submit. If the reflection does fall behind, the lag and stall checks page on that. A settle
+// wallet's runway, in days at EXPECTED_OPS_PER_DAY and the live gas price, and the ETH_GAS_BUFFER_WEI floor say when
+// to top up.
 async function checkEth() {
-  let gasPrice = null;
+  let gasPrice = null, base = null, tip = null;
   try { gasPrice = await publicClient.getGasPrice(); }
   catch (e) { log(`gas price read failed, runway unavailable: ${e?.message || e}`); }
+  try {
+    [base, tip] = await Promise.all([
+      publicClient.getBlock({ blockTag: 'latest' }).then((b) => b.baseFeePerGas ?? 0n),
+      publicClient.estimateMaxPriorityFeePerGas().catch(() => 10n ** 9n),
+    ]);
+  } catch (e) { log(`base fee read failed, next-transaction costs unavailable: ${e?.message || e}`); }
 
   for (const { address, roles } of watchedWallets) {
     const bal = await publicClient.getBalance({ address });
     const who = `${address} (${roles.join('+')})`;
     log(`ETH ${who} = ${formatEther(bal)}`);
+    const extra = { address, roles, ethWei: bal.toString() };
 
-    // Runway in DAYS of this wallet's actual burn at the live gas price. It must be days, not "settles": a
-    // wallet carrying both roles pays for the maintenance lane AND the settles, and maintenance (header
-    // attestation, reflection) costs about as much per day as the settles do at any realistic volume.
+    if (base !== null && roles.includes('settle')) {
+      const need = CFG.settleFundsGas * (3n * base + CFG.settleTipFloorWei);
+      if (bal < need) await alert('critical', `${who} holds ${formatEther(bal)} ETH, under the ${formatEther(need)} ETH the next settle can cost at today's gas: relayed jobs wait in the queue until it is topped up`, extra);
+    }
+    if (base !== null && roles.includes('relay')) {
+      const need = CFG.attestGasBudget * (2n * base + tip);
+      if (bal < need) await alert('warning', `${who} holds ${formatEther(bal)} ETH, under the ${formatEther(need)} ETH an attest can cost at today's gas: attests wait for a top-up or cheaper gas`, extra);
+    }
+
+    // Runway in DAYS of the wallet's burn at the live gas price, from the roles it carries:
     //   burn = (maintenance runs/day x maintenance gas)   if it carries the relay role
     //        + (expected ops/day x settle gas)            if it carries the settle role
+    // Only a wallet that settles is warned on it. The relay role's burn follows its own gas cap, not the live price.
     let runway = null;
     const burn = { roles, maintenanceRunsPerDay: MAINTENANCE_RUNS_PER_DAY, expectedOpsPerDay: CFG.expectedOpsPerDay, gas: OP_GAS };
     const burnGas = burnGasPerDay(burn);
     if (gasPrice && burnGas * gasPrice > 0n) {
       runway = runwayDays({ balanceWei: bal, gasPriceWei: gasPrice, ...burn });
-      const settlesLeft = Number(bal / (OP_GAS.transfer * gasPrice));
-      log(`  runway = ${runway.toFixed(1)} days of burn (${(Number(burnGas * gasPrice) / 1e18).toFixed(5)} ETH/day; ~${settlesLeft} settles if it did nothing else) @ ${formatUnits(gasPrice, 9)} gwei`);
-      const extra = { address, roles, runwayDays: runway, ethWei: bal.toString(), gasPriceWei: gasPrice.toString() };
-      if (runway < CFG.runwayDaysCritical) {
-        await alert('critical', `${who} has ~${runway.toFixed(1)} days of gas left at ${formatUnits(gasPrice, 9)} gwei (< ${CFG.runwayDaysCritical}) — fund it or attestation and settles stall`, extra);
-      } else if (runway < CFG.runwayDaysWarn) {
-        await alert('warning', `${who} has ~${runway.toFixed(1)} days of gas left at ${formatUnits(gasPrice, 9)} gwei (< ${CFG.runwayDaysWarn}) — top it up soon`, extra);
-      }
+      log(`  runway = ${runway.toFixed(1)} days of burn (${(Number(burnGas * gasPrice) / 1e18).toFixed(5)} ETH/day) @ ${formatUnits(gasPrice, 9)} gwei`);
     }
-
-    // Absolute floor — now UNCONDITIONAL, not a fallback for when runway is unavailable.
-    //
-    // The runway figure is only as good as EXPECTED_OPS_PER_DAY, which is a pinned constant measured at
-    // today's volume. Its error is one-directional and grows exactly when it matters most: at 10x volume the
-    // settle term is understated 10x, so a wallet with a day and a half of real gas reports a comfortable
-    // week — and this key funds the header and reflection lanes too, so running it dry stops far more than
-    // settles. Gating the floor on `runway === null` meant a computable-but-wrong runway suppressed the one
-    // check that does not depend on a volume estimate at all. Now they are independent: the runway warns
-    // early when the estimate is good, and the balance floor still fires when it is not.
-    if (bal < CFG.ethGasBufferWei) {
-      const why = runway === null ? 'runway unavailable' : `runway says ~${runway.toFixed(1)}d, but that assumes ${CFG.expectedOpsPerDay} ops/day`;
-      await alert('critical', `${who} ETH ${formatEther(bal)} < buffer ${formatEther(CFG.ethGasBufferWei)} (${why}) — fund it`, { address, roles, ethWei: bal.toString(), runwayDays: runway });
+    const short = roles.includes('settle') && runway !== null && runway < CFG.runwayDaysWarn, low = bal < CFG.ethGasBufferWei;
+    if (short || low) {
+      await alert('warning', `${who} holds ${formatEther(bal)} ETH${short ? `, about ${runway.toFixed(1)} days at ${CFG.expectedOpsPerDay} settles a day and ${formatUnits(gasPrice, 9)} gwei` : ''}${low ? `, under the ${formatEther(CFG.ethGasBufferWei)} ETH buffer` : ''}: top it up soon`, { ...extra, runwayDays: runway });
     }
   }
 }

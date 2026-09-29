@@ -83,8 +83,23 @@ test('a missing capacity block degrades quietly instead of throwing', () => {
 
 test('runway is measured in DAYS of the wallet\'s real burn, not in settles', () => {
   ok(/import \{ burnGasPerDay, runwayDays \} from '\.\/lib\/runway\.js'/.test(monitor), 'monitor does not use the shared runway arithmetic');
-  ok(/runway < CFG\.runwayDaysCritical/.test(monitor) && /runway < CFG\.runwayDaysWarn/.test(monitor), 'no critical and warning day thresholds');
+  ok(/runway < CFG\.runwayDaysWarn/.test(monitor), 'no warning day threshold');
   ok(/getGasPrice\(\)/.test(monitor), 'runway must read the live gas price');
+});
+
+// A wallet pages only where users wait on it: a settle wallet that cannot pay the next settle, the settle relay's own
+// test before it takes a job. The relay wallet (headers, attests) waits out a short balance by design, and the lag and
+// stall checks page if the reflection actually falls behind; runway and the buffer only say when to top up.
+test('gas pages only when the next settle cannot be paid', () => {
+  const block = monitor.slice(monitor.indexOf('async function checkEth'), monitor.indexOf('async function checkSnapshotCapacity'));
+  const crit = block.match(/alert\('critical'/g) || [];
+  ok(crit.length === 1, `checkEth has exactly one critical, got ${crit.length}`);
+  ok(/roles\.includes\('settle'\)\) \{\s*const need = CFG\.settleFundsGas \* \(3n \* base \+ CFG\.settleTipFloorWei\);\s*if \(bal < need\) await alert\('critical'/.test(block), 'the critical is not the next-settle cost the settle relay checks');
+  ok(/roles\.includes\('relay'\)\) \{\s*const need = CFG\.attestGasBudget \* \(2n \* base \+ tip\);\s*if \(bal < need\) await alert\('warning'/.test(block), 'a relay wallet short of an attest must warn, not page');
+  ok(!/runwayDaysCritical/.test(block) && !/alert\('critical', `\$\{who\} ETH/.test(block), 'runway and the buffer must not page');
+  const settle = readFileSync(join(ROOT, 'worker-relay/src/settle-relay.js'), 'utf8'), folder = readFileSync(join(ROOT, 'worker-relay/src/reflection-folder.js'), 'utf8');
+  ok(/const SETTLE_FUNDS_GAS = CFG\.settleFundsGas;/.test(settle) && /const TIP_FLOOR_WEI = CFG\.settleTipFloorWei;/.test(settle), 'the settle relay and the monitor must price a settle alike');
+  ok(/const ATTEST_GAS_BUDGET = CFG\.attestGasBudget;/.test(folder), 'the reflection and the monitor must price an attest alike');
 });
 
 // The arithmetic itself, with real numbers: a merged relayer wallet holding 0.02014 ETH at 0.053 gwei
@@ -131,7 +146,7 @@ test('a critical exits non-zero so the cron surfaces it without a webhook', () =
 });
 
 test('both new thresholds are env-overridable', () => {
-  for (const k of ['RUNWAY_DAYS_CRITICAL', 'RUNWAY_DAYS_WARN', 'SNAPSHOT_BYTES_WARN']) {
+  for (const k of ['RUNWAY_DAYS_WARN', 'SNAPSHOT_BYTES_WARN', 'SETTLE_FUNDS_GAS', 'SETTLE_TIP_FLOOR_WEI', 'REFLECTION_ATTEST_GAS_BUDGET']) {
     ok(new RegExp(`'${k}'`).test(config), `${k} is not configurable`);
   }
 });

@@ -156,7 +156,7 @@ async function cycle() {
 // What an attest can cost the relay wallet right now against what it holds. The budget covers the padded
 // estimate of a large batch; the fee is the cap a send carries (twice the base fee plus the tip), which is what
 // the node checks the balance against. An unreadable chain is not a reason to stop.
-const ATTEST_GAS_BUDGET = BigInt(process.env.REFLECTION_ATTEST_GAS_BUDGET || '700000');
+const ATTEST_GAS_BUDGET = CFG.attestGasBudget;
 const eth = (wei) => (Number(wei) / 1e18).toFixed(4);
 async function attestFunds() {
   try {

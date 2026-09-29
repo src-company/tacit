@@ -103,7 +103,7 @@ await test('the route is registered and box-token gated', () => {
   ok(/checkConfidentialAuth\(req, env\)\) return jsonResponse\(\{ error: 'not found' \}, 404/.test(fn), 'the queue route must be auth-gated (404 when unauthenticated)');
 });
 await test('the monitor runs the queue check, and a critical/warning becomes an alert', () => {
-  ok(/checkQueue\(\)\]/.test(monitor), 'checkQueue is not run');
+  ok(/Promise\.allSettled\(\[[^\]]*\bcheckQueue\(\)[^\]]*\]\)/.test(monitor), 'checkQueue is not run');
   ok(/if \(v\.level === 'critical' \|\| v\.level === 'warning'\) await alert\(v\.level/.test(monitor), 'the verdict must raise an alert');
   ok(/\/confidential\/queue/.test(monitor) && /Bearer \$\{CFG\.boxToken\}/.test(monitor), 'the monitor must call the gated route with the box token');
 });

@@ -389,10 +389,15 @@ export const CFG = {
   // credit while the wallet can still pay gas.
   proveCreditFloorWei: BigInt(opt('PROVE_CREDIT_FLOOR_WEI', '100000000000000000000')), // 100 PROVE
   proveTopUpMaxWei: BigInt(opt('PROVE_TOPUP_MAX_WEI', '20000000000000000')), // 0.02 ETH
-  // A floor says "low"; runway says WHEN. The relay stalls when it can no longer afford its next transaction, so
-  // the actionable number is how many DAYS the wallet lasts at its real burn and the live gas price — which
-  // moves with the market, where a fixed wei floor does not. Critical below the first, a warning below the second.
-  runwayDaysCritical: num('RUNWAY_DAYS_CRITICAL', 3),
+  // What each wallet's next transaction can cost, as the services that send them reckon it before sending. A settle:
+  // SETTLE_FUNDS_GAS at 3x the base fee plus the settle tip floor (the settle relay leaves jobs queued below it). An
+  // attest: REFLECTION_ATTEST_GAS_BUDGET at 2x the base fee plus the tip (the reflection waits below it). The header
+  // relay keeps both back from its batches; the monitor pages when a settle cannot be paid.
+  settleFundsGas: BigInt(opt('SETTLE_FUNDS_GAS', '720000')),
+  settleTipFloorWei: BigInt(opt('SETTLE_TIP_FLOOR_WEI', '100000000')), // 0.1 gwei: lower tips often waited out a round
+  attestGasBudget: BigInt(opt('REFLECTION_ATTEST_GAS_BUDGET', '700000')),
+  // Days a wallet with the settle role lasts at EXPECTED_OPS_PER_DAY and the live gas price: a warning below this. It
+  // says when to top up, not that anything has stopped (the monitor pages only on a settle it cannot pay).
   runwayDaysWarn: num('RUNWAY_DAYS_WARN', 7),
   // Settle-queue health (see lib/queue-health.js). A relayed job is normally picked up in seconds, so a pending job
   // this old means the settle service is down or stuck and a user is waiting.

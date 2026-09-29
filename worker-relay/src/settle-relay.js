@@ -40,7 +40,7 @@ const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
 // Settle submission: a private endpoint accepting a transaction is not the same as a builder including it,
 // and an un-included settle costs a proof that was already paid for. These bound how hard the relay tries
 // before giving up, and how cheap a tip it is willing to start from.
-const TIP_FLOOR_WEI = BigInt(process.env.SETTLE_TIP_FLOOR_WEI || '100000000'); // 0.1 gwei: lower tips often waited out a round
+const TIP_FLOOR_WEI = CFG.settleTipFloorWei;
 const TIP_CAP_WEI = BigInt(process.env.SETTLE_TIP_CAP_WEI || '2000000000'); // 2 gwei
 const SUBMIT_ROUNDS = Math.max(1, parseInt(process.env.SETTLE_SUBMIT_ROUNDS || '3', 10));
 const RECEIPT_WAIT_MS = Math.max(30_000, parseInt(process.env.SETTLE_RECEIPT_WAIT_MS || '90000', 10));
@@ -532,7 +532,7 @@ async function batchCycle() {
 // the wallet cannot cover, so while the wallet is short every job would be proved and then failed. The queue is not
 // read at all until it is funded again: jobs wait as queued, and nothing is spent on a proof that cannot land. The
 // budget is an ordinary op's padded gas at the fee cap submitCall uses. An unreadable chain is not a reason to stop.
-const SETTLE_FUNDS_GAS = BigInt(process.env.SETTLE_FUNDS_GAS || '720000');
+const SETTLE_FUNDS_GAS = CFG.settleFundsGas;
 let shortSince = 0, shortNotedAt = 0;
 async function fundsShort() {
   let have, need;

@@ -118,8 +118,8 @@ async function resumeHeight(rtip, btip) {
 // (SETTLE_ADDRESS names another wallet), so headers never spend into what those need: one attest, and one settle
 // where it applies, each at the fee cap its own service sends with, stay behind.
 const MIN_TIP_WEI = 50_000_000n; // 0.05 gwei: a zero tip is accepted and then never included
-const SETTLE_RESERVE_GAS = BigInt(process.env.SETTLE_FUNDS_GAS || '720000');             // settle-relay's fee cap: 3x base
-const ATTEST_RESERVE_GAS = BigInt(process.env.REFLECTION_ATTEST_GAS_BUDGET || '700000'); // reflection's fee cap: 2x base
+const SETTLE_RESERVE_GAS = CFG.settleFundsGas;   // settle-relay's fee cap: 3x base
+const ATTEST_RESERVE_GAS = CFG.attestGasBudget;  // reflection's fee cap: 2x base
 const eth = (wei) => (Number(wei) / 1e18).toFixed(4);
 async function submitAdvance(from, to) {
   const [blk, prio, have] = await Promise.all([
