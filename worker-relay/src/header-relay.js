@@ -112,7 +112,11 @@ async function resumeHeight(rtip, btip) {
 // tip (a three-minute cron never outgrows it), rather than left to the client, whose default reserves several
 // times what an advance costs; and the batch is cut to what the wallet covers. The next run carries on from
 // wherever this one stops. Returns the transaction and the height it advanced to.
+//
+// The wallet also pays for users' settles and the reflection's attests, so headers never spend into what those
+// need: a couple of settles and an attest at today's fee cap stay behind (RESERVE_GAS).
 const MIN_TIP_WEI = 50_000_000n; // 0.05 gwei: a zero tip is accepted and then never included
+const RESERVE_GAS = BigInt(process.env.HEADER_RELAY_RESERVE_GAS || '2000000');
 const eth = (wei) => (Number(wei) / 1e18).toFixed(4);
 async function submitAdvance(from, to) {
   const [blk, prio, have] = await Promise.all([
@@ -122,18 +126,20 @@ async function submitAdvance(from, to) {
   ]);
   const maxPriorityFeePerGas = prio > MIN_TIP_WEI ? prio : MIN_TIP_WEI;
   const maxFeePerGas = (blk.baseFeePerGas ?? 0n) * 2n + maxPriorityFeePerGas;
+  const reserve = RESERVE_GAS * ((blk.baseFeePerGas ?? 0n) * 3n + maxPriorityFeePerGas);
+  const budget = have > reserve ? have - reserve : 0n;
   const headers = [];
   for (let h = from; h <= to; h++) headers.push(await headerHex(h));
   for (;;) {
     const advanceCall = { address: HEADER_RELAY, abi: RELAY_ABI, functionName: 'advanceTip', args: [`0x${headers.slice(0, to - from + 1).join('')}`] };
     const gas = ((await publicClient.estimateContractGas({ ...advanceCall, account: relayWallet.account })) * 125n) / 100n;
     const need = gas * maxFeePerGas;
-    if (need > have) {
+    if (need > budget) {
       // Gas is close to linear in the header count; one header of margin covers the fixed part.
       const n = to - from + 1;
-      const fits = Math.floor((n * Number(have)) / Number(need)) - 1;
-      if (fits < 1) throw new Error(`relay wallet holds ${eth(have)} ETH, under what one header costs at today's gas (${eth(need / BigInt(n))} ETH): top it up`);
-      log(`relay wallet holds ${eth(have)} ETH, enough for ${fits} of ${n} headers at today's gas — advancing to ${from + fits - 1}`);
+      const fits = Math.floor((n * Number(budget)) / Number(need)) - 1;
+      if (fits < 1) throw new Error(`relay wallet holds ${eth(have)} ETH and keeps ${eth(reserve)} for settles and attests; one header costs ${eth(need / BigInt(n))} ETH at today's gas: top it up`);
+      log(`relay wallet holds ${eth(have)} ETH (${eth(reserve)} kept for settles and attests), enough for ${fits} of ${n} headers at today's gas — advancing to ${from + fits - 1}`);
       to = from + fits - 1;
       continue;
     }
