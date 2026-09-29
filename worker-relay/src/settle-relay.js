@@ -40,7 +40,7 @@ const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
 // Settle submission: a private endpoint accepting a transaction is not the same as a builder including it,
 // and an un-included settle costs a proof that was already paid for. These bound how hard the relay tries
 // before giving up, and how cheap a tip it is willing to start from.
-const TIP_FLOOR_WEI = BigInt(process.env.SETTLE_TIP_FLOOR_WEI || '50000000'); // 0.05 gwei
+const TIP_FLOOR_WEI = BigInt(process.env.SETTLE_TIP_FLOOR_WEI || '100000000'); // 0.1 gwei: lower tips often waited out a round
 const TIP_CAP_WEI = BigInt(process.env.SETTLE_TIP_CAP_WEI || '2000000000'); // 2 gwei
 const SUBMIT_ROUNDS = Math.max(1, parseInt(process.env.SETTLE_SUBMIT_ROUNDS || '3', 10));
 const RECEIPT_WAIT_MS = Math.max(30_000, parseInt(process.env.SETTLE_RECEIPT_WAIT_MS || '90000', 10));
@@ -680,7 +680,13 @@ async function main() {
     }
     return;
   }
+  // A deploy or restart sends SIGTERM. A job in hand has had its proof paid for and is claimed, so it would sit
+  // stranded until the claim times out: finish it, take no new one, then exit. (The service's shutdown delay has to
+  // outlast a prove and settle for this to help.)
+  let stopping = false;
+  process.on('SIGTERM', () => { if (!stopping) log('SIGTERM — finishing the job in hand, taking no new ones'); stopping = true; });
   for (;;) {
+    if (stopping) { log('stopped cleanly'); process.exit(0); }
     try {
       const worked = await cycle();
       // An empty queue is the common case, not an error — but it must still beat, or /prover-health
