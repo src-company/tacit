@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-qsh/aOzBRkj6WFrdwcDObXne9hpmJt58rY6Py6OxW9s=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-eQF3kl19hKMRxnBIOkjEq6WZuBqmrYEDatLTml9vKgY=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -3151,7 +3151,8 @@ render.borrow = () => {
             <div class="kv"><span>Balance</span><b>${st.sats == null ? '—' : html`${fmt(st.sats, 8, 8)} BTC${st.pendingSats ? html` <span class="mute">(${fmt(st.pendingSats, 8, 8)} unconfirmed)</span>` : ''}`}</b></div>
             <div class="amt act"><input id="bw-amt" inputmode="decimal" placeholder="0.001" autocomplete="off" aria-label="BTC to lock"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-btc"/></svg>BTC</span></div>
             <div class="row2"><button class="btn ghost" type="button" id="bw-fund">Send from Bitcoin wallet</button><button class="btn" type="button" id="bw-lock">Lock BTC</button></div>
-            <p class="note">Xverse, Leather or UniSat send it in one popup, or pay the address from anywhere. Locking waits for one confirmation.</p>`}
+            <p class="note">Xverse, Leather or UniSat send it in one popup, or pay the address from anywhere. Locking waits for one confirmation.</p>
+            ${attested && st.tip ? html`<p class="note">Minting waits for Bitcoin's proof on Ethereum to reach the lock's block. It is at block ${attested.toLocaleString('en-US')}, ${Math.max(0, st.tip - attested).toLocaleString('en-US')} behind Bitcoin (about ${Math.max(1, Math.round((st.tip - attested) / 6))} hours), so a lock made now mints about then. Until it is minted, its bond can be taken back.</p>` : ''}`}
         </div>
       </li>
       <li class="${stepCls(s2, s1 && !s2)}">
@@ -3181,6 +3182,7 @@ render.borrow = () => {
             <label class="pick"><input type="checkbox" id="bw-pts"><span>Send the loan from ${your()} to earn points. It pays the gas and is linked to the loan.</span></label>
             <button class="btn" type="button" id="bw-borrow">Borrow cUSD</button>` : ''}
           ${s4 && st.cusd?.value ? html`<div class="kv"><span>Private cUSD</span><b>${fmt(st.cusd.value, 8, 2)}</b></div><button class="btn ghost" type="button" id="bw-out">Withdraw as tacUSD</button>` : ''}
+          ${s4 ? html`<p class="note">To repay and close the loan, which returns the cBTC, use the <a href="/#tab=cdp" target="_blank" rel="noopener">CDP tab</a> of the full app: it finds this loan from your key. Repaying takes cUSD held privately, so keep enough of it as cUSD.</p>` : ''}
         </div>
       </li>
     </ol>

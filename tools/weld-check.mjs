@@ -401,6 +401,8 @@ await step('borrow', async () => {
   await page.waitForSelector('#bw-lock, #borrow-body [data-in="eth"]', { timeout: 60000 });
   if (await page.$('#borrow-body [data-in="eth"]')) { await page.click('#borrow-body [data-in="eth"]'); await page.waitForSelector('#bw-lock', { timeout: 120000 }); }
   ok(/^bc1q/.test(await page.$eval('#borrow-body [data-copy]', (b) => b.dataset.copy)), 'borrow: the Bitcoin deposit address renders');
+  const lag = await page.$eval('#borrow-body', (e) => (e.textContent.match(/It is at block [\d,]+, [\d,]+ behind Bitcoin \(about \d+ hours\)/) || [''])[0]);
+  ok(/at block [\d,]+, [\d,]+ behind Bitcoin/.test(lag), `borrow: before a lock, it says how far behind Bitcoin's proof is (${lag.slice(0, 90)})`);
   const pub = await page.evaluate(() => localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('tacit-eth-identity-anchor:'))));
   await page.evaluate((p) => localStorage.setItem(`tacit-lite-cbtc-v1:${p}`, JSON.stringify({ lockTxid: 'aa'.repeat(32), lockVout: 1, vBtc: '20000', anchor: { txid: 'bb'.repeat(32), vout: 0 }, at: Date.now() })), pub);
   await page.evaluate(() => { location.hash = ''; location.hash = '#borrow'; });
