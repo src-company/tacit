@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-7t/mFBHbFdQSnD+W+vVm0iqNRYaFVZR6B2k8gIHr3Ug=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-GefIem8BMGE0p+c9OfgQ5V1akykF9lhedxECx0gJ8RM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -692,6 +692,8 @@ const errText = (e) => {
   if (r) return r;
   if (/insufficient funds/i.test(m)) return 'Not enough ETH for this and its gas.';
   if (/failed to fetch|networkerror|load failed|all rpcs failed/i.test(m)) return 'Could not reach the network. Check your connection and try again.';
+  if (/rate.?limit|too many requests|\b429\b|exceeded.*(?:request|quota)|upgrade.*(?:plan|tier)/i.test(m)) return 'That network is busy right now. Try again in a moment.';
+  if (/timed? ?out|timeout/i.test(m)) return 'The network took too long to answer. Try again.';
   return m.replace(/^Error:\s*/, '').slice(0, 240);
 };
 // A status line is state: it survives re-renders of its pane and clears when the sheet closes.
@@ -1402,7 +1404,7 @@ const getUx = lazy(async () => {
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
 });
 const P = { scan: null, scanning: null, err: null };           // this identity's shielded notes, from ux.balance
-function resetPrivate() { P.scan = null; P.scanning = null; P.err = null; DEV.W = null; DEV.bal = null; DEV.key = null; DEV.quote = null; Object.assign(LOCK, { rec: null, state: null, lm: null, bonds: [], list: [], pick: null, found: null, repayOver: null }); Object.assign(LK, { at: 0, pub: null, mine: [], back: [], scanning: null }); Object.assign(BTC, { pub: null, at: 0, err: null, share: null, sp: null, held: [] }); dropTacitKey(); }
+function resetPrivate() { P.scan = null; P.scanning = null; P.err = null; DEV.W = null; DEV.bal = null; DEV.key = null; DEV.quote = null; DEV.err = null; Object.assign(LOCK, { rec: null, state: null, lm: null, bonds: [], list: [], pick: null, found: null, repayOver: null }); Object.assign(LK, { at: 0, pub: null, mine: [], back: [], scanning: null }); Object.assign(BTC, { pub: null, at: 0, err: null, share: null, sp: null, held: [] }); dropTacitKey(); }
 // A forced scan starts after any scan already running, so what it returns is newer than the call.
 async function scanPrivate(force = false) {
   if (!S.key) return null;
@@ -1755,7 +1757,7 @@ function v1Out(el, status) {
 }
 
 // ── private ETH · on this device (TacitEvmPool, Groth16 proved in the browser) ──────────────────────────
-const DEV = { chain: DEVICE_CHAINS.find((c) => c.chainId === store.get('tacit-lite-device-chain')) || DEVICE_CHAINS[1], mode: 'deposit', dest: 'addr', W: null, bal: null, key: null, quote: null };
+const DEV = { chain: DEVICE_CHAINS.find((c) => c.chainId === store.get('tacit-lite-device-chain')) || DEVICE_CHAINS[1], mode: 'deposit', dest: 'addr', W: null, bal: null, key: null, quote: null, err: null };
 const getDeviceMods = lazy(async () => {
   const [zkm, wm, pm, pos] = await Promise.all([
     import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=f8c2ced2'), import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
@@ -1856,7 +1858,7 @@ function deviceSync(fresh = false) {
     const W = await deviceWallet();
     const [s, q] = await Promise.all([W.sync(), W.quote().catch(() => null)]);
     if (DEV.W === W) {                                                          // not a chain or key switched away from meanwhile
-      DEV.bal = s.balance; DEV.quote = q;
+      DEV.bal = s.balance; DEV.quote = q; DEV.err = null;
       store.set(`tacit-lite-device-bal-v1:${DEV.chain.chainId}:${S.key.pubHex}`, { v: s.balance.toString(), at: Date.now() });
     }
   }).finally(() => { if (DEV.syncing === p) DEV.syncing = null; });
@@ -1869,16 +1871,22 @@ function renderDevice(el) {
     ${segSub('chain', String(c.chainId), DEVICE_CHAINS.map((x) => [String(x.chainId), x.name]))}
     <div class="bal">
       <svg class="tk md" aria-hidden="true"><use href="#tk-eth"/></svg>
-      <div><div class="v num">${DEV.bal == null ? html`<span class="mute">reading…</span>` : fmt(DEV.bal, 18, 6)}</div><div class="u">ETH, private on ${c.name}</div></div>
+      <div><div class="v num">${DEV.bal == null ? (DEV.err ? html`<span class="err">—</span>` : html`<span class="mute">reading…</span>`) : fmt(DEV.bal, 18, 6)}</div><div class="u">ETH, private on ${c.name}</div></div>
+      <div class="side">${DEV.err ? html`<button class="link" type="button" id="d-rescan">retry</button>` : DEV.bal != null ? html`<button class="link" type="button" id="d-rescan">refresh</button>` : ''}</div>
     </div>
     ${segSub('dev', DEV.mode, [['deposit', 'Deposit'], ['send', 'Send'], ['out', 'Withdraw'], ['receive', 'Receive']])}
     <div id="d-form"></div>
     <div class="status" role="status" id="d-status"></div>`);
-  wireSub(el, 'chain', (id) => { DEV.chain = DEVICE_CHAINS.find((x) => String(x.chainId) === id); store.set('tacit-lite-device-chain', DEV.chain.chainId); DEV.W = null; DEV.bal = null; DEV.quote = null; keep($('#sheet-eth'), render.eth); deviceSync(true).then(() => rerender('eth')).catch((e) => sayErr($('#d-status'), e)); });
+  const syncFailed = (e) => { DEV.err = e; rerender('eth'); sayErr($('#d-status'), e); };
+  wireSub(el, 'chain', (id) => { DEV.chain = DEVICE_CHAINS.find((x) => String(x.chainId) === id); store.set('tacit-lite-device-chain', DEV.chain.chainId); DEV.W = null; DEV.bal = null; DEV.quote = null; DEV.err = null; keep($('#sheet-eth'), render.eth); deviceSync(true).then(() => rerender('eth')).catch(syncFailed); });
   wireSub(el, 'dev', (m) => { DEV.mode = m; keep($('#sheet-eth'), render.eth); });
-  if (!W || DEV.bal == null) deviceSync().then(() => rerender('eth')).catch((e) => sayErr($('#d-status'), e));
+  if (!W || DEV.bal == null) deviceSync().then(() => rerender('eth')).catch(syncFailed);
+  const re = $('#d-rescan'); if (re) re.onclick = () => busy(re, async () => { try { await deviceSync(true); DEV.err = null; rerender('eth'); } catch (e) { syncFailed(e); } });
   const f = $('#d-form'), status = $('#d-status');
   const step = (m) => say(status, m[0].toUpperCase() + m.slice(1) + '…');
+  // The action already landed on chain: say so now, and let the refresh happen after. A refresh that fails here
+  // (a busy RPC, most often) must never turn an action that succeeded into one this page reports as failed.
+  const afterAction = (done) => { say(status, done); deviceSync(true).then(() => rerender('eth')).catch(() => rerender('eth')); };
   const explorer = (h) => txLink(h, c.explorer);
   const warm = () => prover(provingNote).then(() => say(status, '')).catch(() => {});
   const amountField = (id, label, extra = '') => html`
@@ -1915,7 +1923,7 @@ function renderDevice(el) {
         await payingAccount(); W2.connect(payFrom(c.chainId));
         const h = await W2.deposit({ amount, onStep: step });
         clearField(amt); rc.hidden = true;
-        await deviceSync(true); rerender('eth'); say($('#d-status'), html`<span class="ok">Deposited.</span> ${explorer(h)}`);
+        afterAction(html`<span class="ok">Deposited.</span> ${explorer(h)}`);
       } catch (e) { sayErr(status, e); }
     });
   } else if (DEV.mode === 'send') {
@@ -1960,7 +1968,7 @@ function renderDevice(el) {
         const W2 = await deviceWallet();
         const h = k === 'addr' ? await W2.withdraw({ to: recipientOf(to), amount, onStep: step }) : await W2.send({ to, amount, onStep: step });
         clearField(amt); rc.hidden = true;
-        await deviceSync(true); rerender('eth'); say($('#d-status'), html`<span class="ok">${k === 'addr' ? 'Sent to the address.' : 'Sent privately.'}</span> ${explorer(h)}`);
+        afterAction(html`<span class="ok">${k === 'addr' ? 'Sent to the address.' : 'Sent privately.'}</span> ${explorer(h)}`);
       } catch (e) { sayErr(status, e); }
     });
   } else if (DEV.mode === 'out') {
@@ -2018,7 +2026,7 @@ function renderDevice(el) {
           done = `On its way to ${l2.name}.`;
         }
         clearField(amt); rc.hidden = true;
-        await deviceSync(true); rerender('eth'); say($('#d-status'), html`<span class="ok">${done}</span> ${explorer(h)}`);
+        afterAction(html`<span class="ok">${done}</span> ${explorer(h)}`);
       } catch (e) { sayErr(status, e); }
     });
   } else {
@@ -2040,7 +2048,7 @@ function renderDevice(el) {
         try {
           await payingAccount(); W.connect(payFrom(c.chainId));
           const h = await W.sweep({ onStep: step });
-          await deviceSync(true); rerender('eth'); say($('#d-status'), html`<span class="ok">Swept in.</span> ${explorer(h)}`);
+          afterAction(html`<span class="ok">Swept in.</span> ${explorer(h)}`);
         } catch (e) { sayErr(status, e); }
       });
     }).catch(() => {});

@@ -389,6 +389,10 @@ await step('device', async () => {
   await page.waitForSelector('[data-chain="1"]', { timeout: 60000 });
   await page.click('[data-chain="1"]');
   await page.waitForSelector('#d-amt', { timeout: 60000 });
+  // DEV.mode (the sub-tab) persists across sheet reopens, a deliberate feature: a scenario run right after devsend
+  // (which leaves it on Send) must not inherit that here.
+  await page.click('[data-dev="deposit"]');
+  await page.waitForFunction(() => /Deposit/.test(document.querySelector('#d-go')?.textContent || ''));
   await page.fill('#d-amt', '0.01');
   await page.click('#d-go');
   await until(page, () => /Deposited|err/.test(document.querySelector('#d-status')?.innerHTML || ''), null, 600000);
