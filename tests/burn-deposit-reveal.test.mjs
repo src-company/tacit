@@ -138,6 +138,73 @@ const mig = await rd.buildMigrationTxs({ prims, note, walletPriv: WALLET_PRIV, f
   ok('migration reveal signature + commit-output tweak independently verified via a from-scratch BIP-341 sighash');
 }
 
+// sourcePriv: a stealth-received note sits at P2WPKH(commit), commit != walletPub, so its spend key differs
+// from walletPriv. buildMigrationTxs must sign the note's OWN input under sourcePriv while keeping the
+// funding UTXO, the envelope's authority and the reveal's change on walletPriv — mirrors this same note
+// (same outpoint) to isolate exactly what sourcePriv is allowed to change.
+{
+  const dsha256 = (b) => sh(sh(b));
+  const hash160 = (b) => createHash('ripemd160').update(sh(b)).digest();
+  // noble/secp256k1 v2's verify() takes only the 64-byte compact (r||s) form, not DER — signP2wpkhInput's
+  // witness carries DER (+ trailing sighash-type byte), so convert before verifying.
+  function derSigToCompact(der) {
+    let p = 0;
+    if (der[p++] !== 0x30) throw new Error('not a DER sequence');
+    p++; // total-length byte (short form only; secp256k1 sig components never need long-form here)
+    if (der[p++] !== 0x02) throw new Error('expected INTEGER (r)');
+    const rLen = der[p++]; const r = der.subarray(p, p + rLen); p += rLen;
+    if (der[p++] !== 0x02) throw new Error('expected INTEGER (s)');
+    const sLen = der[p++]; const s = der.subarray(p, p + sLen);
+    const to32 = (x) => { while (x.length > 32 && x[0] === 0) x = x.subarray(1); const out = Buffer.alloc(32); Buffer.from(x).copy(out, 32 - x.length); return out; };
+    return Buffer.concat([to32(r), to32(s)]);
+  }
+  function bip143Sighash(tx, idx, scriptCode, prevValue) {
+    const u32 = (v) => { const x = Buffer.alloc(4); x.writeUInt32LE(v >>> 0); return x; };
+    const u64 = (v) => { const x = Buffer.alloc(8); x.writeBigUInt64LE(BigInt(v)); return x; };
+    const hashPrevouts = dsha256(Buffer.concat(tx.inputs.map((i) => Buffer.concat([i.txid, u32(i.vout)]))));
+    const hashSequence = dsha256(Buffer.concat(tx.inputs.map((i) => u32(i.sequence))));
+    const hashOutputs = dsha256(Buffer.concat(tx.outputs.map((o) => Buffer.concat([u64(o.value), varintBuf(o.script.length), o.script]))));
+    const inp = tx.inputs[idx];
+    return dsha256(Buffer.concat([
+      u32(tx.version), hashPrevouts, hashSequence, inp.txid, u32(inp.vout),
+      varintBuf(scriptCode.length), scriptCode, u64(prevValue), u32(inp.sequence),
+      hashOutputs, u32(tx.locktime), u32(0x00000001),
+    ]));
+  }
+
+  const SOURCE_PRIV = new Uint8Array(32).fill(0x22); // stands in for a stealth tweaked_sk, deliberately != WALLET_PRIV
+  const sourcePub = secp.getPublicKey(SOURCE_PRIV, true);
+  const mig2 = await rd.buildMigrationTxs({ prims, note, walletPriv: WALLET_PRIV, sourcePriv: SOURCE_PRIV, fundingUtxo: { ...fundingUtxo1, txid: '9a'.repeat(32) }, feeRate: 3 });
+
+  const reveal2 = parseTx(Buffer.from(mig2.revealHex, 'hex'));
+  const [sig1, pub1] = reveal2.inputs[1].witness;
+  assert.deepStrictEqual(Buffer.from(pub1), Buffer.from(sourcePub), 'the note input signs with sourcePriv\'s pubkey, not walletPriv\'s');
+  const scriptCode = Buffer.concat([Buffer.from([0x76, 0xa9, 0x14]), hash160(sourcePub), Buffer.from([0x88, 0xac])]);
+  const sigNoType = sig1.subarray(0, sig1.length - 1); // strip the trailing SIGHASH_ALL byte before verify
+  const sigCompact = derSigToCompact(sigNoType);
+  assert.ok(secp.verify(sigCompact, bip143Sighash(reveal2, 1, scriptCode, NOTE_SATS), sourcePub), 'note-input signature independently verifies under a from-scratch BIP-143 sighash keyed to sourcePriv');
+
+  const walletPub = secp.getPublicKey(WALLET_PRIV, true);
+  assert.notDeepStrictEqual(Buffer.from(pub1), Buffer.from(walletPub), 'sanity: sourcePriv and walletPriv are genuinely different keys here');
+
+  // Envelope authority (vin[0]) and the reveal's own change output stay on walletPriv regardless of sourcePriv.
+  const [sig0, script0, cb0] = reveal2.inputs[0].witness;
+  const leafHash = independentLeafHash(script0);
+  const commit2 = parseTx(Buffer.from(mig2.commitHex, 'hex'));
+  const realPrevouts2 = [{ value: commit2.outputs[0].value, script: commit2.outputs[0].script }, { value: BigInt(NOTE_SATS), script: Buffer.concat([Buffer.from([0x00, 0x14]), hash160(sourcePub)]) }];
+  assert.ok(verifySchnorr(sig0, bip341Sighash(reveal2, 0, realPrevouts2, leafHash), script0.subarray(1, 33)), 'vin[0] (envelope/commit) still signs under walletPriv\'s xonly key');
+  assert.strictEqual(script0.subarray(1, 33).toString('hex'), Buffer.from(walletPub.slice(1)).toString('hex'), 'envelope leaf still names walletPriv\'s x-only key as its authority');
+  const changeOut = reveal2.outputs.find((o) => o.value > BigInt(546) && o.value !== BigInt(mig2.revealTx.outputs[0].value));
+  if (changeOut) assert.strictEqual(changeOut.script.toString('hex'), '0014' + hash160(walletPub).toString('hex'), 'the reveal\'s sats-change output still pays walletPriv\'s address, not sourcePriv\'s');
+
+  // The burn-home itself is keyed on (walletPriv, note outpoint) only — identical whether or not sourcePriv
+  // was used to unlock the note, since by design nothing downstream of migrate ever needs to know the note
+  // was stealth-received (see dapp/burn-deposit-reveal.js's own header comment).
+  assert.deepStrictEqual(mig2.burnHome.priv, mig.burnHome.priv, 'the burn-home key is unaffected by sourcePriv — stays anchored to walletPriv + the note\'s own outpoint');
+
+  ok('buildMigrationTxs(sourcePriv=...) signs only the note\'s own input under the alternate key; funding, envelope authority, change and the burn-home key all stay on walletPriv');
+}
+
 // reconstructBurnHome: rebuilds mig.burnHome from the wallet key + source outpoint alone (no fundingUtxo,
 // no signing) — the recovery path for a session that lost buildMigrationTxs's own return value.
 {

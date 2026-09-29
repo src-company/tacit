@@ -170,6 +170,7 @@ function makeUx(world, storage) {
     { txid: 'bb'.repeat(32), vout: 0, assetId: withHex('ff'.repeat(32)), amount: 1n, confirmed: true },
     { txid: 'cc'.repeat(32), vout: 0, assetId: ASSET, amount: 1n, confirmed: false },
     { txid: 'dd'.repeat(32), vout: 0, assetId: ASSET, amount: 1n, confirmed: true, stealth: true },
+    { txid: 'd1'.repeat(32), vout: 0, assetId: ASSET, amount: 1n, confirmed: true, stealth: true, stealthTweakedSk: bytesToHex(new Uint8Array(32).fill(0x33)) },
     // dapp/tacit.js's real bridge-eth click handler passes a holding's assetId bare-hex (its button's own
     // data-aid) while tacAssetId itself is wired in 0x-prefixed (_burndepUxSingleton) — a real note must not
     // be called "not TAC" just because the two sides disagree on a leading 0x.
@@ -180,9 +181,39 @@ function makeUx(world, storage) {
   ok(list[1].eligible === false && /1,000 TAC/.test(list[1].reason), 'a note over the cap is ineligible with a clear reason');
   ok(list[2].eligible === false && list[2].reason === 'not TAC', 'a non-TAC note is ineligible');
   ok(list[3].eligible === false && list[3].reason === 'unconfirmed', 'an unconfirmed note is ineligible');
-  ok(list[4].eligible === false && /stealth/.test(list[4].reason), 'a stealth-received note is ineligible');
-  ok(list[5].eligible === true, 'a bare-hex TAC assetId is still recognized as TAC against a 0x-prefixed tacAssetId');
+  ok(list[4].eligible === false && /stealth/.test(list[4].reason), 'a stealth-received note with no recovered spend key is ineligible (defensive fallback — scanHoldings should never actually produce this)');
+  ok(list[5].eligible === true && list[5].stealthTweakedSk, 'a stealth-received note WITH its spend key is eligible — bridging a stealth note is supported, not blanket-excluded');
+  ok(list[6].eligible === true, 'a bare-hex TAC assetId is still recognized as TAC against a 0x-prefixed tacAssetId');
   ok(n > 0, 'eligibleNotes checks ran');
+}
+
+// ==== stealth-received note: it sits on chain at P2WPKH(stealthPub), not P2WPKH(WALLET_PUB) — preflight's
+// ownership check and start()'s signing must both use the note's own tweaked key (carried as
+// note.stealthTweakedSk, exactly as eligibleNotes documents), never walletPriv itself. The deep cryptographic
+// proof that ONLY the note's own input signs under the alternate key (funding/envelope/change/burn-home all
+// stay on walletPriv) lives in tests/burn-deposit-reveal.test.mjs; this checks the integration wiring above it.
+{
+  const world = makeWorld();
+  const STEALTH_PRIV = new Uint8Array(32).fill(0x44); // stands in for a real tweaked_sk = walletPriv + b mod N
+  const stealthPub = secp.getPublicKey(STEALTH_PRIV, true);
+  const STEALTH_NOTE_TXID = '5e'.repeat(31) + '09';
+  world.setBurnHomeOnChain(STEALTH_NOTE_TXID, realWpkhSpkHexOf(stealthPub)); // the note's REAL on-chain script
+  const storage = makeMemStorage();
+  const ux = makeUx(world, storage);
+  const stealthNote = { txid: STEALTH_NOTE_TXID, vout: 0, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING, stealthTweakedSk: bytesToHex(STEALTH_PRIV) };
+
+  const pfMissingKey = await ux.preflight({ note: { ...stealthNote, stealthTweakedSk: undefined }, walletPub: WALLET_PUB });
+  const ownStepMissing = pfMissingKey.steps.find((s) => s.name === 'source-ownership');
+  ok(!!ownStepMissing && ownStepMissing.ok === false, "sanity: without stealthTweakedSk, preflight checks ownership against walletPub and correctly rejects this note (proves the check below isn't vacuously true)");
+
+  const pf = await ux.preflight({ note: stealthNote, walletPub: WALLET_PUB });
+  const ownStep = pf.steps.find((s) => s.name === 'source-ownership');
+  ok(!!ownStep && ownStep.ok === true, "preflight's ownership check passes against the note's OWN tweaked pubkey when stealthTweakedSk is present");
+
+  const r = await ux.start({ note: stealthNote, walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE });
+  ok(r.stage === 'migrate-signed', 'start() builds and signs a migrate for a stealth-received note without throwing');
+  const stealthPubHex = bytesToHex(stealthPub).slice(2).toLowerCase();
+  ok(r.migrate.revealHex.toLowerCase().includes(stealthPubHex), "the signed migrate reveal's witness carries the note's own stealth pubkey (full per-input signing proof lives in tests/burn-deposit-reveal.test.mjs)");
 }
 
 // ==== full happy path: migrate-signed -> ... -> minted ====

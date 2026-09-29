@@ -122,19 +122,30 @@ export function makeBurnDepositReveal({ pool, secp, prims: defaultPrims = null }
 
   // Build and sign the migration's commit + reveal. Nothing broadcast. fundingUtxo funds the commit
   // (must be plain sats — never a Tacit note); reveal outputs = [burn-home (DUST), change back to the wallet].
-  async function buildMigrationTxs({ prims, note, walletPriv, fundingUtxo, feeRate = null } = {}) {
+  // sourcePriv unlocks the SOURCE NOTE's own input specifically, when it differs from walletPriv — a
+  // stealth-received note sits at P2WPKH(commit), commit = walletPub + b·G, not at P2WPKH(walletPub), so
+  // its spend key is tweaked_sk (see dapp/tacit.js's per-input signing-key pattern), not walletPriv itself.
+  // Everything else — the funding UTXO, the envelope's own authority, the reveal's sats-change output —
+  // stays on walletPriv regardless of sourcePriv, exactly like this codebase's other assetSigner-override
+  // spends (dapp/tacit.js): only the one input being unlocked ever uses the alternate key.
+  async function buildMigrationTxs({ prims, note, walletPriv, fundingUtxo, feeRate = null, sourcePriv = null } = {}) {
     const P = primsOf(prims, MIGRATE_NEED);
     const plan = planMigrationToBurnHome({ note, walletPriv, sha256: P.sha256 });
     const rate = Number(feeRate != null ? feeRate : await P.getFeeRate('priority'));
     if (!Number.isFinite(rate) || rate < MIN_RELAY_RATE) throw new Error(`burn-deposit-reveal: fee rate ${rate} sat/vB is below the minimum relay rate`);
     if (!fundingUtxo || !fundingUtxo.txid || fundingUtxo.value == null) throw new Error('burn-deposit-reveal: fundingUtxo { txid, vout, value } required');
 
+    // notePriv/notePub equal walletPriv/walletPub whenever sourcePriv is omitted, so every branch below
+    // that picks between "wallet" and "note" collapses to the same value — no separate no-sourcePriv path.
+    const notePriv = sourcePriv || walletPriv;
+    const notePub = secp.getPublicKey(notePriv, true);
+
     const savedPriv = P.wallet.priv, savedPub = P.wallet.pub;
     try {
       P.wallet.priv = walletPriv; P.wallet.pub = secp.getPublicKey(walletPriv, true);
       const wpkhSpk = P.p2wpkhScript(P.wallet.pub);
       const fundingXonly = P.wallet.pub.slice(1);
-      const noteSpk = wpkhSpk; // P2WPKH-homed source note, spent from the SAME wallet address as funding
+      const noteSpk = P.p2wpkhScript(notePub);
 
       // Crypto over the single burn-home output (full amount, no split) — mirrors an ordinary single-output
       // T_CXFER_BPP exactly (kernel excess = out blinding − in blinding, BP+ range proof over the new commitment).
@@ -175,9 +186,16 @@ export function makeBurnDepositReveal({ pool, secp, prims: defaultPrims = null }
         if (changeValue >= DUST) rt.outputs.push({ value: changeValue, script: wpkhSpk });
         const prevouts = [{ value: commitValue, script: commitSpk }, { value: plan.note.sats, script: noteSpk }];
         // Standard 3-item script-path witness (unlike the burn-reveal below, the migration's envelope IS the
-        // real committed script here — nothing extra to insert).
+        // real committed script here — nothing extra to insert). The envelope's own authority is fundingXonly
+        // (== walletPriv's x-only key, set just above) regardless of sourcePriv, so input 0 always signs under
+        // walletPriv; input 1 (the note itself) signs under whichever key actually unlocks noteSpk. sign*Input
+        // reads P.wallet.priv/.pub live, so the two calls bracket their own key — same save/restore pattern
+        // this function already uses around itself (savedPriv/savedPub below).
+        P.wallet.priv = walletPriv; P.wallet.pub = secp.getPublicKey(walletPriv, true);
         rt.inputs[0].witness = P.signTaprootScriptPathInput(rt, prevouts, envelopeScript, envCb);
+        P.wallet.priv = notePriv; P.wallet.pub = notePub;
         rt.inputs[1].witness = P.signP2wpkhInput(rt, 1, plan.note.sats);
+        P.wallet.priv = walletPriv; P.wallet.pub = secp.getPublicKey(walletPriv, true);
         return rt;
       }
       const revealVb = vsizeOf(P, buildReveal('00'.repeat(32), 4000, 3000)).vsize;

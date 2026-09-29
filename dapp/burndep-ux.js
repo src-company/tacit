@@ -156,7 +156,10 @@ export function makeBurnDepositUx(deps) {
 
   // ---- eligibility (pure — no network) ----
   // `holding` shape: { txid, vout, sats, assetId, amount (bigint|string), blinding (bigint|string),
-  //                    confirmed (bool), stealth (bool, true for a note received via a stealth claim) }.
+  //                    confirmed (bool), stealth (bool, true for a note received via a stealth claim),
+  //                    stealthTweakedSk (hex string|null — the note's own spend key when stealth is true;
+  //                    see dapp/tacit.js's per-input signing-key pattern. scanHoldings always populates this
+  //                    alongside stealth:true, so the fallback reason below is defensive, not expected). }.
   function eligibleNotes(holdings) {
     return (holdings || []).map((h) => {
       const amount = BigInt(h.amount);
@@ -168,7 +171,7 @@ export function makeBurnDepositUx(deps) {
       if (lc(stripHex(h.assetId)) !== lc(stripHex(tacAssetId))) reason = 'not TAC';
       else if (amount > BURNDEP_BETA_CAP_RAW) reason = 'over the 1,000 TAC beta limit — send part of it to yourself first to split off a smaller note';
       else if (h.confirmed === false) reason = 'unconfirmed';
-      else if (h.stealth) reason = 'received privately (stealth) — send it to yourself first to get an ordinary note';
+      else if (h.stealth && !h.stealthTweakedSk) reason = 'received privately (stealth) — rescan holdings to recover its spend key, then retry';
       else if (isReserved(h.txid, h.vout)) reason = 'already bridging';
       return { ...h, eligible: !reason, reason };
     });
@@ -214,7 +217,11 @@ export function makeBurnDepositUx(deps) {
     catch (e) { step('source-lookup', false, String(e.message || e)); return out; }
     const vout = srcTx && srcTx.vout && srcTx.vout[note.vout];
     if (!step('source-confirmed', !!(srcTx.status && srcTx.status.confirmed), 'source output confirmed on Bitcoin')) return out;
-    const ownWpkh = lc(bytesToHexLocal(p2wpkhScriptOf(walletPub)));
+    // A stealth-received note sits at P2WPKH(commit), commit = walletPub + b·G, not at P2WPKH(walletPub) —
+    // its own tweaked key (carried on the note by scanHoldings, see eligibleNotes' shape comment) is the
+    // ownership proof instead.
+    const ownerPub = note.stealthTweakedSk ? secp.getPublicKey(hexToBytesLocal(stripHex(note.stealthTweakedSk)), true) : walletPub;
+    const ownWpkh = lc(bytesToHexLocal(p2wpkhScriptOf(ownerPub)));
     if (!step('source-ownership', !!vout && lc(vout.scriptpubkey) === ownWpkh, "source output pays this wallet's own address")) return out;
 
     let traced;
@@ -266,9 +273,12 @@ export function makeBurnDepositUx(deps) {
     if (isReserved(note.txid, note.vout)) throw new Error('burndep-ux: this note is already reserved by another bridge in progress');
     if (BigInt(note.amount) > BURNDEP_BETA_CAP_RAW) throw new Error('burndep-ux: over the beta cap');
 
+    // A stealth-received note's own spend key (see eligibleNotes' shape comment) — buildMigrationTxs signs
+    // the source input with it while keeping the funding/envelope/change side on walletPriv.
+    const sourcePriv = note.stealthTweakedSk ? hexToBytesLocal(stripHex(note.stealthTweakedSk)) : null;
     const P = freshPrims(walletPriv);
     const mig = await reveal.buildMigrationTxs({
-      prims: P, walletPriv,
+      prims: P, walletPriv, sourcePriv,
       note: { assetId: tacAssetId, amount: BigInt(note.amount), blinding: BigInt(note.blinding), txid: note.txid, vout: note.vout, sats: note.sats },
       fundingUtxo, feeRate,
     });

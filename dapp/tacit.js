@@ -21228,14 +21228,20 @@ async function _scanHoldingsImpl() {
       const liveChecks = creditKeys.map(async (k) => {
         const [txid, voutStr] = k.split(':');
         const vout = parseInt(voutStr, 10);
-        if (!txid || !Number.isFinite(vout)) return { k, alive: false };
+        if (!txid || !Number.isFinite(vout)) return { k, alive: false, txStatus: null };
+        // Real confirmation status, not assumed — a credit can be recorded from an
+        // still-unconfirmed scan hit, and even once confirmed this stays cheap: getTx
+        // caches confirmed txs (mem + IDB) forever, so a repeat rehydration costs no
+        // extra network round-trip beyond the outspend check already made here.
+        let txStatus = null;
+        try { const t = await getTx(txid); txStatus = t?.status || null; } catch {}
         try {
           const os = await getOutspend(txid, vout);
-          return { k, alive: !(os && os.spent === true) };
-        } catch { return { k, alive: true }; }  // fail-open on transient errors; classifier will re-check next scan
+          return { k, alive: !(os && os.spent === true), txStatus };
+        } catch { return { k, alive: true, txStatus }; }  // fail-open on transient errors; classifier will re-check next scan
       });
       const results = await Promise.all(liveChecks);
-      for (const { k, alive } of results) {
+      for (const { k, alive, txStatus } of results) {
         const e = credits[k];
         if (!e) continue;
         const [txid, voutStr] = k.split(':');
@@ -21273,12 +21279,12 @@ async function _scanHoldingsImpl() {
         }
         h.balance += amount;
         h.utxos.push({
-          utxo: { txid, vout, value: DUST, status: {} },
+          utxo: { txid, vout, value: DUST, status: txStatus || {} },
           amount, blinding,
           commitment,
           senderPubHex: e.senderPubHex || null,
           stealthTweakedSk,
-          blockTime: e.blockTime || null,
+          blockTime: txStatus?.block_time || e.blockTime || null,
         });
       }
     }
@@ -60967,6 +60973,7 @@ async function renderHoldings() {
             txid: u.utxo.txid, vout: u.utxo.vout, sats: u.utxo.value, assetId: aid,
             amount: u.amount, blinding: u.blinding,
             confirmed: !!(u.utxo.status && u.utxo.status.confirmed), stealth: !!u.stealthTweakedSk,
+            stealthTweakedSk: u.stealthTweakedSk || null,
           }));
           const eligible = ux.eligibleNotes(candidates);
           if (!eligible.length) { toast('No TAC notes to bridge yet.', 'error'); return; }
