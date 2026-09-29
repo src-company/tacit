@@ -89,7 +89,8 @@ import { mountBtcMarket } from './btc-market.js';
 import { fmtUnit as fmtBookUnit } from './btc-book.js';
 import { renderGovernTab } from './confidential-govern-tab.js';
 import { renderFactoryTab } from './confidential-factory-tab.js';
-import { CONFIDENTIAL_DEPLOYMENTS as CROSSLANE_DEPLOYMENTS, setActiveNetwork as _setConfidentialNet, isProtectedOutpoint as _isProtectedOutpoint } from './confidential-deployments.js';
+import { CONFIDENTIAL_DEPLOYMENTS as CROSSLANE_DEPLOYMENTS, setActiveNetwork as _setConfidentialNet, isProtectedOutpoint as _isProtectedOutpoint, notify as _confidentialNotify } from './confidential-deployments.js';
+import { notifyPendingWrapsOnce } from './confidential-scan-health.js';
 import { makeCrossLaneGuard } from './confidential-crosslane-guard.js';
 import { makeCrossChainAssets } from './cross-chain-asset-resolver.js';
 import { makeTacitAddress } from './tacit-address.js';
@@ -19781,7 +19782,10 @@ async function scanHoldingsCrossChain(force = false) {
   const poolNotesReader = (wallet && wallet.priv && dep.pool) ? async () => {
     try {
       const ux = _poolUxSingleton();
-      const { byAsset } = await ux.balance(wallet.priv);
+      const { byAsset, diag } = await ux.balance(wallet.priv);
+      // A deposit still waiting for its settle is money in limbo: say so wherever balances first load, not only on
+      // the tabs that list it with a Resume button.
+      try { notifyPendingWrapsOnce(diag, _confidentialNotify); } catch { /* the Pool and Send tabs still list it */ }
       return Object.values(byAsset || {})
         .filter((a) => BigInt(a.value || 0) > 0n)
         .map((a) => ({ assetId: a.asset, ticker: a.ticker, balance: BigInt(a.value), source: 'eth-confidential', lane: 'ethereum' }));
