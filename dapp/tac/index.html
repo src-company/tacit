@@ -70,6 +70,11 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 0; }
 .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; flex: none; }
 .brand b { font: italic 400 30px/1 var(--serif); letter-spacing: -.01em; }
+.tk { width: 28px; height: 28px; display: block; flex: none; border-radius: 50%; }
+.tk.sm { width: 18px; height: 18px; }
+.tk.dash { box-shadow: 0 0 0 1.5px var(--card), 0 0 0 3px var(--hair-2); }
+.uu { display: inline-flex; align-items: center; gap: 7px; }
+.fiat { font-size: 12px; color: var(--mute); margin-top: 5px; min-height: 17px; }
 .brand i { font: 500 10px/1 var(--mono); font-style: normal; letter-spacing: .16em; text-transform: uppercase; color: var(--mute);
   border: 1px solid var(--hair-2); padding: 4px 6px 3px; margin-left: 2px; }
 .chip { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; min-width: 0; padding: 0 14px; background: var(--card);
@@ -87,7 +92,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .hero p { color: var(--mute); margin: 0; max-width: 46ch; }
 
 /* live pool strip */
-.strip { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 1px; margin: 0 0 14px;
+.strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 1px; margin: 0 0 14px;
   background: var(--hair); border: 1px solid var(--hair); }
 .strip div { background: var(--card); padding: 14px 12px; }
 .strip .v { font: 500 22px/1.1 var(--mono); letter-spacing: -.02em; display: block; }
@@ -179,7 +184,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 <div class="shell">
 
   <header class="top">
-    <a class="brand" href="/"><b>tacit</b><i>tac</i></a>
+    <a class="brand" href="/"><img class="tk" src="/tac-logo.png" alt=""><b>tacit</b><i>tac</i></a>
     <button class="chip" id="wallet-chip" type="button"><span class="dot" id="wallet-dot"></span><span id="wallet-label">Connect</span></button>
   </header>
 
@@ -192,6 +197,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
     <div><span class="v num" id="s-set">—</span><span class="k">Anonymity set</span></div>
     <div><span class="v num" id="s-spends">—</span><span class="k">Private spends</span></div>
     <div><span class="v num" id="s-height">—</span><span class="k">Indexed block</span></div>
+    <div><span class="v num" id="s-price">—</span><span class="k">TAC · market</span></div>
     <div><span class="v" id="s-proof">—</span><span class="k">Proof system</span></div>
   </div>
 
@@ -204,8 +210,11 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
     </div>
 
     <div class="bal">
-      <div><span class="v num" id="bal-shielded">—</span> <span class="u">TAC shielded</span></div>
-      <div class="side">in your wallet<b class="num" id="bal-public">—</b></div>
+      <div>
+        <div class="uu"><img class="tk sm dash" src="/tac-logo.png" alt=""><span class="v num" id="bal-shielded">—</span> <span class="u">TAC shielded</span></div>
+        <div class="fiat" id="bal-shielded-sats"></div>
+      </div>
+      <div class="side">in your wallet<b class="num" id="bal-public">—</b><span class="fiat" id="bal-public-sats"></span></div>
     </div>
     <div class="kv"><span id="bal-note">Connect a wallet to see your balances.</span><button class="link" id="btn-refresh" hidden>refresh</button></div>
 
@@ -221,7 +230,8 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
       <div class="lbl"><label for="send-to">To a pool address</label></div>
       <div class="amt text"><input id="send-to" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="bp1…"></div>
       <div class="lbl"><label for="send-amt">Amount</label><button class="link" id="send-max" type="button">max</button></div>
-      <div class="amt"><input id="send-amt" inputmode="decimal" autocomplete="off" placeholder="0.00"><span class="u">TAC</span></div>
+      <div class="amt"><input id="send-amt" inputmode="decimal" autocomplete="off" placeholder="0.00"><span class="u"><img class="tk sm" src="/tac-logo.png" alt="">TAC</span></div>
+      <div class="fiat" id="send-sats"></div>
       <p class="note">Nothing about this payment is public: not the amount, not who receives it. Partial amounts are fine — the rest stays shielded as change.</p>
       <button class="btn" id="btn-send">Send privately</button>
       <div class="status" id="st-send"></div>
@@ -235,7 +245,8 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 
       <div id="wpane-self">
         <div class="lbl"><label for="exit-amt">Amount to withdraw</label><button class="link" id="exit-max" type="button">max</button></div>
-        <div class="amt"><input id="exit-amt" inputmode="decimal" autocomplete="off" placeholder="0.00"><span class="u">TAC</span></div>
+        <div class="amt"><input id="exit-amt" inputmode="decimal" autocomplete="off" placeholder="0.00"><span class="u"><img class="tk sm" src="/tac-logo.png" alt="">TAC</span></div>
+      <div class="fiat" id="exit-sats"></div>
         <p class="note">Leaves the pool as an ordinary TAC note in this wallet, where it is public again. Withdraw part and the rest stays shielded. This step funds its own Bitcoin fee.</p>
         <button class="btn" id="btn-exit">Withdraw TAC</button>
         <div class="status" id="st-exit"></div>
@@ -284,7 +295,10 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
   <div class="sheet-in">
     <div class="sheet-head"><h2>Wallet</h2><button class="x" id="connect-x" aria-label="Close">×</button></div>
     <p class="note" style="margin-top:0">This page keeps a Tacit key in your browser. The same key derives your pool address, so your shielded balance is recoverable from it anywhere.</p>
-    <button class="btn" id="btn-create">Create or unlock a wallet</button>
+    <p class="note" id="known-line" hidden style="margin-top:0"></p>
+    <button class="btn" id="btn-open">Unlock</button>
+    <button class="btn ghost" id="btn-create">Create a new wallet here</button>
+    <button class="btn ghost" id="btn-lock" hidden>Lock</button>
     <div class="lbl" style="margin-top:22px"><label for="import-key">Or restore from a key</label></div>
     <div class="amt text"><input id="import-key" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="64 hex characters"></div>
     <button class="btn ghost" id="btn-import">Restore</button>
@@ -301,6 +315,6 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
   </div>
 </dialog>
 
-<script type="module" src="/tac/app.js?cb=61aeb841"></script>
+<script type="module" src="/tac/app.js?cb=406cd5b1"></script>
 </body>
 </html>
