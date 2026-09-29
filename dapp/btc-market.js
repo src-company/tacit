@@ -32,6 +32,13 @@ const FAR_BELOW = 0.2;
 const FAR_ABOVE = 5;
 const CHART_TFS = [['1D', 86400, '1D'], ['1W', 7 * 86400, '1W'], ['1M', 30 * 86400, '1M'], ['ALL', Infinity, 'All']];
 const SLIPPAGE_CHOICES = [1, 2, 5, 10, 25];
+// A market order's default price cap. Thin books (most real listings here) sit in a few
+// large, unevenly-priced lots — a tight default cap turns "spend my sats at the best
+// price" into "spend my sats, unless that requires reaching the 2nd cheapest lot, in
+// which case do nothing and ask me first." Default wide enough that a normal budget
+// reaches the real available liquidity in one tap; Settings can still tighten it for
+// anyone who wants a hard price ceiling.
+const DEFAULT_SLIPPAGE = 25;
 const EXPIRY_CHOICES = [[86400, '1 day'], [3 * 86400, '3 days'], [7 * 86400, '7 days'], [30 * 86400, '30 days']];
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -100,7 +107,7 @@ function createMarket(host, ctx) {
     side: pref.side === 'sell' ? 'sell' : 'buy',
     type: pref.type === 'limit' ? 'limit' : 'market',
     buyIn: pref.buyIn === 'token' ? 'token' : 'sats',
-    slip: SLIPPAGE_CHOICES.includes(pref.slip) ? pref.slip : 5,
+    slip: SLIPPAGE_CHOICES.includes(pref.slip) ? pref.slip : DEFAULT_SLIPPAGE,
     includeMaker: pref.includeMaker !== false,
     includeManual: pref.includeManual === true,
     expirySec: EXPIRY_CHOICES.some(([s]) => s === pref.expirySec) ? pref.expirySec : 86400,
