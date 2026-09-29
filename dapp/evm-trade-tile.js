@@ -126,19 +126,15 @@ async function waitForReceipt(hash, { intervalMs = RECEIPT_POLL_MS, timeoutMs = 
 // Same circle-badge language as tacit.js's _ethLogoSvg/_btcLogoSvg (a separate
 // ES module, not worth an import for one inline SVG — keep both in sync if the
 // glyphs change) so the pair label + pills read as the same mark as the lane
-// switch above them. tacLogoSvg mirrors the actual Tacit Coin mark shown in
-// the asset header (dark circle, orange italic serif "t"), not a generic
-// fallback, so the "TAC" side of the pair is recognizable at a glance too.
+// switch above them. TAC is the token's own image (dapp/tac-logo.png, the same bytes
+// as its on-chain metadata image), never a redrawn protocol mark.
 const ETH_LOGO_SVG = `<svg viewBox="0 0 32 32" width="20" height="20" style="flex-shrink:0;border-radius:50%;display:block;">
   <circle cx="16" cy="16" r="16" fill="#627eea"/>
   <polygon points="16,5 24,16 16,20.5 8,16" fill="#fff"/>
   <polygon points="16,5 8,16 16,20.5" fill="#fff" fill-opacity="0.55"/>
   <polygon points="16,21.8 24,17.3 16,27 8,17.3" fill="#fff" fill-opacity="0.85"/>
 </svg>`;
-const TAC_LOGO_SVG = `<svg viewBox="0 0 32 32" width="20" height="20" style="flex-shrink:0;border-radius:50%;display:block;">
-  <circle cx="16" cy="16" r="16" fill="#0a0a0a"/>
-  <text x="16" y="23" font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-size="19" fill="#f7931a" text-anchor="middle">t</text>
-</svg>`;
+const TAC_LOGO_SVG = `<img src="tac-logo.png" alt="TAC" width="20" height="20" style="flex-shrink:0;border-radius:50%;display:block;">`;
 function pillIconFor(ticker) { return ticker === 'ETH' ? ETH_LOGO_SVG : TAC_LOGO_SVG; }
 const ACTION_BTN_STYLE = 'display:block;width:100%;padding:13px;font-size:13px;font-weight:500;text-transform:uppercase;letter-spacing:0.04em;background:var(--green-positive);color:#F2EBD4;border:0;cursor:pointer;';
 const SLIPPAGE_SELECT_STYLE = 'box-sizing:border-box;min-width:78px;height:28px;font-family:var(--mono);font-size:11px;line-height:1.2;padding:4px 22px 4px 8px;border:1px solid var(--ink);background:var(--bg);color:var(--ink);-webkit-appearance:none;-moz-appearance:none;appearance:none;cursor:pointer;';
@@ -152,7 +148,7 @@ function tileHtml() {
     <div class="evm-lane-tile" data-evm-lane-root>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
       <div style="display:flex;align-items:center;gap:8px;font-size:15px;font-weight:bold;">
-        ${ETH_LOGO_SVG}<span>ETH / TAC</span>
+        <span style="display:inline-flex;gap:3px;">${ETH_LOGO_SVG}${TAC_LOGO_SVG}</span><span>ETH / TAC</span>
       </div>
     </div>
     <div class="evm-lane-side" data-lane-side="pay">

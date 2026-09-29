@@ -336,6 +336,23 @@ await test('Escape does not close a running order', async (page) => {
   await waitModal(page, /Bought/);
 });
 
+await test('at my price: any two of price, amount, total set the third; a row click sets the price', async (page) => {
+  await page.evaluate(() => { const W = window.__w; W.listings = [W.preauth('p1', 100, 25000)]; W.bids = [W.bid('b1', 10, 1900, { watchtower: true })]; });
+  await mount(page); await settle(page, 300);
+  await page.click('[data-act=type][data-v=limit]'); await settle(page);
+  await page.fill('[data-k=limit-price]', '200');
+  await page.fill('[data-k=amount]', '50'); await settle(page);
+  assert.equal(await page.inputValue('[data-k=total]'), '10000');
+  await page.fill('[data-k=total]', '30000'); await settle(page);
+  assert.equal(await page.inputValue('[data-k=amount]'), '150');
+  await page.fill('[data-k=limit-price]', '300'); await page.dispatchEvent('[data-k=limit-price]', 'input'); await settle(page);
+  assert.equal(await page.inputValue('[data-k=amount]'), '100', 'total anchored: amount follows the price');
+  await page.click('.bm-row.bid'); await settle(page);
+  assert.equal(await page.inputValue('[data-k=limit-price]'), '190.00');
+  assert.equal(await page.getAttribute('[data-act=type][data-v=limit]', 'aria-pressed'), 'true');
+  assert.match(await page.textContent('[data-k=mode-note]'), /Name your price/);
+});
+
 await b.close();
 srv.close();
 console.log(`btc-market flows: ${passed} passed${process.exitCode ? ' — FAILURES above' : ''}`);

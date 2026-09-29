@@ -69510,9 +69510,13 @@ function _btcMarketAssetView(aid) {
     try { scheduleMarketSupplyEnrichment([{ asset: m.a, lastTradeUnit: markUnit, floorUnit: null, marketCapSats: null }]); } catch {}
   }
   const holders = Number(stats?.holder_count ?? a.holder_count);
+  const brandOk = String(a.ticker || '').toUpperCase() !== 'TAC' || aid === CANONICAL_TAC_ASSET_ID_HEX;
+  const iconHtml = (brandOk && _dayOneLogoHtml(aid, a.ticker, 16))
+    || ((a.image_uri || a.imageUri) ? marketAssetImageHtml(a, 16, 'bm-ico') : assetImageFallback(aid, a.ticker, 16));
   return {
     ticker: a.ticker || '?', decimals: Number(a.decimals) | 0,
     identityHtml: _btcMarketIdentityHtml(a, aid),
+    iconHtml,
     markUnit, change24h: Number.isFinite(chg) ? chg : null, lastTradeTs: lastTs,
     vol24Sats: Number.isFinite(vol24) ? vol24 : null,
     mcapSats: Number.isFinite(mcapSats) && mcapSats > 0 ? mcapSats : null,

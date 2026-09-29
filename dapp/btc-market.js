@@ -127,8 +127,8 @@ function createMarket(host, ctx) {
     live: $('[data-k=live]'), price: $('[data-k=price]'), usd: $('[data-k=usd]'), chg: $('[data-k=chg]'),
     stats: $('[data-k=stats]'), chart: $('[data-k=chart]'), chartWrap: $('[data-k=chart-wrap]'), chartSum: $('[data-k=chart-sum]'), avail: $('[data-k=avail]'),
     asks: $('[data-k=asks]'), bids: $('[data-k=bids]'), spread: $('[data-k=spread]'), bookNote: $('[data-k=book-note]'),
-    askMore: $('[data-k=ask-more]'), bidMore: $('[data-k=bid-more]'),
-    ticket: $('[data-k=ticket]'), amount: $('[data-k=amount]'), price2: $('[data-k=limit-price]'),
+    bidMore: $('[data-k=bid-more]'),
+    ticket: $('[data-k=ticket]'), amount: $('[data-k=amount]'), price2: $('[data-k=limit-price]'), total: $('[data-k=total]'), modeNote: $('[data-k=mode-note]'),
     unitBtn: $('[data-k=unit]'), chips: $('[data-k=chips]'), bal: $('[data-k=bal]'), quote: $('[data-k=quote]'),
     go: $('[data-k=go]'), fine: $('[data-k=fine]'), opts: $('[data-k=opts]'),
     orders: $('[data-k=orders]'), trades: $('[data-k=trades]'),
@@ -172,9 +172,10 @@ function createMarket(host, ctx) {
               <button type="button" role="tab" data-act="side" data-v="sell">Sell</button>
             </div>
             <div class="bm-types">
-              <button type="button" data-act="type" data-v="market">Market</button>
-              <button type="button" data-act="type" data-v="limit">Limit</button>
+              <button type="button" data-act="type" data-v="market" title="Market order">Now</button>
+              <button type="button" data-act="type" data-v="limit" title="Limit order">At my price</button>
             </div>
+            <p class="bm-mode-note" data-k="mode-note"></p>
             <label class="bm-field bm-field-price" data-show="limit">
               <span class="bm-label">Price <em>sats per ${T}</em></span>
               <span class="bm-inputrow"><input data-k="limit-price" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="Limit price in sats per ${T}"></span>
@@ -187,11 +188,15 @@ function createMarket(host, ctx) {
                 <button type="button" class="bm-unit" data-k="unit" data-act="unit"></button>
               </span>
             </label>
+            <label class="bm-field" data-show="limit">
+              <span class="bm-label">Total <em>sats</em></span>
+              <span class="bm-inputrow"><input data-k="total" inputmode="numeric" autocomplete="off" placeholder="0" aria-label="Total in sats"><span class="bm-unit bm-unit-static">${ctx.icons?.btc || ''}sats</span></span>
+            </label>
             <div class="bm-chips" data-k="chips"></div>
             <div class="bm-bal" data-k="bal"></div>
             <div class="bm-avail" data-k="avail"></div>
             <div class="bm-quote" data-k="quote" aria-live="polite"></div>
-            <details class="bm-opts" data-k="opts"><summary>Settings</summary><div data-k="opts-body"></div></details>
+            <details class="bm-opts" data-k="opts"><summary data-k="opts-sum">Settings</summary><div data-k="opts-body"></div></details>
             <button type="button" class="bm-go" data-k="go" data-act="go" disabled>Enter an amount</button>
             <p class="bm-fine" data-k="fine"></p>
           </div>
@@ -199,7 +204,6 @@ function createMarket(host, ctx) {
           </div>
           <div class="bm-book">
             <div class="bm-book-head"><span>Price <em>sats</em></span><span>Amount <em>${T}</em></span><span>Total <em>sats</em></span></div>
-            <button type="button" class="bm-more" data-k="ask-more" data-act="more-asks" hidden></button>
             <div class="bm-asks" data-k="asks"></div>
             <div class="bm-spread" data-k="spread"></div>
             <div class="bm-bids" data-k="bids"></div>
@@ -301,15 +305,19 @@ function createMarket(host, ctx) {
   }
 
   // ── book ──────────────────────────────────────────────────────────────────
-  function rowHtml(lv, side, maxSats) {
-    const w = maxSats > 0 ? Math.max(2, Math.round((lv.sats / maxSats) * 100)) : 0;
-    const tags = [];
-    if (lv.flag === 'mine') tags.push('<i class="bm-tag you">you</i>');
-    else if (side === 'ask' && lv.flag === 'maker') tags.push(`<i class="bm-tag wait" title="The seller's wallet confirms your claim (usually seconds). If they're offline the page moves on and nothing is spent.">confirm</i>`);
-    else if (side === 'bid' && lv.flag === 'auto') tags.push(`<i class="bm-tag auto" title="A watchtower completes this bid for the bidder — sells settle in about a minute">auto</i>`);
-    const cnt = lv.count > 1 ? `<i class="bm-cnt">×${lv.count}</i>` : '';
-    return `<button type="button" class="bm-row ${side}" data-act="row" data-side="${side}" data-key="${esc(lv.key)}" style="--w:${w}%">
-      <span class="p">${fmtUnit(lv.unit)}${cnt}</span><span class="a">${fmtAmount(lv.amount, dec, 4)}${tags.join('')}</span><span class="t">${fmtSats(lv.sats)}</span></button>`;
+  // One ladder row. The shaded bar is cumulative depth from the spread outward, so the
+  // book reads as a staircase: how much you'd have to buy (or sell) to reach this price.
+  function rowHtml(lv, side, depthPct) {
+    let tag = '';
+    let why = side === 'ask'
+      ? (lv.flag === 'maker' ? 'The seller\'s wallet confirms your claim, usually within seconds; if it\'s offline the page moves on and nothing is spent.' : lv.count > 1 ? 'Whole pieces — each is bought entirely or not at all.' : 'Sold as one whole piece.')
+      : (lv.flag === 'auto' ? 'A watchtower settles this bid for the bidder, usually within a couple of minutes.' : 'Settles only while the bidder\'s wallet is online.');
+    if (lv.flag === 'mine') { tag = '<i class="bm-tag you">you</i>'; why = 'Your order — manage it under Your orders.'; }
+    else if (side === 'ask' && lv.flag === 'maker') tag = '<i class="bm-dot wait" aria-label="seller confirms"></i>';
+    else if (side === 'bid' && lv.flag === 'auto') tag = '<i class="bm-dot auto" aria-label="auto-settles"></i>';
+    const pieces = lv.count > 1 ? `${lv.count} ${side === 'ask' ? 'pieces' : 'bids'} · ` : '';
+    return `<button type="button" class="bm-row ${side}" data-act="row" data-side="${side}" data-key="${esc(lv.key)}" style="--w:${depthPct}%" title="${esc(pieces + why + ' Click to ' + (side === 'ask' ? 'buy' : 'sell') + ' up to this price.')}">
+      <span class="p">${fmtUnit(lv.unit)}</span><span class="a">${tag}${fmtAmount(lv.amount, dec, 4)}</span><span class="t">${fmtSats(lv.sats)}</span></button>`;
   }
 
   function paintBook() {
@@ -322,36 +330,38 @@ function createMarket(host, ctx) {
     const farBids = b.bids.length - b.bids.filter(near).length;
     const askShown = S.showAllAsks ? askLv : askLv.slice(0, LADDER_ROWS);
     const bidShown = S.showAllBids ? bidLv : bidLv.slice(0, LADDER_ROWS);
-    const maxSats = [...askShown, ...bidShown].reduce((m, l) => Math.max(m, l.sats), 0);
+    const cum = (ls) => { let t = 0; return ls.map((l) => (t += l.sats)); };
+    const askCum = cum(askShown), bidCum = cum(bidShown);
+    const maxCum = Math.max(askCum[askCum.length - 1] || 0, bidCum[bidCum.length - 1] || 0, 1);
+    const pct = (v) => Math.max(1, Math.round((v / maxCum) * 100));
     const sig = [askShown, bidShown].map((ls) => ls.map((l) => l.key + ':' + l.amount + ':' + l.count).join(',')).join('|') + S.showAllAsks + S.showAllBids;
     if (sig !== S.levelsSig) {
       S.levelsSig = sig;
       el.asks.innerHTML = askShown.length
-        ? askShown.slice().reverse().map((l) => rowHtml(l, 'ask', maxSats)).join('')
+        ? askShown.map((l, i) => rowHtml(l, 'ask', pct(askCum[i]))).reverse().join('')
         : `<div class="bm-empty">No one is selling right now.${S.side === 'buy' ? ' Place a limit bid and sellers can fill it.' : ''}</div>`;
       el.bids.innerHTML = bidShown.length
-        ? bidShown.map((l) => rowHtml(l, 'bid', maxSats)).join('')
+        ? bidShown.map((l, i) => rowHtml(l, 'bid', pct(bidCum[i]))).join('')
         : `<div class="bm-empty">No one is bidding right now.${S.side === 'sell' ? ' List at your price and buyers can take it.' : ''}</div>`;
       S.ladder = { ask: new Map(askLv.map((l) => [l.key, l])), bid: new Map(bidLv.map((l) => [l.key, l])) };
     }
     const allAskLv = ladderLevels(b.asks, 'ask').length;
     const allBidLv = ladderLevels(b.bids, 'bid').length;
-    el.askMore.hidden = !S.showAllAsks && allAskLv <= LADDER_ROWS && !farAsks;
-    el.askMore.textContent = S.showAllAsks ? '▾ fewer asks' : `▴ all ${allAskLv} asks`;
-    el.askMore.title = farAsks ? `Includes ${farAsks} priced far from the market` : '';
-    el.bidMore.hidden = !S.showAllBids && allBidLv <= LADDER_ROWS && !farBids;
-    el.bidMore.textContent = S.showAllBids ? '▴ fewer bids' : `▾ all ${allBidLv} bids`;
-    el.bidMore.title = farBids ? `Includes ${farBids} priced far from the market` : '';
+    const hiddenLv = (allAskLv - askShown.length) + (allBidLv - bidShown.length);
+    const full = S.showAllAsks && S.showAllBids;
+    el.bidMore.hidden = !full && hiddenLv <= 0;
+    el.bidMore.textContent = full ? 'Show less' : `Full book · ${allAskLv} asks, ${allBidLv} bids`;
+    el.bidMore.title = (farAsks + farBids) ? `Includes ${farAsks + farBids} priced far from the market` : '';
     const a = ctx.asset();
     let sp = '';
-    if (a.markUnit > 0) sp += `<span class="bm-sp-last"><b>${fmtUnit(a.markUnit)}</b> <em>last trade</em></span>`;
+    if (a.markUnit > 0) sp += `<span class="bm-sp-last" title="Price of the last trade"><b>${fmtUnit(a.markUnit)}</b><em>last</em></span>`;
     if (b.bestAsk != null && b.bestBid != null) {
       if (b.overlap) {
         const autoAbove = b.bids.some((x) => !x.mine && x.auto && x.unit > b.bestAsk);
-        sp += `<span class="bm-sp-note">Bids above the best ask${autoAbove ? '' : ' — their bidders settle only when online'}</span>`;
+        sp += `<span class="bm-sp-note" title="${autoAbove ? 'Some bids pay more than the cheapest ask — sell into them now.' : 'Some bids pay more than the cheapest ask, but their bidders settle only while online.'}">bids over ask</span>`;
       } else {
-        const pct = ((b.bestAsk - b.bestBid) / b.bestAsk) * 100;
-        sp += `<span class="bm-sp-note">spread ${fmtUnit(b.bestAsk - b.bestBid)} <em>(${pct.toFixed(pct < 1 ? 2 : 1)}%)</em></span>`;
+        const pc = ((b.bestAsk - b.bestBid) / b.bestAsk) * 100;
+        sp += `<span class="bm-sp-note">spread ${fmtUnit(b.bestAsk - b.bestBid)} · ${pc.toFixed(pc < 1 ? 2 : 1)}%</span>`;
       }
     }
     if (el.spread.innerHTML !== sp) el.spread.innerHTML = sp;
@@ -361,11 +371,13 @@ function createMarket(host, ctx) {
     if (hid) notes.push(`${hid} OTC offer${hid === 1 ? '' : 's'} that need${hid === 1 ? 's' : ''} trust in the seller ${hid === 1 ? 'isn\'t' : 'aren\'t'} shown`);
     const stale = (ex.asks.stale || 0) + (ex.asks.claimed || 0);
     if (stale) notes.push(`${stale} offer${stale === 1 ? ' is' : 's are'} busy or inactive and hidden`);
-    const manual = b.bids.some((x) => !x.mine && !x.auto);
-    if (manual) notes.unshift('Bids without “auto” settle only while the bidder is online');
-    if (b.asks.some((x) => !x.mine && x.whole)) notes.unshift('Asks sell in whole pieces');
-    const nb = notes.join(' · ');
-    if (el.bookNote.textContent !== nb) el.bookNote.textContent = nb;
+    const legend = [];
+    if (b.asks.some((x) => !x.mine && x.whole)) legend.push('Asks sell in whole pieces');
+    if (b.asks.some((x) => !x.mine && !x.instant)) legend.push('<i class="bm-dot wait"></i> seller confirms your claim');
+    if (b.bids.some((x) => !x.mine && x.auto)) legend.push('<i class="bm-dot auto"></i> settles automatically');
+    if (b.bids.some((x) => !x.mine && !x.auto)) legend.push('other bids settle only while the bidder is online');
+    const nb = [...legend, ...notes.map(esc)].join(' · ');
+    if (el.bookNote.innerHTML !== nb) el.bookNote.innerHTML = nb;
   }
 
   // ── ticket ────────────────────────────────────────────────────────────────
@@ -382,15 +394,21 @@ function createMarket(host, ctx) {
     } else if (S.side === 'buy') {
       lbl.innerHTML = S.buyIn === 'sats' ? 'You spend' : 'You get';
       el.unitBtn.hidden = false;
-      el.unitBtn.innerHTML = `${S.buyIn === 'sats' ? 'sats' : T} <span aria-hidden="true">⇄</span>`;
+      el.unitBtn.innerHTML = `${S.buyIn === 'sats' ? (ctx.icons?.btc || '') + 'sats' : (ctx.asset().iconHtml || '') + T} <span class="sw" aria-hidden="true">⇄</span>`;
       el.unitBtn.title = S.buyIn === 'sats' ? `Enter how many ${asset0.ticker} you want instead` : 'Enter how many sats to spend instead';
     } else {
       lbl.innerHTML = 'You sell';
       el.unitBtn.hidden = false;
-      el.unitBtn.innerHTML = T;
+      el.unitBtn.innerHTML = `${ctx.asset().iconHtml || ''}${T}`;
       el.unitBtn.title = '';
     }
     paintOpts();
+    el.modeNote.textContent = {
+      'buy-market': 'Buy from the cheapest sellers right now.',
+      'buy-limit': 'Name your price. Anything offered at or below it fills now; the rest waits on the book as your bid.',
+      'sell-market': 'Sell to the best bids right now.',
+      'sell-limit': 'Name your price. Your tokens are listed on the book and buyers take them — you don\'t need to be online.',
+    }[`${S.side}-${S.type}`];
     el.fine.innerHTML = S.side === 'buy'
       ? 'Settles on Bitcoin, peer to peer. No custodian, no wrapped coins.'
       : 'Settles on Bitcoin, peer to peer. You keep your tokens until a buyer pays.';
@@ -406,6 +424,11 @@ function createMarket(host, ctx) {
     const expiry = `<label class="bm-opt"><span>Order lasts</span><select data-act="expiry">${EXPIRY_CHOICES.map(([s, l]) => `<option value="${s}"${s === S.expirySec ? ' selected' : ''}>${l}</option>`).join('')}</select></label>`;
     const html = S.type === 'market' ? slip + flag : expiry;
     if (body.innerHTML !== html) body.innerHTML = html;
+    const sum = $('[data-k=opts-sum]');
+    const exp = EXPIRY_CHOICES.find(([x]) => x === S.expirySec)?.[1] || '1 day';
+    sum.innerHTML = S.type === 'market'
+      ? `${S.side === 'buy' ? 'Max price' : 'Min price'} <b>${S.side === 'buy' ? '+' : '−'}${S.slip}%</b> from best`
+      : `Order lasts <b>${exp}</b>`;
   }
 
   function paintBalance() {
@@ -607,7 +630,7 @@ function createMarket(host, ctx) {
       const bidSats = bidBase > 0n ? satsForAmount(bidBase, o.unit, dec) : 0;
       const wt = watchtowerState(bidSats);
       if (bidBase > 0n) {
-        html += `<label class="bm-check"><input type="checkbox" data-act="wt"${wt.on ? ' checked' : ''}${wt.ok ? '' : ' disabled'}> Fill it while I'm away <em>${wt.ok ? `(a watchtower completes fills; sets aside ${fmtSats(bidSats + 10000)} sats in a wallet only you can reclaim)` : esc(wt.why)}</em></label>`;
+        html += `<label class="bm-check"><input type="checkbox" data-act="wt"${wt.on ? ' checked' : ''}${wt.ok ? '' : ' disabled'}><span>Fill it while I'm away <em>${wt.ok ? `— a watchtower completes fills; sets aside ${fmtSats(bidSats + 10000)} sats in a wallet only you can reclaim` : esc(wt.why)}</em></span></label>`;
         if (!wt.on) html += `<div class="bm-q muted">Without it, fills complete only while this page is open.</div>`;
       }
       el.quote.innerHTML = html;
@@ -725,7 +748,7 @@ function createMarket(host, ctx) {
     const html = `<h3>Recent trades</h3><div class="bm-ttable"><div class="bm-trow bm-thead"><span>Price</span><span>${T}</span><span>When</span></div>${grouped.slice(0, 10).map(({ t, amt, u, dir, n }) => {
       const href = t.txid ? link(t.txid) : null;
       const time = `${ago(t.ts)}`;
-      return `<div class="bm-trow" title="${esc(fmtSats(Number(t.price_sats) * n))} sats${n > 1 ? ` across ${n} fills` : ''}"><span class="p ${dir}">${dir === 'up' ? '▲' : dir === 'down' ? '▼' : ''}${fmtUnit(u)}</span><span>${fmtAmount(amt, dec, 2)}${n > 1 ? `<i class="bm-cnt">×${n}</i>` : ''}</span><span class="muted">${href ? `<a href="${esc(href)}" target="_blank" rel="noopener" title="View on mempool.space">${time}</a>` : time}</span></div>`;
+      return `<div class="bm-trow" title="${esc(fmtSats(Number(t.price_sats) * n))} sats${n > 1 ? ` across ${n} fills` : ''}"><span class="p ${dir}"><i class="dir" aria-hidden="true">${dir === 'up' ? '▲' : dir === 'down' ? '▼' : ''}</i>${fmtUnit(u)}</span><span>${fmtAmount(amt, dec, 2)}${n > 1 ? `<i class="bm-cnt">×${n}</i>` : ''}</span><span class="muted">${href ? `<a href="${esc(href)}" target="_blank" rel="noopener" title="View on mempool.space">${time}</a>` : time}</span></div>`;
     }).join('')}</div>`;
     if (el.trades.__html !== html) { el.trades.innerHTML = html; el.trades.__html = html; }
   }
@@ -1338,10 +1361,17 @@ function createMarket(host, ctx) {
     } else if (S.type === 'market') {
       if (sellBase != null) el.amount.value = fmtAmount(sellBase, dec).replace(/,/g, '');
     } else {
-      const u = unit || (S.side === 'buy' ? S.book?.bestBid || ctx.asset().markUnit : S.book?.bestAsk || ctx.asset().markUnit);
+      // Resting defaults: a buy joins the best bid (or the cheapest ask when bids sit above
+      // it); a sell joins the cheapest ask.
+      const bb = S.book?.bestBid, ba = S.book?.bestAsk;
+      const u = unit || (S.side === 'buy'
+        ? (bb && ba ? Math.min(bb, ba) : bb || ba || ctx.asset().markUnit)
+        : (ba || bb || ctx.asset().markUnit));
       if (u) el.price2.value = plainUnit(u);
       if (totalSats != null && u) el.amount.value = fmtAmount(amountForSats(totalSats, u, dec), dec).replace(/,/g, '');
       else if (sellBase != null) el.amount.value = fmtAmount(sellBase, dec).replace(/,/g, '');
+      S.anchorTotal = false;
+      S.syncTotal?.();
     }
     savePref();
     paintTicketFrame();
@@ -1369,7 +1399,7 @@ function createMarket(host, ctx) {
     if (act === 'back') { e.preventDefault(); ctx.goBack(); return; }
     if (act === 'refresh') { refresh({ force: true }); return; }
     if (act === 'lane') { setLane(t.dataset.v); return; }
-    if (act === 'side') { if (S.side !== t.dataset.v) { S.side = t.dataset.v; el.amount.value = ''; savePref(); paintTicketFrame(); paintAll(); } return; }
+    if (act === 'side') { if (S.side !== t.dataset.v) { S.side = t.dataset.v; el.amount.value = ''; el.total.value = ''; savePref(); paintTicketFrame(); paintAll(); } return; }
     if (act === 'type') { S.type = t.dataset.v; savePref(); if (S.type === 'limit' && !el.price2.value) prime({ type: 'limit' }); paintTicketFrame(); paintAll(); return; }
     if (act === 'to-limit') { S.type = 'limit'; prime({ type: 'limit' }); return; }
     if (act === 'to-market') { S.type = 'market'; prime({ type: 'market', sellBase: parseAmount(el.amount.value, dec) || undefined }); return; }
@@ -1380,14 +1410,21 @@ function createMarket(host, ctx) {
       else { S.buyIn = 'sats'; el.amount.value = q?.plan?.sats > 0 ? String(q.plan.sats) : ''; }
       savePref(); paintTicketFrame(); paintAll(); return;
     }
-    if (act === 'chip') { el.amount.value = t.dataset.v; paintQuote(); return; }
-    if (act === 'pchip') { el.price2.value = plainUnit(Number(t.dataset.v)); paintQuote(); return; }
+    if (act === 'chip') { el.amount.value = t.dataset.v; S.anchorTotal = false; S.syncTotal(); paintQuote(); return; }
+    if (act === 'pchip') { el.price2.value = plainUnit(Number(t.dataset.v)); S.anchorTotal ? el.total.dispatchEvent(new Event('input')) : S.syncTotal(); paintQuote(); return; }
     if (act === 'go') { review(); return; }
     if (act === 'unlock') { ctx.unlock().then(() => refresh({ soft: true })).catch(() => {}); return; }
     if (act === 'fund') { ctx.fundSats(); return; }
-    if (act === 'row') { primeFromRow(t.dataset.side, t.dataset.key); return; }
-    if (act === 'more-asks') { S.showAllAsks = !S.showAllAsks; paintBook(); return; }
-    if (act === 'more-bids') { S.showAllBids = !S.showAllBids; paintBook(); return; }
+    if (act === 'row') {
+      // At my price: a row click just sets the price to that level (join or cross it).
+      if (S.type === 'limit') {
+        const lv = S.ladder?.[t.dataset.side]?.get(t.dataset.key);
+        if (lv) { el.price2.value = plainUnit(lv.unit); S.anchorTotal ? el.total.dispatchEvent(new Event('input')) : S.syncTotal(); paintQuote(); el.amount.focus({ preventScroll: true }); }
+        return;
+      }
+      primeFromRow(t.dataset.side, t.dataset.key); return;
+    }
+    if (act === 'more-bids') { const f = !(S.showAllAsks && S.showAllBids); S.showAllAsks = f; S.showAllBids = f; paintBook(); return; }
     if (act === 'cancel') { cancelOrder(t.dataset.id); return; }
     if (act === 'tf') { LS.set('tacit-btc-market-tf', t.dataset.v); paintChart(); return; }
     ctx.onAct?.(act, t);
@@ -1403,8 +1440,22 @@ function createMarket(host, ctx) {
   }, sig);
   let debounce = null;
   const onInput = () => { clearTimeout(debounce); debounce = setTimeout(paintQuote, 60); };
-  el.amount.addEventListener('input', onInput, sig);
-  el.price2.addEventListener('input', onInput, sig);
+  // At my price: any two of price / amount / total set the third. Typing the total
+  // anchors it, so a later price change re-derives the amount instead.
+  const unitNow = () => Number(String(el.price2.value).replace(/[,_\s]/g, ''));
+  const syncTotal = () => {
+    const u = unitNow(); const base = parseAmount(el.amount.value, dec);
+    el.total.value = u > 0 && base > 0n ? String(satsForAmount(base, u, dec)) : '';
+  };
+  const syncAmount = () => {
+    const u = unitNow(); const t = Number(String(el.total.value).replace(/[,_\s]/g, ''));
+    el.amount.value = u > 0 && t > 0 ? fmtAmount(amountForSats(t, u, dec), dec).replace(/,/g, '') : '';
+  };
+  el.amount.addEventListener('input', () => { S.anchorTotal = false; if (S.type === 'limit') syncTotal(); onInput(); }, sig);
+  el.price2.addEventListener('input', () => { if (S.type === 'limit') { if (S.anchorTotal) syncAmount(); else syncTotal(); } onInput(); }, sig);
+  el.total.addEventListener('input', () => { S.anchorTotal = true; syncAmount(); onInput(); }, sig);
+  el.total.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !el.go.disabled) review(); }, sig);
+  S.syncTotal = syncTotal;
   el.amount.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !el.go.disabled) review(); }, sig);
   el.price2.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !el.go.disabled) review(); }, sig);
   el.chartWrap.addEventListener('toggle', () => { LS.set('tacit-btc-market-chart-open', el.chartWrap.open); paintChart(); }, sig);

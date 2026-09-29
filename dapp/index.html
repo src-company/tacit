@@ -107,7 +107,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=a4f6a19a">
+<link rel="modulepreload" href="./tacit.js?cb=8e3eaa0b">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -8614,6 +8614,9 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm-types { display: flex; gap: 14px; margin: 10px 0 6px; }
 .bm-types button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 2px 0; cursor: pointer; color: var(--ink-mid); font-size: 12px; }
 .bm-types button[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--ink); font-weight: 700; }
+.bm-mode-note { margin: 2px 0 4px; font-size: 11px; line-height: 1.45; color: var(--ink-mid); }
+.bm-unit-static { cursor: default; display: inline-flex; align-items: center; gap: 6px; color: var(--ink-mid); }
+.bm-unit-static:hover { background: transparent; }
 .bm-field { display: block; margin-top: 8px; }
 .bm-label { display: block; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-mid); margin-bottom: 4px; }
 .bm-label em { text-transform: none; letter-spacing: 0; }
@@ -8638,44 +8641,62 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm-q.muted { color: var(--ink-mid); }
 .bm-q.warn { color: var(--red-warn); }
 .bm-q.note { color: var(--amber); }
-.bm-check { display: flex; gap: 8px; align-items: flex-start; font-size: 11px; margin-top: 8px; line-height: 1.45; cursor: pointer; }
+.bm-check { display: flex; gap: 8px; align-items: flex-start; font-size: 11px; margin-top: 8px; line-height: 1.45; cursor: pointer; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.bm-check > span { flex: 1; min-width: 0; }
+.bm-pricechips button, .bm-chips button { text-transform: none; letter-spacing: 0; font-size: 11px; padding: 2px 8px; }
 .bm-check input { margin-top: 2px; }
 .bm-opts { margin-top: 10px; font-size: 11px; }
-.bm-opts > summary { cursor: pointer; color: var(--ink-mid); }
+.bm-opts > summary { cursor: pointer; color: var(--ink-mid); list-style: none; display: flex; align-items: center; gap: 6px; }
+.bm-opts > summary::-webkit-details-marker { display: none; }
+.bm-opts > summary::before { content: '⚙'; font-size: 12px; }
+.bm-opts > summary::after { content: '▾'; margin-left: auto; font-size: 10px; }
+.bm-opts[open] > summary::after { content: '▴'; }
+.bm-opts > summary b { color: var(--ink); font-weight: 600; }
 .bm-opt { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 8px; }
 .bm-opt select { font: inherit; font-size: 11px; padding: 3px 6px; }
 .bm-go { display: block; width: 100%; margin-top: 12px; padding: 12px; border: 0; background: var(--ink); color: var(--bg); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
 .bm-ticket[data-side="buy"] .bm-go:not(:disabled) { background: var(--buy); }
 .bm-ticket[data-side="sell"] .bm-go:not(:disabled) { background: var(--sell); }
 .bm-go[data-kind="fund"]:not(:disabled) { background: var(--ink) !important; }
-.bm-go:disabled { opacity: 0.45; cursor: default; }
+.bm-go:disabled { background: transparent !important; color: var(--ink-mid); border: 1px dashed var(--ink-faint); cursor: default; }
 .bm-fine { margin: 8px 0 0; font-size: 10px; color: var(--ink-mid); text-align: center; }
 
 /* book */
-.bm-book { border: 1px solid var(--ink); background: var(--bg); }
-.bm-book-head, .bm-row { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 8px; padding: 0 12px; }
-.bm-book-head { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-mid); padding-top: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--bm-line); }
+.bm-book { border: 1px solid var(--ink); background: var(--bg); font-variant-numeric: tabular-nums; }
+.bm-book-head, .bm-row { display: grid; grid-template-columns: 0.9fr 1.2fr 1fr; gap: 8px; padding: 0 12px; align-items: center; }
+.bm-book-head { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-mid); height: 30px; border-bottom: 1px solid var(--bm-line); }
+.bm-book-head em { text-transform: none; letter-spacing: 0; }
 .bm-book-head > span:not(:first-child), .bm-row > span:not(:first-child) { text-align: right; }
-.bm-row { position: relative; width: 100%; background: transparent; border: 0; text-align: left; padding-top: 4px; padding-bottom: 4px; cursor: pointer; font-variant-numeric: tabular-nums; }
-.bm-row::before { content: ''; position: absolute; right: 0; top: 1px; bottom: 1px; width: var(--w, 0%); opacity: 0.12; pointer-events: none; }
-.bm-row.ask::before { background: var(--sell); }
-.bm-row.bid::before { background: var(--buy); }
+.bm-row { position: relative; width: 100%; height: 25px; background: transparent; border: 0; text-align: left; cursor: pointer; font-size: 12px; line-height: 1; z-index: 0; }
+.bm-row::before { content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: var(--w, 0%); z-index: -1; pointer-events: none; transition: width 0.25s ease-out; }
+.bm-row.ask::before { background: color-mix(in srgb, var(--sell) 9%, transparent); }
+.bm-row.bid::before { background: color-mix(in srgb, var(--buy) 9%, transparent); }
 .bm-row:hover, .bm-row:focus-visible { background: var(--bg-alt); outline: none; }
+.bm-row:hover .p { text-decoration: underline; text-underline-offset: 3px; }
 .bm-row.ask .p { color: var(--sell); font-weight: 600; }
 .bm-row.bid .p { color: var(--buy); font-weight: 600; }
-.bm-cnt { color: var(--ink-faint); font-size: 10px; margin-left: 4px; font-weight: 400; }
-.bm-tag { font-style: normal; font-size: 9px; letter-spacing: 0.04em; border: 1px solid var(--ink-faint); color: var(--ink-mid); padding: 0 4px; margin-left: 5px; vertical-align: 1px; }
-.bm-tag.you { border-color: var(--orange); color: var(--orange); }
-.bm-tag.auto { border-color: var(--green); color: var(--green); }
-.bm-tag.wait { border-style: dashed; }
-.bm-spread { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; padding: 6px 12px; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); background: var(--bg-warm); font-size: 10px; color: var(--ink-mid); }
-.bm-spread b { font-size: 14px; color: var(--ink); }
-.bm-sp-note { text-align: right; }
+.bm-row .a, .bm-row .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bm-row .t { color: var(--ink-mid); }
+.bm-tag { font-style: normal; font-size: 9px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; margin-right: 6px; vertical-align: 1px; color: var(--ink-mid); }
+.bm-tag.you { color: var(--orange); }
+.bm-tag.auto { color: var(--green); }
+.bm-tag.wait { color: var(--amber); }
+.bm-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.bm-dot.wait { background: var(--amber); } .bm-dot.auto { background: var(--green); }
+.bm-unit { display: inline-flex; align-items: center; gap: 6px; }
+.bm-unit svg, .bm-unit img { width: 16px; height: 16px; flex: 0 0 16px; }
+.bm-unit .sw { color: var(--ink-mid); }
+.bm-cnt { color: var(--ink-faint); font-size: 10px; margin-left: 4px; font-weight: 400; font-style: normal; }
+.bm-spread { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 34px; padding: 0 12px; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); background: var(--bg-warm); font-size: 10px; color: var(--ink-mid); white-space: nowrap; }
 .bm-spread:empty { display: none; }
-.bm-more { display: block; width: 100%; background: none; border: 0; padding: 5px; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-mid); cursor: pointer; }
-.bm-more:hover { color: var(--ink); }
+.bm-sp-last { display: inline-flex; align-items: baseline; gap: 6px; }
+.bm-sp-last b { font-size: 15px; color: var(--ink); font-weight: 700; }
+.bm-sp-last em { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.bm-sp-note { cursor: help; letter-spacing: 0.02em; }
+.bm-more { display: block; width: 100%; background: none; border: 0; border-top: 1px solid var(--bm-line); height: 30px; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-mid); cursor: pointer; }
+.bm-more:hover { color: var(--ink); background: var(--bg-alt); }
 .bm-empty { padding: 14px 12px; color: var(--ink-mid); font-size: 11px; }
-.bm-book-note { padding: 6px 12px 8px; font-size: 10px; color: var(--ink-faint); }
+.bm-book-note { padding: 7px 12px 9px; font-size: 10px; line-height: 1.5; color: var(--ink-faint); border-top: 1px solid var(--bm-line); }
 .bm-book-note:empty { display: none; }
 
 /* orders + trades */
@@ -8691,10 +8712,11 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm-orow button { background: transparent; border: 1px solid var(--ink); padding: 3px 10px; font-size: 11px; cursor: pointer; }
 .bm-orow button:hover { background: var(--ink); color: var(--bg); }
 .bm-trow { display: grid; grid-template-columns: 1.1fr 1.1fr 0.6fr; gap: 8px; padding: 3px 12px; border-top: 1px solid var(--bm-line); font-variant-numeric: tabular-nums; font-size: 11px; }
-.bm-trow .p.up::first-letter, .bm-trow .p.down::first-letter { font-size: 8px; }
 .bm-trow:first-child { border-top: 0; }
 .bm-trow > span:not(:first-child) { text-align: right; }
-.bm-trow a { color: inherit; }
+.bm-trow a { color: inherit; text-decoration: none; }
+.bm-trow a:hover { text-decoration: underline; }
+.bm-trow .dir { font-style: normal; display: inline-block; width: 11px; font-size: 8px; vertical-align: 1px; }
 .bm-thead { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-mid); padding-top: 7px; padding-bottom: 5px; }
 @media (max-width: 639px) {
   .bm-left { display: contents; }
@@ -11798,7 +11820,7 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=a4f6a19a"></script>
+<script type="module" src="./tacit.js?cb=8e3eaa0b"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for
