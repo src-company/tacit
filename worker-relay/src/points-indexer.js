@@ -6,10 +6,11 @@
 // only for now — this serves a leaderboard/lookup API; it does not mint or gate anything on-chain.
 
 import { createServer } from 'node:http';
-import { createWalletClient, http, decodeEventLog, keccak256, toBytes } from 'viem';
+import { createWalletClient, http, decodeEventLog, keccak256, toBytes, formatEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { CFG, ADDR } from './lib/config.js';
 import { publicClient, clientForChain } from './lib/chain.js';
+import { withNonceRetry } from './lib/nonce-retry.js';
 import Database from 'better-sqlite3';
 import { openStore } from './lib/points-store.js';
 import { parseBoostTiers, openTacBoost, scanTacTransfers } from './lib/tac-holder-boost.js';
@@ -118,6 +119,8 @@ const rootSetterWallet = CFG.pointsRootSetterKey
       transport: http(CFG.rpcUrl),
     })
   : null;
+const ROOT_SETTER_MIN_TIP_WEI = 50_000_000n; // 0.05 gwei — same floor as header-relay's MIN_TIP_WEI
+const ROOT_SETTER_RECEIPT_TIMEOUT_MS = 300_000;
 
 const WRAP_EVENT = {
   type: 'event',
@@ -1335,13 +1338,49 @@ export async function settleCycle(store) {
     return;
   }
 
-  const hash = await rootSetterWallet.writeContract({
-    address: ADDR.pointsDistributor,
-    abi: DISTRIBUTOR_ABI,
-    functionName: 'updateRoot',
-    args: [tree.root, totalWei],
+  const call = { address: ADDR.pointsDistributor, abi: DISTRIBUTOR_ABI, functionName: 'updateRoot', args: [tree.root, totalWei] };
+
+  // Same EIP-1559 sizing as header-relay's submitAdvance: base fee doubled plus a real tip, rather than
+  // leaving the fee to the client's own default (which reserves several times what this actually costs).
+  // Checked once up front against the wallet's own balance — a genuine shortfall should defer to next cycle
+  // (matching the TAC-funding check above) rather than burn retries against a fee it can't cover either way.
+  const [block0, tip0, ethBalance] = await Promise.all([
+    publicClient.getBlock(),
+    publicClient.estimateMaxPriorityFeePerGas().catch(() => ROOT_SETTER_MIN_TIP_WEI),
+    publicClient.getBalance({ address: rootSetterWallet.account.address }),
+  ]);
+  const maxPriorityFeePerGas0 = tip0 > ROOT_SETTER_MIN_TIP_WEI ? tip0 : ROOT_SETTER_MIN_TIP_WEI;
+  const gas = (await publicClient.estimateContractGas({ ...call, account: rootSetterWallet.account }) * 125n) / 100n;
+  const need = gas * ((block0.baseFeePerGas ?? 0n) * 2n + maxPriorityFeePerGas0);
+  if (need > ethBalance) {
+    log(`ALERT: root-setter wallet ${rootSetterWallet.account.address} holds ${formatEther(ethBalance)} ETH; `
+      + `today's updateRoot needs ~${formatEther(need)} ETH at today's gas — top it up`);
+    return;
+  }
+
+  // Fees are refetched on every attempt, not just the upfront estimate above, so a retry after a stuck or
+  // underpriced send bids at least the network's current rate instead of repeating the same rejected fee.
+  const hash = await withNonceRetry('updateRoot', async () => {
+    const [block, tip] = await Promise.all([publicClient.getBlock(), publicClient.estimateMaxPriorityFeePerGas().catch(() => ROOT_SETTER_MIN_TIP_WEI)]);
+    const maxPriorityFeePerGas = tip > ROOT_SETTER_MIN_TIP_WEI ? tip : ROOT_SETTER_MIN_TIP_WEI;
+    const maxFeePerGas = (block.baseFeePerGas ?? 0n) * 2n + maxPriorityFeePerGas;
+    return rootSetterWallet.writeContract({ ...call, gas, maxFeePerGas, maxPriorityFeePerGas });
+  }, { log });
+
+  // Bounded, not left to hang: settleCycle runs last in main()'s loop, so an unconfirmed wait here would
+  // otherwise stall every scanner's next cycle behind it. A timeout isn't a failure — the send went through
+  // fine — so it logs and returns rather than throwing; the root stays unpublished locally, and the next
+  // cycle re-evaluates fees and either finds it confirmed or sends a proper replacement.
+  const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: ROOT_SETTER_RECEIPT_TIMEOUT_MS }).catch((err) => {
+    log(`updateRoot ${hash} not confirmed within ${ROOT_SETTER_RECEIPT_TIMEOUT_MS / 1000}s, will re-check next cycle:`, err?.message || err);
+    return null;
   });
-  await publicClient.waitForTransactionReceipt({ hash });
+  if (!receipt) return;
+  if (receipt.status !== 'success') {
+    log(`updateRoot ${hash} reverted`);
+    return;
+  }
+
   store.savePublishedClaims(tree.claims);
   store.saveSettleState({ lastSettledDay: state.lastSettledDay, publishedRoot: tree.root, publishedTotalWei: tree.totalWei });
   log(`published points root ${tree.root} (${formatTac(totalWei)} TAC across ${tree.count} addresses), tx ${hash}`);
