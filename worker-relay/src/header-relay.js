@@ -114,8 +114,9 @@ async function resumeHeight(rtip, btip) {
 // times what an advance costs; and the batch is cut to what the wallet covers. The next run carries on from
 // wherever this one stops. Returns the transaction and the height it advanced to.
 //
-// The wallet also pays for users' settles and the reflection's attests, so headers never spend into what those
-// need: one settle and one attest, each at the fee cap its own service sends with, stay behind.
+// The wallet also pays for the reflection's attests, and for users' settles unless those have their own key
+// (SETTLE_ADDRESS names another wallet), so headers never spend into what those need: one attest, and one settle
+// where it applies, each at the fee cap its own service sends with, stay behind.
 const MIN_TIP_WEI = 50_000_000n; // 0.05 gwei: a zero tip is accepted and then never included
 const SETTLE_RESERVE_GAS = BigInt(process.env.SETTLE_FUNDS_GAS || '720000');             // settle-relay's fee cap: 3x base
 const ATTEST_RESERVE_GAS = BigInt(process.env.REFLECTION_ATTEST_GAS_BUDGET || '700000'); // reflection's fee cap: 2x base
@@ -129,7 +130,8 @@ async function submitAdvance(from, to) {
   const maxPriorityFeePerGas = prio > MIN_TIP_WEI ? prio : MIN_TIP_WEI;
   const maxFeePerGas = (blk.baseFeePerGas ?? 0n) * 2n + maxPriorityFeePerGas;
   const base = blk.baseFeePerGas ?? 0n;
-  const reserve = SETTLE_RESERVE_GAS * (base * 3n + maxPriorityFeePerGas) + ATTEST_RESERVE_GAS * (base * 2n + maxPriorityFeePerGas);
+  const settlesHere = !CFG.settleAddress || CFG.settleAddress.toLowerCase() === relayWallet.account.address.toLowerCase();
+  const reserve = (settlesHere ? SETTLE_RESERVE_GAS * (base * 3n + maxPriorityFeePerGas) : 0n) + ATTEST_RESERVE_GAS * (base * 2n + maxPriorityFeePerGas);
   const budget = have > reserve ? have - reserve : 0n;
   const headers = [];
   for (let h = from; h <= to; h++) headers.push(await headerHex(h));
@@ -141,8 +143,9 @@ async function submitAdvance(from, to) {
       // Gas is close to linear in the header count; one header of margin covers the fixed part.
       const n = to - from + 1;
       const fits = Math.floor((n * Number(budget)) / Number(need)) - 1;
-      if (fits < 1) throw new Error(`relay wallet holds ${eth(have)} ETH and keeps ${eth(reserve)} for settles and attests; one header costs ${eth(need / BigInt(n))} ETH at today's gas: top it up`);
-      log(`relay wallet holds ${eth(have)} ETH (${eth(reserve)} kept for settles and attests), enough for ${fits} of ${n} headers at today's gas — advancing to ${from + fits - 1}`);
+      const kept = settlesHere ? 'settles and attests' : 'attests';
+      if (fits < 1) throw new Error(`relay wallet holds ${eth(have)} ETH and keeps ${eth(reserve)} for ${kept}; one header costs ${eth(need / BigInt(n))} ETH at today's gas: top it up`);
+      log(`relay wallet holds ${eth(have)} ETH (${eth(reserve)} kept for ${kept}), enough for ${fits} of ${n} headers at today's gas — advancing to ${from + fits - 1}`);
       to = from + fits - 1;
       continue;
     }
