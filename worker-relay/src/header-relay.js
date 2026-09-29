@@ -12,10 +12,11 @@
 // step and each attest's walk short, then hold at the tip.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { CFG } from './lib/config.js';
+import { CFG, ADDR } from './lib/config.js';
 import { withNonceRetry } from './lib/nonce-retry.js';
 import { publicClient, relayWallet, HEADER_RELAY, RELAY_ABI, gasAboveCap } from './lib/chain.js';
 import { planHeaderAdvance } from './lib/header-plan.js';
+import { cbtcLockDemand } from './lib/reflection-demand.js';
 
 const log = (...a) => console.log(`[header ${new Date().toISOString()}]`, ...a);
 const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
@@ -184,9 +185,17 @@ async function cycle() {
   // epochStartTs[prev]), not a single global per-epoch value set by a separate call — so it crosses a
   // difficulty-epoch boundary transparently within one submission. No special-casing needed here.
   const dear = await gasAboveCap();
+  // A user waiting on the reflection (a bonded cBTC lock not recorded yet) outranks waiting for cheap gas, up to a
+  // ceiling: headers go out now, in whatever number is pending, so the reflection can fold the lock as soon as it has
+  // its confirmations.
+  const demand = await cbtcLockDemand({ client: publicClient, pool: ADDR.pool, helper: ADDR.cbtcEscrowHelper, engine: ADDR.collateralEngine, lookbackBlocks: CFG.demandLookbackBlocks })
+    .catch((e) => { log(`demand check unavailable (${String(e.message).slice(0, 80)})`); return null; });
+  const gwei = dear || null;
+  const urgent = !!demand?.waiting && !(gwei && gwei > CFG.demandMaxGasGwei);
+  if (demand?.waiting) log(`${demand.waiting} bonded cBTC lock(s) waiting on the reflection${urgent ? ' — advancing now' : ` — gas ${gwei.toFixed(2)} gwei is above the ${CFG.demandMaxGasGwei} gwei ceiling, waiting`}`);
   const plan = planHeaderAdvance({
-    base, to, minBatch: CFG.headerMinBatch, maxStale: CFG.headerMaxStaleBlocks, maxBatch: CFG.headerMaxBatch,
-    gasDear: !!dear, restore: depth > 0,
+    base, to, minBatch: urgent ? 1 : CFG.headerMinBatch, maxStale: CFG.headerMaxStaleBlocks, maxBatch: CFG.headerMaxBatch,
+    gasDear: urgent ? false : !!dear, restore: depth > 0,
   });
   if (plan.action === 'wait') {
     if (plan.reason === 'gas') log(`gas ${dear.toFixed(3)} gwei is above MAX_GAS_GWEI=${CFG.maxGasGwei} — waiting`);

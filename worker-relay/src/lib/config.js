@@ -58,6 +58,9 @@ export const ADDR = {
   // ConfidentialRouter — escrowAddressFor() + activateExit() for relayed L2 exits. Per-deployment, same
   // caveat as pool above.
   router: opt('ROUTER_ADDR', '0x000000005dA3E3B73726af3c774Deeb9472D4992'),
+  // cBTC bonds: the escrow helper users post them through, and the engine that holds them (lib/reflection-demand.js).
+  cbtcEscrowHelper: opt('CBTC_ESCROW_HELPER_ADDR', '0x000000008eCD09f922C9FbbDD9ACA5aE8F0beBfA'),
+  collateralEngine: opt('COLLATERAL_ENGINE_ADDR', '0x000000003f608BDdF0ca45934003ffb9DbDF70DB'),
   // Succinct vApp deposit contract — deposit(uint256) tops up the network prover balance
   vApp: opt('VAPP_DEPOSIT_ADDR', '0x5Ad5Bc4B18f7c173DcE17A57682Cb0Dc8788951F'),
   // PROVE token — the prover-fee currency (approve + deposit to vApp)
@@ -145,6 +148,11 @@ export const CFG = {
   // Submit only once this many headers are pending, so a quiet lane pays one transaction for a batch instead of one per
   // block. 1 (default) is the original behaviour: submit as soon as any block exists.
   headerMinBatch: num('HEADER_RELAY_MIN_BATCH', 1),
+  // While a user waits on Bitcoin state (lib/reflection-demand.js), headers go out at any gas up to this, in whatever
+  // number is pending, rather than waiting for MAX_GAS_GWEI and HEADER_RELAY_MIN_BATCH.
+  demandMaxGasGwei: num('DEMAND_MAX_GAS_GWEI', 5),
+  // How far back a bond counts as a user waiting (about a day of blocks).
+  demandLookbackBlocks: BigInt(opt('DEMAND_LOOKBACK_BLOCKS', '7200')),
   // The bound on how far behind the relay is left. When > 0, a pending count at or above it is submitted even while
   // MAX_GAS_GWEI would hold it and even if it is below the minimum batch. 0 (default) disables the override.
   headerMaxStaleBlocks: num('HEADER_RELAY_MAX_STALE_BLOCKS', 0),
