@@ -94,6 +94,7 @@ const WRAP_TYPES = ['bytes32', 'uint256', 'uint256', 'address', 'bytes32', 'addr
 const withdrawToV1Data = (t, i) => calldata(`withdrawToV1(${TX_SIG},${WRAP_SIG})`, [{ tuple: TX_TYPES }, { tuple: WRAP_TYPES }], [
   [t.pA.map(B), t.pB.map((r) => r.map(B)), t.pC.map(B), t.publicInputs.map(B), t.recipient, BigInt.asUintN(256, B(t.extAmount)), t.relayer, B(t.fee), t.memo0, t.memo1],
   [i.assetId, B(i.amount), B(i.tip), i.tipTo, i.commit, i.refund, B(i.deadline), B(i.nonce)]]);
+const fromJsonText = (t) => JSON.parse(t || 'null');
 const json = (route, body) => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
 
 async function openPage({ account, key = null, host = '127.0.0.1', init = null, viewport = { width: 1280, height: 900 }, colorScheme = 'light' }) {
@@ -1322,9 +1323,10 @@ await step('receipts', async () => {
   } finally { await r.browser.close(); }
 });
 
-// The stats page reads the explorer, the chains and the relay's status. The explorer answers here from fixtures (a known
-// set of deposits, settles, attestations, bonds, loans, claims and device-pool moves); the chain reads come from the fork.
-// Every figure the fixtures decide is checked, and a second visit within ten minutes reads nothing again.
+// The stats page reads the chains, two explorers and the relay's status. Logs and the explorers' transaction lists answer
+// here from fixtures (a known set of deposits, settles, attestations, bonds, loans, claims and device-pool moves); the
+// contract reads come from the fork. Every figure the fixtures decide is checked, then how little each later visit asks:
+// nothing within a quarter hour, only what is new on a fresh read, and nothing at all when the API has a shared reading.
 await step('stats', async () => {
   const lc = (x) => String(x || '').toLowerCase();
   const w = (v) => (BigInt(v) < 0n ? (1n << 256n) + BigInt(v) : BigInt(v)).toString(16).padStart(64, '0');
@@ -1342,7 +1344,7 @@ await step('stats', async () => {
   const CETH = '0x3cba71e1114af183cdeacc6b8457a474d17529fd28704480ca799d0d03126f34', TACID = '0xf0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b', USDC = '0x' + 'c5'.repeat(32), USDT = '0x' + 'c6'.repeat(32);
   const tx = (c) => '0x' + c.repeat(64 / c.length);
   let li = 0;
-  const log = (address, topics, data, txh, t) => ({ address, topics, data: '0x' + data, blockNumber: h(26000000 + li), timeStamp: h(t), transactionHash: txh, logIndex: h(li++) });
+  const log = (address, topics, data, txh, t, block = 26000000 + li) => ({ address, topics, data: '0x' + data, blockNumber: h(block), timeStamp: h(t), blockTimestamp: h(t), transactionHash: txh, logIndex: h(li++) });
   const str = (s) => { const b = Buffer.from(s); return w(b.length) + b.toString('hex').padEnd(64, '0'); };
   // Real locks, read from the fork's pool and engine: one since unlocked on Bitcoin, one still locked (both minted on), and
   // one bonded in the fixtures only, which the pool never recorded.
@@ -1369,9 +1371,13 @@ await step('stats', async () => {
   ];
   const addr32 = (a) => '0x' + '00'.repeat(12) + a.slice(2);
   const airLogs = [[CL1, 10], [CL1, 20], [CL2, 30]].map(([a, v], i) => log(AIR, [TOPIC.claimed, w(i), addr32(a)], w(BigInt(v) * 10n ** 18n), tx('c' + i), T));
-  const transact = (v, i, t, fee = 0n) => log(EVMP, [TOPIC.transact, tx('e' + i), tx('e' + (i + 5))], [w(0), w(0), w(0), w(0), w(0), w(v), w(0), w(fee), w(0x140), w(0x160), w(0), w(0)].join(''), tx('9' + i), t);
+  const transact = (v, i, t, fee = 0n, block) => log(EVMP, [TOPIC.transact, tx('e' + i), tx('e' + (i + 5))], [w(0), w(0), w(0), w(0), w(0), w(v), w(0), w(fee), w(0x140), w(0x160), w(0), w(0)].join(''), tx('9' + i), t, block);
   const devLogs = [transact(3n * 10n ** 17n, 1, T), transact(-(10n ** 17n), 2, T + 86400, 10n ** 16n)];
-  const rhLogs = [transact(2n * 10n ** 17n, 3, T)];
+  const rhLogs = [transact(2n * 10n ** 17n, 3, T, 0n, 74000000)];
+  const MAIN = [...poolLogs, ...engineLogs, ...airLogs, ...devLogs];
+  const BASE_HEAD = 51961580, RH_HEAD = 74100000;
+  const inRange = (ls, q) => ls.filter((l) => [].concat(q.address).map(lc).includes(lc(l.address))
+    && Number(BigInt(l.blockNumber)) >= Number(BigInt(q.fromBlock)) && (q.toBlock === 'latest' || Number(BigInt(l.blockNumber)) <= Number(BigInt(q.toBlock))));
   const TXS = {
     [POOLA]: [
       { hash: tx('a2'), from: W2, to: POOLA, blockNumber: '26000001', timeStamp: String(T + 86400), isError: '0', methodId: '0x8be3ad21', value: '500000000000000000' },
@@ -1392,28 +1398,39 @@ await step('stats', async () => {
   const CUSD_SLOT = '0x' + word(19), cusdWas = await rpc('eth_getStorageAt', [ENGINE, CUSD_SLOT, 'latest']);
   await rpc('anvil_setStorageAt', [ENGINE, CUSD_SLOT, '0x' + word(250000000)]);
   const r = await openPage({ account: A0, key: K0, viewport: { width: 1280, height: 1100 } });
-  const hits = [];
-  // Who sent each deposit comes from the chain in one batch: the fixtures' deposits answer here, the rest go to the fork.
+  const hits = [], logReads = [];
+  // Who sent each deposit comes from the chain in one batch, and the logs from one request: the fixtures answer both
+  // here, and every other read goes on to the fork.
   const SENDERS = { [tx('a1')]: W1, [tx('a2')]: W2 };
   for (const host of RPC_HOSTS) await r.ctx.route(`https://${host}/**`, (route) => {
     const b = JSON.parse(route.request().postData() || 'null');
+    if (b && !Array.isArray(b) && b.method === 'eth_getLogs') { logReads.push(host); return json(route, { jsonrpc: '2.0', id: b.id, result: inRange(MAIN, b.params[0]) }); }
     if (!Array.isArray(b) || !b.length || !b.every((x) => x.method === 'eth_getTransactionByHash')) return route.fallback();
     return json(route, b.map((x) => ({ jsonrpc: '2.0', id: x.id, result: SENDERS[x.params[0]] ? { hash: x.params[0], from: SENDERS[x.params[0]] } : null })));
   });
-  await r.ctx.route(/^https:\/\/(eth|base)\.blockscout\.com\/api\?/, (route) => {
-    const u = new URL(route.request().url()), q = u.searchParams, a = lc(q.get('address')), t0 = q.get('topic0');
-    hits.push(u.hostname + u.search);
+  // Both explorers answer from the same fixtures, each list from the block asked for.
+  await r.ctx.route(/^https:\/\/((eth|base)\.blockscout\.com\/api|api\.routescan\.io\/v2\/network\/mainnet\/evm\/(1|8453)\/etherscan\/api)\?/, (route) => {
+    const u = new URL(route.request().url()), q = u.searchParams, a = lc(q.get('address')), base = /base\.|\/8453\//.test(u.hostname + u.pathname);
+    hits.push(u.hostname + u.pathname + u.search);
+    const from = Number(q.get('startblock') || q.get('fromBlock') || 0);
     let result = [];
-    if (q.get('module') === 'logs') result = (u.hostname.startsWith('base') ? [] : { [POOLA]: poolLogs, [ENGINE]: engineLogs, [AIR]: airLogs, [EVMP]: devLogs }[a] || []).filter((l) => !t0 || l.topics[0] === t0);
-    else if (q.get('action') === 'txlist') result = TXS[a] || [];
-    else if (q.get('action') === 'txlistinternal') result = a === POOLA ? INTERNAL : [];
+    if (q.get('module') === 'logs') result = base ? [] : inRange(MAIN, { address: a, fromBlock: h(from), toBlock: 'latest' });
+    else if (!base) result = (q.get('action') === 'txlist' ? TXS[a] || [] : a === POOLA ? INTERNAL : []).filter((t) => Number(t.blockNumber) >= from);
     return json(route, { status: result.length ? '1' : '0', message: result.length ? 'OK' : 'No records found', result });
   });
-  await r.ctx.route(/^https:\/\/(mainnet\.base\.org|base\.drpc\.org|rpc\.mainnet\.chain\.robinhood\.com)\/?/, (route) => {
-    const b = JSON.parse(route.request().postData() || '{}'), base = /base/.test(route.request().url());
-    const res = b.method === 'eth_getBalance' ? (base ? h(5n * 10n ** 17n) : h(2n * 10n ** 17n)) : b.method === 'eth_getLogs' ? (base ? [] : rhLogs) : '0x0';
-    return json(route, { jsonrpc: '2.0', id: b.id, result: res });
+  // Base's nodes serve short ranges only, as they do live (the first read of its device pool goes to an explorer).
+  await r.ctx.route(/^https:\/\/(mainnet\.base\.org|base-rpc\.publicnode\.com|rpc\.mainnet\.chain\.robinhood\.com)\/?/, (route) => {
+    const b = JSON.parse(route.request().postData() || '{}'), url = route.request().url(), base = /base/.test(url);
+    const reply = (result) => json(route, { jsonrpc: '2.0', id: b.id, result });
+    if (b.method === 'eth_blockNumber') return reply(h(base ? BASE_HEAD : RH_HEAD));
+    if (b.method === 'eth_getBalance') return reply(base ? h(5n * 10n ** 17n) : h(2n * 10n ** 17n));
+    if (b.method !== 'eth_getLogs') return reply('0x0');
+    const q = b.params[0], span = Number(BigInt(q.toBlock)) - Number(BigInt(q.fromBlock)) + 1;
+    if (base && span > 2000) return json(route, { jsonrpc: '2.0', id: b.id, error: { code: -32000, message: /publicnode/.test(url) ? 'Archive requests require a personal token' : 'eth_getLogs is limited to a 2,000 range' } });
+    return reply(base ? [] : inRange(rhLogs, q));
   });
+  let snapshot = null;
+  await r.ctx.route(/^https:\/\/api\.tacit\.finance\/stats/, (route) => (snapshot ? route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: snapshot }) : route.fulfill({ status: 404, body: '' })));
   await r.ctx.route(/^https:\/\/api\.tacit\.finance\/reflection\/status/, (route) => json(route, { attestedHeight: 969159, tipHeight: 969159, foldedCrossoutCount: 5, consumedCount: 2, liveNotes: 1234 }));
   await r.ctx.route(/^https:\/\/api\.tacit\.finance\/leaderboard/, (route) => json(route, [{ address: W1, points: 10 }, { address: W2, points: 20 }]));
   await r.ctx.route(/^https:\/\/(mempool\.space|blockstream\.info)\/api\/blocks\/tip\/height/, (route) => route.fulfill({ status: 200, contentType: 'text/plain', headers: { 'access-control-allow-origin': '*' }, body: '969200' }));
@@ -1459,11 +1476,29 @@ await step('stats', async () => {
     await shot(r.page, 'stats-phone-dark');
     await r.page.setViewportSize({ width: 1280, height: 1100 });
     await r.page.emulateMedia({ colorScheme: 'light' });
-    const n = hits.length;
-    ok(n <= 7, `stats: one reading makes at most seven explorer calls, six on Ethereum and one on Base (${n})`);
+    const n = hits.length, nLogs = logReads.length;
+    ok(n <= 3 && hits.every((q) => /txlist|base\.blockscout|\/8453\//.test(q)), `stats: a first reading asks the explorers only for the pool's two transaction lists and Base's first log read (${hits.join(' | ')})`);
+    ok(new Set(hits.filter((q) => !/base|8453/.test(q)).map((q) => q.split('/')[0])).size === 2, 'stats: the two lists go to the two explorers in turn');
+    ok(nLogs === 1, `stats: every Ethereum log in one request (${nLogs})`);
+    const settled = () => until(r.page, () => /^As of /.test(document.querySelector('#asof')?.textContent || '') && !/updating/.test(document.querySelector('#asof')?.textContent || ''), null, 60000).catch(() => {});
     await r.page.reload();
-    await until(r.page, () => /hourly/.test(document.querySelector('#asof')?.textContent || ''), null, 30000).catch(() => {});
-    ok(hits.length === n && /^Shielded \| 1\.5ETH/.test(await card('Shielded')), `stats: a second visit within the hour shows the last reading and asks the explorer nothing (${hits.length - n} calls)`);
+    await settled();
+    ok(hits.length === n && logReads.length === nLogs && /^Shielded \| 1\.5ETH/.test(await card('Shielded')), `stats: a second visit within the quarter hour shows the last reading and reads nothing (${hits.length - n} explorer, ${logReads.length - nLogs} log reads)`);
+    await r.page.goto(r.url + 'stats/?fresh');
+    await settled();
+    const fresh = hits.slice(n);
+    ok(fresh.length === 2 && fresh.every((q) => Number(new URLSearchParams(q.split('?')[1]).get('startblock')) > 0) && /^Shielded \| 1\.5ETH \| 2 deposits/.test(await card('Shielded')),
+      `stats: a fresh reading reads on from what the last one kept, asking the explorers only for what is new (${fresh.join(' | ')})`);
+    // The API's shared reading, when there is one, is all a visit needs.
+    const kept = fromJsonText(await r.page.evaluate(() => localStorage.getItem('tacit-weld-stats-v3')));
+    kept.at = Date.now(); kept.eth.inWei = { $n: String(9n * 10n ** 18n) }; delete kept.partial;
+    snapshot = JSON.stringify(kept);
+    await r.page.evaluate(() => localStorage.clear());
+    const before = [hits.length, logReads.length];
+    await r.page.goto(r.url + 'stats/');
+    await settled();
+    ok(/^Shielded \| 9ETH/.test(await card('Shielded')) && hits.length === before[0] && logReads.length === before[1],
+      `stats: with the API's shared reading the page shows it and reads nothing itself (${await card('Shielded')} · ${hits.length - before[0]} explorer, ${logReads.length - before[1]} log reads)`);
     if (r.errors.length) { fails++; console.log('FAIL stats page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   } finally { await r.browser.close(); await rpc('anvil_setStorageAt', [ENGINE, CUSD_SLOT, '0x' + word(cusdWas)]); }
 });

@@ -154,9 +154,9 @@ function updateCacheBust(htmlBytes, appJsBytes, prebootBytes) {
 // then app.js, then the page that loads app.js) so each token covers bytes already final. Returns the drift it found; writes only
 // when asked, so --verify-only reuses the same walk.
 const SATS_CB_FILES = ['sats/join-worker.js', 'sats/mix.js', 'sats/secret.js', 'sats/eth.js', 'sats/app.js', 'sats/index.html'];
-// dapp/weld/ is one page whose imports all sit in its inline module, so its tokens are rewritten before that
-// module's CSP hash is taken (updatePinnedCsp below).
-const WELD_CB_FILES = ['weld/index.html'];
+// dapp/weld/ and its stats page each keep their imports in their inline module, so their tokens are rewritten before
+// those modules' CSP hashes are taken (updatePinnedCsp below).
+const WELD_CB_FILES = ['weld/index.html', 'weld/stats/index.html'];
 // dapp/tac/ is the shielded-TAC page: app.js lazy-imports sats.js, so sats.js is hashed first and the page
 // that loads app.js last, same importer-last order as the sats page above.
 const TAC_CB_FILES = ['tac/sats.js', 'tac/market.js', 'tac/claim.js', 'tac/app.js', 'tac/index.html'];
