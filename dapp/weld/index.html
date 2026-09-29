@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-lABtc+gsgQiW3xkO+usR+chWsrVJn49xEcgqD9vODFk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-sX6Bh8cfbd9YCvrfgnNOjQLgx24ph3D+fyR+SkqAMd8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -916,7 +916,7 @@ function setKey(k) {
 // tacit.js opens the passphrase-locked and Bitcoin-signed keys exactly as tacit.finance does. It loads only for
 // those paths, as a library: it reads the shared network once at import, so this page pins mainnet for its visit,
 // and any call that rewrites the app's linked-wallet records is run with them put back afterwards.
-const TACIT_URL = '/tacit.js?cb=ccd94acf';
+const TACIT_URL = '/tacit.js?cb=bf721822';
 const SHARED_NET = 'tacit-network-v1', PREV_NET = 'tacit-lite-prev-net-v1';
 const SHARED_WALLET_KEYS = ['tacit-eth-identity', 'tacit-btc-identity', 'tacit-active-mode-v1', 'tacit-ext-mode-v1', 'tacit-ext-state-v1',
   ...['mainnet', 'signet'].flatMap((n) => [`tacit-eth-identity:${n}`, `tacit-btc-identity:${n}`])];
@@ -3278,8 +3278,8 @@ render.borrow = () => {
           <div class="d">${s2 ? 'Posted as wstETH, earning while it bonds the lock. Spending the BTC without redeeming forfeits it.' : s1 ? html`${fmt(st.payEth, 18, 5)} ETH${st.have ? ' more, as the price moved since the bond was posted' : ''}, staked as wstETH and earning while it bonds the lock. Spending the BTC without redeeming forfeits it.` : 'An ETH bond worth at least 1.5× the BTC, posted in one transaction.'}</div>
           ${s1 && !s2 ? (st.payEth ? html`
             <div class="kv"><span>Paid from ${your()}${payer() === 'tacit' && S.acct ? html` · <span class="mono">${short(S.acct.address, 6)}</span> <button class="link" type="button" data-copy="${S.acct.address}">copy</button>` : ''}</span><b>${bf?.bal == null ? '…' : html`${fmt(bf.bal, 18, 5)} ETH`}</b></div>
-            ${shortEth ? html`<p class="note err">The bond and its gas come to about ${fmt(need, 18, 5)} ETH. ${payer() === 'tacit' ? html`<button class="link" type="button" data-fund>Add ETH</button> to your Tacit account, from any wallet or exchange on Ethereum, or <button class="link" type="button" id="bw-paywallet">pay from a wallet</button>.` : 'Add ETH to your wallet.'} Post bond opens once it arrives.</p>` : ''}
-            <button class="btn" type="button" id="bw-bond" ${shortEth ? 'disabled' : ''}>${st.have ? 'Top up bond' : 'Post bond'}</button>` : html`<div class="d err">The BTC price feed is updating; the bond can be sized again in a few minutes.</div>`) : ''}
+            ${shortEth ? html`<p class="note err">The bond and its gas come to about ${fmt(need, 18, 5)} ETH. ${payer() === 'tacit' ? html`Top up your Tacit account from a connected wallet and the bond posts in the same go, or <button class="link" type="button" data-fund>add ETH another way</button> and post it once that arrives.` : 'Add ETH to your wallet, and Post bond opens once it arrives.'}</p>` : ''}
+            ${shortEth && payer() === 'tacit' ? html`<button class="btn" type="button" id="bw-topup">Top up from wallet and post bond</button>` : html`<button class="btn" type="button" id="bw-bond" ${shortEth ? 'disabled' : ''}>${st.have ? 'Top up bond' : 'Post bond'}</button>`}` : html`<div class="d err">The BTC price feed is updating; the bond can be sized again in a few minutes.</div>`) : ''}
         </div>
       </li>
       <li class="${stepCls(s3, s2 && !s3)}">
@@ -3322,8 +3322,29 @@ render.borrow = () => {
   const status = $('#bw-status');
   clearTimeout(BF.poll);
   if (shortEth) BF.poll = setTimeout(() => { BF.at = 0; rerender('borrow'); }, 20e3);
-  const payw = $('#bw-paywallet');
-  if (payw) payw.onclick = () => busy(payw, async () => { try { await connect(); setPayer('wallet'); BF.at = 0; rerender('borrow'); } catch (e) { sayErr(status, e); } });
+  // The connected wallet sends the Tacit account what the bond still needs, with a little room for gas moving, and once
+  // that lands the bond is posted from the Tacit account: one wallet prompt, and the bond stays with this key.
+  const topup = $('#bw-topup');
+  if (topup) topup.onclick = () => busy(topup, async () => {
+    try {
+      const t = await getUx();
+      if (!st.payEth) throw new Error('The bond size could not be read. Try again in a few minutes.');
+      const bal = BigInt(await rpc('eth_getBalance', [S.acct.address, 'latest'])), gap = ((st.payEth + BF.gas) * 105n) / 100n - bal;
+      if (gap > 0n) {
+        say(status, `Confirm ${fmt(gap, 18, 5)} ETH to your Tacit account in your wallet…`);
+        const h = await sendTx({ to: S.acct.address, data: '0x', value: gap, via: 'wallet' });
+        say(status, html`Topping up your Tacit account… ${txLink(h)}`);
+        await waitTx(h);
+      }
+      const hash = await sendTx({ to: ADDR.escrow, data: SEL.postEscrowWithETH + strip(outpointOf(t, rec)), value: st.payEth, via: 'tacit' });
+      say(status, html`Posting the bond… ${txLink(hash)}`);
+      await waitTx(hash);
+      say(status, html`<span class="ok">Bond posted.</span> ${txLink(hash)} Mint once the lock is proven.`);
+      toast('Bond posted');
+      BF.at = 0;
+      await loadBorrow(true); rerender('borrow');
+    } catch (e) { sayErr(status, e); }
+  });
   $$('[data-reclaim]', el).forEach((b) => b.onclick = () => busy(b, async () => {
     const x = LOCK.bonds[Number(b.dataset.reclaim)];
     try {

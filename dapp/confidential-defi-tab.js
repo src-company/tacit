@@ -384,7 +384,7 @@ function renderReservedCbtcLocks() {
     + `, held out of ordinary spending until redeemed.`;
 }
 
-function wireCbtc(wallet, ux) {
+function wireCbtc(wallet, ux, helpers = {}) {
   const lockBtn = el('cdp-cbtc-lock-btn');
   const statusEl = el('cdp-cbtc-status');
   const pendingList = el('cdp-cbtc-pending');
@@ -487,6 +487,29 @@ function wireCbtc(wallet, ux) {
     }
   }
 
+  // One wallet prompt for a Tacit account without the ETH: the connected browser wallet sends what the bond still needs,
+  // with a little room for gas moving, and once that lands the bond is posted from the Tacit account as usual, so the
+  // bond and its refund stay with this wallet's key.
+  async function topUpAndBond(rec, btn, pr) {
+    btn.disabled = true;
+    try {
+      const f = pr && await bondFunding(ux, wallet, pr);
+      if (!f) throw new Error('the bond cannot be sized right now; try again in a few minutes');
+      const gap = (f.need * 105n) / 100n - f.bal;
+      if (gap > 0n) {
+        if (statusEl) statusEl.textContent = `Confirm ${wei6(gap)} ETH to your Tacit account in your wallet…`;
+        const hash = await helpers.ethPay({ to: f.addr, value: gap });
+        if (statusEl) statusEl.innerHTML = `Topping up your Tacit account (<code class="addr">${esc(hash)}</code>)…`;
+        await ux.waitReceipt(hash);
+      }
+      await postBond(rec, btn, pr);
+    } catch (e) {
+      const m = /reject|denied|cancel/i.test(String(e && e.message)) ? 'Top-up cancelled.' : formatSpecErr(e, 'Top-up');
+      if (statusEl) statusEl.textContent = m; notify(m, 'error');
+      refreshPending();
+    }
+  }
+
   // Redraws the pending locks and sets each one's next step from chain: post its bond, wait for the reflection to
   // record it, or mint. A lock already minted or retired leaves the list.
   async function refreshPending() {
@@ -526,7 +549,8 @@ function wireCbtc(wallet, ux) {
         if (run !== refreshing) return;
         if (f && f.bal < f.need) {
           short = true;
-          step(i, `Needs its bond: ${wei6(f.payEth)} ETH, staked as wstETH, paid from your Tacit account, the Ethereum address this wallet's key controls. It holds ${wei6(f.bal)} ETH: send it at least ${wei6(f.need - f.bal)} ETH on Ethereum, from any wallet or exchange, and Post bond opens once it arrives.`, '', 'Post bond');
+          const top = helpers.ethPay ? ['topup', 'Top up from wallet'] : ['', 'Post bond'];
+          step(i, `Needs its bond: ${wei6(f.payEth)} ETH, staked as wstETH, paid from your Tacit account, the Ethereum address this wallet's key controls. It holds ${wei6(f.bal)} ETH.${helpers.ethPay ? ' Top it up from a connected wallet and the bond posts in the same go, or' : ''} send it at least ${wei6(f.need - f.bal)} ETH on Ethereum from any wallet or exchange${helpers.ethPay ? ' and post it once that arrives' : ', and Post bond opens once it arrives'}.`, ...top);
           fund(i, f.addr);
         } else {
           step(i, `Needs its bond: ${f ? `${wei6(f.payEth)} ETH, staked as wstETH,` : `${wei6(pr.want - pr.have)} wstETH,`} paid from your Tacit account.`, 'bond', 'Post bond');
@@ -607,6 +631,7 @@ function wireCbtc(wallet, ux) {
       const rec = loadPendingCbtcLocks()[i];
       if (!rec) return;
       if (btn.dataset.step === 'bond') postBond(rec, btn, progress.get(i));
+      else if (btn.dataset.step === 'topup') topUpAndBond(rec, btn, progress.get(i));
       else if (btn.dataset.step === 'mint') mintPending(rec, btn);
     });
   }
@@ -672,7 +697,7 @@ export async function renderCdpTab(wallet, helpers = {}) {
     <div id="cdp-positions" class="divider"></div>
     </div>`;
 
-  wireCbtc(wallet, ux);
+  wireCbtc(wallet, ux, helpers);
 
   if (el('cdp-status')) el('cdp-status').textContent = 'Scanning the pool…';
   try {

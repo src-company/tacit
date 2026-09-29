@@ -46196,6 +46196,15 @@ function _renderCdpTab() {
   renderCdpTab(wallet, {
     unlock: async () => { await ensurePrivkey(); _renderCdpTab(); },
     isUnlockCancelled,
+    // ETH from a connected browser wallet on Ethereum mainnet, in one prompt: how the Tacit account is topped up.
+    ethPay: async ({ to, value }) => {
+      const { provider, address } = await ethWallet.connect();
+      if (String(await provider.request({ method: 'eth_chainId' })).toLowerCase() !== '0x1') {
+        try { await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x1' }] }); }
+        catch { throw new Error('Switch your wallet to Ethereum mainnet to top up.'); }
+      }
+      return provider.request({ method: 'eth_sendTransaction', params: [{ from: '0x' + address, to, value: '0x' + BigInt(value).toString(16) }] });
+    },
   });
 }
 

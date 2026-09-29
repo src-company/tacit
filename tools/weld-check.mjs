@@ -476,12 +476,9 @@ await step('mainbond', async () => {
     let [s, b] = await row();
     const fundLine = await r.page.evaluate(() => document.querySelector('.cbtc-fund[data-i="0"]')?.textContent || '');
     const off = () => r.page.$eval('.cbtc-mint-pending-btn[data-i="0"]', (x) => x.disabled);
-    ok(/holds 0 ETH: send it at least [\d.]+ ETH on Ethereum/.test(s) && fundLine.toLowerCase().includes(acct.toLowerCase()) && await off(),
-      `mainbond: an unfunded Tacit account is named with what to send, and the bond waits for it (${s} | ${fundLine.trim()})`);
-    await rpc('anvil_setBalance', [acct, '0x' + (10n ** 18n).toString(16)]);
-    await rowIs(/paid from your Tacit account\.$/, 90000).catch(() => {});
-    [s, b] = await row();
-    ok(/Needs its bond: [\d.]+ ETH, staked as wstETH, paid from your Tacit account\./.test(s) && b === 'Post bond' && !(await off()), `mainbond: once the ETH arrives the bond opens on its own (${s} [${b}])`);
+    ok(/holds 0 ETH\. Top it up from a connected wallet[^]*send it at least [\d.]+ ETH on Ethereum/.test(s) && fundLine.toLowerCase().includes(acct.toLowerCase()) && b === 'Top up from wallet' && !(await off()),
+      `mainbond: an unfunded Tacit account is named, with a top-up from the connected wallet (${s} | ${fundLine.trim()} [${b}])`);
+    // One click: the connected wallet (anvil's first account) sends the shortfall, then the bond posts from the Tacit account.
     await r.page.click('.cbtc-mint-pending-btn[data-i="0"]');
     await rowIs(/Bonded\.|Needs its bond/, 180000).catch(() => {});
     await chainUntil(async () => (await call(ENGINE, '0xe06e89c9' + OP)) > 0n, 120000).catch(() => {});
@@ -539,14 +536,20 @@ await step('locks', async () => {
     const b = await body();
     ok(/0\.0002\d* BTC in your own output/.test(b) && /Your locks/.test(b) && /post its bond · shown above/.test(b), `locks: the sheet opens on the oldest lock still to mint and lists the others (${b.slice(0, 120)})`);
     ok(!!(await r.page.$('#borrow-body details.lockmore #bw-lock')), 'locks: another lock can be made from the sheet');
-    ok(!!(await r.page.$('#bw-bond')), 'locks: the lock it follows offers its bond');
+    ok(!!(await r.page.$('#bw-bond, #bw-topup')), 'locks: the lock it follows offers its bond');
     await until(r.page, () => /Paid from your (Tacit account|wallet)[^]*?\d ETH/.test(document.querySelector('#borrow-body')?.textContent || ''), null, 60000).catch(() => {});
-    const bt = await body(), held = await r.page.$eval('#bw-bond', (x) => x.disabled);
-    ok(/Paid from your (Tacit account|wallet)/.test(bt) && (/Add ETH/.test(bt) ? held : !held),
-      `locks: the bond names the account that pays and what it holds, and waits for ETH when short (${(bt.match(/Paid from.{0,60}?ETH/) || [''])[0]}${/Add ETH/.test(bt) ? ' · Add ETH' : ''})`);
+    const bt = await body(), short = !!(await r.page.$('#bw-topup'));
+    ok(/Paid from your (Tacit account|wallet)/.test(bt) && (short ? /Top up your Tacit account from a connected wallet/.test(bt) && !(await r.page.$('#bw-bond')) : !(await r.page.$eval('#bw-bond', (x) => x.disabled))),
+      `locks: the bond names the account that pays and what it holds, and offers a top-up when short (${(bt.match(/Paid from.{0,60}?ETH/) || [''])[0]}${short ? ' · Top up from wallet' : ''})`);
     await r.page.click('#borrow-body [data-pick]');
     await until(r.page, () => /0\.0003\d* BTC in your own output/.test((document.querySelector('#borrow-body')?.textContent || '').replace(/\s+/g, ' ')), null, 60000).catch(() => {});
     ok(/0\.0003\d* BTC in your own output/.test(await body()), 'locks: Show opens the other lock');
+    // An empty Tacit account: the connected wallet tops it up and the bond posts from the Tacit account, in one click.
+    if (await r.page.waitForSelector('#bw-topup', { timeout: 60000 }).then(() => true, () => false)) {
+      await r.page.click('#bw-topup');
+      await until(r.page, () => /Bond posted/.test(document.querySelector('#bw-status')?.textContent || '') || /error|could not|reverted/i.test(document.querySelector('#bw-status')?.textContent || ''), null, 180000).catch(() => {});
+      ok(/Bond posted/.test(await text(r.page, '#bw-status')), `locks: Top up from wallet funds the Tacit account and posts the bond (${(await text(r.page, '#bw-status')).trim().slice(0, 120)})`);
+    } else ok(false, 'locks: an empty Tacit account offers Top up from wallet');
     if (r.errors.length) { fails++; console.log('FAIL locks page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   } finally { await r.browser.close(); }
 });
