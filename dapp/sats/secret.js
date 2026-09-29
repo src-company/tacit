@@ -26,11 +26,15 @@ export const pool = makeBtcShieldedPool({ secp, keccak256: keccak_256, sha256 })
 export const zap = makeBtcPoolZap({ secp, sha256, keccak256: keccak_256 });
 
 // One indexer per network. Both serve the same prover artifacts at `base` (the circuit is shared), so only
-// `api` — the replay/relayer host — differs. poolClientFor(wallet.network) is how every call below picks it.
+// `api` — the replay host — differs. poolClientFor(wallet.network) is how every call below picks it.
+// The relayer is deployed as its own origin on both networks rather than mounted on the replay service, so
+// it gets its own base; without it relayInfo() answers 404 and every payment quietly funds its own carrier.
 const MAINNET_POOL_API = globalThis.__TACIT_BTC_POOL_API_MAINNET__ || 'https://tacit-btc-pool-mainnet.onrender.com';
+const SIGNET_POOL_RELAY = globalThis.__TACIT_BTC_POOL_RELAY__ || 'https://tacit-btc-pool-relay.onrender.com';
+const MAINNET_POOL_RELAY = globalThis.__TACIT_BTC_POOL_RELAY_MAINNET__ || 'https://tacit-btc-pool-relay-mainnet.onrender.com';
 const poolClients = {
-  signet: makePoolClient({ base: '/btc-pool/' }),
-  mainnet: makePoolClient({ api: MAINNET_POOL_API, base: '/btc-pool/' }),
+  signet: makePoolClient({ base: '/btc-pool/', relayApi: SIGNET_POOL_RELAY }),
+  mainnet: makePoolClient({ api: MAINNET_POOL_API, base: '/btc-pool/', relayApi: MAINNET_POOL_RELAY }),
 };
 export const poolClient = poolClients.signet;
 export const poolClientFor = (network) => poolClients[network] || poolClients.signet;
