@@ -322,9 +322,30 @@ function renderPendingCbtcLocks() {
   list.innerHTML = pending.map((p, i) => `
     <div class="check-row" style="padding:5px 0;display:flex;justify-content:space-between;gap:8px;align-items:center;">
       <span style="font-size:11.5px;">Locked <code class="addr">${esc(p.lockTxid.slice(0, 12))}…:${p.lockVout}</code> — ${esc(p.vBtc)} sats
-        <span class="cbtc-step" data-i="${i}" style="display:block;opacity:.75;">Checking the lock…</span></span>
+        <span class="cbtc-step" data-i="${i}" style="display:block;opacity:.75;">Checking the lock…</span>
+        <span class="cbtc-fund" data-i="${i}" style="display:none;opacity:.75;"></span></span>
       <button class="cbtc-mint-pending-btn" data-i="${i}" style="font-size:11.5px;" disabled>Mint</button>
     </div>`).join('');
+}
+
+// What posting a lock's bond takes from this wallet's Tacit account, the address postBond pays from: the ETH staked
+// for the wstETH still owed, plus the gas the node holds back for it (sendPreparedTx's 450k limit at twice the gas
+// price plus the tip), against what the account holds. Null when any of it cannot be read.
+async function bondFunding(ux, wallet, pr) {
+  try {
+    const gap = pr.want > pr.have ? pr.want - pr.have : 0n;
+    const addr = ux.account(wallet.priv).address;
+    const wsteth = '0x' + String(await ux.ethCall(ux.cfg.cbtcEscrowHelper, '0xd9fb643a')).replace(/^0x/, '').slice(-40); // WSTETH()
+    const [eth, bal, price, tip] = await Promise.all([
+      ux.ethCall(wsteth, '0xbb2952fc' + gap.toString(16).padStart(64, '0')), // getStETHByWstETH(uint256)
+      ux.rpc('eth_getBalance', [addr, 'latest']), ux.rpc('eth_gasPrice', []),
+      ux.rpc('eth_maxPriorityFeePerGas', []).catch(() => '0x5f5e100'),
+    ]);
+    const payEth = BigInt(eth && eth !== '0x' ? eth : '0x0');
+    if (payEth === 0n) return null;
+    const t = BigInt(tip || '0x0'), prio = t > 0n && t < 1500000000n ? t : t > 0n ? 1500000000n : 100000000n;
+    return { addr, payEth, bal: BigInt(bal), need: payEth + 450000n * (BigInt(price) * 2n + prio) };
+  } catch { return null; }
 }
 
 // Where a pending lock stands on its way to a mint, all read from chain. The pool records the lock once the
@@ -368,7 +389,7 @@ function wireCbtc(wallet, ux) {
   const statusEl = el('cdp-cbtc-status');
   const pendingList = el('cdp-cbtc-pending');
   const progress = new Map();
-  let refreshing = 0;
+  let refreshing = 0, fundPoll = null;
   refreshPending();
   renderReservedCbtcLocks();
   // The local reservation set is browser-scoped; the pool's cbtcLock* records are not. Refresh from chain so
@@ -458,7 +479,7 @@ function wireCbtc(wallet, ux) {
       notify('cBTC bond posted', 'ok');
     } catch (e) {
       const m = /insufficient ETH/i.test(String(e && e.message))
-        ? `Your Tacit account ${ux.account(wallet.priv).address} needs more ETH for the bond and its gas.`
+        ? `Your Tacit account ${ux.account(wallet.priv).address} needs more ETH for the bond and its gas. Send ETH to it on Ethereum from any wallet or exchange, then post the bond again.`
         : formatSpecErr(e, 'cBTC bond');
       if (statusEl) statusEl.textContent = m; notify(m, 'error');
     } finally {
@@ -482,6 +503,14 @@ function wireCbtc(wallet, ux) {
       if (s) s.textContent = text;
       if (b) { b.textContent = label; b.dataset.step = action; b.disabled = !action; }
     };
+    // Where the Tacit account's ETH comes from, under a lock waiting on it: its address, to send ETH to from anywhere.
+    const fund = (i, addr) => {
+      const f = pendingList && pendingList.querySelector(`.cbtc-fund[data-i="${i}"]`);
+      if (!f) return;
+      f.style.display = addr ? 'block' : 'none';
+      f.innerHTML = addr ? `Your Tacit account: <code class="addr">${esc(addr)}</code> <button class="cbtc-fund-copy" type="button" data-addr="${esc(addr)}" style="font-size:10.5px;padding:1px 6px;">Copy</button>` : '';
+    };
+    let short = false;
     const done = [];
     await Promise.all(pending.map(async (rec, i) => {
       let pr;
@@ -492,7 +521,18 @@ function wireCbtc(wallet, ux) {
       const vBtc = BigInt(rec.vBtc);
       if (pr.recorded > 0n && pr.recorded !== vBtc) step(i, `The pool records ${pr.recorded} sats for this lock, not ${vBtc}.`);
       else if (pr.need == null) step(i, 'The BTC price feed is updating; the bond can be sized again in a few minutes.');
-      else if (!pr.bonded) step(i, `Needs its bond: ${wei6(pr.want - pr.have)} wstETH, paid in ETH from your Tacit account.`, 'bond', 'Post bond');
+      else if (!pr.bonded) {
+        const f = await bondFunding(ux, wallet, pr);
+        if (run !== refreshing) return;
+        if (f && f.bal < f.need) {
+          short = true;
+          step(i, `Needs its bond: ${wei6(f.payEth)} ETH, staked as wstETH, paid from your Tacit account, the Ethereum address this wallet's key controls. It holds ${wei6(f.bal)} ETH: send it at least ${wei6(f.need - f.bal)} ETH on Ethereum, from any wallet or exchange, and Post bond opens once it arrives.`, '', 'Post bond');
+          fund(i, f.addr);
+        } else {
+          step(i, `Needs its bond: ${f ? `${wei6(f.payEth)} ETH, staked as wstETH,` : `${wei6(pr.want - pr.have)} wstETH,`} paid from your Tacit account.`, 'bond', 'Post bond');
+          fund(i, null);
+        }
+      }
       else if (pr.recorded === 0n) {
         const h = await at;
         if (run === refreshing) step(i, `Bonded. Minting opens once the reflection records this lock${h ? ` (it has reached Bitcoin block ${h})` : ''}.`, '', 'Waiting');
@@ -502,6 +542,9 @@ function wireCbtc(wallet, ux) {
       for (const txid of done) removePendingCbtcLock(txid);
       refreshPending();
     }
+    // A lock waiting on ETH for its bond: look again shortly, so Post bond opens on its own once the ETH lands.
+    clearTimeout(fundPoll);
+    if (run === refreshing && short) fundPoll = setTimeout(() => { if (pendingList && pendingList.isConnected) refreshPending(); }, 20000);
   }
 
   if (lockBtn) {
@@ -552,6 +595,12 @@ function wireCbtc(wallet, ux) {
 
   if (pendingList) {
     pendingList.addEventListener('click', (ev) => {
+      const cp = ev.target.closest('.cbtc-fund-copy');
+      if (cp) {
+        Promise.resolve().then(() => navigator.clipboard.writeText(cp.dataset.addr))
+          .then(() => { cp.textContent = 'Copied'; setTimeout(() => { cp.textContent = 'Copy'; }, 1500); }, () => { cp.textContent = 'Select it above'; });
+        return;
+      }
       const btn = ev.target.closest('.cbtc-mint-pending-btn');
       if (!btn || btn.disabled) return;
       const i = Number(btn.getAttribute('data-i'));

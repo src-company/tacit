@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ldRgrPm9jluLpznT9jMZwYFkniQFL7+0gKJjmfK+wv8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-lABtc+gsgQiW3xkO+usR+chWsrVJn49xEcgqD9vODFk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -3226,6 +3226,22 @@ async function loadBorrow(fresh = false) {
   LOCK.rec = st.rec; LOCK.state = st; LOCK.bonds = bonds;
 }
 load.borrow = () => loadBorrow();
+// The bond step's view of the paying account: its ETH against the bond plus the gas a send holds back for it (the
+// helper call's padded estimate at twice the gas price plus a small tip). Read beside the sheet at most every 20
+// seconds, and again on that cadence while it falls short, so Post bond opens on its own once the ETH lands.
+const BF = { for: null, at: 0, bal: null, gas: 0n, reading: null, poll: null };
+function bondFunds() {
+  const who = S.address;
+  if (!who) return null;
+  if (BF.for === who && Date.now() - BF.at < 20e3) return BF;
+  if (!BF.reading) {
+    BF.reading = Promise.all([rpc('eth_getBalance', [who, 'latest']), rpc('eth_gasPrice', [])])
+      .then(([b, g]) => { Object.assign(BF, { for: who, at: Date.now(), bal: BigInt(b), gas: 370000n * (BigInt(g) * 2n + 10n ** 8n) }); rerender('borrow'); })
+      .catch(() => {})
+      .finally(() => { BF.reading = null; });
+  }
+  return BF.for === who ? BF : null;
+}
 render.borrow = () => {
   const el = $('#borrow-body');
   if (!needKey(el, 'Lock BTC in an output only your key can spend, mint cBTC one to one, and borrow cUSD against it. Open your Tacit wallet to start.')) return;
@@ -3235,6 +3251,8 @@ render.borrow = () => {
   const s1 = !!rec, s3 = !!st.minted, s2 = !!st.bonded || s3, s4 = !!st.borrowed;          // once minted, the bond has done its part
   const confs = Math.max(0, Math.min(24, st.confs || 0));
   const attested = st.refl?.attestedHeight, lag = attested && st.tip ? Math.max(0, st.tip - attested) : null;
+  const bf = s1 && !s2 && st.payEth ? bondFunds() : null;
+  const need = bf ? st.payEth + bf.gas : 0n, shortEth = !!bf && bf.bal != null && bf.bal < need;
   const form = html`
             <div class="d">Send BTC to your Bitcoin address, then lock it. Your Tacit key signs the lock here.</div>
             <div class="kv"><span>Address</span><b class="mono">${short(st.addr, 8)}</b><button class="link" type="button" data-copy="${st.addr}">copy</button></div>
@@ -3258,7 +3276,10 @@ render.borrow = () => {
         <div>
           <h3>Post the ETH bond</h3>
           <div class="d">${s2 ? 'Posted as wstETH, earning while it bonds the lock. Spending the BTC without redeeming forfeits it.' : s1 ? html`${fmt(st.payEth, 18, 5)} ETH${st.have ? ' more, as the price moved since the bond was posted' : ''}, staked as wstETH and earning while it bonds the lock. Spending the BTC without redeeming forfeits it.` : 'An ETH bond worth at least 1.5× the BTC, posted in one transaction.'}</div>
-          ${s1 && !s2 ? (st.payEth ? html`<button class="btn" type="button" id="bw-bond">${st.have ? 'Top up bond' : 'Post bond'}</button>` : html`<div class="d err">The BTC price feed is updating; the bond can be sized again in a few minutes.</div>`) : ''}
+          ${s1 && !s2 ? (st.payEth ? html`
+            <div class="kv"><span>Paid from ${your()}${payer() === 'tacit' && S.acct ? html` · <span class="mono">${short(S.acct.address, 6)}</span> <button class="link" type="button" data-copy="${S.acct.address}">copy</button>` : ''}</span><b>${bf?.bal == null ? '…' : html`${fmt(bf.bal, 18, 5)} ETH`}</b></div>
+            ${shortEth ? html`<p class="note err">The bond and its gas come to about ${fmt(need, 18, 5)} ETH. ${payer() === 'tacit' ? html`<button class="link" type="button" data-fund>Add ETH</button> to your Tacit account, from any wallet or exchange on Ethereum, or <button class="link" type="button" id="bw-paywallet">pay from a wallet</button>.` : 'Add ETH to your wallet.'} Post bond opens once it arrives.</p>` : ''}
+            <button class="btn" type="button" id="bw-bond" ${shortEth ? 'disabled' : ''}>${st.have ? 'Top up bond' : 'Post bond'}</button>` : html`<div class="d err">The BTC price feed is updating; the bond can be sized again in a few minutes.</div>`) : ''}
         </div>
       </li>
       <li class="${stepCls(s3, s2 && !s3)}">
@@ -3299,6 +3320,10 @@ render.borrow = () => {
     <div class="blk" id="bw-send" hidden></div>
     <div class="status" role="status" id="bw-status"></div>`);
   const status = $('#bw-status');
+  clearTimeout(BF.poll);
+  if (shortEth) BF.poll = setTimeout(() => { BF.at = 0; rerender('borrow'); }, 20e3);
+  const payw = $('#bw-paywallet');
+  if (payw) payw.onclick = () => busy(payw, async () => { try { await connect(); setPayer('wallet'); BF.at = 0; rerender('borrow'); } catch (e) { sayErr(status, e); } });
   $$('[data-reclaim]', el).forEach((b) => b.onclick = () => busy(b, async () => {
     const x = LOCK.bonds[Number(b.dataset.reclaim)];
     try {
