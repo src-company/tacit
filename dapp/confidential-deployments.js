@@ -208,6 +208,7 @@ export const CONFIDENTIAL_DEPLOYMENTS = {
     router: '0x0000000000000000000000000000000000000Ace',
     collateralEngine: null, // CollateralEngine (CDP controller / sole cUSD minter). null ⇒ CDP disabled.
     cbtcEscrowHelper: null,  // CbtcEscrowHelper: posts a cBTC lock's wstETH bond from ETH in one tx. null ⇒ no bond step.
+    cbtcEscrowHelpersRetired: [], // earlier helpers: take no new bonds, still hand back what they took
     farmControllers: {},     // poolId → FarmController (OP_LP_BOND bond target), per pool. {} ⇒ Earn bonding disabled.
     farm: null,              // launch farm program (FarmManager + reward asset + pools). null ⇒ no program on this network.
     assetFactory: null,      // CanonicalAssetFactory (EVM-etch new tacit-compatible assets). null ⇒ Create→Asset disabled.
@@ -229,6 +230,8 @@ export const CONFIDENTIAL_DEPLOYMENTS = {
     router: null,
     collateralEngine: null,
     cbtcEscrowHelper: '0x000000008eCD09f922C9FbbDD9ACA5aE8F0beBfA', // bound to the collateralEngine the sync sets
+    // The first helper: new bonds go to the one above, but it still hands each depositor back what it took for them.
+    cbtcEscrowHelpersRetired: ['0x00000000689c71e690e5842df088af97f9d4f71b'],
     farmControllers: MAINNET_FARM_CONTROLLERS,
     farm: MAINNET_FARM,
     assetFactory: null,

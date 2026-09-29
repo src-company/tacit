@@ -71,7 +71,8 @@ export function makeBtcHistoryProvider({ fetchImpl, sha256, bases = ESPLORA_BASE
     return { funding: prims.p2wpkhScript(wallet.pub), lock: prims.p2trScript(Q_xonly) };
   }
 
-  // { anchors: [{ txid, vout }], lockOutputs: [{ txid, vout, value }] } — displayed (big-endian) txids, as esplora serves.
+  // { anchors: [{ txid, vout }], lockOutputs: [{ txid, vout, value, spk }] } — displayed (big-endian) txids, as esplora
+  // serves; `spk` is the script the output pays (the wallet's everyday one, or its lock script).
   async function history(priv) {
     const s = walletScripts(priv);
     const mine = new Set([bytesToHex(s.funding), bytesToHex(s.lock)]);
@@ -82,7 +83,7 @@ export function makeBtcHistoryProvider({ fetchImpl, sha256, bases = ESPLORA_BASE
       for (const v of t.vin || []) if (v.prevout && mine.has(String(v.prevout.scriptpubkey || '').toLowerCase())) anchors.push({ txid: v.txid, vout: v.vout });
       const revealShape = (t.vin || []).some((v) => v.prevout && v.prevout.scriptpubkey_type === 'v1_p2tr');
       if (!revealShape) continue;
-      (t.vout || []).forEach((o, i) => { if (mine.has(String(o.scriptpubkey || '').toLowerCase())) lockOutputs.push({ txid: t.txid, vout: i, value: o.value }); });
+      (t.vout || []).forEach((o, i) => { const spk = String(o.scriptpubkey || '').toLowerCase(); if (mine.has(spk)) lockOutputs.push({ txid: t.txid, vout: i, value: o.value, spk }); });
     }
     return { anchors, lockOutputs, txCount: seen.size };
   }

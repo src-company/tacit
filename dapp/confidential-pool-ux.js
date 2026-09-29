@@ -381,6 +381,115 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     return syncProtectedOutpoints({ lockOutputs: h.lockOutputs || [], lockState: cbtcLockState });
   }
 
+  // Many reads in one eth_call through Multicall3 (the same address on every chain this runs on). A read that reverts
+  // comes back null.
+  const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';
+  async function _multicall(calls) {
+    if (!calls.length) return [];
+    const bodies = calls.map(({ to, data }) => {
+      const d = String(data).replace(/^0x/, '');
+      return _word(to) + _word(1n) + _word(0x60n) + _word(BigInt(d.length / 2)) + d.padEnd(Math.ceil(d.length / 64) * 64, '0');
+    });
+    let off = calls.length * 32;
+    const heads = bodies.map((b) => { const o = _word(BigInt(off)); off += b.length / 2; return o; });
+    const out = String(await ethCall(MULTICALL3, '0x82ad56cb' + _word(0x20n) + _word(BigInt(calls.length)) + heads.join('') + bodies.join(''))).replace(/^0x/, '');
+    const at = (i) => BigInt('0x' + (out.slice(i * 64, i * 64 + 64) || '0'));
+    const arr = Number(at(0)) / 32;
+    return calls.map((_, i) => {
+      const e = arr + 1 + Number(at(arr + 1 + i)) / 32;
+      if (at(e) !== 1n) return null;
+      const b = e + Number(at(e + 1)) / 32, len = Number(at(b));
+      return '0x' + out.slice(64 * (b + 1), 64 * (b + 1) + len * 2);
+    });
+  }
+
+  // ── cBTC bonds ──
+  // A lock's bond is wstETH the CollateralEngine holds for it. It is posted through the escrow helper, which keeps each
+  // depositor's own share and hands it back to them; through an earlier helper, which still hands back what it took; or
+  // on the engine directly. cbtcBonds gathers every lock this key has made and every bond the given accounts (the key's
+  // own Tacit account is always one) posted, however posted, and says what each bond can do now:
+  //   pending   not minted against yet: the bond can be taken back, and minting then waits for a new one
+  //   backing   minted, lock still held: the bond backs that cBTC until the lock is redeemed
+  //   free      redeemed, or spent before any mint: the bond can be taken back
+  //   forfeit   spent on Bitcoin without a redemption: the bond can't come back, it belongs to the insurance reserve
+  //   slashed   moved to the insurance reserve
+  // `everyday` marks a lock still held at the wallet's ordinary address (early locks paid their BTC there): this app never
+  // spends it, but another wallet using the same key would see it as spendable. `health` is set only while the engine's
+  // margin call is armed.
+  const _topic = (sig) => '0x' + _hex(keccak256(new TextEncoder().encode(sig)));
+  const _addrTopic = (a) => '0x' + '0'.repeat(24) + String(a).replace(/^0x/, '').toLowerCase();
+  let _btcScripts = null;
+  async function cbtcBonds(walletPriv, { accounts = [], btcHistory = null } = {}) {
+    const engine = lc(cfg.collateralEngine);
+    if (!engine || !cfg.pool) return { maintenanceBps: 0n, graceWindow: 0n, locks: [] };
+    const id = identity(walletPriv);
+    const helpers = [[cfg.cbtcEscrowHelper, 'helper'], ...(cfg.cbtcEscrowHelpersRetired || []).map((a) => [a, 'retired'])].filter(([a]) => a).map(([a, src]) => [lc(a), src]);
+    const accts = [...new Set([account(walletPriv).address, ...accounts].filter(Boolean).map(lc))];
+    const history = typeof btcHistory === 'function' ? btcHistory(id.priv) : Promise.resolve(btcHistory || _defaultBtcHistory(id.priv));
+    const [hist, posts] = await Promise.all([
+      history.catch(() => null),
+      headBlock().then((to) => getLogsChunked({
+        address: [engine, ...helpers.map(([a]) => a)],
+        topics: [[_topic('EscrowPosted(bytes32,address,uint256)'), _topic('HelperEscrowPosted(bytes32,address,uint256)')], null, accts.map(_addrTopic)],
+      }, Number(cfg.deployBlock || 0), to)),
+    ]);
+    _btcScripts ||= makeBtcHistoryProvider({ fetchImpl: _fetch, sha256, hrp: Number(cfg.chainId) === 1 ? 'bc' : 'tb' });
+    const everydaySpk = _hex(_btcScripts.walletScripts(id.priv).funding).toLowerCase();
+    const outputs = new Map();
+    for (const o of hist?.lockOutputs || []) outputs.set(lc(pool.outpointKey('0x' + _rev(o.txid), o.vout)), o);
+    const ops = [...new Set([...outputs.keys(), ...posts.map((l) => lc(l.topics[1]))])];
+    const own = [[cfg.pool, 'cbtcLockVBtc(bytes32)'], [cfg.pool, 'cbtcMinted(bytes32)'], [cfg.pool, 'cbtcLockSpent(bytes32)'], [cfg.pool, 'cbtcLockRedeemed(bytes32)'],
+      [engine, 'escrowTotal(bytes32)'], [engine, 'escrowSlashed(bytes32)']];
+    const shares = [...helpers.flatMap(([contract, src]) => accts.map((acct) => ({ contract, src, acct, sig: 'helperEscrowOf(bytes32,address)' }))),
+      ...accts.map((acct) => ({ contract: engine, src: 'engine', acct, sig: 'escrowOf(bytes32,address)' }))];
+    const per = own.length + shares.length;
+    const r = await _multicall([
+      { to: engine, data: '0x' + _selector('escrowMaintenanceBps()') },
+      ...ops.flatMap((op) => [
+        ...own.map(([to, sig]) => ({ to, data: '0x' + _selector(sig) + _word(op) })),
+        ...shares.map((s) => ({ to: s.contract, data: '0x' + _selector(s.sig) + _word(op) + _word(s.acct) })),
+      ]),
+    ]);
+    const n = (x) => (x && x !== '0x' ? BigInt(x.slice(0, 66)) : 0n);
+    const maintenanceBps = n(r[0]);
+    const locks = [];
+    ops.forEach((op, i) => {
+      const v = r.slice(1 + i * per, 1 + (i + 1) * per).map(n);
+      const [vBtc, minted, spent, redeemed, total, slashed] = v;
+      const mine = shares.map((s, j) => ({ ...s, share: v[own.length + j] })).filter((s) => s.share > 0n);
+      if (vBtc === 0n && !mine.length) return;   // one of the wallet's other outputs, or a bond since taken back
+      const state = slashed ? 'slashed' : spent ? (minted ? 'forfeit' : 'free') : redeemed ? 'free' : minted ? 'backing' : 'pending';
+      const out = outputs.get(op) || null, takeable = state === 'pending' || state === 'free';
+      locks.push({
+        op, txid: out?.txid || null, vout: out ? out.vout : null, vBtc, state, total, minted: !!minted, spent: !!spent, redeemed: !!redeemed, slashed: !!slashed,
+        everyday: !!out && out.spk === everydaySpk && !spent && !redeemed, health: null,
+        bonds: mine.map((s) => ({
+          src: s.src, contract: s.contract, account: s.acct, share: s.share,
+          take: takeable ? { to: s.contract, data: '0x' + _selector(s.src === 'engine' ? 'claimEscrow(bytes32)' : 'reclaimEscrow(bytes32)') + _word(op) } : null,
+        })),
+      });
+    });
+    // While the margin call is armed, each backing bond's health at the engine's own mark, and when a flag runs out.
+    let graceWindow = 0n;
+    const backing = locks.filter((l) => l.state === 'backing');
+    if (maintenanceBps > 0n && backing.length) {
+      const h = await _multicall([
+        { to: engine, data: '0x' + _selector('escrowGraceWindow()') },
+        ...backing.flatMap((l) => [{ to: engine, data: '0x' + _selector('checkEscrowHealth(bytes32)') + _word(l.op) }, { to: engine, data: '0x' + _selector('escrowUnhealthySince(bytes32)') + _word(l.op) }]),
+      ]);
+      graceWindow = n(h[0]);
+      backing.forEach((l, i) => {
+        const x = h[1 + 2 * i], since = n(h[2 + 2 * i]);
+        if (!x) return;
+        const w = (k) => BigInt('0x' + x.slice(2 + 64 * k, 66 + 64 * k));
+        l.health = { healthy: w(0) === 1n, have: w(1), want: w(2), flaggedAt: since, due: since > 0n ? since + graceWindow : 0n };
+      });
+    }
+    const rank = { forfeit: 0, free: 1, pending: 2, backing: 3, slashed: 4 };
+    locks.sort((a, b) => rank[a.state] - rank[b.state] || (b.health && !b.health.healthy) - (a.health && !a.health.healthy));
+    return { maintenanceBps, graceWindow, locks };
+  }
+
   // The assets an output of a wallet's settle can be in: every pool asset plus the assets of the notes the wallet has held.
   const _knownAssets = (notes) => [...new Set([..._poolAssets.map((a) => a.assetId), ...notes.map((n) => n.asset)].map(lc))];
 
@@ -3507,6 +3616,6 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   return { cfg, assets: _poolAssets, assetByTicker, account, identity, rpc, ethCall, fetchEvents, balance, poolStatsFromEvents, tickerOf,
     deriveOutput, buildWrap, nextWrapIndex, wrap, submitWrapSettle, buildRouterWrap, routerWrap, routerConfigured, buildWrapTransferOp, wrapAndSend, resumeWrapAndSend, sendPreparedTx, buildTransferOp, transfer, stealthSend, scanStealthLocks, stealthClaim, stealthRefund, stealthLockPosition, crossOut, payInvoice, quoteUnwrapFee, holderFeeBps, setPublicTacHeld, quoteTransferFee, quoteOpFee: gasAwareMinFee, feeUsdFor, relayFeeEligible, buildUnwrap, unwrap, sendUnwrap, buildAttestMeta, chainBindingHex,
     erc2612Nonce: _erc2612Nonce, waitReceipt: _waitReceipt, poolReserves, poolCurrentRoot, sameRoot, routePoolId, quoteRoute, route, swapBatched, swapBatchPending, swapBatchFlush, lpBondPosition, buildLpBondOp, lpBond, farmProgram, farmBond, farmPositions, importFarmPosition, recover, recoverCdpPositions, scanSentLocks, farmHarvest, farmUnbond, farmRedeem, buildFastlaneExitOp, fastlaneExit, lpAdd, lpRemove, quoteLpAdd, wrapLp, wrapSwap, ensureExactNote, mintCbtc, defiActions, cdp: _cdp, cdpPositionTree, submitSettle, settleCalldata,
-    cbtcLockState, syncCbtcLockReservations,
+    cbtcLockState, syncCbtcLockReservations, cbtcBonds,
     relay, indexer, evmLog, evmTx, pool, memo, router: _router, stealth: _stealth, bridgeMint: _bridgeMint, bridgeBurn: _bridgeBurn, bridgeBurnToPool, airdrop: _airdrop, tacAirdrop: _tacAirdrop, lockScan: _lockScan };
 }
