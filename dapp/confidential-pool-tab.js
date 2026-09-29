@@ -125,6 +125,20 @@ function wireExit(wallet, ux, notes) {
   };
   const byLeaf = new Map(notes.map((n) => [String(n.leafIndex), n]));
 
+  // An exit to the account deposits come from (the default when the field is empty) can be matched to them on
+  // chain; say so while it applies. Not refused: it is the user's call.
+  const recField = el('cpool-exit-recipient'), linkNote = el('cpool-exit-linknote');
+  const own = String(ux.account(wallet.priv).address).toLowerCase();
+  const noteLink = () => {
+    if (!linkNote) return;
+    const v = String(recField && recField.value || '').trim().toLowerCase();
+    linkNote.textContent = !v || v === own
+      ? 'This exits to your own account, where your deposits come from, so it can be matched to them on chain. A fresh address keeps them apart.'
+      : '';
+  };
+  if (recField) recField.oninput = noteLink;
+  noteLink();
+
   listEl.innerHTML = notes.map((n) => {
     const ticker = ux.tickerOf(n.asset) || 'cETH';
     const dec = decOf(n.asset);
@@ -256,7 +270,8 @@ function renderPoolPanel() {
     + `<div class="muted" style="font-size:11px;margin-top:6px;">Fund your confidential account (above) with ETH first. The deposit escrows ETH; your tETH note appears after the settle.</div>`;
 
   const exitBody =
-    `<input id="cpool-exit-recipient" type="text" placeholder="Recipient address (default: your account)">`
+    `<input id="cpool-exit-recipient" type="text" placeholder="Recipient address (a fresh one keeps it unlinked; default: your account)">`
+    + `<div id="cpool-exit-linknote" class="muted" style="font-size:11px;margin:4px 0;"></div>`
     + `<label class="check-row" style="margin:8px 0;"><input id="cpool-exit-selfsettle" type="checkbox"> <span>No fee (relayer settles at no charge — for your own exits)</span></label>`
     + `<div id="cpool-exit-list" class="muted" style="font-size:12px;">Unlock + wrap to see your exitable notes.</div>`
     + `<div id="cpool-exit-status" class="muted field-status" style="margin-top:6px;"></div>`
