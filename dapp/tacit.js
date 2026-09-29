@@ -3651,7 +3651,23 @@ async function _populateUtxoCache(a, utxos) {
   } catch {}
 }
 
+// Early cBTC locks paid their BTC to the wallet's own address, where it looks like any other output, and a lock spent
+// anywhere but in its redemption forfeits its bond. getUtxos drops the reserved lock outpoints, but that list lives in
+// this browser only, so before the wallet's first pick in a session it is rebuilt from chain: the wallet's Bitcoin
+// history and the pool's record of each lock. A rebuild that fails is tried again on the next pick.
+let _lockSync = { addr: null, p: null };
+function _ownLocksReserved(a) {
+  if (!wallet.priv || a !== wallet.address()) return null;
+  if (_lockSync.addr !== a || !_lockSync.p) {
+    const p = _poolUxSingleton().syncCbtcLockReservations(wallet.priv);
+    _lockSync = { addr: a, p };
+    p.catch((e) => { if (_lockSync.p === p) _lockSync.p = null; console.warn('[tacit] could not rebuild the cBTC lock reservations:', e?.message || e); });
+  }
+  return _lockSync.p;
+}
+
 async function getUtxos(a, onProgress) {
+  await _ownLocksReserved(a)?.catch(() => {});
   // Indexer-lag guard: filter out any UTXOs we *know* are spent in mempool
   // (recorded by _markTxInputsSpent right after each broadcast we issued)
   // but which the indexer's /utxo response may still include during the

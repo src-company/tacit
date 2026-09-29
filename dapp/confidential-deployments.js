@@ -635,8 +635,9 @@ export function reservedLockSats() {
 export async function syncProtectedOutpoints({ lockOutputs, lockState } = {}) {
   if (typeof lockState !== 'function') throw new Error('confidential-deployments: syncProtectedOutpoints needs lockState(txid, vout)');
   const reserved = [], released = [];
-  for (const o of lockOutputs || []) {
-    const st = await lockState(o.txid, o.vout) || {};
+  const outs = lockOutputs || [], states = await Promise.all(outs.map((o) => lockState(o.txid, o.vout)));
+  for (const [i, o] of outs.entries()) {
+    const st = states[i] || {};
     const vBtc = BigInt(st.vBtc || 0);
     if (vBtc <= 0n) continue;
     if (st.spent || st.redeemed) { unprotectOutpoint(o.txid, o.vout); released.push({ txid: o.txid, vout: o.vout }); continue; }
