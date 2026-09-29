@@ -52,7 +52,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,mainbond,locks,repay,csend,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,activity,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,mainbond,locks,repay,csend,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,activity,receipts,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -267,10 +267,15 @@ await step('farm', async () => {
   if (await page.$('#pf-connect')) await page.click('#pf-connect');
   await page.waitForSelector('[data-pfm="eth"]', { timeout: 60000 });
   await page.click('[data-pfm="eth"]');
-  await page.fill('#pf-amt', '0.05');
-  try { await page.waitForSelector('#pf-ackv', { timeout: 60000 }); } catch (e) {
+  // The pool's depth at the fork block decides how big a zap crosses the loss gate: the size grows until it asks.
+  let gated = false;
+  for (const amt of ['0.05', '0.5', '2', '8']) {
+    await page.fill('#pf-amt', amt);
+    if ((gated = await page.waitForSelector('#pf-ackv', { timeout: 20000 }).then(() => true, () => false))) break;
+  }
+  if (!gated) {
     if (process.env.DEBUG) console.log('   farm state:', JSON.stringify(await page.evaluate(() => ({ amt: document.querySelector('#pf-amt')?.value, open: document.querySelector('.farm.open')?.dataset.farm, mode: document.querySelector('[data-pfm][aria-selected="true"]')?.dataset.pfm, rcpt: document.querySelector('#pf-rcpt')?.textContent.replace(/\s+/g, ' '), status: document.querySelector('#pf-status')?.textContent, go: document.querySelector('#pf-go')?.disabled }))));
-    throw e;
+    throw new Error('farm: no zap size up to 8 ETH asked for its loss to be accepted');
   }
   ok(await page.isDisabled('#pf-go'), 'farm: a zap this size waits for its loss to be accepted');
   for (let i = 0; i < 5 && await page.isDisabled('#pf-go'); i++) {              // a requote can move the loss by a point
@@ -1129,6 +1134,194 @@ await step('activity', async () => {
   }
 });
 
+// Two relayed actions at once, each its own receipt. The page's pool module is the real one, with three cETH notes added
+// to what the key's scan finds and its relayed calls stood in for: each names its job to the caller (as the relay
+// client does), announces it, and waits for the test to let the relay finish it. A send needing a split goes back to
+// the relay on its own, a withdrawal starts meanwhile on another note, and neither reaches for the other's notes.
+await step('receipts', async () => {
+  const served = {};
+  const r = await openPage({ account: A0, key: K0, viewport: { width: 390, height: 900 } });
+  await serveStatus(r.ctx, served);
+  await r.page.route(/\/confidential-pool-ux\.js\?cb=/, (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: `
+    import * as real from '/confidential-pool-ux.js?stub=real';
+    export * from '/confidential-pool-ux.js?stub=real';
+    export function makeConfidentialPoolUx(o) {
+      const ux = real.makeConfidentialPoolUx(o), balance = ux.balance;
+      const ETH = String(ux.assetByTicker.cETH.assetId).toLowerCase();
+      let seq = 0;
+      const note = (value) => { const i = ++seq; return { asset: ETH, value: String(value), leaf: '0x' + (0xabc000 + i).toString(16).padStart(64, '0'), leafIndex: 800000 + i, cx: '0x' + String(i).padStart(64, '0'), cy: '0x01', owner: '0x02', root: '0x' + '1'.padStart(64, '0'), path: [] }; };
+      const TAC = String(ux.assetByTicker.cTAC.assetId).toLowerCase(), tacNote = (value) => ({ ...note(value), asset: TAC });
+      const S = window.__rx = { notes: [note(30000000n), note(20000000n), note(5000000n), tacNote(500000000n), tacNote(300000000n)], calls: [], gates: {}, spent: new Set() };
+      ux.balance = async (priv) => {
+        const b = await balance(priv), add = S.notes.filter((n) => !S.spent.has(n.leaf));
+        b.notes = [...b.notes, ...add];
+        for (const n of add) {
+          const g = b.byAsset[n.asset] ||= { asset: n.asset, value: 0n, notes: [] };
+          g.notes = [...(g.notes || []), n]; g.value = g.notes.reduce((a, x) => a + BigInt(x.value), 0n);
+        }
+        return b;
+      };
+      ux.quoteOpFee = async () => '100000';
+      const fire = (d) => dispatchEvent(new CustomEvent('tacit:job', { detail: { txHash: null, error: null, at: Date.now(), ...d } }));
+      const job = async (type, waitOpts, spend, make) => {
+        const jobId = 'rx-' + type + '-' + (spend[0]?.leaf || '').slice(-6);
+        S.calls.push({ jobId, type, spend: spend.map((n) => n.leaf) });
+        waitOpts?.onJob?.(jobId, type);
+        fire({ jobId, type, status: 'pending' });
+        const out = await new Promise((res) => { S.gates[jobId] = res; });
+        if (out === 'fail') { fire({ jobId, type, status: 'failed', error: 'the pool refused it in this check' }); throw new Error('settle failed: the pool refused it in this check'); }
+        fire({ jobId, type, status: 'proving' });
+        for (const n of spend) S.spent.add(n.leaf);
+        for (const v of make) S.notes.push(note(v));
+        const txHash = '0x' + String(S.calls.length).padStart(64, 'e');
+        fire({ jobId, type, status: 'settled', txHash });
+        return { jobId, status: 'settled', txHash };
+      };
+      ux.transfer = ({ notes, amount, fee, waitOpts }) => job('transfer', waitOpts, notes, [BigInt(amount), notes.reduce((a, n) => a + BigInt(n.value), 0n) - BigInt(amount) - BigInt(fee)].filter((v) => v > 0n));
+      ux.stealthSend = async ({ notes, amount, waitOpts }) => {
+        if (notes.length !== 1 || BigInt(notes[0].value) !== BigInt(amount)) throw new Error('stealthSend in this check takes one note of the exact amount');
+        return { ...(await job('stealthlock', waitOpts, notes, [])), memoCheck: { ok: true } };
+      };
+      ux.sendUnwrap = async ({ note: n, amount, waitOpts }) => job('sendunwrap', waitOpts, [n], [BigInt(n.value) - BigInt(amount)].filter((v) => v > 0n));
+      ux.unwrap = async ({ note: n, waitOpts }) => job('unwrap', waitOpts, [n], []);
+      return ux;
+    }` }));
+  const rx = () => r.page.evaluate(() => ({ calls: window.__rx?.calls || [], notes: (window.__rx?.notes || []).map((n) => [n.leaf, n.value]) }));
+  const open = (id, out = 'ok') => r.page.evaluate(([i, o]) => window.__rx.gates[i](o), [id, out]);
+  const toastHas = (re, ms = 20000) => until(r.page, (s) => new RegExp(s).test(document.querySelector('#toast-container')?.textContent || ''), re.source, ms).then(() => true, () => false);
+  const row = async (re) => (await actRows(r.page)).find((x) => re.test(x.text)) || { text: '', links: [], now: '', bad: '', id: '' };
+  const sub = async (m) => { await r.page.click(`[data-v1="${m}"]`); await until(r.page, (x) => document.querySelector(`[data-v1="${x}"]`)?.getAttribute('aria-selected') === 'true', m); };
+  const toV1 = async () => { await r.page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close())); await r.page.evaluate(() => { location.hash = ''; location.hash = '#private'; }); await r.page.waitForSelector('#sheet-eth[open]'); };
+  const REC = tacit1('d1'.padEnd(64, '7'));
+  try {
+    await r.page.goto(r.url);
+    await r.page.waitForSelector('.tile');
+    await pasteKey(r.page, 'e1'.padEnd(64, '5'));
+    await toV1();
+    await sub('send');
+    await until(r.page, () => /Private 0\.55 tETH/.test(document.querySelector('#s-max')?.textContent || ''), null, 240000)
+      .catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | form: ${(await text(r.page, '#v1-form')).replace(/\s+/g, ' ').slice(0, 200)} | status: ${await text(r.page, '#v1-status')} | errors: ${r.errors.slice(0, 2).join(' | ')}`); });
+    ok(true, 'receipts: three private notes, 0.55 tETH, to spend');
+
+    // A: 0.1 privately. No note is exactly that, so the relay first splits the 0.2 note; the sheet is handed back then.
+    await r.page.fill('#s-to', REC);
+    await r.page.fill('#s-amt', '0.1');
+    await until(r.page, () => /They get about/.test(document.querySelector('#s-rcpt')?.textContent || '') && !document.querySelector('#s-go').disabled, null, 60000);
+    await r.page.click('#s-go');
+    await until(r.page, () => /with the relay/.test(document.querySelector('#v1-status')?.textContent || ''), null, 60000)
+      .catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | status: ${await text(r.page, '#v1-status')} | errors: ${r.errors.slice(0, 2).join(' | ')}`); });
+    const a0 = await rx();
+    ok(a0.calls.length === 1 && a0.calls[0].type === 'transfer' && a0.calls[0].spend[0] === a0.notes[1][0], `receipts: the send splits the 0.2 note first (${JSON.stringify(a0.calls)})`);
+    ok(await r.page.$eval('#s-amt', (i) => i.value === '') && await r.page.$eval('#s-go', (b) => b.disabled), 'receipts: the sheet comes back with an empty form as soon as the relay has the split');
+    ok(/Private 0\.35 tETH · 0\.2 tETH in use/.test(await text(r.page, '#s-max')), `receipts: the note it spends is shown as in use (${await text(r.page, '#s-max')})`);
+    await openActivity(r.page);
+    const opA = await row(/Send 0\.1 tETH privately/);
+    ok(opA.id.startsWith('op:') && /Split a note/.test(opA.text) && opA.now === 'Split a note', `receipts: one receipt for the send, at its split step (${opA.text.slice(0, 120)})`);
+    ok((await actRows(r.page)).length === 1, 'receipts: the split is a step of the send, not a receipt of its own');
+
+    // B, meanwhile: withdraw 0.25. The 0.3 note covers it without a split; it is not the note the send is splitting.
+    await toV1();
+    await sub('out');
+    await r.page.fill('#o-to', '0x000000000000000000000000000000000000dEaD');
+    await r.page.fill('#o-amt', '0.25');
+    await until(r.page, () => /Arrives/.test(document.querySelector('#o-rcpt')?.textContent || '') && !document.querySelector('#o-go').disabled, null, 60000);
+    await r.page.click('#o-go');
+    await until(r.page, () => /Withdraw 0\.25 ETH[^]*with the relay/.test(document.querySelector('#v1-status')?.textContent || ''), null, 60000);
+    const b0 = await rx();
+    ok(b0.calls.length === 2 && b0.calls[1].type === 'sendunwrap' && b0.calls[1].spend[0] === b0.notes[0][0], `receipts: the withdrawal starts at once, on the 0.3 note (${JSON.stringify(b0.calls[1])})`);
+    // C: what is left free (0.05) cannot cover 0.1, and the form says so.
+    await r.page.fill('#o-amt', '0.1');
+    await until(r.page, () => /More than your private balance/.test(document.querySelector('#o-rcpt')?.textContent || ''), null, 30000);
+    ok(await r.page.$eval('#o-go', (b) => b.disabled) && /Private 0\.05 tETH · 0\.5 tETH in use/.test(await text(r.page, '#o-max')), `receipts: notes two actions are spending are not offered to a third (${await text(r.page, '#o-max')})`);
+
+    // The split settles: the send takes the new 0.1 note and queues its lock, with no one pressing anything.
+    await open(a0.calls[0].jobId);
+    await until(r.page, () => (window.__rx?.calls || []).length === 3, null, 90000).catch(() => {});
+    const a1 = await rx(), made = a1.notes.find(([, v]) => v === '10000000');
+    ok(a1.calls[2]?.type === 'stealthlock' && made && a1.calls[2].spend[0] === made[0], `receipts: after the split, the send locks the new 0.1 note on its own (${JSON.stringify(a1.calls[2] || null)})`);
+    await openActivity(r.page);
+    await until(r.page, () => /Queued/.test([...document.querySelectorAll('#act-body .actr')].find((li) => /Send 0\.1/.test(li.textContent))?.querySelector('.stp .now')?.textContent || ''), null, 30000).catch(() => {});
+    const opA2 = await row(/Send 0\.1 tETH privately/);
+    ok(opA2.now === 'Queued' && /Split a note/.test(opA2.text), `receipts: its receipt shows the split done and the send queued (${opA2.text.slice(0, 120)})`);
+
+    // Outcomes: the send settles (toasted, one receipt, linked); the withdrawal fails (toasted with its reason).
+    await open(a1.calls[2].jobId);
+    ok(await toastHas(/Send 0\.1 tETH privately to [^:]+: done/), 'receipts: the send is toasted done');
+    await open(b0.calls[1].jobId, 'fail');
+    ok(await toastHas(/Withdraw 0\.25 ETH[^]*did not go through/), 'receipts: the failed withdrawal is toasted with its reason');
+    await openActivity(r.page);
+    await sleep(500);
+    const [sA, sB] = [await row(/Send 0\.1 tETH privately/), await row(/Withdraw 0\.25 ETH/)];
+    ok(/Done in/.test(sA.text) && sA.links.some((l) => /etherscan\.io\/tx\/0x0*3e/.test(l) || /etherscan\.io\/tx\//.test(l)), `receipts: the send's receipt reads done, with its transaction (${sA.text.slice(0, 90)})`);
+    ok(sB.bad === 'Failed' && /refused it in this check/.test(sB.text), `receipts: the withdrawal's receipt reads failed, with the relay's reason (${sB.text.slice(0, 90)})`);
+    // The failed withdrawal's note is free again once a scan shows it unspent.
+    await toV1();
+    await sub('out');
+    await until(r.page, () => /Private 0\.(4|3)\d* tETH/.test(document.querySelector('#o-max')?.textContent || '') && !/in use/.test(document.querySelector('#o-max')?.textContent || ''), null, 60000).catch(() => {});
+    ok(!/in use/.test(await text(r.page, '#o-max')), `receipts: nothing is held once both are over (${await text(r.page, '#o-max')})`);
+
+    // D: a send of the 0.05 note exactly, and the page reloaded while the relay still has it: its receipt carries on.
+    await sub('send');
+    await r.page.fill('#s-to', REC);
+    await r.page.fill('#s-amt', '0.05');
+    await until(r.page, () => /They get about/.test(document.querySelector('#s-rcpt')?.textContent || '') && !document.querySelector('#s-go').disabled, null, 60000);
+    await r.page.click('#s-go');
+    await until(r.page, () => (window.__rx?.calls || []).length === 4, null, 60000);
+    const d0 = await rx();
+    ok(d0.calls[3].type === 'stealthlock', 'receipts: a note of the exact amount is locked with no split');
+    await sleep(600);
+    served[d0.calls[3].jobId] = { type: 'stealthlock', status: 'proving' };
+    await r.page.reload();
+    await r.page.waitForSelector('.tile');
+    await openActivity(r.page);
+    const dRow = await row(/Send 0\.05 tETH privately/);
+    ok(dRow.id.startsWith('op:') && !/Done/.test(dRow.bad) && ['Queued', 'Proving'].includes(dRow.now), `receipts: after a reload the receipt is still there, in progress (${dRow.text.slice(0, 90)})`);
+    served[d0.calls[3].jobId] = { type: 'stealthlock', status: 'settled', txHash: '0x' + 'd'.repeat(64) };
+    await until(r.page, () => /Done in/.test([...document.querySelectorAll('#act-body .actr')].find((li) => /Send 0\.05/.test(li.textContent))?.textContent || ''), null, 60000).catch(() => {});
+    ok(/Done in/.test((await row(/Send 0\.05 tETH privately/)).text), 'receipts: and it reads done once the relay settles it');
+    await shot(r.page, 'receipts-phone');
+
+    // E: private TAC made public, one relayed unwrap per note, each its own receipt. Both notes are taken when pressed,
+    // so the offer goes away at once, and the second is queued after the first settles, with nothing pressed.
+    await pasteKey(r.page, 'e1'.padEnd(64, '5'));                             // a pasted key does not outlive a reload
+    await r.page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    await r.page.evaluate(() => { location.hash = ''; location.hash = '#tac'; });
+    await r.page.waitForSelector('#tac-pub', { timeout: 240000 });
+    ok(/8(\.0+)? TAC is in private notes/.test(await text(r.page, '#tac-bal')), `receipts: 8 private TAC is offered to make public (${(await text(r.page, '#tac-bal')).replace(/\s+/g, ' ').slice(-120)})`);
+    const before = (await rx()).calls.length;
+    await r.page.click('#tac-pub');
+    await until(r.page, () => /each goes on by itself/.test(document.querySelector('#tac-bal-status')?.textContent || ''), null, 60000)
+      .catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | status: ${await text(r.page, '#tac-bal-status')} | errors: ${r.errors.slice(0, 2).join(' | ')}`); });
+    const e0 = await rx(), first = e0.calls.at(-1);
+    ok(e0.calls.length === before + 1 && first.type === 'unwrap' && !(await r.page.$('#tac-pub')), 'receipts: the first unwrap is queued, the sheet is handed back, and the notes are no longer offered');
+    // The first fails; the second still goes to the relay on its own.
+    await open(first.jobId, 'fail');
+    ok(await toastHas(/Make 5 TAC public did not go through/), 'receipts: the failed unwrap is toasted');
+    await until(r.page, (n) => (window.__rx?.calls || []).length === n, before + 2, 60000).catch(() => {});
+    const e1 = await rx(), second = e1.calls.at(-1);
+    ok(e1.calls.length === before + 2 && second.type === 'unwrap' && second.spend[0] !== first.spend[0], 'receipts: the second note goes to the relay on its own after the first failed');
+    await open(second.jobId);
+    // The failed note is offered again once a scan shows it unspent; sent again, it is the same job, a new attempt.
+    await r.page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    await r.page.evaluate(() => { location.hash = ''; location.hash = '#tac'; });
+    await until(r.page, () => /5(\.0+)? TAC is in private notes/.test(document.querySelector('#tac-bal')?.textContent || ''), null, 60000).catch(() => {});
+    ok(/5(\.0+)? TAC is in private notes/.test(await text(r.page, '#tac-bal')), `receipts: the note whose unwrap failed is offered again (${(await text(r.page, '#tac-bal')).replace(/\s+/g, ' ').slice(-110)})`);
+    await r.page.click('#tac-pub');
+    await until(r.page, (n) => (window.__rx?.calls || []).length === n, before + 3, 60000).catch(() => {});
+    const e2 = await rx(), again = e2.calls.at(-1);
+    ok(again?.jobId === first.jobId, `receipts: sent again, it is the same job at the relay (${again?.jobId} = ${first.jobId})`);
+    await open(again.jobId);
+    ok(await toastHas(/Make 5 TAC public: done/), 'receipts: the new attempt is toasted done');
+    await openActivity(r.page);
+    await sleep(500);
+    const outs = (await actRows(r.page)).filter((x) => /Make \d TAC public/.test(x.text));
+    const five = outs.filter((x) => /Make 5 TAC public/.test(x.text));
+    ok(outs.length === 3 && five.some((x) => x.bad === 'Failed') && five.some((x) => /Done in/.test(x.text)) && outs.some((x) => /Make 3 TAC public/.test(x.text) && /Done in/.test(x.text)),
+      `receipts: each attempt keeps its own receipt: the failed one, the retry done, the other note done (${outs.map((x) => x.text.slice(0, 36)).join(' | ')})`);
+    if (r.errors.length) { fails++; console.log('FAIL receipts page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { await r.browser.close(); }
+});
+
 // The dashboard paints what the page has read. A wallet holding 5 TAC, whose last visit here saw 2, reads +3.
 await step('dash', async () => {
   const W = '0xd45b000000000000000000000000000000000d45', id = `tacit-lite-dash-v1:|${W}`, t0 = Date.now() - 2 * 86400e3;
@@ -1212,7 +1405,8 @@ await step('tacdeposit', async () => {
     await shot(r.page, 'tacdeposit-dash');
     const n0 = submits.length;
     await r.page.click('#dash-due [data-dash-do="tac"]');                               // opens the TAC sheet and presses its Finish
-    await until(r.page, () => /stubbed|err/i.test(document.querySelector('#tac-bal-status')?.innerHTML || ''), null, 600000).catch(() => {});
+    await until(r.page, () => /stubbed|err/i.test(document.querySelector('#tac-bal-status')?.innerHTML || ''), null, 120000).catch(() => {});
+    ok(/Finishing a 20 TAC deposit did not go through: Stubbed in the fork check/.test(await text(r.page, '#tac-bal-status')), `tacdeposit: the sheet's line sums up the Finish once its settle has ended (${await text(r.page, '#tac-bal-status')})`);
     const subs = submits.slice(n0).filter((s) => s.type === 'wrap');
     ok(subs.length === 1 && String(subs[0].op?.asset).toLowerCase() === dep.asset.toLowerCase() && String(subs[0].op?.value) === dep.value,
       `tacdeposit: Finish submits one wrap, rebuilt under TAC's asset and scale (${subs.length} submitted, value ${subs[0]?.op?.value})`);
