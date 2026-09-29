@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ljh+qsskM+pmoOxzwYx1HLnsPuEg/gvI5mZ2b+wZm/c=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-pLy2IWUVNf574P1Dc4Dwet07e4w0aSGDy/gAh0gk7Ik=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -475,6 +475,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
       <button class="x" type="button" data-close aria-label="Close">×</button>
     </div>
     <ul class="farms" id="farm-list"></ul>
+    <div id="farm-notes"></div>
   </div>
 </dialog>
 
@@ -561,7 +562,7 @@ const SEL = {
   totalStaked: '817b1cd2', rewardRate: '7b0a47ee', periodFinish: 'ebe2b12b', staked: '98807d84', earned: '008cc262',
   previewZap: 'e7cddab0', previewAdd: 'e03ec807', zapETH: '8703a0d8', addAndStake: '6d15c09b', addAndStakeWithPermit: 'ddd9f3fb',
   claim: '4e71d92d', exitAndRemove: 'bccbe38a', aggregate3: '82ad56cb', timestamp: '0f28c97d',
-  zapToken: '9376f34e', zapTokenWithPermit: '51291e77', withdrawAndRemove: 'bd8196a9', withdrawTo: '47d1eebd', exitTo: '6ae36ea7', stake: 'a694fc3a', stakeWithPermit: 'ecd9ba82',
+  wtacWithdraw: '00f714ce', transfer: 'a9059cbb', zapToken: '9376f34e', zapTokenWithPermit: '51291e77', withdrawAndRemove: 'bd8196a9', withdrawTo: '47d1eebd', exitTo: '6ae36ea7', stake: 'a694fc3a', stakeWithPermit: 'ecd9ba82',
   wrapWithTip: 'fc24c435', postEscrowWithETH: 'c0e2d9a1', requiredEscrow: '034448ed', stEthPerWst: 'bb2952fc',
   escrowSufficient: '058e18b0', escrowTotal: 'e06e89c9', cbtcLockVBtc: '7cea1c1a', cbtcMinted: 'e2c2a40c', btcToUsd: 'd5901347', cdpRatioBps: '4827ecb3', liqRatioBps: '1432d93f', rate: '2c4e722e',
 };
@@ -1177,7 +1178,7 @@ function paintWallet() {
   $('#wallet-label').textContent = S.key ? short(S.key.tacit, 6) : S.address ? short(S.address) : knownWallet() ? 'Open wallet' : 'Connect wallet';
 }
 $('#wallet').onclick = () => openSheet('wallet');
-const WAL = { mode: 'add' };
+const WAL = { mode: 'add', asset: 'eth', chain: 1 };
 render.wallet = () => {
   const el = $('#wallet-body');
   if (!S.key) {
@@ -1220,16 +1221,26 @@ render.wallet = () => {
     const cn = $('#ac-connect');
     if (cn) cn.onclick = () => busy(cn, async () => { try { await connect(); setPayer('tacit'); } catch (e) { sayErr(status, e); } });
   } else {
+    // Whatever the Tacit account holds can leave it: ETH on any of its chains, and its TAC on Ethereum.
+    const tac = WAL.asset === 'tac', chain = tac ? 1 : WAL.chain;
     mount(f, html`
+      ${segSub('wala', WAL.asset, [['eth', 'ETH'], ['tac', 'TAC']])}
+      ${tac ? '' : segSub('walc', String(chain), DEVICE_CHAINS.map((x) => [String(x.chainId), x.name]))}
       <div class="lbl"><span>To</span>${S.wallet ? html`<button type="button" id="ac-me">My wallet</button>` : ''}</div>
       <div class="amt text"><input id="ac-to" placeholder="0x…" autocomplete="off" spellcheck="false" aria-label="Recipient address"></div>
-      ${amountField(html`<button type="button" id="ac-max">Max</button>`)}
+      ${tac ? html`<div class="lbl"><span>Amount</span><button type="button" id="ac-max">Max</button></div>
+        <div class="amt"><input id="ac-mv" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="TAC"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</span></div>`
+        : amountField(html`<button type="button" id="ac-max">Max</button>`)}
       <button class="btn" type="button" id="ac-go">Send from Tacit account</button>`);
+    wireSub(f, 'wala', (v) => { WAL.asset = v; keep($('#sheet-wallet'), render.wallet); });
+    wireSub(f, 'walc', (v) => { WAL.chain = Number(v); keep($('#sheet-wallet'), render.wallet); });
     $('#ac-me')?.addEventListener('click', () => { $('#ac-to').value = S.wallet; });
-    // Everything but a plain transfer's gas at the most sendFromTacit would pay for it.
+    // TAC: all of it. ETH: everything but a plain transfer's gas at the most sendFromTacit would pay for it on that chain.
     $('#ac-max').onclick = () => busy($('#ac-max'), async () => {
       try {
-        const [b, blk] = await Promise.all([rpc('eth_getBalance', [a.address, 'latest']), rpc('eth_getBlockByNumber', ['latest', false])]);
+        if (tac) { const v = wordAt(await ethCall(ADDR.tac, SEL.balanceOf + addrWord(a.address)), 0); $('#ac-mv').value = v ? plain(v, 18) : ''; return; }
+        const call = await chainRpc(chain);
+        const [b, blk] = await Promise.all([call('eth_getBalance', [a.address, 'latest']), call('eth_getBlockByNumber', ['latest', false])]);
         const fee = 25200n * (2n * BigInt(blk.baseFeePerGas) + 15n * 10n ** 8n), v = BigInt(b) > fee ? BigInt(b) - fee : 0n;
         $('#ac-mv').value = v ? plain(v, 18) : '';
       } catch (e) { sayErr(status, e); }
@@ -1241,11 +1252,14 @@ render.wallet = () => {
     try {
       const value = parseUnits($('#ac-mv').value), to = WAL.mode === 'add' ? a.address : recipientOf($('#ac-to').value);
       if (!value) throw new Error('Enter an amount.');
-      const hash = await sendTx({ to, data: '0x', value, via: WAL.mode === 'add' ? 'wallet' : 'tacit' });
-      say(status, html`Sending… ${txLink(hash)}`);
-      await waitTx(hash);
+      const out = WAL.mode === 'out', tac = out && WAL.asset === 'tac', chainId = out && !tac ? WAL.chain : 1;
+      const hash = await sendTx(tac ? { to: ADDR.tac, data: SEL.transfer + addrWord(to) + word(value), via: 'tacit' } : { to, data: '0x', value, via: out ? 'tacit' : 'wallet', chainId });
+      const c = DEVICE_CHAINS.find((x) => x.chainId === chainId);
+      say(status, html`Sending… ${txLink(hash, c.explorer)}`);
+      if (chainId === 1) await waitTx(hash);
+      else await (async () => { const call = await chainRpc(chainId); for (let i = 0; i < 120; i++) { const r = await call('eth_getTransactionReceipt', [hash]).catch(() => null); if (r) { if (r.status !== '0x1') throw new Error('The transaction reverted.'); return; } await new Promise((res) => setTimeout(res, 3000)); } })();
       clearField($('#ac-mv'));
-      say(status, html`<span class="ok">${WAL.mode === 'add' ? 'Added.' : 'Sent.'}</span> ${txLink(hash)}`);
+      say(status, html`<span class="ok">${WAL.mode === 'add' ? 'Added.' : 'Sent.'}</span> ${txLink(hash, c.explorer)}`);
       rerender('wallet');
     } catch (e) { sayErr(status, e); }
   });
@@ -1400,7 +1414,7 @@ async function scanPrivate(force = false) {
     const of = (tk) => { const id = String(t.assetByTicker[tk]?.assetId || '').toLowerCase(); const g = r.byAsset[id]; return { id, value: g ? g.value : 0n, notes: g ? g.notes : [] }; };
     // Deposits still waiting for their settle: pool-ux leaves out any another op already spent (a wrap-and-send, a
     // one-click swap or LP).
-    P.scan = { at: Date.now(), eth: of('cETH'), cusd: of('cUSD'), tac: of('cTAC'), cbtc: { id: String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase(), notes: r.notes.filter((n) => String(n.asset).toLowerCase() === String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase()) },
+    P.scan = { at: Date.now(), notes: r.notes, eth: of('cETH'), cusd: of('cUSD'), tac: of('cTAC'), cbtc: { id: String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase(), notes: r.notes.filter((n) => String(n.asset).toLowerCase() === String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase()) },
       pending: (r.diag?.wrap?.pending || []).filter((d) => String(d.asset).toLowerCase() === of('cETH').id), partial: Object.keys(r.diag?.errors || {}).length > 0 };
     P.err = null;
     return P.scan;
@@ -2251,7 +2265,26 @@ function renderTacBal(el) {
       <div><div class="v num">${known || total ? fmt(total, 18, 2) : html`<span class="mute">reading…</span>`}</div><div class="u">TAC${known ? '' : ', still reading'}</div></div>
       <div class="side"><button class="link" type="button" data-asset="tac">About TAC</button></div>
     </div>
-    <div class="parts">${parts.map(([label, v]) => html`<span>${label} <b class="num">${v == null ? '…' : fmt(v, 18, 2)}</b></span>`)}</div>`);
+    <div class="parts">${parts.map(([label, v]) => html`<span>${label} <b class="num">${v == null ? '…' : fmt(v, 18, 2)}</b></span>`)}</div>
+    ${k && P.scan?.tac?.value ? html`<div class="callout"><span>${fmt(P.scan.tac.value * E10, 18, 2)} TAC is in private notes. Make it public TAC in ${your()} to sell or farm it here.</span><button class="btn ghost" type="button" id="tac-pub">Make public</button></div>
+      <div class="status" role="status" id="tac-pub-status"></div>` : ''}`);
+  const pub = $('#tac-pub', el);
+  if (pub) pub.onclick = () => busy(pub, async () => {
+    const status = $('#tac-pub-status');
+    try {
+      const t = await getUx(), priv = walletPriv(), to = await payingAccount(), notes = [...P.scan.tac.notes].sort((a, b) => (BigInt(b.value) > BigInt(a.value) ? 1 : -1));
+      const minFee = BigInt(await t.quoteOpFee('cTAC', 'sendunwrap'));
+      const worth = notes.filter((n) => BigInt(n.value) > t.quoteUnwrapFee(BigInt(n.value), 'cTAC', { minFee }).fee);
+      if (!worth.length) throw new Error('Each private TAC note is worth less than the relay fee to move it.');
+      for (const [i, n] of worth.entries()) {
+        say(status, `The relay is moving your TAC${worth.length > 1 ? ` (${i + 1} of ${worth.length})` : ''}…`);
+        await t.unwrap({ note: n, walletPriv: priv, recipient: to, wait: true, waitOpts: { timeoutMs: 15 * 60e3 } });
+      }
+      toast('Private TAC made public');
+      say(status, html`<span class="ok">Public TAC in ${your()}.</span>`);
+      await Promise.allSettled([scanPrivate(true), loadTacHoldings()]); rerender('tac');
+    } catch (e) { sayErr(status, e); }
+  });
 }
 const sendWallet = ({ to, data, value }) => sendTx({ to, data, value: BigInt(value || 0), via: 'wallet' });   // the snapshot wallet itself
 function renderAirdrop(el) {
@@ -2591,7 +2624,8 @@ function weiForm(f, status) {
 }
 
 // ── farms ────────────────────────────────────────────────────────────────────────────────────────────────
-const FARM = { precision: null, program: null, open: 'precision', mode: null, positions: null, outPct: '100', outAs: 'both', fill: null };
+const FARM = { precision: null, program: null, open: 'precision', mode: null, positions: null, outPct: '100', outAs: 'both', fill: null, wtac: 0n };
+const WTAC = '0x2018139a8fdd3666855be3315c7683b4d6ab7aef';        // WrappedTac: the private farms' reward token, 1:1 for TAC
 let precisionSeq = 0;
 async function loadPrecision() {
   const my = ++precisionSeq;
@@ -2630,7 +2664,8 @@ async function loadPositions() {
   FARM.positions = await t.farmPositions({ walletPriv: walletPriv() });
 }
 async function loadFarms() {
-  await Promise.allSettled([loadPrecision(), loadProgram(), S.key ? loadPositions() : null]);
+  await Promise.allSettled([loadPrecision(), loadProgram(), S.key ? loadPositions() : null, S.key ? scanPrivate() : null,
+    S.address ? ethCall(WTAC, SEL.balanceOf + addrWord(S.address)).then((r) => { FARM.wtac = wordAt(r, 0); }) : null]);
   const x = FARM.precision, prog = FARM.program;
   const shielded = prog?.epoch?.active ? Number(prog.epoch.ratePerDayTac) : 0;
   const pub = x ? Number(x.perDay / 10n ** 14n) / 1e4 : 0;
@@ -2694,7 +2729,59 @@ render.farm = () => {
   });
   if (FARM.open === 'precision') renderPrecision($('#farm-precision'));
   else if (FARM.open?.startsWith('pid')) renderShielded($(`#farm-${FARM.open}`), (prog?.pools || []).find((p) => 'pid' + p.pid === FARM.open));
+  renderFarmNotes($('#farm-notes'));
 };
+
+// What the private farms leave in this key's notes: harvested rewards (wTAC notes, and wTAC already unwrapped to the paying
+// account) and liquidity that is no longer bonded. All of it is found from the key and the chain, and turns back here into
+// TAC, or into the pool's two assets as private notes.
+function renderFarmNotes(el) {
+  const prog = FARM.program, notes = S.key ? P.scan?.notes : null;
+  const rid = String(prog?.rewardAsset || '').toLowerCase();
+  const wtac = (notes || []).filter((n) => rid && String(n.asset).toLowerCase() === rid);
+  const lps = (prog?.pools || []).map((p) => ({ p, notes: (notes || []).filter((n) => String(n.asset).toLowerCase() === String(p.lpAsset).toLowerCase()) })).filter((x) => x.notes.length);
+  const inNotes = wtac.reduce((a, n) => a + BigInt(n.value), 0n), inAccount = FARM.wtac || 0n;
+  if (!inNotes && !inAccount && !lps.length) { mount(el, html``); return; }
+  mount(el, html`
+    <div class="blk">
+      <div class="lbl"><span>From the private farms</span></div>
+      ${inNotes ? html`<div class="kv"><span>Harvested rewards</span><b>${fmt(inNotes, 8, 2)} wTAC</b></div>` : ''}
+      ${inAccount ? html`<div class="kv"><span>wTAC in ${your()}</span><b>${fmt(inAccount, 18, 2)}</b></div>` : ''}
+      ${inNotes || inAccount ? html`<button class="btn ghost" type="button" id="fn-redeem">Turn into TAC</button>` : ''}
+      ${lps.map(({ p, notes: ns }) => html`<div class="kv"><span>${pairName(p.pair)} liquidity, not bonded</span><b>${ns.reduce((a, n) => a + BigInt(n.value), 0n).toLocaleString('en-US')} shares</b></div>
+        <button class="btn ghost" type="button" data-lprm="${p.pid}">Take it out as ${pairName(p.pair)}</button>`)}
+      <p class="note">wTAC is the farms' reward token, one for one with TAC: it becomes TAC in ${your()}. Liquidity that is not bonded earns nothing; taking it out returns both assets as private notes.</p>
+      <div class="status" role="status" id="fn-status"></div>
+    </div>`);
+  const status = $('#fn-status', el), done = async (msg) => { say(status, html`<span class="ok">${msg}</span>`); await Promise.allSettled([scanPrivate(true), loadFarms()]); rerender('farm'); };
+  const rd = $('#fn-redeem', el);
+  if (rd) rd.onclick = () => busy(rd, async () => {
+    try {
+      const t = await getUx(), priv = walletPriv(), to = await payingAccount();
+      for (const [i, n] of wtac.entries()) {
+        say(status, `The relay is unwrapping your rewards${wtac.length > 1 ? ` (${i + 1} of ${wtac.length})` : ''}…`);
+        await t.farmRedeem({ walletPriv: priv, note: n, to, wait: true, waitOpts: { timeoutMs: 15 * 60e3 } });
+      }
+      // WrappedTac turns the wTAC ERC20 in the paying account into TAC, one for one: what is there now, whatever its source.
+      const bal = wordAt(await ethCall(WTAC, SEL.balanceOf + addrWord(to)), 0);
+      if (bal > 0n) { const h = await sendTx({ to: WTAC, data: SEL.wtacWithdraw + word(bal) + addrWord(to) }); say(status, html`Turning wTAC into TAC… ${txLink(h)}`); await waitTx(h); }
+      toast('Rewards turned into TAC');
+      await done(`Your rewards are TAC in ${your()}.`);
+    } catch (e) { sayErr(status, e); }
+  });
+  $$('[data-lprm]', el).forEach((b) => b.onclick = () => busy(b, async () => {
+    const x = lps.find((l) => String(l.p.pid) === b.dataset.lprm), r = x.p.reserves || {};
+    try {
+      const t = await getUx(), priv = walletPriv();
+      for (const [i, n] of x.notes.entries()) {
+        say(status, `The relay is taking your liquidity out${x.notes.length > 1 ? ` (${i + 1} of ${x.notes.length})` : ''}…`);
+        await t.lpRemove({ walletPriv: priv, assetA: r.assetA, assetB: r.assetB, feeBps: Number(x.p.feeBps || 30), shareNote: n, waitOpts: { timeoutMs: 15 * 60e3 } });
+      }
+      toast('Liquidity taken out');
+      await done('Taken out: both assets are private notes again.');
+    } catch (e) { sayErr(status, /not covered by this withdrawal/.test(e?.message || '') ? new Error('This liquidity is worth less than the relay fee to take it out.') : e); }
+  }));
+}
 
 // The public farm, whole: add from ETH, TAC or both (a permit stands in for any approval), stake LP already held, and
 // see, claim and withdraw a position — part or all of it, as both assets or swapped into one.

@@ -584,6 +584,16 @@ await step('acct', async () => {
   await r.page.click('#ac-go');
   await until(r.page, () => /Sent\.|err/.test(document.querySelector('#ac-status')?.innerHTML || ''), null, 120000);
   ok((await balOf(OUT)) - o0 === 10n ** 16n, `acct: Send out pays from the Tacit account ${await text(r.page, '#ac-status')}`);
+  await r.page.click('[data-wala="tac"]');
+  await r.page.waitForSelector('#ac-to');
+  await r.page.fill('#ac-to', OUT);
+  const tAcct = await tacOf(want), tOut0 = await tacOf(OUT);
+  await r.page.click('#ac-max');
+  await until(r.page, () => !!document.querySelector('#ac-mv')?.value);
+  await r.page.click('#ac-go');
+  await chainUntil(async () => (await tacOf(OUT)) - tOut0 === tAcct, 120000);
+  ok(tAcct > 0n && (await tacOf(OUT)) - tOut0 === tAcct && (await tacOf(want)) === 0n, `acct: Send out moves all of the Tacit account's TAC too (${Number(tAcct / 10n ** 14n) / 1e4} TAC)`);
+  await r.page.click('[data-wala="eth"]');
 
   await r.page.click('[data-pay="wallet"]');                                              // connects the stub wallet
   await until(r.page, () => document.querySelector('[data-pay="wallet"]')?.classList.contains('main'));
