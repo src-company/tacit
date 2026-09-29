@@ -514,7 +514,39 @@ async function batchCycle() {
   return true;
 }
 
+// A settle is paid from the settle wallet after its proof is bought, and a node refuses a send whose worst-case fee
+// the wallet cannot cover, so while the wallet is short every job would be proved and then failed. The queue is not
+// read at all until it is funded again: jobs wait as queued, and nothing is spent on a proof that cannot land. The
+// budget is an ordinary op's padded gas at the fee cap submitCall uses. An unreadable chain is not a reason to stop.
+const SETTLE_FUNDS_GAS = BigInt(process.env.SETTLE_FUNDS_GAS || '720000');
+let shortSince = 0, shortNotedAt = 0;
+async function fundsShort() {
+  let have, need;
+  try {
+    const [bal, blk] = await Promise.all([
+      publicClient.getBalance({ address: settleWallet.account.address }),
+      publicClient.getBlock({ blockTag: 'latest' }),
+    ]);
+    have = bal; need = SETTLE_FUNDS_GAS * ((blk.baseFeePerGas ?? 0n) * 3n + TIP_FLOOR_WEI);
+  } catch { return false; }
+  const eth = (wei) => (Number(wei) / 1e18).toFixed(4);
+  if (have >= need) {
+    if (shortSince) log(`settle wallet holds ${eth(have)} ETH again — taking jobs`);
+    shortSince = 0;
+    return false;
+  }
+  if (!shortSince) shortSince = Date.now();
+  if (Date.now() - shortNotedAt >= 60_000) {
+    shortNotedAt = Date.now();
+    const why = `settle wallet holds ${eth(have)} ETH, under the ${eth(need)} ETH a settle can cost at today's gas — leaving jobs queued until it is topped up`;
+    log(why);
+    await heartbeat('settle', why);
+  }
+  return true;
+}
+
 async function cycle() {
+  if (await fundsShort()) return false;
   if (await batchCycle()) return true;
   const job = await confidentialJob();
   const jobId = job?.jobId;
@@ -640,7 +672,7 @@ async function main() {
       // An empty queue is the common case, not an error — but it must still beat, or /prover-health
       // goes stale (and "down") after 10 quiet minutes on a perfectly healthy relay. heartbeat() itself
       // only fires on real activity (proving/settled/error), so idle time needs its own signal.
-      if (!worked) { await heartbeatIdle('settle', 'idle — queue empty'); await maybeReplenish(); await sleep(CFG.settlePollSecs); }
+      if (!worked) { if (!shortSince) await heartbeatIdle('settle', 'idle — queue empty'); await maybeReplenish(); await sleep(CFG.settlePollSecs); }
     } catch (e) {
       log('cycle error (continuing):', e.message);
       await heartbeat('settle', `error ${safeErr(e)}`);
