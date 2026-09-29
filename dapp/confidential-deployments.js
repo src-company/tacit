@@ -207,6 +207,7 @@ export const CONFIDENTIAL_DEPLOYMENTS = {
     // the real broadcast address. Still inert in the UI until an asset is flipped live (_crosslaneConfigured).
     router: '0x0000000000000000000000000000000000000Ace',
     collateralEngine: null, // CollateralEngine (CDP controller / sole cUSD minter). null ⇒ CDP disabled.
+    cbtcEscrowHelper: null,  // CbtcEscrowHelper: posts a cBTC lock's wstETH bond from ETH in one tx. null ⇒ no bond step.
     farmControllers: {},     // poolId → FarmController (OP_LP_BOND bond target), per pool. {} ⇒ Earn bonding disabled.
     farm: null,              // launch farm program (FarmManager + reward asset + pools). null ⇒ no program on this network.
     assetFactory: null,      // CanonicalAssetFactory (EVM-etch new tacit-compatible assets). null ⇒ Create→Asset disabled.
@@ -227,6 +228,7 @@ export const CONFIDENTIAL_DEPLOYMENTS = {
     pool: null,
     router: null,
     collateralEngine: null,
+    cbtcEscrowHelper: '0x000000008eCD09f922C9FbbDD9ACA5aE8F0beBfA', // bound to the collateralEngine the sync sets
     farmControllers: MAINNET_FARM_CONTROLLERS,
     farm: MAINNET_FARM,
     assetFactory: null,

@@ -42,7 +42,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,mainbond,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -419,6 +419,82 @@ await step('borrow', async () => {
   ok((await wst(A0)) > w0, `borrow: a bond on a lock not minted comes back to the account that posted it ${await text(page, '#bw-status')}`);
 });
 
+// tacit.finance's own Borrow tab: a pending cBTC lock asks for its bond, the bond posts through the escrow helper from
+// the wallet's Tacit account, the row waits for the reflection, and once the pool records the lock it offers the mint.
+const { makeEvmAccount } = await import(new URL('../dapp/evm-account.js', import.meta.url));
+await step('mainbond', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  const root = r.url.replace(/weld\/$/, ''), hex = 'bd'.padEnd(64, '5'), pass = 'correct horse battery staple';
+  const POOL = '0x000000000Ed1eabD231Be41d93b719056F7febFC', ENGINE = '0x000000003f608BDdF0ca45934003ffb9DbDF70DB';
+  const OP = Buffer.from(keccak_256(Buffer.concat([Buffer.from('aa'.repeat(32), 'hex'), Buffer.from([1, 0, 0, 0])]))).toString('hex');
+  const call = async (to, data) => BigInt(await rpc('eth_call', [{ to, data }, 'latest']));
+  const row = () => r.page.evaluate(() => [document.querySelector('.cbtc-step[data-i="0"]')?.textContent || '', document.querySelector('.cbtc-mint-pending-btn[data-i="0"]')?.textContent || '']);
+  const rowIs = (re, timeout = 120000) => until(r.page, (s) => new RegExp(s).test(document.querySelector('.cbtc-step[data-i="0"]')?.textContent || ''), re.source, timeout);
+  try {
+    await r.page.goto(r.url);
+    await r.page.waitForSelector('#toast-container', { state: 'attached' });
+    const saving = r.page.evaluate(async (h) => { globalThis.__TACIT_NO_INIT__ = true; const T = await import('/tacit.js'); await T.wallet.setPriv(h); }, hex);
+    await r.page.waitForSelector('#pass-dialog[open] #pass-input-1', { timeout: 120000 });
+    await r.page.fill('#pass-input-1', pass); await r.page.fill('#pass-input-2', pass); await r.page.click('#pass-submit');
+    await saving;
+    const lock = { lockTxid: 'aa'.repeat(32), lockVout: 1, vBtc: '20000', blinding: '0x' + '11'.repeat(32) };
+    await r.page.evaluate((l) => { localStorage.setItem('tacit-active-mode-v1', 'local'); localStorage.setItem('tacit-cbtc-pending-locks-v1', JSON.stringify([l])); }, lock);
+    const acct = makeEvmAccount({ secp, keccak256: keccak_256, sha256 }).deriveEvmAccount(Buffer.from(hex, 'hex'), 'mainnet').address;
+    await rpc('anvil_setBalance', [acct, '0x' + (10n ** 18n).toString(16)]);
+    await r.page.goto(root);
+    await r.page.waitForSelector('#toast-container', { state: 'attached' });
+    await until(r.page, () => !!document.querySelector('[data-tab="cdp"]'));
+    // Unlock the saved key through tacit.finance's own wallet. The page evaluates a second copy of tacit.js
+    // (amm-farm-ui.js imports it by bare path) and the tabs are wired by whichever copy set up last, so both unlock.
+    const unlocked = [];
+    for (const which of ['entry', 'bare']) {
+      const unlocking = r.page.evaluate(async (w) => {
+        const src = w === 'entry' ? document.querySelector('script[type="module"][src*="tacit.js"]').src : new URL('/tacit.js', location.href).href;
+        const T = await import(src);
+        if (!T.wallet.priv) await T.wallet.load(null);
+        return !!T.wallet.priv;
+      }, which).catch((e) => e.message);
+      if (await r.page.waitForSelector('#pass-modal #pass-input-1', { state: 'visible', timeout: 60000 }).then(() => true, () => false)) {
+        await r.page.fill('#pass-input-1', pass); await r.page.click('#pass-submit');
+      }
+      unlocked.push(await unlocking);
+    }
+    ok(unlocked.every((u) => u === true), `mainbond: the saved key unlocks in tacit.finance (${unlocked.join(', ')})`);
+    const toTab = async (name) => {
+      await until(r.page, (n) => typeof document.querySelector(`.tab[data-tab="${n}"]`)?.onclick === 'function', name, 120000);
+      await r.page.evaluate((n) => document.querySelector(`.tab[data-tab="${n}"]`).click(), name);
+    };
+    const toBorrow = () => toTab('cdp');
+    await toBorrow();
+    await rowIs(/Needs its bond|price feed|Could not/);
+    let [s, b] = await row();
+    ok(/Needs its bond: [\d.]+ wstETH/.test(s) && b === 'Post bond', `mainbond: a pending lock asks for its bond (${s} [${b}])`);
+    await r.page.click('.cbtc-mint-pending-btn[data-i="0"]');
+    await rowIs(/Bonded\.|Needs its bond/, 180000).catch(() => {});
+    await chainUntil(async () => (await call(ENGINE, '0xe06e89c9' + OP)) > 0n, 120000).catch(() => {});
+    const [total, need] = await Promise.all([call(ENGINE, '0xe06e89c9' + OP), call(ENGINE, '0x034448ed' + word(20000))]);
+    ok(need > 0n && total >= need, `mainbond: the bond is posted for the lock from the Tacit account (${total} of ${need} wstETH wei) ${await text(r.page, '#cdp-cbtc-status')}`);
+    await rowIs(/Bonded\./);
+    [s, b] = await row();
+    ok(/Minting opens once the reflection records this lock/.test(s) && b === 'Waiting', `mainbond: then it waits for the reflection (${s} [${b}])`);
+    // The reflection records the lock (cbtcLockVBtc, declaration slot 123): the row then offers the mint.
+    await rpc('anvil_setStorageAt', [POOL, '0x' + Buffer.from(keccak_256(Buffer.from(OP + word(123), 'hex'))).toString('hex'), '0x' + word(20000)]);
+    await toTab('market');
+    await toBorrow();
+    await rowIs(/Recorded and bonded/);
+    [s, b] = await row();
+    ok(b === 'Mint', `mainbond: once the pool records the lock, the row offers the mint (${s} [${b}])`);
+    if (r.errors.length) { fails++; console.log('FAIL mainbond page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } catch (e) {
+    await shot(r.page, 'mainbond-fail');
+    const at = await r.page.evaluate(() => ({ loaded: performance.getEntriesByType('resource').map((x) => x.name).filter((n) => /\/tacit\.js/.test(n)),
+      pending: document.querySelector('#cdp-cbtc-pending')?.textContent.replace(/\s+/g, ' ').slice(0, 200) ?? 'absent',
+      status: document.querySelector('#cdp-cbtc-status')?.textContent.slice(0, 160),
+      cdpTail: (document.querySelector('#cdp-body')?.textContent || '').replace(/\s+/g, ' ').slice(-260) })).catch(() => null);
+    throw new Error(`${e.message.split('\n')[0]} | page ${JSON.stringify(at)} | errors ${r.errors.slice(0, 2).join(' | ')}`);
+  } finally { await r.browser.close(); }
+});
+
 // The tacit1 address of a key, derived the way tacit.finance does (BIP-352 scan key, one root).
 const { makeTacitAddress } = await import(new URL('../dapp/tacit-address.js', import.meta.url));
 const { bip352TaggedHash } = await import(new URL('../dapp/bip352.js', import.meta.url));
@@ -538,7 +614,6 @@ await step('passkey', async () => {
   await r.browser.close();
 });
 
-const { makeEvmAccount } = await import(new URL('../dapp/evm-account.js', import.meta.url));
 const balOf = async (a) => BigInt(await rpc('eth_getBalance', [a, 'latest']));
 const go = (p, h) => p.evaluate((x) => { location.hash = ''; location.hash = x; }, h);
 let ACCT = null;

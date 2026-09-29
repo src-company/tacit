@@ -319,9 +319,34 @@ function renderPendingCbtcLocks() {
   if (!pending.length) { list.innerHTML = ''; return; }
   list.innerHTML = pending.map((p, i) => `
     <div class="check-row" style="padding:5px 0;display:flex;justify-content:space-between;gap:8px;align-items:center;">
-      <span style="font-size:11.5px;">Locked <code class="addr">${esc(p.lockTxid.slice(0, 12))}…:${p.lockVout}</code> — ${esc(p.vBtc)} sats</span>
-      <button class="cbtc-mint-pending-btn" data-i="${i}" style="font-size:11.5px;">Mint</button>
+      <span style="font-size:11.5px;">Locked <code class="addr">${esc(p.lockTxid.slice(0, 12))}…:${p.lockVout}</code> — ${esc(p.vBtc)} sats
+        <span class="cbtc-step" data-i="${i}" style="display:block;opacity:.75;">Checking the lock…</span></span>
+      <button class="cbtc-mint-pending-btn" data-i="${i}" style="font-size:11.5px;" disabled>Mint</button>
     </div>`).join('');
+}
+
+// Where a pending lock stands on its way to a mint, all read from chain. The pool records the lock once the
+// reflection folds its Bitcoin block, and the mint gate also wants the lock's wstETH bond at the collateral
+// engine (escrowSufficient). The bond can be posted first: the engine takes it for any live outpoint and
+// refunds it until a mint. It aims at 1.1x the requirement, so a small price move does not undo it.
+const wei6 = (x) => { const [i, f = ''] = formatUnits(x, 18).split('.'); const d = f.slice(0, 6).replace(/0+$/, ''); return d ? `${i}.${d}` : i; };
+async function cbtcLockProgress(ux, rec) {
+  const { pool, collateralEngine } = ux.cfg;
+  const word = (x) => BigInt(x).toString(16).padStart(64, '0');
+  const uint = (r) => BigInt(r && r !== '0x' ? r : '0x0');
+  const outpoint = cbtcOutpoint(ux.pool, rec.lockTxid, rec.lockVout);
+  const op = word(outpoint);
+  const [lock, minted, have, need] = await Promise.all([
+    ux.cbtcLockState(rec.lockTxid, rec.lockVout),
+    ux.ethCall(pool, '0xe2c2a40c' + op).then(uint), // cbtcMinted(bytes32)
+    ux.ethCall(collateralEngine, '0xe06e89c9' + op).then(uint), // escrowTotal(bytes32)
+    // requiredEscrow(uint256) prices the lock, so it reverts while the BTC price feed is stale
+    ux.ethCall(collateralEngine, '0x034448ed' + word(rec.vBtc)).then(uint).catch(() => null),
+  ]);
+  return {
+    outpoint, recorded: lock.vBtc, retired: lock.spent || lock.redeemed, minted: minted !== 0n, have, need,
+    want: need == null ? null : need * 11n / 10n, bonded: need != null && have >= need,
+  };
 }
 
 // Sats sitting in live locks are still the user's Bitcoin, but they are not spendable change: coin selection
@@ -339,7 +364,10 @@ function renderReservedCbtcLocks() {
 function wireCbtc(wallet, ux) {
   const lockBtn = el('cdp-cbtc-lock-btn');
   const statusEl = el('cdp-cbtc-status');
-  renderPendingCbtcLocks();
+  const pendingList = el('cdp-cbtc-pending');
+  const progress = new Map();
+  let refreshing = 0;
+  refreshPending();
   renderReservedCbtcLocks();
   // The local reservation set is browser-scoped; the pool's cbtcLock* records are not. Refresh from chain so
   // a second device, a private window or a cleared cache still knows which outputs must never be spent.
@@ -365,22 +393,93 @@ function wireCbtc(wallet, ux) {
         waitOpts: { onUpdate: proveUpdater(statusEl, 'Minting cBTC') },
       });
       removePendingCbtcLock(rec.lockTxid);
-      renderPendingCbtcLocks();
       if (statusEl) statusEl.innerHTML = `cBTC note minted — ${rec.vBtc} sats`
         + (r && r.txHash ? ` (<code class="addr">${esc(r.txHash)}</code>)` : '') + '.';
       notify(`cBTC note minted — ${rec.vBtc} sats`, 'ok');
     } catch (e) {
-      // The most common failure here is timing, not a bug: the lock needs ~6 Bitcoin confirmations AND a
-      // reflection fold before OP_CBTC_MINT recognizes it (cbtcLockCommitment[outpoint] unset until then) —
-      // surface that plainly rather than a raw revert string, and leave the pending record so retry needs
-      // no re-entry.
+      // Mint is only offered once the lock is recorded and bonded, and the relay reads the same gate before it
+      // proves, so its message names whatever changed in between. The pending record stays for a retry.
       const m = formatSpecErr(e, 'cBTC mint');
-      const hint = /CbtcLockMismatch|revert/i.test(m)
-        ? `${m} — likely still waiting on Bitcoin confirmations + the reflection fold; safe to retry in a few minutes.`
-        : m;
-      if (statusEl) statusEl.textContent = hint; notify(hint, 'error');
+      if (statusEl) statusEl.textContent = m; notify(m, 'error');
     } finally {
-      if (btn) btn.disabled = false;
+      refreshPending();
+    }
+  }
+
+  // Posts the lock's bond through CbtcEscrowHelper.postEscrowWithETH: ETH from this wallet's Tacit account is
+  // staked to wstETH and posted for the lock in one transaction, refundable to that account until a mint.
+  async function postBond(rec, btn, pr) {
+    const helper = ux.cfg.cbtcEscrowHelper;
+    btn.disabled = true;
+    try {
+      if (!helper || !pr || pr.want == null) throw new Error('the bond cannot be sized right now; try again in a few minutes');
+      const addr = (r) => '0x' + String(r || '').replace(/^0x/, '').slice(-40).toLowerCase();
+      const [engine, wsteth] = await Promise.all([
+        ux.ethCall(helper, '0x3d5030a3').then(addr), // COLLATERAL_ENGINE()
+        ux.ethCall(helper, '0xd9fb643a').then(addr), // WSTETH()
+      ]);
+      // A helper bound to another engine would post the bond where the mint gate never looks.
+      if (engine !== String(ux.cfg.collateralEngine).toLowerCase()) throw new Error('the bond helper is not bound to this collateral engine');
+      const gap = pr.want > pr.have ? pr.want - pr.have : 0n;
+      if (gap === 0n) return;
+      const r = await ux.ethCall(wsteth, '0xbb2952fc' + gap.toString(16).padStart(64, '0')); // getStETHByWstETH(uint256)
+      const payEth = BigInt(r && r !== '0x' ? r : '0x0');
+      if (payEth === 0n) throw new Error('the bond size could not be read; try again in a few minutes');
+      if (statusEl) statusEl.textContent = `Posting the bond: ${wei6(payEth)} ETH from your Tacit account, staked to wstETH…`;
+      // The helper stakes through Lido and writes the engine's escrow records, about 305k gas; only gas used is paid.
+      const { txHash } = await ux.sendPreparedTx({
+        walletPriv: wallet.priv, to: helper, value: payEth, gasLimit: 450000n,
+        calldata: '0xc0e2d9a1' + BigInt(pr.outpoint).toString(16).padStart(64, '0'), // postEscrowWithETH(bytes32)
+      });
+      const rcpt = await ux.waitReceipt(txHash);
+      if (rcpt.status !== '0x1') throw new Error(`the bond transaction reverted (${txHash})`);
+      if (statusEl) statusEl.innerHTML = `Bond posted (<code class="addr">${esc(txHash)}</code>).`;
+      notify('cBTC bond posted', 'ok');
+    } catch (e) {
+      const m = /insufficient ETH/i.test(String(e && e.message))
+        ? `Your Tacit account ${ux.account(wallet.priv).address} needs more ETH for the bond and its gas.`
+        : formatSpecErr(e, 'cBTC bond');
+      if (statusEl) statusEl.textContent = m; notify(m, 'error');
+    } finally {
+      refreshPending();
+    }
+  }
+
+  // Redraws the pending locks and sets each one's next step from chain: post its bond, wait for the reflection to
+  // record it, or mint. A lock already minted or retired leaves the list.
+  async function refreshPending() {
+    const run = ++refreshing;
+    renderPendingCbtcLocks();
+    const pending = loadPendingCbtcLocks();
+    if (!pending.length || !wallet || !wallet.priv || !ux.cfg.collateralEngine) return;
+    const at = Number(ux.cfg.chainId) === 1
+      ? fetch(`${ux.cfg.relayBase}/reflection/status?network=mainnet`).then((r) => r.json()).then((j) => j.attestedHeight).catch(() => null)
+      : Promise.resolve(null);
+    const step = (i, text, action = '', label = 'Mint') => {
+      const s = pendingList && pendingList.querySelector(`.cbtc-step[data-i="${i}"]`);
+      const b = pendingList && pendingList.querySelector(`.cbtc-mint-pending-btn[data-i="${i}"]`);
+      if (s) s.textContent = text;
+      if (b) { b.textContent = label; b.dataset.step = action; b.disabled = !action; }
+    };
+    const done = [];
+    await Promise.all(pending.map(async (rec, i) => {
+      let pr;
+      try { pr = await cbtcLockProgress(ux, rec); } catch { if (run === refreshing) step(i, 'Could not read this lock from chain; reopen the tab to retry.'); return; }
+      if (run !== refreshing) return;
+      progress.set(i, pr);
+      if (pr.minted || pr.retired) { done.push(rec.lockTxid); return; }
+      const vBtc = BigInt(rec.vBtc);
+      if (pr.recorded > 0n && pr.recorded !== vBtc) step(i, `The pool records ${pr.recorded} sats for this lock, not ${vBtc}.`);
+      else if (pr.need == null) step(i, 'The BTC price feed is updating; the bond can be sized again in a few minutes.');
+      else if (!pr.bonded) step(i, `Needs its bond: ${wei6(pr.want - pr.have)} wstETH, paid in ETH from your Tacit account.`, 'bond', 'Post bond');
+      else if (pr.recorded === 0n) {
+        const h = await at;
+        if (run === refreshing) step(i, `Bonded. Minting opens once the reflection records this lock${h ? ` (it has reached Bitcoin block ${h})` : ''}.`, '', 'Waiting');
+      } else step(i, 'Recorded and bonded.', 'mint', 'Mint');
+    }));
+    if (run === refreshing && done.length) {
+      for (const txid of done) removePendingCbtcLock(txid);
+      refreshPending();
     }
   }
 
@@ -417,9 +516,9 @@ function wireCbtc(wallet, ux) {
         // blinding comes back as a BigInt (deriveCbtcNoteBlinding); JSON.stringify can't serialize that, so
         // store it as hex and convert back to BigInt at mint time.
         addPendingCbtcLock({ ...res, blinding: '0x' + BigInt(res.blinding).toString(16).padStart(64, '0') });
-        renderPendingCbtcLocks();
-        if (statusEl) statusEl.innerHTML = `Locked <code class="addr">${esc(res.lockTxid)}</code> — waiting on `
-          + `confirmations + the reflection fold, then click Mint below.`;
+        refreshPending();
+        if (statusEl) statusEl.innerHTML = `Locked <code class="addr">${esc(res.lockTxid)}</code>. Post its bond below; `
+          + 'minting opens once the reflection records the lock.';
         notify(`cBTC lock broadcast — ${res.vBtc} sats`, 'ok');
       } catch (e) {
         const m = formatSpecErr(e, 'cBTC lock');
@@ -430,13 +529,15 @@ function wireCbtc(wallet, ux) {
     };
   }
 
-  const pendingList = el('cdp-cbtc-pending');
   if (pendingList) {
     pendingList.addEventListener('click', (ev) => {
       const btn = ev.target.closest('.cbtc-mint-pending-btn');
-      if (!btn) return;
-      const rec = loadPendingCbtcLocks()[Number(btn.getAttribute('data-i'))];
-      if (rec) mintPending(rec, btn);
+      if (!btn || btn.disabled) return;
+      const i = Number(btn.getAttribute('data-i'));
+      const rec = loadPendingCbtcLocks()[i];
+      if (!rec) return;
+      if (btn.dataset.step === 'bond') postBond(rec, btn, progress.get(i));
+      else if (btn.dataset.step === 'mint') mintPending(rec, btn);
     });
   }
 }
