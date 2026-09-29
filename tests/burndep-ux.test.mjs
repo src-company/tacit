@@ -170,6 +170,10 @@ function makeUx(world, storage) {
     { txid: 'bb'.repeat(32), vout: 0, assetId: withHex('ff'.repeat(32)), amount: 1n, confirmed: true },
     { txid: 'cc'.repeat(32), vout: 0, assetId: ASSET, amount: 1n, confirmed: false },
     { txid: 'dd'.repeat(32), vout: 0, assetId: ASSET, amount: 1n, confirmed: true, stealth: true },
+    // dapp/tacit.js's real bridge-eth click handler passes a holding's assetId bare-hex (its button's own
+    // data-aid) while tacAssetId itself is wired in 0x-prefixed (_burndepUxSingleton) — a real note must not
+    // be called "not TAC" just because the two sides disagree on a leading 0x.
+    { txid: 'ee'.repeat(32), vout: 0, assetId: stripHex(ASSET), amount: 1n, confirmed: true },
   ];
   const list = ux.eligibleNotes(holdings);
   ok(list[0].eligible === true, 'an ordinary confirmed TAC note under the cap is eligible');
@@ -177,6 +181,7 @@ function makeUx(world, storage) {
   ok(list[2].eligible === false && list[2].reason === 'not TAC', 'a non-TAC note is ineligible');
   ok(list[3].eligible === false && list[3].reason === 'unconfirmed', 'an unconfirmed note is ineligible');
   ok(list[4].eligible === false && /stealth/.test(list[4].reason), 'a stealth-received note is ineligible');
+  ok(list[5].eligible === true, 'a bare-hex TAC assetId is still recognized as TAC against a 0x-prefixed tacAssetId');
   ok(n > 0, 'eligibleNotes checks ran');
 }
 

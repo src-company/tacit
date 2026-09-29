@@ -161,7 +161,11 @@ export function makeBurnDepositUx(deps) {
     return (holdings || []).map((h) => {
       const amount = BigInt(h.amount);
       let reason = null;
-      if (lc(h.assetId) !== lc(tacAssetId)) reason = 'not TAC';
+      // stripHex both sides: the caller's h.assetId and this module's own tacAssetId aren't guaranteed to
+      // agree on a leading 0x (tacit.js's real wiring passes tacAssetId 0x-prefixed but a holding's own
+      // assetIdHex bare — see dapp/tacit.js's _burndepUxSingleton and its bridge-eth click handler), and a
+      // bare lc() comparison would call every real TAC note "not TAC".
+      if (lc(stripHex(h.assetId)) !== lc(stripHex(tacAssetId))) reason = 'not TAC';
       else if (amount > BURNDEP_BETA_CAP_RAW) reason = 'over the 1,000 TAC beta limit — send part of it to yourself first to split off a smaller note';
       else if (h.confirmed === false) reason = 'unconfirmed';
       else if (h.stealth) reason = 'received privately (stealth) — send it to yourself first to get an ordinary note';
@@ -441,7 +445,7 @@ export function makeBurnDepositUx(deps) {
     const status = await checkTxidStatus(burnTxidDisplay);
     if (status.status === 'not-found') throw new Error('burndep-ux: unknown burn txid');
     if (!status.note || !status.assetId) throw new Error('burndep-ux: this txid does not classify as a burn-deposit');
-    if (lc(status.assetId) !== lc(tacAssetId)) throw new Error('burndep-ux: this burn is for a different asset');
+    if (lc(stripHex(status.assetId)) !== lc(stripHex(tacAssetId))) throw new Error('burndep-ux: this burn is for a different asset');
     const burnHomeTxid = stripHex(status.note.txid);
 
     const traced = await traceNote({ txid: burnHomeTxid, vout: 0, assetId: tacAssetId });
