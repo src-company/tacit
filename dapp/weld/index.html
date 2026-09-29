@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Sfn5jxthEVWEsm7ZM/0e0/k3c9TiBI4IXEoTiSOzbr4=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-tPM/lB/o5v/lfqJthjYd4KPwg1QPPMqi8odoylmDYnA=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -295,6 +295,7 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .callout { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; margin: 0 0 16px;
   font-size: 12.5px; background: var(--field); border-left: 2px solid var(--orange); }
 .callout .btn { width: auto; min-height: 36px; margin: 0; padding: 6px 14px; }
+.callout.bad { border-left-color: var(--err); }
 .ack { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 12.5px; color: var(--err); cursor: pointer; }
 .ack input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--err); flex: none; }
 .pick { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; font-size: 12.5px; color: var(--mute); cursor: pointer; }
@@ -1539,7 +1540,7 @@ function setKey(k) {
 // tacit.js opens the passphrase-locked and Bitcoin-signed keys exactly as tacit.finance does. It loads only for
 // those paths, as a library: it reads the shared network once at import, so this page pins mainnet for its visit,
 // and any call that rewrites the app's linked-wallet records is run with them put back afterwards.
-const TACIT_URL = '/tacit.js?cb=e2d31087';
+const TACIT_URL = '/tacit.js?cb=66bb9b7b';
 const SHARED_NET = 'tacit-network-v1', PREV_NET = 'tacit-lite-prev-net-v1';
 const SHARED_WALLET_KEYS = ['tacit-eth-identity', 'tacit-btc-identity', 'tacit-active-mode-v1', 'tacit-ext-mode-v1', 'tacit-ext-state-v1',
   ...['mainnet', 'signet'].flatMap((n) => [`tacit-eth-identity:${n}`, `tacit-btc-identity:${n}`])];
@@ -2031,7 +2032,7 @@ function wireSub(el, name, set) { $$(`[data-${name}]`, el).forEach((b) => b.oncl
 
 // ── Tacit V1 pool: shared module, loaded on first use ────────────────────────────────────────────────────
 const getUx = lazy(async () => {
-  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=4bfdde4d'), import('/confidential-deployments.js')]);
+  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=6d4bc7f6'), import('/confidential-deployments.js')]);
   dep.setActiveNetwork('mainnet');
   setExternalTacHolders(() => (S.wallet ? [S.wallet] : []));      // public TAC in the connected wallet counts toward the exit-fee tier, as on tacit.finance
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
@@ -3872,29 +3873,81 @@ async function lockStatuses(t, locks) {
 // The lock the sheet follows: the one picked, else the oldest still to mint, else the newest.
 const followLock = (list) => list.find((l) => LOCK.pick && lockId(l) === LOCK.pick) || list.find((l) => !l.minted) || list[list.length - 1] || null;
 const lockNext = (l) => (l.minted ? 'minted' : !l.bonded ? 'post its bond' : !l.recorded ? 'waiting for its proof' : 'ready to mint');
-// Every bond that can come back, from the key's whole lock history and the chain (the lock record follows only the newest
-// lock): the escrow helper refunds the account that posted a bond once its lock was never minted against, or has been
-// redeemed. A minted lock that is still outstanding keeps its bond, and a slashed one has none left.
-async function findBonds(t, priv = walletPriv(), rec = null) {
-  const who = [...new Map([[S.acct?.address, 'tacit'], [S.wallet, 'wallet']].filter(([a]) => a).map(([a, via]) => [a.toLowerCase(), via]))];
-  if (!who.length) return [];
-  const { h } = await btcHistory(), spk = h.walletScripts(priv).lock, want = bytesToHex(spk);
-  const locks = [];
-  for (const tx of await h.txsOf(spk)) (tx.vout || []).forEach((o, vout) => { if (String(o.scriptpubkey).toLowerCase() === want) locks.push({ txid: tx.txid, vout, op: outpointOf(t, { lockTxid: tx.txid, lockVout: vout }) }); });
-  if (rec && !locks.some((l) => l.txid === rec.lockTxid && l.vout === rec.lockVout)) locks.push({ txid: rec.lockTxid, vout: rec.lockVout, op: outpointOf(t, rec) });   // history can trail a fresh lock
-  if (!locks.length) return [];
-  const n = 3 + who.length;
-  const r = await multicall(locks.flatMap((l) => [
-    { to: ADDR.pool, data: SEL.cbtcMinted + strip(l.op) }, { to: ADDR.pool, data: SEL.cbtcLockRedeemed + strip(l.op) }, { to: ADDR.engine, data: SEL.escrowSlashed + strip(l.op) },
-    ...who.map(([a]) => ({ to: ADDR.escrow, data: SEL.helperEscrowOf + strip(l.op) + addrWord(a) })),
-  ]));
-  const w = (i) => (r[i] ? wordAt(r[i], 0) : 0n), out = [];
-  locks.forEach((l, i) => {
-    const minted = w(i * n) === 1n, redeemed = w(i * n + 1) === 1n;
-    if (w(i * n + 2) === 1n || (minted && !redeemed)) return;
-    who.forEach(([a, via], j) => { const share = w(i * n + 3 + j); if (share > 0n) out.push({ ...l, share, via, minted }); });
-  });
+// Every lock this key has made and every bond its accounts posted, however they were posted, with what each bond can do
+// now and which contract hands it back (pool-ux cbtcBonds). One reading per key, shared by the borrow sheet and the
+// dashboard: read in the background once the key is open, again every ten minutes, and at once after a bond changes.
+const BONDS = { pub: null, acc: '', at: 0, data: null, p: null };
+const bondSeen = () => `tacit-lite-bonds-seen-v1:${S.key?.pubHex}`, bondAck = () => `tacit-lite-bonds-ack-v1:${S.key?.pubHex}`;
+const bondVia = (acct) => (S.acct && acct === S.acct.address.toLowerCase() ? 'tacit' : S.wallet && acct === S.wallet.toLowerCase() ? 'wallet' : null);
+const bondsNow = () => (BONDS.pub === S.key?.pubHex ? BONDS.data : null);
+function loadBonds(fresh = false) {
+  const k = S.key?.pubHex, acc = [S.acct?.address, S.wallet].filter(Boolean).join(' ').toLowerCase();
+  if (!k) return Promise.resolve(null);
+  if (BONDS.pub !== k) Object.assign(BONDS, { pub: k, acc, at: 0, data: null, p: null });
+  if (BONDS.acc !== acc) Object.assign(BONDS, { acc, at: 0 });   // a wallet connected or left: its bonds are read again
+  // A read already under way is shared, except by one asked for after an action: that read began before the action, so a
+  // fresh one follows it.
+  if (BONDS.p) return fresh ? BONDS.p.catch(() => {}).then(() => loadBonds(true)) : BONDS.p;
+  if (!fresh && Date.now() - BONDS.at < 10 * 60e3) return Promise.resolve(BONDS.data);
+  const p = BONDS.p = (async () => {
+    const r = await (await getUx()).cbtcBonds(walletPriv(), { accounts: [S.acct?.address, S.wallet].filter(Boolean) });
+    if (S.key?.pubHex !== k) return null;
+    Object.assign(BONDS, { at: Date.now(), data: r });
+    bondNews(r);
+    dashSoon();
+    rerender('borrow');
+    return r;
+  })().catch((e) => { if (BONDS.pub === k) BONDS.at = Date.now() - 9 * 60e3; throw e; })   // a failed read is tried again in a minute
+    .finally(() => { if (BONDS.p === p) BONDS.p = null; });
+  p.catch(() => {});
+  return p;
+}
+// What the key's bonds ask of it: one that can come back, one forfeit to the insurance reserve, and (while the engine's
+// margin call is armed) one short of what the engine asks for.
+function bondNotes(r = bondsNow()) {
+  const out = [];
+  for (const l of r?.locks || []) {
+    const take = l.bonds.filter((b) => b.take && bondVia(b.account));
+    if (take.length) out.push({ id: `take:${l.op}`, kind: 'take', l, amt: take.reduce((s, b) => s + b.share, 0n) });
+    if (l.state === 'forfeit') out.push({ id: `lost:${l.op}`, kind: 'lost', l, amt: l.total });
+    if (l.health && !l.health.healthy) out.push({ id: `short:${l.op}:${l.health.flaggedAt}`, kind: 'short', l, amt: l.health.want - l.health.have });
+  }
   return out;
+}
+const bondDue = (t) => new Date(Number(t) * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const bondText = (n) => (n.kind === 'take' ? `A bond of ${fmt(n.amt, 18, 5)} wstETH can come back to you.`
+  : n.kind === 'lost' ? `A lock was spent on Bitcoin before its cBTC was redeemed, so its ${fmt(n.amt, 18, 5)} wstETH bond goes to the insurance reserve.`
+  : `A bond is ${fmt(n.amt, 18, 5)} wstETH short of what the engine asks for. Top it up${n.l.health.due ? ` by ${bondDue(n.l.health.due)}` : ''}, or it can go to the insurance reserve.`);
+// Each notice is announced once: a toast here, and a system notification while this tab is in the background and
+// notifications are on. The dashboard keeps showing it for as long as it holds.
+function bondNews(r) {
+  const seen = new Set(store.get(bondSeen())?.ids || []), fresh = bondNotes(r).filter((n) => !seen.has(n.id));
+  if (!fresh.length) return;
+  for (const n of fresh) {
+    toast(bondText(n), n.kind !== 'take', 12000);
+    if (document.hidden && store.get(NOTIFY_KEY) && typeof Notification === 'function' && Notification.permission === 'granted') {
+      try { const o = new Notification('Borrow on Bitcoin', { body: bondText(n), tag: n.id, icon: '/favicon.svg' }); o.onclick = () => { focus(); openSheet('borrow'); o.close(); }; } catch {}
+    }
+  }
+  store.set(bondSeen(), { ids: [...seen, ...fresh.map((n) => n.id)].slice(-200) });
+}
+// The sheet's view of every bond: a line per lock with what its bond does, a way to take back each one that can come
+// back, and the notices that go with them.
+function bondsBlock() {
+  const locks = (bondsNow()?.locks || []).filter((l) => l.total > 0n || l.bonds.length);
+  if (!locks.length) return '';
+  const what = { pending: 'not minted yet, can come back', backing: 'backs your cBTC until you redeem', free: 'can come back', forfeit: 'forfeit', slashed: 'in the insurance reserve' };
+  const link = (l) => (l.txid ? html`<a href="${MEMPOOL}/tx/${l.txid}" target="_blank" rel="noopener">${short(l.txid, 6)} ↗</a>` : html`<span class="mono">${short(l.op, 6)}</span>`);
+  const everyday = locks.filter((l) => l.everyday).length;
+  return html`<div class="blk" id="bw-bonds">
+    <div class="lbl"><span>Your bonds</span></div>
+    ${locks.filter((l) => l.state === 'forfeit').map((l) => html`<div class="callout bad"><span>Lock ${link(l)} was spent on Bitcoin before its cBTC was redeemed, so its ${fmt(l.total, 18, 5)} wstETH bond can't come back. It goes to the insurance reserve, which backs the ${fmt(l.vBtc, 8, 8)} cBTC minted on it.</span></div>`)}
+    ${locks.filter((l) => l.health && !l.health.healthy).map((l) => html`<div class="callout bad"><span>Lock ${link(l)}: its bond is ${fmt(l.health.want - l.health.have, 18, 5)} wstETH short of what the engine asks for. Top it up${l.health.due ? ` by ${bondDue(l.health.due)}` : ''}, or it can go to the insurance reserve.</span><button class="btn ghost" type="button" data-bond-topup="${l.op}">Top up</button></div>`)}
+    ${locks.map((l) => html`<div class="kv"><span>${l.vBtc ? `${fmt(l.vBtc, 8, 8)} BTC` : 'Lock'} · ${link(l)}${l.everyday ? ' · everyday address' : ''}</span><b class="${l.state === 'forfeit' ? 'err' : ''}">${fmt(l.total, 18, 5)} wstETH · ${what[l.state]}</b></div>
+      ${l.bonds.filter((b) => b.take && bondVia(b.account)).map((b) => html`<button class="btn ghost" type="button" data-bond-take="${l.op}|${b.contract}|${b.account}">Take back ${fmt(b.share, 18, 5)} wstETH to your ${bondVia(b.account) === 'tacit' ? 'Tacit account' : 'wallet'}</button>`)}`)}
+    ${everyday ? html`<p class="note">${everyday === 1 ? 'One lock holds its' : `${everyday} locks hold their`} BTC at your everyday Bitcoin address, where early locks put it. This app never spends it, but another Bitcoin wallet using this key would see it as spendable, and spending it gives up its bond. Keep this key out of other Bitcoin wallets until you redeem.</p>` : ''}
+    <p class="note">A bond comes back to the account that posted it before its lock is minted against, or once the lock is redeemed. Spending a lock's BTC any other way gives its bond to the insurance reserve.</p>
+  </div>`;
 }
 // What a lock costs on top of the BTC it locks: its two transactions' fees at the next-block rate, and its dust output.
 async function lockPad() {
@@ -3937,7 +3990,7 @@ async function readBorrow(fresh, current) {
     ...(cached && lockId(cached) === lockId(next) ? { minted: cached.minted, borrowed: cached.borrowed, borrowedAt: cached.borrowedAt } : {}) };
   if (rec) for (const k of ['minted', 'borrowed', 'borrowedAt']) if (rec[k] === undefined) delete rec[k];
   if (JSON.stringify(rec) !== JSON.stringify(cached)) store.set(key, rec);
-  const bondsP = findBonds(t, priv, rec).catch(() => null);
+  const bondsP = loadBonds(fresh).catch(() => null);
   const lm = await lmP;
   if (!same()) return;
   LOCK.lm = lm;
@@ -3992,9 +4045,9 @@ async function readBorrow(fresh, current) {
       if (JSON.stringify(cached) !== JSON.stringify(rec)) { store.set(key, cached); st.rec = rec = cached; }
     }
   }
-  const bonds = (await bondsP) ?? LOCK.bonds;
+  await bondsP;
   if (!same()) return;
-  LOCK.rec = st.rec; LOCK.state = st; LOCK.bonds = bonds;
+  LOCK.rec = st.rec; LOCK.state = st;
   dashSoon();
 }
 load.borrow = () => loadBorrow();
@@ -4093,12 +4146,8 @@ render.borrow = () => {
       ${LOCK.list.map((l) => html`<div class="kv"><span>${fmt(BigInt(l.vBtc), 8, 8)} BTC · <a href="${MEMPOOL}/tx/${l.lockTxid}" target="_blank" rel="noopener">${short(l.lockTxid, 6)} ↗</a></span>
         <b>${rec && lockId(l) === lockId(rec) ? html`${lockNext(l)} · shown above` : html`${lockNext(l)} <button class="link" type="button" data-pick="${lockId(l)}">Show</button>`}</b></div>`)}
     </div>` : ''}
-    ${LOCK.bonds?.length ? html`<div class="blk">
-      <div class="lbl"><span>Bonds you can take back</span></div>
-      ${LOCK.bonds.map((b, i) => html`<div class="kv"><span>Lock <a href="${MEMPOOL}/tx/${b.txid}" target="_blank" rel="noopener">${short(b.txid, 6)} ↗</a>, from your ${b.via === 'tacit' ? 'Tacit account' : 'wallet'}</span><b>${fmt(b.share, 18, 5)} wstETH</b></div>
-        <button class="btn ghost" type="button" data-reclaim="${i}">Take it back</button>`)}
-      <p class="note">A bond comes back to the account that posted it while its lock has not been minted against, or once the lock is redeemed. Taking back the bond of a lock that is not minted yet means minting it waits for a new bond.</p>
-    </div>` : ''}
+    ${bondsBlock()}
+    <button type="button" id="bw-see-bonds" hidden></button>
     <div class="blk" id="bw-send" hidden></div>
     <div class="status" role="status" id="bw-status"></div>`);
   const status = $('#bw-status');
@@ -4128,17 +4177,42 @@ render.borrow = () => {
     } catch (e) { sayErr(status, e); }
   });
   wireFinish();
-  $$('[data-reclaim]', el).forEach((b) => b.onclick = () => busy(b, async () => {
-    const x = LOCK.bonds[Number(b.dataset.reclaim)];
+  // A bond goes back through the contract that holds it (the escrow helper, the earlier helper, or the engine), sent from
+  // the account that posted it.
+  $$('[data-bond-take]', el).forEach((btn) => btn.onclick = () => busy(btn, async () => {
+    const [op, contract, account] = btn.dataset.bondTake.split('|');
+    const b = bondsNow()?.locks.find((l) => l.op === op)?.bonds.find((x) => x.contract === contract && x.account === account);
     try {
-      const hash = await sendTx({ to: ADDR.escrow, data: SEL.reclaimEscrow + strip(x.op), via: x.via, label: `Take back a ${fmt(x.share, 18, 5)} wstETH bond` });
+      if (!b?.take) throw new Error('This bond can no longer be taken back. Its lock may have been minted against since.');
+      const via = bondVia(b.account);
+      const hash = await sendTx({ to: b.take.to, data: b.take.data, via, label: `Take back a ${fmt(b.share, 18, 5)} wstETH bond` });
       say(status, html`Taking the bond back… ${txLink(hash)}`);
       await waitTx(hash);
-      say(status, html`<span class="ok">The bond is back in your ${x.via === 'tacit' ? 'Tacit account' : 'wallet'} as wstETH.</span> ${txLink(hash)}`);
+      say(status, html`<span class="ok">The bond is back in your ${via === 'tacit' ? 'Tacit account' : 'wallet'} as wstETH.</span> ${txLink(hash)}`);
       toast('Bond taken back');
       await loadBorrow(true); rerender('borrow');
     } catch (e) { sayErr(status, e); }
   }));
+  // A bond the armed margin call finds short is topped up to 1.1x what the engine asks, from the account that pays here.
+  $$('[data-bond-topup]', el).forEach((btn) => btn.onclick = () => busy(btn, async () => {
+    const l = bondsNow()?.locks.find((x) => x.op === btn.dataset.bondTopup);
+    try {
+      if (!l?.health) throw new Error('This bond no longer needs topping up.');
+      const gapWst = l.health.want * 11n / 10n - l.health.have;
+      if (gapWst <= 0n) throw new Error('This bond no longer needs topping up.');
+      const value = wordAt(await ethCall(ADDR.wsteth, SEL.stEthPerWst + word(gapWst)), 0);
+      const hash = await sendTx({ to: ADDR.escrow, data: SEL.postEscrowWithETH + strip(l.op), value, label: `Top up a bond by ${fmt(value, 18, 5)} ETH` });
+      say(status, html`Topping up the bond… ${txLink(hash)}`);
+      await waitTx(hash);
+      say(status, html`<span class="ok">Bond topped up.</span> ${txLink(hash)}`);
+      toast('Bond topped up');
+      await loadBorrow(true); rerender('borrow');
+    } catch (e) { sayErr(status, e); }
+  }));
+  $('#bw-see-bonds')?.addEventListener('click', () => $('#bw-bonds')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+  // A forfeit shown here has been seen: the dashboard stops pointing at it.
+  const lost = bondNotes().filter((n) => n.kind === 'lost').map((n) => n.id);
+  if (lost.length) { const ack = new Set(store.get(bondAck())?.ids || []); if (lost.some((id) => !ack.has(id))) { store.set(bondAck(), { ids: [...ack, ...lost].slice(-200) }); dashSoon(); } }
   $$('[data-copy]', el).forEach((b) => b.onclick = () => copy(b.dataset.copy));
   $$('[data-pick]', el).forEach((b) => b.onclick = () => busy(b, async () => {
     LOCK.pick = b.dataset.pick;
@@ -4570,7 +4644,7 @@ function dashItems() {
   return out;
 }
 // What needs the user now, each a line with the button that does it in its sheet.
-const DASH_DO = { eth: ['private', 'eth', 'v1-finish'], tac: ['tac', 'tac', 'tac-finish'], borrow: ['borrow', 'borrow', 'bw-finish'], claim: ['private', 'eth', 'v1-claim'], back: ['private', 'eth', 'v1-back'] };
+const DASH_DO = { eth: ['private', 'eth', 'v1-finish'], tac: ['tac', 'tac', 'tac-finish'], borrow: ['borrow', 'borrow', 'bw-finish'], claim: ['private', 'eth', 'v1-claim'], back: ['private', 'eth', 'v1-back'], bonds: ['borrow', 'borrow', 'bw-see-bonds'] };
 function paintDash() {
   const id = dashId(), sec = $('#dash');
   if (!id) { sec.hidden = true; DASH.id = null; DASH.view = ''; return; }
@@ -4598,6 +4672,14 @@ function paintDash() {
   const [lm, lb] = [lockList('claim').length, lockList('refund').length];
   if (k && LK.pub === k && lm) due.push([`${lm === 1 ? 'A private payment was' : `${lm} private payments were`} sent to you.`, 'claim', 'Claim']);
   if (k && LK.pub === k && lb) due.push([`${lb === 1 ? 'A private send was' : `${lb} private sends were`} never claimed and can come back.`, 'back', 'Take back']);
+  if (k) {
+    loadBonds().catch(() => {});
+    const notes = bondNotes(), ack = new Set(store.get(bondAck())?.ids || []);
+    const low = notes.filter((n) => n.kind === 'short'), take = notes.filter((n) => n.kind === 'take'), lost = notes.filter((n) => n.kind === 'lost' && !ack.has(n.id));
+    if (low.length) due.push([low.length === 1 ? bondText(low[0]) : `${low.length} bonds are short of what the engine asks for. Top them up, or they can go to the insurance reserve.`, 'bonds', 'Top up']);
+    if (take.length) due.push([take.length === 1 ? bondText(take[0]) : `${take.length} bonds, ${fmt(take.reduce((s, n) => s + n.amt, 0n), 18, 5)} wstETH in all, can come back to you.`, 'bonds', 'Take back']);
+    if (lost.length) due.push([lost.length === 1 ? bondText(lost[0]) : `${lost.length} locks were spent on Bitcoin before their cBTC was redeemed, so their bonds go to the insurance reserve.`, 'bonds', 'See']);
+  }
   const dueHtml = html`${due.map(([t, go, label]) => html`<div class="callout"><span>${t}</span><button class="btn ghost" type="button" data-dash-do="${go}">${label}</button></div>`)}`.s;
   const gridHtml = html`${items.map(cell)}`.s, view = dueHtml + gridHtml;
   sec.hidden = false;

@@ -52,7 +52,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,mainbond,locks,repay,csend,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,activity,receipts,stats,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,bonds,mainbond,locks,repay,csend,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -437,11 +437,55 @@ await step('borrow', async () => {
   await shot(page, 'borrow');
   ok(/Bond posted/.test(await text(page, '#toast-container')), `borrow: the bond posts through the helper ${await text(page, '#bw-status')}`);
   const WSTETH = '0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0', wst = async (x) => BigInt(await rpc('eth_call', [{ to: WSTETH, data: '0x70a08231' + addrWord(x) }, 'latest']));
-  await page.waitForSelector('[data-reclaim]', { timeout: 120000 });
+  await page.waitForSelector('[data-bond-take]', { timeout: 120000 });
+  ok(/not minted yet, can come back/.test(await text(page, '#bw-bonds')), `borrow: the bond shows under Your bonds as one that can come back (${(await text(page, '#bw-bonds')).slice(0, 120)})`);
   const w0 = await wst(A0);
-  await page.click('[data-reclaim]');
+  await page.click('[data-bond-take]');
   await chainUntil(async () => (await wst(A0)) > w0, 120000);
   ok((await wst(A0)) > w0, `borrow: a bond on a lock not minted comes back to the account that posted it ${await text(page, '#bw-status')}`);
+});
+
+// A bond whose lock the pool records as minted on and then spent on Bitcoin (the pool's own flags for a fixture lock,
+// set on the fork) is forfeit: the dashboard says so, the borrow sheet shows it with no way to take it back, and the
+// dashboard's notice clears once the sheet has shown it.
+await step('bonds', async () => {
+  const HELPER = '0x000000008eCD09f922C9FbbDD9ACA5aE8F0beBfA', POOL = '0x000000000Ed1eabD231Be41d93b719056F7febFC';
+  const OP = Buffer.from(keccak_256(Buffer.concat([Buffer.from('cd'.repeat(32), 'hex'), Buffer.from([1, 0, 0, 0])]))).toString('hex');
+  const slot = (n) => '0x' + Buffer.from(keccak_256(Buffer.from(OP + word(n), 'hex'))).toString('hex');
+  const flag = (n, v) => rpc('anvil_setStorageAt', [POOL, slot(n), '0x' + word(v)]);   // 123 lock sats, 125 spent, 127 minted
+  const h = await rpc('eth_sendTransaction', [{ from: A0, to: HELPER, data: '0xc0e2d9a1' + OP, value: '0x' + (10n ** 15n).toString(16) }]);
+  await chainUntil(async () => (await rpc('eth_getTransactionReceipt', [h]))?.status === '0x1', 60000);
+  await flag(123, 20000); await flag(127, 1); await flag(125, 1);
+  try {
+    // The same key the borrow step opened, reopened from the wallet sheet if the reload closed it (the borrow sheet would
+    // mark the forfeit seen before the dashboard could show it).
+    await page.goto(url + '#wallet');
+    await page.reload();                                             // a new page: nothing read before the flags were set
+    await page.waitForSelector('#wallet-body [data-in], #wallet-dot.on', { state: 'attached', timeout: 60000 });
+    if (!(await page.$('#wallet-dot.on'))) {
+      await page.click((await page.$('#wallet-body [data-in="known"]')) ? '#wallet-body [data-in="known"]' : '#wallet-body [data-in="eth"]');
+      await until(page, () => !!document.querySelector('#wallet-dot.on'), null, 60000);
+    }
+    await page.keyboard.press('Escape');
+    const due = () => page.evaluate(() => document.querySelector('#dash-due')?.textContent || '');
+    await until(page, () => /spent on Bitcoin before its cBTC was redeemed/.test(document.querySelector('#dash-due')?.textContent || ''), null, 120000)
+      .catch(async () => { throw new Error(`no forfeit notice on the dashboard (${(await due()).slice(0, 160)})`); });
+    ok(/insurance reserve/.test(await due()), 'bonds: the dashboard says a bond was forfeit, and where it goes');
+    ok(/spent on Bitcoin before its cBTC was redeemed/.test(await text(page, '#toast-container')), 'bonds: the forfeit is announced once when it is first seen');
+    await page.click('[data-dash-do="bonds"]');
+    await until(page, () => /forfeit/.test(document.querySelector('#bw-bonds')?.textContent || ''), null, 120000);
+    ok(/was spent on Bitcoin before its cBTC was redeemed/.test(await text(page, '#bw-bonds .callout.bad')), 'bonds: the borrow sheet shows the forfeit bond with a notice');
+    await page.$eval('#bw-bonds', (e) => e.scrollIntoView({ block: 'start' }));
+    await shot(page, 'bonds');
+    ok(!(await page.$(`[data-bond-take^="0x${OP}"]`)), 'bonds: a forfeit bond offers no take-back');
+    await page.keyboard.press('Escape');
+    await until(page, () => !/spent on Bitcoin before its cBTC was redeemed/.test(document.querySelector('#dash-due')?.textContent || ''), null, 30000).catch(() => {});
+    ok(!/spent on Bitcoin before its cBTC was redeemed/.test(await due()), 'bonds: once the sheet has shown it, the dashboard stops pointing at it');
+  } finally {
+    // The fixture lock goes back to never recorded, and the wallet takes its bond back.
+    await flag(125, 0); await flag(127, 0); await flag(123, 0);
+    await rpc('eth_sendTransaction', [{ from: A0, to: HELPER, data: '0xc5211d27' + OP }]);
+  }
 });
 
 // tacit.finance's own Borrow tab: a pending cBTC lock asks for its bond, the bond posts through the escrow helper from
@@ -503,6 +547,9 @@ await step('mainbond', async () => {
     await chainUntil(async () => (await call(ENGINE, '0xe06e89c9' + OP)) > 0n, 120000).catch(() => {});
     const [total, need] = await Promise.all([call(ENGINE, '0xe06e89c9' + OP), call(ENGINE, '0x034448ed' + word(20000))]);
     ok(need > 0n && total >= need, `mainbond: the bond is posted for the lock from the Tacit account (${total} of ${need} wstETH wei) ${await text(r.page, '#cdp-cbtc-status')}`);
+    await until(r.page, () => /not minted yet, can come back/.test(document.querySelector('#cdp-cbtc-bonds')?.textContent || ''), null, 120000).catch(() => {});
+    const bondsTxt = (await text(r.page, '#cdp-cbtc-bonds')).replace(/\s+/g, ' ');
+    ok(/not minted yet, can come back/.test(bondsTxt) && !!(await r.page.$('#cdp-cbtc-bonds .cbtc-bond-take')), `mainbond: the Borrow tab lists the bond, with a way to take it back (${bondsTxt.slice(0, 140)})`);
     await rowIs(/Bonded\./);
     [s, b] = await row();
     ok(/Minting opens once the reflection records this lock/.test(s) && b === 'Waiting', `mainbond: then it waits for the reflection (${s} [${b}])`);
