@@ -65,8 +65,11 @@ function errSay(id, e) {
   if (!/^Cancelled/.test(msg)) console.warn('[tac]', id, e);
 }
 
+// One action at a time: they share the wallet's key and the prover. A click that arrives while something
+// else is running has to say so — swallowing it silently reads as a dead button, which is exactly how it
+// looked while a background scan held the lock.
 async function busy(btn, id, fn) {
-  if (busyId) return;
+  if (busyId) { say(id, busyId === id ? 'Already working on that…' : 'Finishing the last action first — try again in a moment.'); return; }
   busyId = id;
   const wasDisabled = btn.disabled;
   btn.disabled = true; btn.setAttribute('aria-busy', 'true');
