@@ -409,6 +409,12 @@ await step('borrow', async () => {
   await until(page, () => /Bond posted/.test(document.querySelector('#toast-container')?.textContent || '') || /err/.test(document.querySelector('#bw-status')?.innerHTML || ''));
   await shot(page, 'borrow');
   ok(/Bond posted/.test(await text(page, '#toast-container')), `borrow: the bond posts through the helper ${await text(page, '#bw-status')}`);
+  const WSTETH = '0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0', wst = async (x) => BigInt(await rpc('eth_call', [{ to: WSTETH, data: '0x70a08231' + addrWord(x) }, 'latest']));
+  await page.waitForSelector('[data-reclaim]', { timeout: 120000 });
+  const w0 = await wst(A0);
+  await page.click('[data-reclaim]');
+  await chainUntil(async () => (await wst(A0)) > w0, 120000);
+  ok((await wst(A0)) > w0, `borrow: a bond on a lock not minted comes back to the account that posted it ${await text(page, '#bw-status')}`);
 });
 
 // The tacit1 address of a key, derived the way tacit.finance does (BIP-352 scan key, one root).

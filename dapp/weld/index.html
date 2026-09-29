@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-pLy2IWUVNf574P1Dc4Dwet07e4w0aSGDy/gAh0gk7Ik=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-qsh/aOzBRkj6WFrdwcDObXne9hpmJt58rY6Py6OxW9s=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -562,7 +562,7 @@ const SEL = {
   totalStaked: '817b1cd2', rewardRate: '7b0a47ee', periodFinish: 'ebe2b12b', staked: '98807d84', earned: '008cc262',
   previewZap: 'e7cddab0', previewAdd: 'e03ec807', zapETH: '8703a0d8', addAndStake: '6d15c09b', addAndStakeWithPermit: 'ddd9f3fb',
   claim: '4e71d92d', exitAndRemove: 'bccbe38a', aggregate3: '82ad56cb', timestamp: '0f28c97d',
-  wtacWithdraw: '00f714ce', transfer: 'a9059cbb', zapToken: '9376f34e', zapTokenWithPermit: '51291e77', withdrawAndRemove: 'bd8196a9', withdrawTo: '47d1eebd', exitTo: '6ae36ea7', stake: 'a694fc3a', stakeWithPermit: 'ecd9ba82',
+  wtacWithdraw: '00f714ce', transfer: 'a9059cbb', cbtcLockRedeemed: 'b5229671', escrowSlashed: 'f2d02700', helperEscrowOf: '78808388', reclaimEscrow: 'c5211d27', zapToken: '9376f34e', zapTokenWithPermit: '51291e77', withdrawAndRemove: 'bd8196a9', withdrawTo: '47d1eebd', exitTo: '6ae36ea7', stake: 'a694fc3a', stakeWithPermit: 'ecd9ba82',
   wrapWithTip: 'fc24c435', postEscrowWithETH: 'c0e2d9a1', requiredEscrow: '034448ed', stEthPerWst: 'bb2952fc',
   escrowSufficient: '058e18b0', escrowTotal: 'e06e89c9', cbtcLockVBtc: '7cea1c1a', cbtcMinted: 'e2c2a40c', btcToUsd: 'd5901347', cdpRatioBps: '4827ecb3', liqRatioBps: '1432d93f', rate: '2c4e722e',
 };
@@ -2999,7 +2999,7 @@ function renderShielded(el, p) {
 
 // ── borrow on Bitcoin: lock → bond → mint cBTC → borrow cUSD ─────────────────────────────────────────────
 // The lock record holds no secret: the cBTC note's blinding re-derives from the key and the lock's funding anchor.
-const LOCK = { rec: null, state: null, lm: null };
+const LOCK = { rec: null, state: null, lm: null, bonds: [] };
 const lockKey = () => `tacit-lite-cbtc-v1:${S.key.pubHex}`;
 const outpointOf = (t, rec) => t.pool.outpointKey('0x' + rec.lockTxid.match(/../g).reverse().join(''), rec.lockVout);
 const getLockMod = lazy(async () => {
@@ -3024,6 +3024,31 @@ async function findLock(t, priv = walletPriv()) {
     return { lockTxid: tx.txid, lockVout: vout, vBtc: String(tx.vout[vout].value), anchor: { txid: commit.vin[0].txid, vout: commit.vin[0].vout }, at: (tx.status?.block_time || Date.now() / 1000) * 1000 };
   }
   return null;
+}
+// Every bond that can come back, from the key's whole lock history and the chain (the lock record follows only the newest
+// lock): the escrow helper refunds the account that posted a bond once its lock was never minted against, or has been
+// redeemed. A minted lock that is still outstanding keeps its bond, and a slashed one has none left.
+async function findBonds(t, priv = walletPriv(), rec = null) {
+  const who = [...new Map([[S.acct?.address, 'tacit'], [S.wallet, 'wallet']].filter(([a]) => a).map(([a, via]) => [a.toLowerCase(), via]))];
+  if (!who.length) return [];
+  const { makeBtcHistoryProvider } = await import('/confidential-recovery-btc.js');
+  const h = makeBtcHistoryProvider({ sha256, hrp: 'bc' }), spk = h.walletScripts(priv).lock, want = bytesToHex(spk);
+  const locks = [];
+  for (const tx of await h.txsOf(spk)) (tx.vout || []).forEach((o, vout) => { if (String(o.scriptpubkey).toLowerCase() === want) locks.push({ txid: tx.txid, vout, op: outpointOf(t, { lockTxid: tx.txid, lockVout: vout }) }); });
+  if (rec && !locks.some((l) => l.txid === rec.lockTxid && l.vout === rec.lockVout)) locks.push({ txid: rec.lockTxid, vout: rec.lockVout, op: outpointOf(t, rec) });   // history can trail a fresh lock
+  if (!locks.length) return [];
+  const n = 3 + who.length;
+  const r = await multicall(locks.flatMap((l) => [
+    { to: ADDR.pool, data: SEL.cbtcMinted + strip(l.op) }, { to: ADDR.pool, data: SEL.cbtcLockRedeemed + strip(l.op) }, { to: ADDR.engine, data: SEL.escrowSlashed + strip(l.op) },
+    ...who.map(([a]) => ({ to: ADDR.escrow, data: SEL.helperEscrowOf + strip(l.op) + addrWord(a) })),
+  ]));
+  const w = (i) => (r[i] ? wordAt(r[i], 0) : 0n), out = [];
+  locks.forEach((l, i) => {
+    const minted = w(i * n) === 1n, redeemed = w(i * n + 1) === 1n;
+    if (w(i * n + 2) === 1n || (minted && !redeemed)) return;
+    who.forEach(([a, via], j) => { const share = w(i * n + 3 + j); if (share > 0n) out.push({ ...l, share, via, minted }); });
+  });
+  return out;
 }
 // What a lock costs on top of the BTC it locks: its two transactions' fees at the next-block rate, and its dust output.
 async function lockPad() {
@@ -3100,8 +3125,9 @@ async function loadBorrow(fresh = false) {
       if (JSON.stringify(cached) !== JSON.stringify(rec)) { store.set(key, cached); st.rec = rec = cached; }
     }
   }
+  const bonds = await findBonds(t, priv, st.rec).catch(() => LOCK.bonds);
   if (!same()) return;
-  LOCK.rec = st.rec; LOCK.state = st;
+  LOCK.rec = st.rec; LOCK.state = st; LOCK.bonds = bonds;
 }
 load.borrow = () => loadBorrow();
 render.borrow = () => {
@@ -3158,8 +3184,25 @@ render.borrow = () => {
         </div>
       </li>
     </ol>
+    ${LOCK.bonds?.length ? html`<div class="blk">
+      <div class="lbl"><span>Bonds you can take back</span></div>
+      ${LOCK.bonds.map((b, i) => html`<div class="kv"><span>Lock <a href="${MEMPOOL}/tx/${b.txid}" target="_blank" rel="noopener">${short(b.txid, 6)} ↗</a>, from your ${b.via === 'tacit' ? 'Tacit account' : 'wallet'}</span><b>${fmt(b.share, 18, 5)} wstETH</b></div>
+        <button class="btn ghost" type="button" data-reclaim="${i}">Take it back</button>`)}
+      <p class="note">A bond comes back to the account that posted it while its lock has not been minted against, or once the lock is redeemed. Taking back the bond of a lock that is not minted yet means minting it waits for a new bond.</p>
+    </div>` : ''}
     <div class="status" role="status" id="bw-status"></div>`);
   const status = $('#bw-status');
+  $$('[data-reclaim]', el).forEach((b) => b.onclick = () => busy(b, async () => {
+    const x = LOCK.bonds[Number(b.dataset.reclaim)];
+    try {
+      const hash = await sendTx({ to: ADDR.escrow, data: SEL.reclaimEscrow + strip(x.op), via: x.via });
+      say(status, html`Taking the bond back… ${txLink(hash)}`);
+      await waitTx(hash);
+      say(status, html`<span class="ok">The bond is back in your ${x.via === 'tacit' ? 'Tacit account' : 'wallet'} as wstETH.</span> ${txLink(hash)}`);
+      toast('Bond taken back');
+      await loadBorrow(true); rerender('borrow');
+    } catch (e) { sayErr(status, e); }
+  }));
   $$('[data-copy]', el).forEach((b) => b.onclick = () => copy(b.dataset.copy));
   const fund = $('#bw-fund');
   if (fund) fund.onclick = () => busy(fund, async () => {
