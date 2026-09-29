@@ -26,6 +26,7 @@ import { proveSettle } from './lib/prover.js';
 import { assertMemosMatchProof } from './lib/memo-root.js';
 import { consumedInputs } from './lib/spent-precheck.js';
 import { cbtcMintBlocker } from './lib/cbtc-mint-precheck.js';
+import { cdpBlocker } from './lib/cdp-precheck.js';
 import { settleWallet, settleWallets, publicClient, ethUsdPrice, POOL, POOL_ABI, ROUTER } from './lib/chain.js';
 import { ROUTER_EXIT_ABI, recipeArgs, exitCheck, activationCover } from './lib/exit-activate.js';
 import { quoteRelayFee, provePriceUsd, replenishOnce, drainToSink } from './replenish.js';
@@ -343,12 +344,15 @@ async function skipConsumed(job) {
   return true;
 }
 
-// A cBTC mint the pool's lock gate would refuse can only revert, so it is acked failed without paying for a proof.
+// A cBTC mint the pool's lock gate would refuse, or a cUSD loan or top-up the engine would, can only revert, so it is
+// acked failed without paying for a proof, with the reason.
+const GATED = { cbtcmint: ['cBTC mint', cbtcMintBlocker], cdpmint: ['cUSD loan', cdpBlocker], cdptopup: ['collateral top-up', cdpBlocker] };
 async function skipBlockedMint(job) {
-  const why = await cbtcMintBlocker(job, { client: publicClient, pool: POOL });
+  const gate = GATED[job.type];
+  const why = gate && await gate[1](job, { client: publicClient, pool: POOL });
   if (!why) return false;
   log(`job ${job.jobId} type=${job.type} not proved: ${why}`);
-  await confidentialAck({ jobId: job.jobId, error: `cBTC mint not proved: ${why}` });
+  await confidentialAck({ jobId: job.jobId, error: `${gate[0]} not proved: ${why}` });
   return true;
 }
 

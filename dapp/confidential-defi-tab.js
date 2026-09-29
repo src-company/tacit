@@ -770,7 +770,7 @@ function wireClose(wallet, ux, positions) {
         // The burned debt note is spent under its own secret nullifier key (the harness reads `nk`).
         const debtNotes = picked.map((n) => ({ cx: n.cx, cy: n.cy, value: n.value, blinding: n.blinding, leafIndex: n.leafIndex, path: n.path, owner: n.owner, nk: n.secret }));
         if (sum > debtValue && !window.confirm(`Repaying ${formatUnits(debtValue, debtDecimals)} cUSD uses notes worth ${formatUnits(sum, debtDecimals)}; the extra ${formatUnits(sum - debtValue, debtDecimals)} is not returned. Split a note to the exact amount first to avoid that. Continue anyway?`)) { btn.disabled = false; return; }
-        if (sum < debtValue) { if (statusEl) statusEl.textContent = `Need ${formatUnits(debtValue, debtDecimals)} cUSD to repay; you hold ${formatUnits(sum, debtDecimals)}.`; btn.disabled = false; return; }
+        if (sum < debtValue) { if (statusEl) statusEl.textContent = `Need ${formatUnits(debtValue, debtDecimals)} cUSD to repay; you hold ${formatUnits(sum, debtDecimals)} privately. tacUSD in your account turns back into cUSD under Send → Just hold it privately.`; btn.disabled = false; return; }
         const root = (notes.find((x) => x.asset.toLowerCase() === debtAsset.toLowerCase()) || {}).root;
         // One blinding and nk per released leg, derived from the wallet key and the closed position's nullifier — the leaf owner
         // is H(nk), which is what the guest publishes. The opening (including this nk) also rides the sealed memo, so the notes
