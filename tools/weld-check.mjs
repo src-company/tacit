@@ -1085,6 +1085,25 @@ await step('activity', async () => {
     ok(old2.bad === 'Failed', `activity: a failure older than six hours is left as it was (${old2.text.slice(0, 40)})`);
     ok((await actRows(r.page)).some((x) => /Add 0\.001 ETH/.test(x.text) && /Confirmed/.test(x.text)), 'activity: the list, and each outcome, survives the reload');
     await shot(r.page, 'activity-phone');
+    // A job still in line after a minute says why, from the relay's heartbeat: here, a settle wallet waiting on gas.
+    await r.ctx.route(/\/prover-health\?/, (route) => json(route, { services: { settle: { healthy: true, age_seconds: 20,
+      note: 'settle: settle wallet holds 0.0010 ETH, under the 0.0031 ETH a settle can cost at today’s gas — leaving jobs queued until it is topped up' } } }));
+    served['j-wait'] = { type: 'transfer', status: 'pending' };
+    await sleep(600);
+    await r.page.evaluate(() => {
+      const k = 'tacit-lite-activity-v1', s = JSON.parse(localStorage.getItem(k)), t = Date.now();
+      s.items.unshift({ id: 'job:j-wait', kind: 'job', type: 'transfer', label: 'Private transfer', status: 'pending', at: t - 90e3, up: t - 90e3 });
+      localStorage.setItem(k, JSON.stringify(s));
+    });
+    await r.page.reload();
+    await r.page.waitForSelector('.tile');
+    await openActivity(r.page);
+    const waitOk = await until(r.page, () => /topping up its gas/.test(document.querySelector('[data-act="job:j-wait"]')?.textContent || ''), null, 20000).then(() => true, () => false);
+    const wait = await row('job:j-wait');
+    ok(waitOk && wait.now === 'Queued' && /keeps its place/.test(wait.text), `activity: a job in line past a minute says the relay is waiting on gas, and that it keeps its place (${wait.text.slice(0, 110)})`);
+    served['j-wait'] = { type: 'transfer', status: 'settled', txHash: H('b8') };
+    await until(r.page, () => /Done in/.test(document.querySelector('[data-act="job:j-wait"]')?.textContent || ''), null, 30000).catch(() => {});
+    ok(/Done in/.test((await row('job:j-wait')).text), 'activity: and it reads done once the relay settles it');
     // At most twenty entries are kept, newest first.
     for (let i = 0; i < 22; i++) await fire({ jobId: `j-n${i}`, type: 'transfer', status: 'settled', txHash: H('ab') });
     await sleep(600);

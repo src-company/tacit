@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-F20ha7z4It+78lLgHbCn8L7NIqM4k2UNzOrSdfZd52o=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-iulg7V5ertRmo1bssIgWzXjyVWBjhn2W/t1NuXcFFE0=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -779,6 +779,9 @@ const errText = (e) => {
   if (/insufficient funds/i.test(m)) return 'Not enough ETH for this and its gas.';
   if (/failed to fetch|networkerror|load failed|all rpcs failed/i.test(m)) return 'Could not reach the network. Check your connection and try again.';
   if (/rate.?limit|too many requests|\b429\b|exceeded.*(?:request|quota)|upgrade.*(?:plan|tier)/i.test(m)) return 'That network is busy right now. Try again in a moment.';
+  // The page's wait for a relayed job ran out, not the job: it is still in the relay's queue, and Activity follows it.
+  if (/settle timed out|prove timed out|status polling for job/i.test(m)) return `Still in the relay’s queue. It goes through on its own; follow it in Activity, and don’t send it again.`;
+  if (/relay lost the job/i.test(m)) return 'The relay lost track of this request. Check Activity before sending it again.';
   if (/timed? ?out|timeout/i.test(m)) return 'The network took too long to answer. Try again.';
   return m.replace(/^Error:\s*/, '').slice(0, 240);
 };
@@ -1027,6 +1030,25 @@ async function jobStatus(jobId) {
   if (!r.ok) throw new Error(`relay ${r.status}`);
   return r.json();
 }
+// Why the relay has not picked a job up yet, from its public heartbeat (read at most every 30 seconds): waiting on a
+// gas top-up, busy with another job, or not beating (restarting). Null when all looks normal or it cannot be read.
+const RS = { at: 0, why: null, reading: null };
+function relayWhy() {
+  if (Date.now() - RS.at < 30e3 || RS.reading) return RS.why;
+  RS.reading = fetch(`${API}/prover-health?network=mainnet`, { cache: 'no-store', signal: within(10e3) }).then((r) => r.json()).then((h) => {
+    const st = h?.services?.settle, note = String(st?.note || '');
+    const why = !st || !st.healthy || Number(st.age_seconds) > 600 ? 'down' : /leaving jobs queued/i.test(note) ? 'gas' : /settle: proving/i.test(note) ? 'busy' : null;
+    const changed = why !== RS.why;
+    Object.assign(RS, { at: Date.now(), why });
+    if (changed) paintAct();
+  }).catch(() => { RS.at = Date.now(); }).finally(() => { RS.reading = null; });
+  return RS.why;
+}
+const WAIT_WHY = {
+  gas: 'In line: the relay is topping up its gas before it settles more. It keeps its place and goes through on its own.',
+  down: 'In line: the relay is restarting. It keeps its place and goes through on its own.',
+  busy: 'In line behind another request.',
+};
 // A job is asked about here once no action in this tab is waiting on it (after a reload, or once the action that sent
 // it has stopped), less often as it ages. A job the relay does not know yet is given two minutes to appear.
 function followJob(id) {
@@ -1037,6 +1059,8 @@ function followJob(id) {
       if (!it || ended(it)) return;
       const age = Date.now() - it.at;
       if (age > 86400e3) { actPut(id, { status: 'unknown', err: 'The relay gave no answer for a day.' }); return; }
+      // Past a minute in line, say why the relay has not picked it up (redrawn once here, then on any change of reason).
+      if (it.status === 'pending' && age > 60e3) { relayWhy(); if (!it.slow) { it.slow = true; paintAct(); } }
       if (!(SESS.has(id) && anyBusy())) {
         const st = await jobStatus(id.slice(4)).catch(() => null);
         if (st?.status && (st.status !== 'unknown' || age > 120e3)) actPut(id, { status: st.status, hash: st.txHash || undefined, err: st.error || undefined });
@@ -1162,7 +1186,8 @@ function actFoot(it) {
   if (it.status === 'failed' || it.status === 'unknown') return html`<div class="actr-f err">${linked(failText(it))}</div>`;
   const took = it.end ? clock(it.end - it.at) : '';
   const say_ = {
-    pending: it.kind === 'job' ? 'Waiting for the relay to pick it up.' : it.kind === 'btc' ? html`Waiting for its first Bitcoin confirmation · ${link}` : html`Waiting for it to land · ${link}`,
+    pending: it.kind === 'job' ? (Date.now() - it.at > 60e3 && WAIT_WHY[relayWhy()]) || 'Waiting for the relay to pick it up.'
+      : it.kind === 'btc' ? html`Waiting for its first Bitcoin confirmation · ${link}` : html`Waiting for it to land · ${link}`,
     proving: 'The relay is proving it, then settling it on Ethereum.',
     settled: html`${it.flip ? 'Went through after all' : `Done in ${took}`}${link ? ' · ' : ''}${link}`,
     proven: 'Proved. It lands with the transaction sent from this page.',
