@@ -101,6 +101,8 @@ async function openSales() {
 
 export function mount(host, ctx) {
   const { ensureKey, busy, say, fmt, parseUnits, shieldedTotal, txLink, loadShielded } = ctx;
+  // fmt() groups thousands, which parseUnits rejects — inputs get the ungrouped form.
+  const plain = (u) => fmt(u).replace(/,/g, '');
 
   let mark = null;          // sats per whole TAC
   let book = null;          // open sales on the mainnet book
@@ -134,6 +136,7 @@ export function mount(host, ctx) {
     const T = ctx.T, S = ctx.S;
     const units = parseUnits(amt.value);
     if (units <= 0n) throw new Error('Enter an amount above zero.');
+    await loadShielded();   // a cold unlock has not scanned the pool yet
     if (units > shieldedTotal()) throw new Error('More than your shielded balance.');
     const r = await S.exitToWallet(T, {
       poolWallet: ctx.poolWallet, amount: units, asset: S.TAC_ASSET_MAINNET,
@@ -183,7 +186,7 @@ export function mount(host, ctx) {
         'Shielded TAC out, real bitcoin in — without holding any bitcoin to start. You withdraw, then list at the market price; the buyer settles and pays sats straight to an address you name. That address can be a brand-new wallet, so the sats arrive somewhere with no history at all.'),
 
       el('div', { class: 'lbl' }, el('label', { for: 'sats-amt' }, 'Amount to sell'),
-        el('button', { class: 'link', type: 'button', onclick: () => { amt.value = fmt(shieldedTotal()); recompute(); } }, 'max')),
+        el('button', { class: 'link', type: 'button', onclick: () => { amt.value = plain(shieldedTotal()); recompute(); } }, 'max')),
       el('div', { class: 'amt' }, amt, el('span', { class: 'u' }, 'TAC')),
 
       el('div', { class: 'lbl' }, el('label', { for: 'sats-price' }, 'Price'),

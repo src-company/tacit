@@ -8,7 +8,7 @@
 // then the sender needs no BTC at all and pays the relayer inside the pool. Shields and exits always fund
 // their own carrier, by design, so those need a little BTC in the wallet.
 
-const SATS_URL = '/tac/sats.js?cb=032e8bf8';   // token rewritten by build/build.mjs (TAC_CB_FILES)
+const SATS_URL = '/tac/sats.js?cb=6655b51b';   // token rewritten by build/build.mjs (TAC_CB_FILES)
 const WORKER = 'https://api.tacit.finance';
 const ASSET = 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
 
@@ -21,6 +21,7 @@ let poolWallet = null;
 let pub = { loading: false, notes: [], decimals: 8 };
 let shielded = { loading: false, notes: [] };
 let relayLive = null;
+let relayFee = null;   // the relayer's quoted fee for TAC, in base units
 let markSats = null;   // sats per whole TAC, from the worker's trade-backed mark price
 let btcUsd = null;     // BTC/USD spot, via tacit.js's cached three-source failover
 let busyId = null;
@@ -31,6 +32,12 @@ const fmt = (units, d = DECIMALS) => {
   const whole = s.slice(0, -d).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   const frac = s.slice(-d).replace(/0+$/, '');
   return frac ? `${whole}.${frac}` : whole;
+};
+// fmt() is for reading; this is for writing back into an input, because parseUnits rejects separators.
+const fmtPlain = (units, d = DECIMALS) => {
+  const s = BigInt(units).toString().padStart(d + 1, '0');
+  const frac = s.slice(-d).replace(/0+$/, '');
+  return frac ? `${s.slice(0, -d)}.${frac}` : s.slice(0, -d);
 };
 const parseUnits = (str, d = DECIMALS) => {
   const m = String(str || '').trim().match(/^(\d*)(?:\.(\d*))?$/);
@@ -192,14 +199,9 @@ async function openKnown(k) {
   }
   if (k.mode === 'passkey') {
     if (!prf?.isPasskeyAvailable?.()) throw new Error('Passkeys need a browser that supports them.');
-    const r = await prf.prfLogin({ credentialId: k.credentialId });
-    const hex = T.bytesToHex(r.priv);
-    r.priv.fill(0);
-    await turn(async () => {
-      T.wallet.priv = null; T.wallet.pub = null; T.wallet.mode = null; T.extWallet.state = null;
-      await T.wallet.setPriv(hex);
-    });
-    try { const m = prf.loadPrfMap(); if (k.label && m[k.label]) { m[k.label].lastUsed = Date.now(); prf.savePrfMap(m); } } catch {}
+    // Through prfWallet, never setPriv: setPriv asks for a new passphrase and writes the key under the
+    // local-wallet storage key, which would overwrite a password wallet saved in this browser and lose it.
+    await turn(() => T.prfWallet.login({ credentialId: k.credentialId, label: k.label }));
     return adopt(k.pubHex);
   }
   await turn(async () => {
@@ -223,6 +225,9 @@ async function ensureKey() {
 }
 
 function afterUnlock() {
+  // tacit.js only drops this cache inside ensurePrivkey; these paths open a key without going through it,
+  // so a 30s-stale Map from the previous identity could otherwise be read as this one's holdings.
+  try { T.invalidateHoldingsCache?.(); } catch {}
   poolWallet = S.poolWalletFor(T.wallet.priv, 'mainnet');
   $('recv-addr').value = poolWallet.addressString;
   refreshChip(); renderKnownLine();
@@ -234,6 +239,7 @@ function afterUnlock() {
 
 function lock() {
   if (T) T.wallet.priv = null;
+  try { T.invalidateHoldingsCache?.(); } catch {}
   poolWallet = null;
   shielded = { loading: false, notes: [] };
   pub = { loading: false, notes: [], decimals: DECIMALS };
@@ -327,6 +333,7 @@ async function loadShielded() {
   renderBalances();
 }
 
+const relayFeeUnits = () => (relayLive && relayFee != null ? relayFee : 0n);
 const noteVal = (u) => (typeof u.amount === 'bigint' ? u.amount : BigInt(u.amount));
 const publicTotal = () => pub.notes.reduce((t, u) => t + noteVal(u), 0n);
 const shieldedTotal = () => (shielded.notes || []).filter((n) => !n.spent).reduce((t, n) => t + BigInt(n.value), 0n);
@@ -362,10 +369,24 @@ function renderShieldPicker() {
   if (!pub.notes.length) {
     const o = document.createElement('option');
     o.textContent = unlocked() ? 'No public TAC in this wallet' : 'Unlock to load your TAC';
+    sel.append(o); sel.disabled = true;
+    $('shield-stealth-note').textContent = '';
+    return;
+  }
+  // A stealth-received note sits at P2WPKH(walletPub + b·G) and is spent with its tweaked key; shieldNote
+  // signs with the wallet key alone, so offering one here would broadcast a commit whose reveal is invalid.
+  const shieldable = pub.notes.filter((u) => !u.stealthTweakedSk);
+  const stealthHeld = pub.notes.length - shieldable.length;
+  $('shield-stealth-note').textContent = stealthHeld
+    ? `${stealthHeld} note${stealthHeld === 1 ? '' : 's'} paid to a one-time address ${stealthHeld === 1 ? 'is' : 'are'} in your balance but cannot be shielded from this page yet — spend ${stealthHeld === 1 ? 'it' : 'them'} on tacit.finance first.`
+    : '';
+  if (!shieldable.length) {
+    const o = document.createElement('option');
+    o.textContent = 'No shieldable TAC in this wallet';
     sel.append(o); sel.disabled = true; return;
   }
   sel.disabled = false;
-  [...pub.notes]
+  [...shieldable]
     .sort((a, b) => (noteVal(b) > noteVal(a) ? 1 : noteVal(b) < noteVal(a) ? -1 : 0))
     .forEach((u, i) => {
       const o = document.createElement('option');
@@ -388,7 +409,12 @@ async function loadStats() {
     const spends = feed ? new Set(feed.filter((n) => n.txid).map((n) => n.txid)).size : null;
     $('s-spends').textContent = spends == null ? '—' : spends.toLocaleString('en-US');
   } catch { /* the strip stays dashed; the page still works */ }
-  try { relayLive = !!(await S.poolClientFor('mainnet').relayInfo()); } catch { relayLive = false; }
+  try {
+    const info = await S.poolClientFor('mainnet').relayInfo();
+    relayLive = !!info;
+    const f = info?.fees?.['0x' + S.TAC_ASSET_MAINNET];
+    relayFee = f == null ? null : BigInt(f);
+  } catch { relayLive = false; relayFee = null; }
 }
 
 // ── actions ──
@@ -396,8 +422,10 @@ async function doShield() {
   await ensureKey();
   if (!pub.notes.length) await loadPublic();
   const picked = $('shield-pick').value;
-  const u = pub.notes.find((x) => `${x.utxo.txid}:${x.utxo.vout}` === picked) || pub.notes[0];
-  if (!u) throw new Error('No public TAC in this wallet yet.');
+  const shieldable = pub.notes.filter((x) => !x.stealthTweakedSk);
+  const u = shieldable.find((x) => `${x.utxo.txid}:${x.utxo.vout}` === picked) || shieldable[0];
+  if (!u) throw new Error('No shieldable TAC in this wallet yet.');
+  if (u.stealthTweakedSk) throw new Error('That note was paid to a one-time address and needs its own key to move.');
   const blinding = (() => {
     const v = u.blinding;
     const big = typeof v === 'bigint' ? v : BigInt(/^0x/i.test(String(v)) ? v : '0x' + String(v));
@@ -416,7 +444,13 @@ async function doSend(anchor = null) {
   if (!to) throw new Error('Paste the pool address you are paying.');
   const amount = parseUnits($('send-amt').value);
   if (amount <= 0n) throw new Error('Enter an amount above zero.');
-  if (amount > shieldedTotal()) throw new Error('More than your shielded balance.');
+  if (!shielded.notes.length) await loadShielded();   // a cold unlock has not scanned the pool yet
+  // A relayed payment spends the fee out of the same notes, so it has to fit alongside the amount.
+  if (amount + relayFeeUnits() > shieldedTotal()) {
+    throw new Error(relayFeeUnits() > 0n
+      ? `More than your shielded balance once the relayer's ${fmt(relayFeeUnits())} TAC fee is included.`
+      : 'More than your shielded balance.');
+  }
   const r = await S.payPrivately(T, { poolWallet, to, amount, asset: S.TAC_ASSET_MAINNET, anchor, say: (m) => say('st-send', m) });
   if (r.wait) return waitBox('st-send', r, (tip) => doSend(tip));
   $('send-to').value = ''; $('send-amt').value = ''; renderAmountHints();
@@ -428,6 +462,7 @@ async function doExit(anchor = null) {
   await ensureKey();
   const amount = parseUnits($('exit-amt').value);
   if (amount <= 0n) throw new Error('Enter an amount above zero.');
+  if (!shielded.notes.length) await loadShielded();   // a cold unlock has not scanned the pool yet
   if (amount > shieldedTotal()) throw new Error('More than your shielded balance.');
   const r = await S.exitToWallet(T, { poolWallet, amount, asset: S.TAC_ASSET_MAINNET, anchor, say: (m) => say('st-exit', m) });
   if (r.wait) return waitBox('st-exit', r, (tip) => doExit(tip));
@@ -544,9 +579,9 @@ async function scanEverything(statusId = 'st-recv') {
   const maxInto = (field, statusId) => async () => {
     if (!haveWallet() && !known) return say(statusId, 'Connect a wallet first.');
     if (!shielded.notes.length && !shielded.loading) { await ensureKey(); await loadShielded(); }
-    const total = shieldedTotal();
+    const total = shieldedTotal() - (field === 'send-amt' ? relayFeeUnits() : 0n);
     if (total <= 0n) return say(statusId, 'Nothing shielded yet — shield some TAC first.');
-    $(field).value = fmt(total);
+    $(field).value = fmtPlain(total);
     renderAmountHints();
     say(statusId, '');
   };
