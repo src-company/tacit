@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-4mrSeeedvs/2r7N8oMeqnZnNFyi+wGAxcEjgXjJKRQM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-F20ha7z4It+78lLgHbCn8L7NIqM4k2UNzOrSdfZd52o=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -38,6 +38,8 @@
   --err: #b8341d;
   --scrim: rgba(26,26,26,.36);
   --lift: 0 22px 44px -28px rgba(26,26,26,.45);
+  --skel: rgba(26,26,26,.08);
+  --skel-hi: rgba(26,26,26,.02);
   --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --serif: 'Instrument Serif', Georgia, serif;
   --tap: 44px;
@@ -56,6 +58,8 @@
     --err: #f08a6c;
     --scrim: rgba(0,0,0,.6);
     --lift: 0 22px 44px -28px rgba(0,0,0,.9);
+    --skel: rgba(237,229,207,.07);
+    --skel-hi: rgba(237,229,207,.15);
     color-scheme: dark;
   }
 }
@@ -105,6 +109,59 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hair-2); flex: none; }
 .dot.on { background: var(--ok); }
 .dot.live { background: var(--orange); }
+.top-r { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.chip.act { position: relative; flex: none; justify-content: center; width: 40px; padding: 0; color: var(--mute); }
+.chip.act svg { width: 18px; height: 18px; flex: none; }
+.chip.act.busy { color: var(--orange); }
+.chip.act #act-n { position: absolute; top: -8px; right: -8px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  font: 500 10.5px/18px var(--mono); letter-spacing: 0; text-align: center; color: var(--card); background: var(--ink); }
+
+/* ── loading: a placeholder the size of what it stands for ── */
+.sk { display: inline-block; width: var(--w, 6ch); max-width: 100%; height: .9em; vertical-align: -.08em; border-radius: 2px;
+  background: linear-gradient(90deg, var(--skel) 0 35%, var(--skel-hi) 50%, var(--skel) 65%) 0 0 / 300% 100%; animation: shimmer 1.6s linear infinite; }
+.sk.ln { display: block; height: .75em; margin: .45em 0; }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.stale { color: var(--mute); }
+
+/* ── your Tacit ── */
+.dash { margin: -14px 0 30px; }
+.dash-h { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
+.dash-h h2 { font: 400 26px/1 var(--serif); letter-spacing: -.01em; margin: 0; }
+.dash-h span { font-size: 12px; color: var(--mute); text-align: right; }
+.dash .callout { margin: 0 0 10px; }
+.dash-g { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); }
+.di { display: flex; flex-direction: column; gap: 3px; width: 100%; min-height: 86px; padding: 12px 14px; text-align: left; cursor: pointer;
+  background: var(--card); border: 1px solid var(--hair); transition: border-color .15s, box-shadow .15s; }
+.di:hover { border-color: var(--ink); box-shadow: var(--lift); }
+.di-k { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--mute); letter-spacing: .02em; }
+.di-k .tk { width: 18px; height: 18px; }
+.di-k .dot { margin-left: auto; }
+.di-v { display: block; font: 500 19px/1.25 var(--mono); letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.di-m { display: block; font-size: 11.5px; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.di-m .up { color: var(--ok); }
+.di-v small { font-size: 12px; font-weight: 400; color: var(--mute); letter-spacing: 0; }
+
+/* ── activity ── */
+.acts { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hair); }
+.actr { display: grid; gap: 7px; padding: 13px 0; border-bottom: 1px solid var(--hair); }
+.actr-h { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.actr-h b { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.actr-h span { flex: none; font-size: 12px; color: var(--mute); }
+.stp { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; list-style: none; margin: 0; padding: 0; font-size: 11.5px; color: var(--mute); }
+.stp li { display: inline-flex; align-items: center; gap: 6px; }
+.stp li + li::before { content: ''; width: 14px; height: 1px; margin: 0 8px; background: var(--hair-2); }
+.stp i { width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--hair-2); flex: none; }
+.stp .done, .stp .now { color: var(--ink); }
+.stp .done i { background: var(--ink); border-color: var(--ink); }
+.stp .now i { background: var(--orange); border-color: var(--orange); animation: pulse 1.6s ease-in-out infinite; }
+.stp .bad { color: var(--err); }
+.stp .bad i { background: var(--err); border-color: var(--err); }
+@keyframes pulse { 50% { opacity: .3; } }
+.actr-f { font-size: 12px; color: var(--mute); overflow-wrap: anywhere; }
+.actr-f a { color: var(--ink); }
+.actr-f.err { color: var(--err); }
+.actr-f.err a { color: inherit; }
+.act-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 16px; margin-top: 12px; font-size: 12px; color: var(--mute); }
 
 /* ── hero ── */
 .hero { padding: 64px 0 44px; }
@@ -294,8 +351,13 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
 .toasts:not(:popover-open) { display: none; }
 .toast { max-width: 520px; padding: 10px 16px; font-size: 12.5px; color: var(--card); background: var(--ink); pointer-events: auto; box-shadow: var(--lift); animation: rise .2s ease-out; }
 .toast.bad, .toast.error { background: var(--err); color: var(--card); }
+.toast a, .toast .link { color: inherit; font-size: inherit; margin-left: 4px; }
 
 @media (max-width: 640px) {
+  .top { gap: 12px; }
+  .brand { gap: 8px; }
+  .chip { padding: 0 10px; }
+  .chip.act { width: 38px; }
   .hero { padding: 40px 0 32px; }
   .tiles { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .tile { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "logo title" "logo text" "foot foot"; gap: 4px 16px; min-height: 0; padding: 18px; }
@@ -308,9 +370,12 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
   dialog.sheet { width: 100vw; max-width: 100vw; margin: auto 0 0; max-height: 92vh; border-width: 1px 0 0; }
   .sheet-in { padding: 20px 16px calc(24px + env(safe-area-inset-bottom)); }
   .big { font-size: 46px; }
+  .dash { margin: -6px 0 24px; }
+  .dash-g { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+  .sk { background: var(--skel); }
 }
 </style>
 </head>
@@ -333,7 +398,12 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
 <div class="shell">
   <header class="top">
     <a class="brand" href="/weld/" aria-label="tacit weld"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><b>tacit</b><i>weld</i></a>
-    <button class="chip" id="wallet" type="button"><span class="dot" id="wallet-dot"></span><span id="wallet-label">Connect wallet</span></button>
+    <div class="top-r">
+      <button class="chip act" id="act" type="button" aria-haspopup="dialog" aria-label="Activity" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="num" id="act-n" hidden></span>
+      </button>
+      <button class="chip" id="wallet" type="button"><span class="dot" id="wallet-dot"></span><span id="wallet-label">Connect wallet</span></button>
+    </div>
   </header>
 
   <section class="hero">
@@ -347,6 +417,12 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
       <button type="button" data-asset="tacbtc"><svg class="tk" aria-hidden="true"><use href="#tk-tacbtc"/></svg>tacBTC</button>
       <button type="button" data-asset="tacusd"><svg class="tk" aria-hidden="true"><use href="#tk-tacusd"/></svg>tacUSD</button>
     </div>
+  </section>
+
+  <section class="dash" id="dash" aria-labelledby="dash-h" hidden>
+    <div class="dash-h"><h2 id="dash-h">Your Tacit</h2><span id="dash-since"></span></div>
+    <div id="dash-due"></div>
+    <ul class="dash-g" id="dash-g"></ul>
   </section>
 
   <main class="tiles">
@@ -505,6 +581,12 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <div id="asset-body"></div>
   </div>
 </dialog>
+<dialog class="sheet layer" id="sheet-act" aria-labelledby="act-h">
+  <div class="sheet-in">
+    <div class="sheet-head"><h2 id="act-h" tabindex="-1" autofocus>Activity</h2><button class="x" type="button" data-close aria-label="Close">×</button></div>
+    <div id="act-body"></div>
+  </div>
+</dialog>
 <dialog class="sheet layer" id="sheet-pick" aria-label="Choose a wallet">
   <div class="sheet-in">
     <div class="sheet-head"><h2 tabindex="-1" autofocus>Choose a wallet</h2><button class="x" type="button" data-close aria-label="Close">×</button></div>
@@ -636,6 +718,7 @@ function parseUnits(s, dec = 18) {
   return BigInt(w || '0') * 10n ** BigInt(dec) + BigInt((f + '0'.repeat(dec)).slice(0, dec) || '0');
 }
 const plain = (v, dec) => fmt(v, dec, dec).replace(/,/g, '');
+const big = (v) => { try { return v == null || v === '' ? null : BigInt(v); } catch { return null; } };
 const dayFmt = (sec) => new Date(sec * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 const pctFmt = (x) => `${x >= 10 ? Math.round(x) : x.toFixed(1)}%`;
 
@@ -647,12 +730,13 @@ function raiseToasts() {
   try { if (toasts.matches(':popover-open')) toasts.hidePopover(); if (on) toasts.showPopover(); } catch {}
 }
 new MutationObserver(raiseToasts).observe(toasts, { childList: true });
-function toast(msg, bad = false) {
+// A toast is text, or markup (html``) when it carries a link or a button.
+function toast(msg, bad = false, ms = bad ? 7000 : 4200) {
   const el = document.createElement('div');
   el.className = 'toast' + (bad ? ' error' : '');
-  el.textContent = msg;
+  if (msg instanceof Raw) el.innerHTML = msg.s; else el.textContent = msg;
   toasts.append(el);
-  setTimeout(() => el.remove(), bad ? 7000 : 4200);
+  setTimeout(() => el.remove(), ms);
 }
 // Where the clipboard is refused, the toast carries the whole text to copy by hand.
 const copy = (text, done = 'Copied') => Promise.resolve().then(() => navigator.clipboard.writeText(text)).then(() => toast(done), () => toast(`Could not copy: ${text}`, true));
@@ -702,6 +786,11 @@ const errText = (e) => {
 const FLASH = {};
 const say = (el, view) => { if (!el) return; const v = view instanceof Raw ? view : html`${view}`; if (el.id) FLASH[el.id] = v; mount(el, v); };
 const sayErr = (el, e) => say(el, html`<span class="err">${errText(e)}</span>`);
+// A read that failed, with a way to try it again. The button works wherever a re-render restores the line: RETRY[name]
+// runs on any press of a [data-retry=name].
+const RETRY = {};
+const sayRetry = (el, e, name) => say(el, html`<span class="err">${errText(e)}</span> <button class="link" type="button" data-retry="${name}">Try again</button>`);
+document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-retry]'); if (b) RETRY[b.dataset.retry]?.(); });
 // Quote-time notes live in the receipt; the status line only reports actions.
 const warn = (rc, view) => { rc.insertAdjacentHTML('beforeend', html`<p class="note err">${view}</p>`.s); rc.hidden = false; };
 const quoteErr = (rc, e) => { mount(rc, html``); warn(rc, errText(e)); };
@@ -746,6 +835,19 @@ function keep(root, fn) {
   if (focus) { const i = root.querySelector('#' + CSS.escape(focus.id)); if (i && i !== document.activeElement) { i.focus(); if (focus.s != null) try { i.setSelectionRange(focus.s, focus.e); } catch {} } }
 }
 const lazy = (f) => { let p = null; return () => (p ||= f().catch((e) => { p = null; throw e; })); };
+// One read of a thing at a time. A call joins a read of the same key begun in the last three seconds (the render and the
+// load of one sheet opening); a later call begins afresh, since what it reads may have changed since, and so does `force`
+// (after an action). The read is handed current(), false once a newer read has finished, so an older one landing late
+// never overwrites it.
+function once(slot, key, read, force = false) {
+  if (!force && slot.q && slot.q.key === key && Date.now() - slot.q.at < 3e3) return slot.q.p;
+  const n = (slot.n = (slot.n || 0) + 1);
+  const p = read(() => !((slot.fin || 0) > n)).finally(() => { slot.fin = Math.max(slot.fin || 0, n); if (slot.q?.p === p) slot.q = null; });
+  slot.q = { key, p, at: Date.now() };
+  return p;
+}
+// A fetch that gives up after `ms` where the browser can say so.
+const within = (ms) => (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(ms) : undefined);
 const debounce = (f, ms = 250) => { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => f(...a), ms); }; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // An edit disables its form's button at once, so a quick click never acts on what was typed before; the debounced
@@ -785,9 +887,9 @@ function lossOk(box, pct) {
 const lossLine = (pct) => !(pct >= 0.5) ? html`` : html`<div class="kv"><span>Price impact</span><b class="${pct >= 5 ? 'err' : ''}">${pctFmt(pct)}</b></div>`;
 
 // ── chain access ─────────────────────────────────────────────────────────────────────────────────────────
-async function rpc(method, params) {
+async function rpc(method, params, urls = RPCS) {
   let last;
-  for (const url of RPCS) {
+  for (const url of urls) {
     try {
       const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
       const j = await r.json();
@@ -820,9 +922,313 @@ async function multicall(calls) {
 async function esplora(path) {
   let last;
   for (const base of ESPLORA) {
-    try { const r = await fetch(base + path); if (r.ok) return await r.json(); last = new Error(`${r.status}`); } catch (e) { last = e; }
+    try { const r = await fetch(base + path, { signal: within(20e3) }); if (r.ok) return await r.json(); last = new Error(`${r.status}`); } catch (e) { last = e; }
   }
   throw new Error(`Bitcoin explorers are unreachable (${last?.message || 'network'})`);
+}
+
+// One receipt watch per transaction, shared by the action that sent it and the Activity list: the receipt, or null
+// once half an hour passes without one.
+const RECEIPTS = new Map();
+const rpcsOf = (chainId) => (chainId === 1 ? RPCS : DEVICE_CHAINS.find((c) => c.chainId === chainId)?.rpc || RPCS);
+const receiptOnce = (hash, chainId = 1) => rpc('eth_getTransactionReceipt', [hash], rpcsOf(chainId)).catch(() => null);
+function receipt(hash, chainId = 1) {
+  const k = `${chainId}:${String(hash).toLowerCase()}`;
+  if (!RECEIPTS.has(k)) RECEIPTS.set(k, (async () => {
+    const t0 = Date.now();
+    for (;;) {
+      const r = await receiptOnce(hash, chainId);
+      if (r) return r;
+      if (Date.now() - t0 > 30 * 60e3) return null;
+      await sleep(Date.now() - t0 < 300e3 ? 3000 : 12000);
+    }
+  })().finally(() => RECEIPTS.delete(k)));
+  return RECEIPTS.get(k);
+}
+
+// ── activity: relayed jobs and sent transactions, newest first ───────────────────────────────────────────
+// The relay client announces every relayed job on `tacit:job`; this page adds the transactions it sends. The list is a
+// cache in this browser: each entry's outcome is asked of the relay or the chain again, and no balance depends on it.
+const ACT_KEY = 'tacit-lite-activity-v1', ACT_MAX = 20, NOTIFY_KEY = 'tacit-lite-notify-v1';
+const JOB_LABEL = {
+  wrap: 'Wrap', wraptransfer: 'Wrap and send', wrapswap: 'Wrap and swap', wraplp: 'Wrap and add liquidity', wrapcdpmint: 'Wrap and borrow',
+  transfer: 'Private transfer', batchtransfer: 'Private transfers', unwrap: 'Withdraw', sendunwrap: 'Withdraw', swap: 'Private swap', route: 'Private swap',
+  lp: 'Add liquidity', lpremove: 'Take out liquidity', lpbond: 'Bond liquidity', farmbond: 'Join a private farm', farmharvest: 'Harvest farm rewards',
+  farmunbond: 'Unbond from a farm', otc: 'Private trade', bid: 'Private bid', cbtcmint: 'Mint cBTC', cdpmint: 'Borrow cUSD', cdpclose: 'Repay a loan',
+  cdptopup: 'Top up a loan', cdpliquidate: 'Liquidate a loan', stealthlock: 'Send privately', stealthlockbatch: 'Send privately',
+  stealthclaim: 'Claim a private payment', stealthrefund: 'Take back a private send', bridgemint: 'Bridge in', bridgestealthmint: 'Bridge in',
+  bridgeburn: 'Bridge out', fastlane: 'Cross-chain move', adaptorlock: 'Atomic swap', adaptorclaim: 'Atomic swap claim', adaptorrefund: 'Atomic swap refund',
+};
+const ENDS = { job: ['settled', 'proven', 'failed', 'unknown'], tx: ['confirmed', 'failed', 'stale'], btc: ['confirmed', 'stale'] };
+const ended = (it) => ENDS[it.kind]?.includes(it.status) ?? true;
+const ACT = { items: (store.get(ACT_KEY)?.items || []).filter((x) => x?.id && ENDS[x.kind]) };
+// SESS: entries this tab started. OWN: the sheet whose action started one. HINT: the words for a job about to be queued.
+const SESS = new Set(), OWN = new Map(), HINT = new Map(), FOLLOW = new Map();
+const hint = (type, label) => HINT.set(type, { label, at: Date.now() });
+const busySheet = () => Object.keys(INFLIGHT).find(running) ?? null;
+const anyBusy = () => Object.keys(INFLIGHT).some(running);
+// A status only moves forward, except that a settle or a receipt found later always wins.
+const RANK = { pending: 0, proving: 1, stale: 1, proven: 2, failed: 2, unknown: 2, settled: 3, confirmed: 3 };
+const ahead = (next, cur) => next !== cur && (cur == null || cur === 'unknown' || next === 'settled' || next === 'confirmed' || (RANK[next] ?? -1) > (RANK[cur] ?? -1));
+let actSaving = 0;
+const actWrite = () => { clearTimeout(actSaving); actSaving = 0; store.set(ACT_KEY, { items: ACT.items }); };
+const actSave = () => { clearTimeout(actSaving); actSaving = setTimeout(actWrite, 150); };
+addEventListener('pagehide', () => { if (actSaving) actWrite(); });
+// At most ACT_MAX entries: the oldest finished one goes first.
+function actTrim() {
+  while (ACT.items.length > ACT_MAX) {
+    let i = ACT.items.length - 1;
+    while (i >= 0 && !ended(ACT.items[i])) i--;
+    ACT.items.splice(i >= 0 ? i : ACT.items.length - 1, 1);
+  }
+}
+function actPut(id, patch) {
+  let it = ACT.items.find((x) => x.id === id);
+  const prev = it ? it.status : null;
+  if (!it) {
+    it = { at: Date.now(), ...patch, id };
+    ACT.items.unshift(it);
+    ACT.items.sort((a, b) => b.at - a.at);
+    actTrim();
+  } else {
+    for (const [k, v] of Object.entries(patch)) if (v !== undefined && k !== 'status' && k !== 'label' && k !== 'at') it[k] = v;
+    if (patch.status && ahead(patch.status, it.status)) it.status = patch.status;
+  }
+  if (it.status !== prev) {
+    it.up = Date.now();
+    // An outcome found after another was shown (a failure the relay later found settled) has no duration of its own.
+    if (ended(it) && ['failed', 'stale', 'unknown'].includes(prev)) it.flip = true;
+    it.end = ended(it) ? it.end || Date.now() : null;
+    if (it.status === 'proving') it.prov = true;
+    actSaid(it, prev);
+  }
+  actSave(); paintAct();
+  return it;
+}
+
+addEventListener('tacit:job', ({ detail: d }) => {
+  if (!d?.jobId || !d.status) return;
+  const id = 'job:' + d.jobId;
+  if (!ACT.items.some((x) => x.id === id)) {
+    const h = HINT.get(d.type);
+    HINT.delete(d.type);
+    SESS.add(id); OWN.set(id, busySheet());
+    actPut(id, { kind: 'job', type: d.type || null, label: h && Date.now() - h.at < 15 * 60e3 ? h.label : JOB_LABEL[d.type] || 'Relayed action',
+      status: d.status, hash: d.txHash || null, err: d.error || null });
+  } else actPut(id, { status: d.status, hash: d.txHash || undefined, err: d.error || undefined });
+  followJob(id);
+});
+
+// The relay this page's jobs go to, as the pool module picks it.
+const relayBase = lazy(() => import('/confidential-deployments.js').then((d) => d.getConfidentialDeployment('mainnet')?.relayBase || API, () => API));
+async function jobStatus(jobId) {
+  const r = await fetch(`${await relayBase()}/confidential/status?id=${encodeURIComponent(jobId)}`, { cache: 'no-store', signal: within(15e3) });
+  if (r.status === 404) return { status: 'unknown' };
+  if (!r.ok) throw new Error(`relay ${r.status}`);
+  return r.json();
+}
+// A job is asked about here once no action in this tab is waiting on it (after a reload, or once the action that sent
+// it has stopped), less often as it ages. A job the relay does not know yet is given two minutes to appear.
+function followJob(id) {
+  if (FOLLOW.has(id)) return;
+  const run = (async () => {
+    for (;;) {
+      const it = ACT.items.find((x) => x.id === id);
+      if (!it || ended(it)) return;
+      const age = Date.now() - it.at;
+      if (age > 86400e3) { actPut(id, { status: 'unknown', err: 'The relay gave no answer for a day.' }); return; }
+      if (!(SESS.has(id) && anyBusy())) {
+        const st = await jobStatus(id.slice(4)).catch(() => null);
+        if (st?.status && (st.status !== 'unknown' || age > 120e3)) actPut(id, { status: st.status, hash: st.txHash || undefined, err: st.error || undefined });
+      }
+      await sleep(age < 180e3 ? 5000 : age < 1800e3 ? 15000 : 60000);
+    }
+  })().finally(() => FOLLOW.delete(id));
+  FOLLOW.set(id, run);
+}
+// The relay can find later that a failed job went through (a copy of its settle landed first): ask once more.
+const recheckJob = (id) => jobStatus(id.slice(4)).then((st) => { if (st?.status === 'settled') actPut(id, { status: 'settled', hash: st.txHash || undefined }); }).catch(() => {});
+
+// A transaction this page sent, followed to its receipt. `via: 'keeper'` marks one a device-pool keeper submitted.
+function actTx(hash, { label, chainId = 1, via = null } = {}) {
+  if (!hash) return hash;
+  const id = `tx:${chainId}:${String(hash).toLowerCase()}`;
+  if (!ACT.items.some((x) => x.id === id)) { SESS.add(id); OWN.set(id, busySheet()); actPut(id, { kind: 'tx', label: label || 'Transaction', chain: chainId, hash, via, status: 'pending' }); }
+  followTx(id);
+  return hash;
+}
+function followTx(id, once = false) {
+  const it = ACT.items.find((x) => x.id === id);
+  if (FOLLOW.has(id) || !it || (ended(it) && !once)) return;
+  const p = (once ? receiptOnce(it.hash, it.chain) : receipt(it.hash, it.chain)).then((r) => {
+    if (r) actPut(id, r.status === '0x1' ? { status: 'confirmed' } : { status: 'failed', err: 'The transaction reverted.' });
+    else if (!once) actPut(id, { status: 'stale' });
+  }).catch(() => {}).finally(() => FOLLOW.delete(id));
+  FOLLOW.set(id, p);
+}
+// A Bitcoin transaction this page broadcast: its first confirmation, asked for every 30 seconds for up to three days.
+function actBtc(txid, label) {
+  if (!txid) return txid;
+  const id = 'btc:' + String(txid).toLowerCase();
+  if (!ACT.items.some((x) => x.id === id)) { SESS.add(id); OWN.set(id, busySheet()); actPut(id, { kind: 'btc', label, hash: txid, status: 'pending' }); }
+  followBtc(id);
+  return txid;
+}
+function followBtc(id) {
+  if (FOLLOW.has(id)) return;
+  const run = (async () => {
+    for (;;) {
+      const it = ACT.items.find((x) => x.id === id);
+      if (!it || ended(it)) return;
+      if (Date.now() - it.at > 3 * 86400e3) { actPut(id, { status: 'stale' }); return; }
+      if ((await esplora(`/tx/${it.hash}/status`).catch(() => null))?.confirmed) { actPut(id, { status: 'confirmed' }); return; }
+      await sleep(30e3);
+    }
+  })().finally(() => FOLLOW.delete(id));
+  FOLLOW.set(id, run);
+}
+
+// A failure in words: a known revert by name, the relay's own sentence as it wrote it.
+function failText(it) {
+  if (it.status === 'unknown') return it.err || 'The relay has no record of it. Check your balance before trying again.';
+  const s = String(it.err || '').trim();
+  if (!s) return 'It did not go through.';
+  const r = revertText({ message: s });
+  if (r) return r;
+  if (/possibly still pending/i.test(s)) return `It was sent and may still land: ${(s.match(/0x[0-9a-f]{64}/i) || [''])[0]}`;
+  if (/^settle reverted/i.test(s)) return 'It was proved, but the pool refused it. Try again.';
+  if (/^prove failed/i.test(s)) return 'The relay could not prove it. Try again.';
+  if (/^feeGate:/i.test(s)) return 'The relay fee no longer covers it. Try again for a fresh quote.';
+  if (/^released:/i.test(s)) return 'The relay set it aside. Try again.';
+  const t = (s.match(/not proved: (.*)$/i)?.[1] || s).replace(/^Error:\s*/, '').slice(0, 240);
+  return t.charAt(0).toUpperCase() + t.slice(1) + (/[.!?]$/.test(t) ? '' : '.');
+}
+const txUrl = (it) => (it.kind === 'btc' ? `${MEMPOOL}/tx/${it.hash}` : `${(DEVICE_CHAINS.find((c) => c.chainId === (it.chain || 1)) || DEVICE_CHAINS[0]).explorer}/tx/${it.hash}`);
+const txSite = (it) => (it.kind === 'btc' ? 'mempool.space' : { 8453: 'Basescan', 4663: 'Blockscout' }[it.chain] || 'Etherscan');
+// Transaction hashes in a relay's sentence become links to them.
+const linked = (text) => html`${String(text).split(/(0x[0-9a-fA-F]{64})/).map((p, i) => (i % 2 ? html`<a href="${SCAN}/tx/${p}" target="_blank" rel="noopener">${short(p, 6)} ↗</a>` : p))}`;
+
+// What a change says, and where. A job handed to the relay is always announced. An outcome is toasted unless the action
+// that started it is still running here (it reports its own), and a failure also when that action's sheet is out of
+// sight. A system notification goes out, if opted into, only while this tab is hidden.
+function actSaid(it, prev) {
+  const own = OWN.get(it.id), mine = SESS.has(it.id) && own != null && running(own);
+  const inView = mine && !document.hidden && !!$(`#sheet-${own}`)?.open;
+  const view = html`<button class="link" type="button" data-act-open>Activity</button>`;
+  const link = it.hash ? html`<a href="${txUrl(it)}" target="_blank" rel="noopener">${txSite(it)} ↗</a>` : '';
+  const good = it.status === 'settled' || it.status === 'confirmed', bad = it.status === 'failed' || it.status === 'unknown';
+  if (it.kind === 'job' && prev == null && !ended(it)) toast(html`${it.label}: queued for the relay. ${view}`);
+  else if (good && ['failed', 'stale', 'unknown'].includes(prev)) toast(html`${it.label} went through after all. ${link}`, false, 9000);
+  else if (good && !mine) toast(html`${it.label}: done. ${link}`, false, 7000);
+  else if (bad && !inView) toast(html`${it.label} did not go through: ${linked(failText(it))} ${view}`, true, 9000);
+  if (it.kind === 'job' && it.status === 'failed' && SESS.has(it.id)) setTimeout(() => recheckJob(it.id), 180e3);
+  if (good || bad) notifyOS(it, good);
+  if (good && !mine && prev != null) afterActivity();
+}
+function notifyOS(it, good) {
+  if (!document.hidden || !store.get(NOTIFY_KEY) || typeof Notification !== 'function' || Notification.permission !== 'granted') return;
+  try {
+    const n = new Notification(it.label, { body: good ? (it.kind === 'job' ? 'Done.' : 'Confirmed.') : `Did not go through: ${failText(it)}`, tag: it.id, icon: '/favicon.svg' });
+    n.onclick = () => { focus(); openAct(); n.close(); };
+  } catch {}
+}
+// An outcome no action here was waiting on changes balances: read them again, once, keeping what shows meanwhile.
+let afterT = 0;
+function afterActivity() {
+  clearTimeout(afterT);
+  afterT = setTimeout(() => {
+    if (S.key) scanPrivate(true).then(() => { paintPrivateFeet(); for (const n of ['eth', 'tac', 'borrow']) rerender(n); }).catch(() => {});
+    loadFarms(true).then(() => rerender('farm')).catch(() => {});
+    if (S.wallet || S.key) loadPoints(true).then(() => rerender('pts')).catch(() => {});
+  }, 1500);
+}
+
+const clock = (ms) => { const s = Math.max(0, Math.round(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${x}` : `${m}:${x}`; };
+const ago = (t) => { const s = (Date.now() - t) / 1000; return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : dayFmt(t / 1000); };
+function actSteps(it) {
+  const st = (label, cls = '') => html`<li class="${cls}" ${cls === 'now' ? html`aria-current="step"` : ''}><i></i>${label}</li>`, s = it.status;
+  if (it.kind === 'job') {
+    if (s === 'failed' || s === 'unknown') return [st('Queued', 'done'), st('Proving', it.prov ? 'done' : ''), st(s === 'failed' ? 'Failed' : 'No record', 'bad')];
+    const at = { pending: 0, proving: 1 }[s] ?? 3;
+    return ['Queued', 'Proving', s === 'proven' ? 'Proved' : 'Done'].map((l, i) => st(l, i < at ? 'done' : i === at ? 'now' : ''));
+  }
+  const first = it.kind === 'btc' ? 'Broadcast' : it.via === 'keeper' ? 'Relayed' : 'Sent';
+  if (s === 'failed') return [st(first, 'done'), st('Reverted', 'bad')];
+  if (s === 'stale') return [st(first, 'done'), st('Not confirmed yet')];
+  return [st(first, s === 'pending' ? 'now' : 'done'), st('Confirmed', s === 'confirmed' ? 'done' : '')];
+}
+function actFoot(it) {
+  const link = it.hash ? html`<a href="${txUrl(it)}" target="_blank" rel="noopener">${txSite(it)} ↗</a>` : '';
+  if (it.status === 'failed' || it.status === 'unknown') return html`<div class="actr-f err">${linked(failText(it))}</div>`;
+  const took = it.end ? clock(it.end - it.at) : '';
+  const say_ = {
+    pending: it.kind === 'job' ? 'Waiting for the relay to pick it up.' : it.kind === 'btc' ? html`Waiting for its first Bitcoin confirmation · ${link}` : html`Waiting for it to land · ${link}`,
+    proving: 'The relay is proving it, then settling it on Ethereum.',
+    settled: html`${it.flip ? 'Went through after all' : `Done in ${took}`}${link ? ' · ' : ''}${link}`,
+    proven: 'Proved. It lands with the transaction sent from this page.',
+    confirmed: html`${it.flip ? 'Confirmed' : `Confirmed in ${took}`} · ${link}`,
+    stale: html`${it.kind === 'btc' ? 'Not confirmed after three days.' : 'Not seen on chain after half an hour; it may have been dropped or replaced.'} ${link}`,
+  }[it.status];
+  return html`<div class="actr-f">${say_ || ''}</div>`;
+}
+const actRow = (it) => html`<li class="actr" data-act="${it.id}">
+  <div class="actr-h"><b>${it.label}</b>${ended(it) ? html`<span>${ago(it.end || it.up || it.at)}</span>` : html`<span class="num" data-since="${it.at}">${clock(Date.now() - it.at)}</span>`}</div>
+  <ol class="stp">${actSteps(it)}</ol>${actFoot(it)}</li>`;
+function renderAct() {
+  const el = $('#act-body'), items = ACT.items, can = typeof Notification === 'function';
+  const on = can && !!store.get(NOTIFY_KEY) && Notification.permission === 'granted';
+  mount(el, html`
+    ${items.length ? html`<ol class="acts">${items.map(actRow)}</ol>` : html`<p class="gate-p">Nothing yet. What you send from this page, and what the relay proves for you, shows up here as it happens.</p>`}
+    ${can ? html`<label class="pick"><input type="checkbox" id="act-notify" ${on ? 'checked' : ''}><span>Notify me when something finishes while this tab is in the background.</span></label>` : ''}
+    <div class="status" role="status" id="act-note"></div>
+    <div class="act-foot"><span>Kept in this browser only. Your balances never depend on it.</span>${items.some(ended) ? html`<button class="link" type="button" id="act-clear">Clear finished</button>` : ''}</div>`);
+  const nb = $('#act-notify', el), note = $('#act-note', el);
+  if (nb) nb.onchange = async () => {
+    if (!nb.checked) { store.set(NOTIFY_KEY, null); note.textContent = ''; return; }
+    let p = Notification.permission;
+    try { if (p === 'default') p = await Notification.requestPermission(); } catch { p = 'denied'; }
+    if (p !== 'granted') { nb.checked = false; note.textContent = 'This browser is blocking notifications from this site. Allow them in its site settings, then try again.'; return; }
+    try { new Notification('tacit weld', { body: 'Notifications are on. One arrives when something finishes while this tab is in the background.', tag: 'tacit-notify-on', icon: '/favicon.svg' }); }
+    catch { nb.checked = false; note.textContent = 'This browser shows notifications only from installed apps.'; return; }
+    store.set(NOTIFY_KEY, true); note.textContent = '';
+  };
+  const cl = $('#act-clear', el);
+  if (cl) cl.onclick = () => { ACT.items = ACT.items.filter((x) => !ended(x)); actSave(); paintAct(); };
+}
+function paintAct() {
+  const live = ACT.items.filter((x) => !ended(x)).length, b = $('#act'), n = $('#act-n');
+  b.hidden = !ACT.items.length;
+  b.classList.toggle('busy', live > 0);
+  n.hidden = !live; n.textContent = live ? String(live) : '';
+  b.setAttribute('aria-label', live ? `Activity, ${live} in progress` : 'Activity');
+  if ($('#sheet-act').open) renderAct();
+}
+function openAct() { renderAct(); const d = $('#sheet-act'); if (!d.open) d.showModal(); }
+$('#act').onclick = openAct;
+$('#sheet-act').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+document.addEventListener('click', (e) => { if (e.target.closest?.('[data-act-open]')) { e.preventDefault(); openAct(); } });
+setInterval(() => { if ($('#sheet-act').open) for (const s of $$('#act-body [data-since]')) s.textContent = clock(Date.now() - Number(s.dataset.since)); }, 1000);
+// Another tab of this page wrote the list: take in what it knows.
+addEventListener('storage', (e) => {
+  if (e.key !== ACT_KEY) return;
+  let theirs = [];
+  try { theirs = JSON.parse(e.newValue || 'null')?.items || []; } catch {}
+  for (const x of theirs) {
+    if (!x?.id || !ENDS[x.kind]) continue;
+    const mine = ACT.items.find((y) => y.id === x.id);
+    if (!mine) ACT.items.push(x); else if (ahead(x.status, mine.status)) Object.assign(mine, x);
+  }
+  ACT.items.sort((a, b) => b.at - a.at); actTrim(); paintAct();
+});
+// Picks up where the last visit left off: open entries are followed again, and a job that failed in the last six hours
+// is asked about once more.
+function resumeActivity() {
+  for (const it of ACT.items) {
+    if (it.kind === 'job') { if (!ended(it)) followJob(it.id); else if (it.status === 'failed' && Date.now() - (it.end || it.at) < 6 * 3600e3) recheckJob(it.id); }
+    else if (it.kind === 'tx') { if (!ended(it)) followTx(it.id); else if (it.status === 'stale' && Date.now() - it.at < 86400e3) followTx(it.id, true); }
+    else if (!ended(it)) followBtc(it.id);
+  }
+  paintAct();
 }
 
 // Each sheet's renderer and its data refresh, keyed by sheet name.
@@ -1093,14 +1499,15 @@ async function ensureChain(id) {
     await S.provider.request({ method: 'wallet_addEthereumChain', params: [{ chainId: want, chainName: m.chainName, nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: m.rpcUrls, blockExplorerUrls: m.blockExplorerUrls }] });
   }
 }
-// A public transaction goes out from the paying account: the connected wallet, or the Tacit account signing here.
-async function sendTx({ to, data, value = 0n, chainId = 1, via = payer() }) {
-  if (via === 'tacit') return sendFromTacit({ to, data, value: BigInt(value), chainId });
+// A public transaction goes out from the paying account: the connected wallet, or the Tacit account signing here. The
+// Activity list follows it to its receipt under `label`.
+async function sendTx({ to, data, value = 0n, chainId = 1, via = payer(), label }) {
+  if (via === 'tacit') return actTx(await sendFromTacit({ to, data, value: BigInt(value), chainId }), { label, chainId });
   if (!S.provider || !S.wallet) await connect();
   await ensureChain(chainId);
   const tx = { from: S.wallet, to, data: '0x' + strip(data) };
   if (BigInt(value) > 0n) tx.value = '0x' + BigInt(value).toString(16);
-  return S.provider.request({ method: 'eth_sendTransaction', params: [tx] });
+  return actTx(await S.provider.request({ method: 'eth_sendTransaction', params: [tx] }), { label, chainId });
 }
 // The paying account's address, asking the wallet to connect when it was chosen to pay but is not connected.
 async function payingAccount() {
@@ -1146,14 +1553,11 @@ async function permitSig({ token, name, spender, value, deadline, status }) {
   await ensureChain(1);
   return evm.signErc2612(permit);
 }
-async function waitTx(hash, { timeoutMs = 10 * 60e3 } = {}) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < timeoutMs) {
-    const r = await rpc('eth_getTransactionReceipt', [hash]).catch(() => null);
-    if (r) { if (r.status !== '0x1') throw new Error('The transaction reverted.'); return r; }
-    await new Promise((res) => setTimeout(res, 3000));
-  }
-  throw new Error('Still pending. Check the transaction on Etherscan.');
+async function waitTx(hash, { timeoutMs = 10 * 60e3, chainId = 1 } = {}) {
+  const r = await Promise.race([receipt(hash, chainId), sleep(timeoutMs).then(() => null)]);
+  if (!r) throw new Error(`Still pending. Check the transaction on ${chainId === 1 ? 'Etherscan' : 'its explorer'}.`);
+  if (r.status !== '0x1') throw new Error('The transaction reverted.');
+  return r;
 }
 const txLink = (hash, base = SCAN) => html`<a href="${base}/tx/${hash}" target="_blank" rel="noopener">${short(hash, 6)} ↗</a>`;
 // The paying account's ETH, or null while there is none (a chosen wallet not connected yet: the action connects it).
@@ -1200,8 +1604,8 @@ render.wallet = () => {
       <div class="row2"><button class="btn ghost" type="button" id="w-copy">Copy address</button><button class="btn ghost" type="button" id="w-lock">Lock</button></div></div>
     <div class="lbl" id="pay-h"><span>Public transactions come from</span></div>
     <div class="opts" role="radiogroup" aria-labelledby="pay-h">
-      <button class="opt${pays === 'tacit' ? ' main' : ''}" type="button" role="radio" aria-checked="${pays === 'tacit'}" data-pay="tacit"><span class="opt-t">${eth}Tacit account${pays === 'tacit' ? html`<span class="tag">pays</span>` : ''}<span class="num w-bal" id="ac-abal"></span></span><span class="opt-m">${short(a.address, 8)} · this key's own, signs here with no popup</span></button>
-      <button class="opt${pays === 'wallet' ? ' main' : ''}" type="button" role="radio" aria-checked="${pays === 'wallet'}" data-pay="wallet"><span class="opt-t">${eth}Wallet${pays === 'wallet' ? html`<span class="tag">pays</span>` : ''}<span class="num w-bal" id="ac-wbal"></span></span><span class="opt-m">${S.wallet ? short(S.wallet, 8) : 'Connect one to pay from it'}</span></button>
+      <button class="opt${pays === 'tacit' ? ' main' : ''}" type="button" role="radio" aria-checked="${pays === 'tacit'}" data-pay="tacit"><span class="opt-t">${eth}Tacit account${pays === 'tacit' ? html`<span class="tag">pays</span>` : ''}<span class="num w-bal" id="ac-abal"><span class="sk" style="--w:5ch"></span></span></span><span class="opt-m">${short(a.address, 8)} · this key's own, signs here with no popup</span></button>
+      <button class="opt${pays === 'wallet' ? ' main' : ''}" type="button" role="radio" aria-checked="${pays === 'wallet'}" data-pay="wallet"><span class="opt-t">${eth}Wallet${pays === 'wallet' ? html`<span class="tag">pays</span>` : ''}<span class="num w-bal" id="ac-wbal">${S.wallet ? html`<span class="sk" style="--w:5ch"></span>` : ''}</span></span><span class="opt-m">${S.wallet ? short(S.wallet, 8) : 'Connect one to pay from it'}</span></button>
     </div>
     ${segSub('wal', WAL.mode, [['add', 'Add ETH'], ['out', 'Send out']])}
     <div id="ac-form"></div>
@@ -1210,7 +1614,7 @@ render.wallet = () => {
     <p class="note">The key stays in this tab, and whoever holds it holds the Tacit account too. Private payments to your Tacit address reach you here and on tacit.finance.</p>`);
   $('#w-copy').onclick = () => copy(k.tacit, 'Tacit address copied');
   $('#w-lock').onclick = () => { S.key = null; syncAccount(); resetPrivate(); paintWallet(); refreshAll(); rerender('wallet'); };
-  const bal = (id, who) => who && rpc('eth_getBalance', [who, 'latest']).then((b) => { const e = $('#' + id); if (e) e.textContent = `${fmt(BigInt(b), 18, 4)} ETH`; }).catch(() => {});
+  const bal = (id, who) => who && rpc('eth_getBalance', [who, 'latest']).then((b) => { const e = $('#' + id); if (e) e.textContent = `${fmt(BigInt(b), 18, 4)} ETH`; }, () => { const e = $('#' + id); if (e) e.textContent = '—'; });
   bal('ac-abal', a.address); bal('ac-wbal', S.wallet);
   $$('[data-pay]', el).forEach((b) => b.onclick = () => busy(b, async () => {
     try { if (b.dataset.pay === 'wallet' && !S.wallet) await connect(); setPayer(b.dataset.pay); } catch (e) { toast(errText(e), true); }
@@ -1260,11 +1664,11 @@ render.wallet = () => {
       const value = parseUnits($('#ac-mv').value), to = WAL.mode === 'add' ? a.address : recipientOf($('#ac-to').value);
       if (!value) throw new Error('Enter an amount.');
       const out = WAL.mode === 'out', tac = out && WAL.asset === 'tac', chainId = out && !tac ? WAL.chain : 1;
-      const hash = await sendTx(tac ? { to: ADDR.tac, data: SEL.transfer + addrWord(to) + word(value), via: 'tacit' } : { to, data: '0x', value, via: out ? 'tacit' : 'wallet', chainId });
       const c = DEVICE_CHAINS.find((x) => x.chainId === chainId);
+      const label = tac ? `Send ${fmt(value, 18, 2)} TAC out` : out ? `Send ${fmt(value, 18, 6)} ETH out${chainId === 1 ? '' : ` on ${c.name}`}` : `Add ${fmt(value, 18, 6)} ETH to your Tacit account`;
+      const hash = await sendTx(tac ? { to: ADDR.tac, data: SEL.transfer + addrWord(to) + word(value), via: 'tacit', label } : { to, data: '0x', value, via: out ? 'tacit' : 'wallet', chainId, label });
       say(status, html`Sending… ${txLink(hash, c.explorer)}`);
-      if (chainId === 1) await waitTx(hash);
-      else await (async () => { const call = await chainRpc(chainId); for (let i = 0; i < 120; i++) { const r = await call('eth_getTransactionReceipt', [hash]).catch(() => null); if (r) { if (r.status !== '0x1') throw new Error('The transaction reverted.'); return; } await new Promise((res) => setTimeout(res, 3000)); } })();
+      await waitTx(hash, { chainId });
       clearField($('#ac-mv'));
       say(status, html`<span class="ok">${WAL.mode === 'add' ? 'Added.' : 'Sent.'}</span> ${txLink(hash, c.explorer)}`);
       rerender('wallet');
@@ -1306,10 +1710,10 @@ const ASSETS = {
     links: [['Borrow on Bitcoin', '#borrow'], ['cBTC and cUSD in the spec', GH + 'SPEC.md#57-cdp-cusd-and-cbtc'], ['The collateral engine', ETHERSCAN(ADDR.engine)], ['A loan opened', ETHERSCAN('0x6da330c161f236030ef83ce5c9c77268c735a52e7f9789c7ebceaccb479b3229', 'tx')]] },
   tacbtc: { name: 'tacBTC', icon: 'tacbtc',
     lede: ['tacBTC is cBTC in public: the ERC-20 minted when a cBTC note is withdrawn to an Ethereum address, and burned when it is wrapped back into a note, one for one. Only the Tacit pool can mint it.'],
-    links: [['tacBTC on Etherscan', ETHERSCAN('0xdf1d99148bEb7a9AFf1d95C49B3d22b7ed90D696', 'token')], ['The token list', 'https://token.list.wei.limo'], ['cBTC and cUSD in the spec', GH + 'SPEC.md#57-cdp-cusd-and-cbtc']] },
+    links: [['tacBTC on Etherscan', ETHERSCAN(ADDR.tacbtc, 'token')], ['The token list', 'https://token.list.wei.limo'], ['cBTC and cUSD in the spec', GH + 'SPEC.md#57-cdp-cusd-and-cbtc']] },
   tacusd: { name: 'tacUSD', icon: 'tacusd',
     lede: ['tacUSD is cUSD in public: the ERC-20 minted when a cUSD note is withdrawn to an Ethereum address, and burned when it is wrapped back into a note, one for one. Only the Tacit pool can mint it.'],
-    links: [['tacUSD on Etherscan', ETHERSCAN('0x23cACFFAc2674514A6d4F6cD420B4cc2aC921564', 'token')], ['The token list', 'https://token.list.wei.limo'], ['Borrow on Bitcoin', '#borrow']] },
+    links: [['tacUSD on Etherscan', ETHERSCAN(ADDR.tacusd, 'token')], ['The token list', 'https://token.list.wei.limo'], ['Borrow on Bitcoin', '#borrow']] },
 };
 function openAsset(key) {
   const a = ASSETS[key];
@@ -1385,7 +1789,7 @@ for (const d of $$('dialog.sheet:not(.layer)')) {
   b.onclick = () => copy(`${location.origin}${location.pathname}#${linkName(d.id.replace('sheet-', ''))}`, 'Link copied');
   x.before(b);
 }
-const setFoot = (name, text, dot = '') => { $(`[data-foot="${name}"]`).textContent = text; $(`[data-dot="${name}"]`).className = 'dot' + (dot ? ' ' + dot : ''); };
+const setFoot = (name, text, dot = '') => { $(`[data-foot="${name}"]`).textContent = text; $(`[data-dot="${name}"]`).className = 'dot' + (dot ? ' ' + dot : ''); dashSoon(); };
 const gate = (text, label, id) => html`<div class="gate"><p>${text}</p><button class="btn" type="button" id="${id}">${label}</button></div>`;
 function wireConnect(id, after) {
   const b = document.getElementById(id);
@@ -1409,7 +1813,7 @@ const getUx = lazy(async () => {
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
 });
 const P = { scan: null, scanning: null, err: null };           // this identity's shielded notes, from ux.balance
-function resetPrivate() { P.scan = null; P.scanning = null; P.err = null; DEV.W = null; DEV.bal = null; DEV.key = null; DEV.quote = null; DEV.err = null; Object.assign(LOCK, { rec: null, state: null, lm: null, bonds: [], list: [], pick: null, found: null, repayOver: null }); Object.assign(LK, { at: 0, pub: null, mine: [], back: [], scanning: null }); Object.assign(BTC, { pub: null, at: 0, err: null, share: null, sp: null, held: [] }); dropTacitKey(); }
+function resetPrivate() { P.scan = null; P.scanning = null; P.err = null; DEV.W = null; DEV.bal = null; DEV.key = null; DEV.quote = null; DEV.err = null; Object.assign(LOCK, { rec: null, state: null, lm: null, bonds: [], list: [], pick: null, found: null, repayOver: null, q: null }); Object.assign(LK, { at: 0, pub: null, mine: [], back: [], scanning: null }); Object.assign(BTC, { pub: null, at: 0, err: null, share: null, sp: null, held: [] }); dropTacitKey(); }
 // A forced scan starts after any scan already running, so what it returns is newer than the call.
 async function scanPrivate(force = false) {
   if (!S.key) return null;
@@ -1422,14 +1826,58 @@ async function scanPrivate(force = false) {
     const r = await t.balance(walletPriv());
     if (S.key?.pubHex !== pub) return null;
     const of = (tk) => { const id = String(t.assetByTicker[tk]?.assetId || '').toLowerCase(); const g = r.byAsset[id]; return { id, value: g ? g.value : 0n, notes: g ? g.notes : [] }; };
-    // Deposits still waiting for their settle: pool-ux leaves out any another op already spent (a wrap-and-send, a
-    // one-click swap or LP).
+    // Deposits still waiting for their settle, of every asset: pool-ux leaves out any another op already spent (a
+    // wrap-and-send, a one-click swap or LP). One deposit is listed once, though two tickers may share its asset id.
+    const pending = new Map((r.diag?.wrap?.pending || []).map((d) => [String(d.depositId || `${d.asset}:${d.index}`).toLowerCase(), d]));
     P.scan = { at: Date.now(), notes: r.notes, eth: of('cETH'), cusd: of('cUSD'), tac: of('cTAC'), cbtc: { id: String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase(), notes: r.notes.filter((n) => String(n.asset).toLowerCase() === String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase()) },
-      pending: (r.diag?.wrap?.pending || []).filter((d) => String(d.asset).toLowerCase() === of('cETH').id), partial: Object.keys(r.diag?.errors || {}).length > 0 };
+      pending: [...pending.values()].map((d) => depositOf(t, d)), partial: Object.keys(r.diag?.errors || {}).length > 0 };
     P.err = null;
+    dashSoon();
     return P.scan;
-  }).catch((e) => { if (S.key?.pubHex === pub) P.err = e; throw e; }).finally(() => { if (P.scanning === p) P.scanning = null; });
+  }).catch((e) => { if (S.key?.pubHex === pub) P.err = e; dashSoon(); throw e; }).finally(() => { if (P.scanning === p) P.scanning = null; });
   return p;
+}
+// A deposit waiting for its settle, as the note it becomes: the ticker buildWrap re-derives it under (the entry whose
+// assetId is the deposit's own), the scale from note units back to the amount deposited, and the sheet that finishes it.
+// A deposit of an asset this page does not list has no ticker, and is left to tacit.finance.
+const DEPOSIT_SHEET = { cETH: 'eth', TAC: 'tac', cTAC: 'tac', cBTC: 'borrow', cUSD: 'borrow' };
+function depositOf(t, d) {
+  const id = String(d.asset).toLowerCase(), tk = t.tickerOf(id);
+  const meta = tk && String(t.assetByTicker[tk]?.assetId || '').toLowerCase() === id ? t.assetByTicker[tk] : t.assets.find((a) => String(a.assetId).toLowerCase() === id) || null;
+  return { ...d, id, value: BigInt(d.value), ticker: meta?.ticker || null, scale: BigInt(meta?.unitScale || '1'), dec: meta ? meta.tacitDecimals ?? meta.decimals ?? 8 : 8,
+    shown: shownAs(meta?.ticker), sheet: DEPOSIT_SHEET[meta?.ticker] || 'eth' };
+}
+const pendingFor = (sheet) => (S.key && P.scan?.pending || []).filter((p) => p.sheet === sheet);
+// "20 TAC is waiting to become private." One amount per asset, however many deposits make it up.
+function waitingText(ps) {
+  const by = new Map();
+  for (const p of ps.filter((x) => x.ticker)) { const g = by.get(p.shown) || { v: 0n, dec: p.dec, n: 0 }; g.v += p.value; g.n++; by.set(p.shown, g); }
+  const parts = [...by].map(([tk, g]) => `${fmt(g.v, g.dec, 6)} ${tk}${g.n > 1 ? ` in ${g.n} deposits` : ''}`);
+  const odd = ps.some((x) => !x.ticker) ? 'Another deposit is waiting too; finish it on tacit.finance.' : '';
+  return [parts.length ? `${parts.join(' and ')} ${parts.length > 1 ? 'are' : 'is'} waiting to become private.` : '', odd].filter(Boolean).join(' ');
+}
+const depositCallout = (sheet, id) => {
+  const ps = pendingFor(sheet);
+  return ps.length ? html`<div class="callout"><span>${waitingText(ps)}</span>${ps.some((p) => p.ticker) ? html`<button class="btn ghost" type="button" id="${id}">Finish</button>` : ''}</div>` : html``;
+};
+// Each of the sheet's waiting deposits is settled in turn, rebuilt from the key at its own index and scale; one that
+// fails does not stop the rest.
+async function finishDeposits(sheet, status) {
+  let err = null, done = 0;
+  try {
+    const t = await getUx(), priv = walletPriv();
+    for (const p of pendingFor(sheet).filter((x) => x.ticker)) {
+      const what = `${fmt(p.value, p.dec, 6)} ${p.shown}`;
+      say(status, `Settling a ${what} deposit into a private note…`);
+      hint('wrap', `Finish a ${what} deposit`);
+      try { await t.submitWrapSettle({ built: t.buildWrap({ walletPriv: priv, amountWei: (p.value * p.scale).toString(), ticker: p.ticker, index: p.index }), waitOpts: { timeoutMs: 15 * 60e3 } }); done++; }
+      catch (e) { err ||= e; }
+    }
+    await scanPrivate(true);
+  } catch (e) { err ||= e; }
+  rerender(sheet);
+  if (err) sayErr(status, done ? new Error(`${done} settled; another did not: ${errText(err)}`) : err);
+  else { say(status, html`<span class="ok">Deposits settled.</span>`); toast('Deposits settled'); }
 }
 
 // ── private ETH · Tacit pool (tETH) ──────────────────────────────────────────────────────────────────────
@@ -1488,6 +1936,7 @@ async function settleLocks(kind, status) {
       const tk = tickerOf(t, due.asset), fee = BigInt(await t.quoteOpFee(tk, 'stealthclaim'));
       if (fee >= BigInt(due.amount)) throw new Error(`A ${fmt(BigInt(due.amount), 8, 8)} ${shownAs(tk)} payment is smaller than the relay fee to ${kind === 'claim' ? 'claim it' : 'take it back'}.`);
       say(status, `${kind === 'claim' ? 'Claiming' : 'Taking back'} ${fmt(BigInt(due.amount), 8, 6)} ${shownAs(tk)}: the relay is proving it…`);
+      hint(kind === 'claim' ? 'stealthclaim' : 'stealthrefund', `${kind === 'claim' ? 'Claim' : 'Take back'} ${fmt(BigInt(due.amount), 8, 6)} ${shownAs(tk)}`);
       const w = { timeoutMs: 15 * 60e3 };
       if (kind === 'claim') await t.stealthClaim({ walletPriv: priv, lockRecord: due, lockSetRoot: LK.root, fee, waitOpts: w });
       else await t.stealthRefund({ walletPriv: priv, lockRecord: due, refundPriv: due.refundPriv, lockSetRoot: LK.sentRoot, fee, waitOpts: w });
@@ -1500,15 +1949,15 @@ async function settleLocks(kind, status) {
 
 function renderV1(el) {
   if (!needKey(el, 'Wrap ETH into tETH, a private note in the Tacit pool and the same asset on Bitcoin. Open your Tacit wallet to start.')) return;
-  const s = P.scan;
-  const bal = s ? html`${fmt(s.eth.value, 8, 6)}` : P.err ? html`<span class="err">—</span>` : html`<span class="mute">reading…</span>`;
+  const s = P.scan, last = s || P.err ? null : lastSeen('teth');
+  const bal = s ? html`${fmt(s.eth.value, 8, 6)}` : P.err ? html`<span class="err">—</span>` : last != null ? html`<span class="stale">${fmt(last, 8, 6)}</span>` : html`<span class="sk" style="--w:8ch"></span>`;
   mount(el, html`
     <div class="bal">
       <svg class="tk md" aria-hidden="true"><use href="#tk-teth"/></svg>
       <div><div class="v num">${bal}</div><div class="u">tETH, private</div></div>
-      <div class="side">${s?.partial ? html`<span class="err">partial scan</span>` : P.err ? html`<button class="link" type="button" id="v1-rescan">retry</button>` : s ? html`<button class="link" type="button" id="v1-rescan">refresh</button>` : ''}</div>
+      <div class="side">${s?.partial ? html`<span class="err">partial scan</span>` : P.err ? html`<button class="link" type="button" id="v1-rescan">retry</button>` : s ? html`<button class="link" type="button" id="v1-rescan">refresh</button>` : 'updating…'}</div>
     </div>
-    ${s?.pending?.length ? html`<div class="callout"><span>${s.pending.length === 1 ? 'A deposit is' : `${s.pending.length} deposits are`} waiting to become private notes.</span><button class="btn ghost" type="button" id="v1-finish">Finish</button></div>` : ''}
+    ${depositCallout('eth', 'v1-finish')}
     ${LK.pub === S.key.pubHex && LK.mine.length ? html`<div class="callout"><span>${LK.mine.length === 1 ? 'A private payment was' : `${LK.mine.length} private payments were`} sent to you.</span><button class="btn ghost" type="button" id="v1-claim">Claim</button></div>` : ''}
     ${LK.pub === S.key.pubHex && LK.back.length ? html`<div class="callout"><span>${LK.back.length === 1 ? 'A private send was' : `${LK.back.length} private sends were`} never claimed. ${LK.back.length === 1 ? 'It' : 'They'} can come back to you.</span><button class="btn ghost" type="button" id="v1-back">Take back</button></div>` : ''}
     ${segSub('v1', V1.mode, [['wrap', 'Wrap'], ['send', 'Send'], ['out', 'Withdraw']])}
@@ -1516,7 +1965,7 @@ function renderV1(el) {
     <div class="status" role="status" id="v1-status"></div>`);
   wireSub(el, 'v1', (m) => { V1.mode = m; keep($('#sheet-eth'), render.eth); });
   const re = $('#v1-rescan'); if (re) re.onclick = () => busy(re, async () => { try { await scanPrivate(true); } catch (e) { sayErr($('#v1-status'), e); } rerender('eth'); });
-  const fin = $('#v1-finish'); if (fin) fin.onclick = () => busy(fin, () => finishWraps($('#v1-status')));
+  const fin = $('#v1-finish'); if (fin) fin.onclick = () => busy(fin, () => finishDeposits('eth', $('#v1-status')));
   for (const [id, kind, done] of [['v1-claim', 'claim', 'Claimed'], ['v1-back', 'refund', 'Taken back']]) {
     const b = $('#' + id);
     if (b) b.onclick = () => busy(b, async () => { try { await settleLocks(kind, $('#v1-status')); toast(done); rerender('eth'); } catch (e) { sayErr($('#v1-status'), e); } });
@@ -1529,7 +1978,7 @@ function renderV1(el) {
 // Wrap: one wallet transaction pays the deposit plus a relay tip; the relay then proves and settles the note.
 function v1Wrap(el, status) {
   mount(el, html`
-    <div class="lbl"><span>Amount</span><button type="button" id="w-max">${payName()} <span id="w-bal">…</span> ETH</button></div>
+    <div class="lbl"><span>Amount</span><button type="button" id="w-max">${payName()} <span id="w-bal"><span class="sk" style="--w:5ch"></span></span> ETH</button></div>
     <div class="amt"><input id="w-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="ETH to wrap"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>
     <div class="rcpt" id="w-rcpt" hidden></div>
     <button class="btn" type="button" id="w-go" disabled>Wrap to tETH</button>
@@ -1568,11 +2017,12 @@ function v1Wrap(el, status) {
       say(status, 'Preparing your note, about half a minute…');
       const index = await t.nextWrapIndex({ walletPriv: priv, ticker: 'cETH' });
       const w = t.buildWrap({ walletPriv: priv, amountWei: x.wei, ticker: 'cETH', index });
-      const hash = await sendTx({ to: ADDR.wrapTip, data: SEL.wrapWithTip + strip(w.commit) + word(x.wei) + addrWord(x.to), value: x.wei + x.tip });
+      const hash = await sendTx({ to: ADDR.wrapTip, data: SEL.wrapWithTip + strip(w.commit) + word(x.wei) + addrWord(x.to), value: x.wei + x.tip, label: `Deposit ${fmt(x.wei, 18, 6)} ETH to wrap` });
       say(status, html`Deposit sent ${txLink(hash)}. Waiting for it to land…`);
       await waitTx(hash);
       // The deposit is in escrow from here on; if this step fails, Finish rebuilds the same note at the same index.
       say(status, html`Deposited ${txLink(hash)}. The relay is proving your note, about a minute…`);
+      hint('wrap', `Wrap ${fmt(x.wei, 18, 6)} ETH into tETH`);
       await t.submitWrapSettle({ built: w, waitOpts: { timeoutMs: 15 * 60e3 } });
       clearField(input); rc.hidden = true;
       toast(`${fmt(x.wei, 18, 8)} tETH is private`);
@@ -1584,22 +2034,6 @@ function v1Wrap(el, status) {
     }
   });
 }
-// Each waiting deposit is settled in turn; one that fails does not stop the rest.
-async function finishWraps(status) {
-  let err = null;
-  try {
-    const t = await getUx(), priv = walletPriv();
-    for (const p of P.scan?.pending || []) {
-      say(status, 'Settling a waiting deposit…');
-      try { await t.submitWrapSettle({ built: t.buildWrap({ walletPriv: priv, amountWei: (BigInt(p.value) * E10).toString(), ticker: 'cETH', index: p.index }), waitOpts: { timeoutMs: 15 * 60e3 } }); }
-      catch (e) { err ||= e; }
-    }
-    await scanPrivate(true);
-  } catch (e) { err ||= e; }
-  rerender('eth');
-  if (err) sayErr(status, err); else { say(status, html`<span class="ok">Deposits settled.</span>`); toast('Deposits settled'); }
-}
-
 // Send: a stealth lock to the recipient's Tacit address; only they can claim it. Relayed end to end.
 const getNames = lazy(async () => {
   const { makeConfidentialNames, makeMainnetCall } = await import('/confidential-names.js?cb=4debeb2e');
@@ -1625,6 +2059,7 @@ async function noteFor(t, priv, amount, fits, status, k = 'eth') {
   for (const n of picked.length ? [] : up.reverse()) { if (sum >= need || picked.length === 16) break; picked.push(n); sum += BigInt(n.value); }
   if (sum < need) throw new Error(picked.length < up.length ? `At most ${fmt(sum - fee, 8, 6)} ${shownAs(tk)} moves in one go. Try that first.` : 'Your notes do not cover this and the relay fee. Try a little less.');
   say(status, picked.length > 1 ? `Combining ${picked.length} notes first…` : 'Splitting a note to this amount first…');
+  hint('transfer', picked.length > 1 ? `Combine ${picked.length} ${shownAs(tk)} notes` : `Split a ${shownAs(tk)} note to ${fmt(amount, 8, 6)}`);
   await t.transfer({ walletPriv: priv, notes: picked, recipientPubHex: t.identity(priv).pubHex, amount, fee, waitOpts: { timeoutMs: 15 * 60e3 } });
   await scanPrivate(true);
   if (!ok()) throw new Error('The new note is not visible yet. Try again in a moment.');
@@ -1679,6 +2114,7 @@ function v1Send(el, status) {
       const { makeStealthSendStore } = await import('/confidential-secret-store.js');
       let built = null;
       say(status, 'Locking it to a one-time address only they can open…');
+      hint('stealthlock', `Send ${fmt(units, 8, 6)} tETH privately`);
       const r = await t.stealthSend({ walletPriv: priv, recipientPubHex: w.pubHex, notes: P.scan.eth.notes, amount: units, onBuilt: (b) => { built = b; }, waitOpts: { timeoutMs: 15 * 60e3 } });
       if (built) {
         await makeStealthSendStore({ sha256 }).add(priv, {
@@ -1754,7 +2190,9 @@ function v1Out(el, status) {
       await noteFor(t, priv, x.units, (n) => BigInt(n.value) >= x.units, status);
       const note = P.scan.eth.notes.filter((n) => BigInt(n.value) >= x.units).sort((a, b) => (BigInt(a.value) > BigInt(b.value) ? 1 : -1))[0];
       say(status, 'The relay is proving your withdrawal…');
+      for (const type of ['sendunwrap', 'unwrap']) hint(type, `Withdraw ${fmt(x.units, 8, 6)} ETH`);
       const r = await t.sendUnwrap({ note, walletPriv: priv, recipient, amount: x.units, waitOpts: { timeoutMs: 15 * 60e3 } });
+      HINT.delete('unwrap');
       clearField(amt); rc.hidden = true;
       toast('Withdrawn');
       await scanPrivate(true).catch(() => {});
@@ -1842,7 +2280,9 @@ async function devWalletOn(chainId) {
   return m.makeEvmPoolWallet({ zk: m.zk, keys: m.evmPoolKeys(m.zk, walletPriv()), keeper: c.keeper, prove: null,
     chain: { chainId: c.chainId, pool: EVM_POOL, router: EVM_ROUTER, rpc: m.jsonRpc(c.rpc), deployBlock: c.deployBlock, confirmations: c.confirmations } });
 }
-const payFrom = (chainId) => ({ address: S.address, send: ({ to, data, value }) => sendTx({ to, data, value: BigInt(value || 0), chainId }) });
+const payFrom = (chainId, label) => ({ address: S.address, send: ({ to, data, value }) => sendTx({ to, data, value: BigInt(value || 0), chainId, label }) });
+// A move a device-pool keeper submitted: in the Activity list too, followed to its receipt on that chain.
+const keeperTx = (h, chainId, label) => actTx(h, { chainId, label, via: 'keeper' });
 // Pool ETH into the Tacit pool with no public stop: router.withdrawToV1 pays the withdrawal straight into a V1 wrap of
 // this key's next note, relayed. The V1 relay then settles it; if that fails, the Tacit pool's Finish rebuilds the same note.
 async function moveToV1(W, amount, step) {
@@ -1851,9 +2291,10 @@ async function moveToV1(W, amount, step) {
   step('preparing your note in the Tacit pool, about half a minute');
   const index = await t.nextWrapIndex({ walletPriv: priv, ticker: 'cETH' });
   const w = t.buildWrap({ walletPriv: priv, amountWei: amount, ticker: 'cETH', index });
-  const h = await W.toV1({ amount, commit: '0x' + strip(w.commit), onStep: step });
+  const h = keeperTx(await W.toV1({ amount, commit: '0x' + strip(w.commit), onStep: step }), 1, `Move ${fmt(amount, 18, 6)} ETH into the Tacit pool`);
   P.scan = null;
   step('the Tacit pool relay is proving your note');
+  hint('wrap', `Settle ${fmt(amount, 18, 6)} tETH moved in from this device`);
   await t.submitWrapSettle({ built: w, waitOpts: { timeoutMs: 15 * 60e3 } });
   return h;
 }
@@ -1867,6 +2308,7 @@ function deviceSync(fresh = false) {
     if (DEV.W === W) {                                                          // not a chain or key switched away from meanwhile
       DEV.bal = s.balance; DEV.quote = q; DEV.err = null;
       store.set(`tacit-lite-device-bal-v1:${DEV.chain.chainId}:${S.key.pubHex}`, { v: s.balance.toString(), at: Date.now() });
+      dashSoon();
     }
   }).finally(() => { if (DEV.syncing === p) DEV.syncing = null; });
   return p;
@@ -1874,12 +2316,13 @@ function deviceSync(fresh = false) {
 function renderDevice(el) {
   if (!needKey(el, 'Private ETH on Ethereum, Base and Robinhood Chain, proved here in your browser. Open your Tacit wallet to start.')) return;
   const c = DEV.chain, W = DEV.W && DEV.key === S.key.pubHex + c.chainId ? DEV.W : null;
+  const last = DEV.bal == null ? big(store.get(`tacit-lite-device-bal-v1:${c.chainId}:${S.key.pubHex}`)?.v) : null;
   mount(el, html`
     ${segSub('chain', String(c.chainId), DEVICE_CHAINS.map((x) => [String(x.chainId), x.name]))}
     <div class="bal">
       <svg class="tk md" aria-hidden="true"><use href="#tk-eth"/></svg>
-      <div><div class="v num">${DEV.bal == null ? (DEV.err ? html`<span class="err">—</span>` : html`<span class="mute">reading…</span>`) : fmt(DEV.bal, 18, 6)}</div><div class="u">ETH, private on ${c.name}</div></div>
-      <div class="side">${DEV.err ? html`<button class="link" type="button" id="d-rescan">retry</button>` : DEV.bal != null ? html`<button class="link" type="button" id="d-rescan">refresh</button>` : ''}</div>
+      <div><div class="v num">${DEV.bal != null ? fmt(DEV.bal, 18, 6) : DEV.err ? html`<span class="err">—</span>` : last != null ? html`<span class="stale">${fmt(last, 18, 6)}</span>` : html`<span class="sk" style="--w:8ch"></span>`}</div><div class="u">ETH, private on ${c.name}</div></div>
+      <div class="side">${DEV.err ? html`<button class="link" type="button" id="d-rescan">retry</button>` : DEV.bal != null ? html`<button class="link" type="button" id="d-rescan">refresh</button>` : 'updating…'}</div>
     </div>
     ${segSub('dev', DEV.mode, [['deposit', 'Deposit'], ['send', 'Send'], ['out', 'Withdraw'], ['receive', 'Receive']])}
     <div id="d-form"></div>
@@ -1903,14 +2346,14 @@ function renderDevice(el) {
   const maxPriv = DEV.bal != null ? html`<button type="button" id="d-maxp">Private ${fmt(DEV.bal, 18, 4)} ETH</button>` : '';
   const wireMax = () => $('#d-maxp')?.addEventListener('click', () => { const fe = BigInt(DEV.quote?.fee || 0), v = DEV.bal > fe ? DEV.bal - fe : 0n, amt = $('#d-amt'); amt.value = v ? plain(v, 18) : ''; amt.dispatchEvent(new Event('input')); });
   if (DEV.mode === 'deposit') {
-    mount(f, html`${amountField('d-amt', 'Amount', html`<button type="button" id="d-max">${payName()} <span id="d-wb">…</span> ETH</button>`)}
+    mount(f, html`${amountField('d-amt', 'Amount', html`<button type="button" id="d-max">${payName()} <span id="d-wb"><span class="sk" style="--w:5ch"></span></span> ETH</button>`)}
       <div class="rcpt" id="d-rcpt" hidden></div>
       <button class="btn" type="button" id="d-go" disabled>Deposit privately</button>
       <p class="note">Proved on this device, then sent from ${your()}: you pay the gas, no fee.</p>`);
     let wb = null;
     const amt = $('#d-amt'), go = $('#d-go'), rc = $('#d-rcpt');
     const rpcOf = async () => (await getDeviceMods()).jsonRpc(c.rpc);
-    rpcOf().then((r) => r('eth_getBalance', [S.address, 'latest'])).then((b) => { wb = BigInt(b); $('#d-wb').textContent = fmt(wb, 18, 4); check(); }).catch(() => {});
+    rpcOf().then((r) => r('eth_getBalance', [S.address, 'latest'])).then((b) => { wb = BigInt(b); $('#d-wb').textContent = fmt(wb, 18, 4); check(); }).catch(() => { const e = $('#d-wb'); if (e) e.textContent = '—'; });
     const check = () => {
       const amount = parseUnits(amt.value);
       go.disabled = true; rc.hidden = true;
@@ -1927,7 +2370,7 @@ function renderDevice(el) {
         const amount = parseUnits(amt.value);
         if (!amount) throw new Error('Enter an amount.');
         const W2 = await deviceWallet();
-        await payingAccount(); W2.connect(payFrom(c.chainId));
+        await payingAccount(); W2.connect(payFrom(c.chainId, `Deposit ${fmt(amount, 18, 6)} ETH on this device${c.chainId === 1 ? '' : `, on ${c.name}`}`));
         const h = await W2.deposit({ amount, onStep: step });
         clearField(amt); rc.hidden = true;
         afterAction(html`<span class="ok">Deposited.</span> ${explorer(h)}`);
@@ -1973,7 +2416,8 @@ function renderDevice(el) {
         const amount = parseUnits(amt.value), to = toEl.value.trim(), k = kind(to);
         if (!amount) throw new Error('Enter an amount.');
         const W2 = await deviceWallet();
-        const h = k === 'addr' ? await W2.withdraw({ to: recipientOf(to), amount, onStep: step }) : await W2.send({ to, amount, onStep: step });
+        const h = keeperTx(k === 'addr' ? await W2.withdraw({ to: recipientOf(to), amount, onStep: step }) : await W2.send({ to, amount, onStep: step }), c.chainId,
+          `Send ${fmt(amount, 18, 6)} ETH ${k === 'addr' ? 'out' : 'privately'} from this device${c.chainId === 1 ? '' : `, on ${c.name}`}`);
         clearField(amt); rc.hidden = true;
         afterAction(html`<span class="ok">${k === 'addr' ? 'Sent to the address.' : 'Sent privately.'}</span> ${explorer(h)}`);
       } catch (e) { sayErr(status, e); }
@@ -2025,10 +2469,10 @@ function renderDevice(el) {
         if (!amount) throw new Error('Enter an amount.');
         const W2 = await deviceWallet();
         let h, done;
-        if (dest === 'addr') { h = await W2.withdraw({ to: recipientOf(toEl.value), amount, onStep: step }); done = 'Withdrawn.'; }
+        if (dest === 'addr') { h = keeperTx(await W2.withdraw({ to: recipientOf(toEl.value), amount, onStep: step }), c.chainId, `Withdraw ${fmt(amount, 18, 6)} ETH from this device${c.chainId === 1 ? '' : `, on ${c.name}`}`); done = 'Withdrawn.'; }
         else if (dest === 'v1') { h = await moveToV1(W2, amount, step); done = 'Moved into the Tacit pool as tETH.'; }
         else {
-          h = await W2.bridgeOut({ toChainId: l2.chainId, amount, l2Rpc: (await getDeviceMods()).jsonRpc(l2.rpc), onStep: step });
+          h = keeperTx(await W2.bridgeOut({ toChainId: l2.chainId, amount, l2Rpc: (await getDeviceMods()).jsonRpc(l2.rpc), onStep: step }), 1, `Move ${fmt(amount, 18, 6)} ETH to ${l2.name}`);
           devWalletOn(l2.chainId).then((w) => w.watchReceive()).catch(() => {});   // that chain's keeper sweeps the arrival in
           done = `On its way to ${l2.name}.`;
         }
@@ -2053,7 +2497,7 @@ function renderDevice(el) {
       const b = $('#d-sweep');
       b.onclick = () => busy(b, async () => {
         try {
-          await payingAccount(); W.connect(payFrom(c.chainId));
+          await payingAccount(); W.connect(payFrom(c.chainId, `Sweep ${fmt(w, 18, 6)} ETH in on this device${c.chainId === 1 ? '' : `, on ${c.name}`}`));
           const h = await W.sweep({ onStep: step });
           afterAction(html`<span class="ok">Swept in.</span> ${explorer(h)}`);
         } catch (e) { sayErr(status, e); }
@@ -2098,10 +2542,11 @@ function loadBtc(force = false) {
     let sats = 0n, pending = 0n, silent = 0n;
     // At or below dust an output is a Tacit asset note: it counts with the assets, never as BTC.
     for (const u of utxos || []) { const v = BigInt(u.value || 0); if (v <= SATS_DUST) continue; if (u.status?.confirmed) sats += v; else pending += v; }
-    for (const [k, c] of Object.entries(t.loadSpCredits() || {})) {               // silent payments found for this key, unspent
-      if (c.coinClass) continue;
-      const [txid, vout] = k.split(':');
-      if (!(await esplora(`/tx/${txid}/outspend/${vout}`).catch(() => null))?.spent) silent += BigInt(c.sats || 0);
+    // Silent payments found for this key, still unspent: asked about six at a time.
+    const credits = Object.entries(t.loadSpCredits() || {}).filter(([, c]) => !c.coinClass);
+    for (let i = 0; i < credits.length; i += 6) {
+      const outs = await Promise.all(credits.slice(i, i + 6).map(([k]) => { const [txid, vout] = k.split(':'); return esplora(`/tx/${txid}/outspend/${vout}`).catch(() => null); }));
+      outs.forEach((o, j) => { if (!o?.spent) silent += BigInt(credits[i + j][1].sats || 0); });
     }
     // An asset whose metadata did not load has unknown decimals: shown in base units and not offered for sending.
     const held = [...(h instanceof Map ? h.entries() : [])].map(([id, x]) => {
@@ -2135,14 +2580,14 @@ async function scanShielded(status) {
 render.btc = () => {
   const el = $('#btc-body');
   if (!needKey(el, 'Send BTC as a silent payment and TAC with the recipient hidden, from your key’s own Bitcoin address. Open your Tacit wallet to start.')) return;
-  const b = BTC.pub === S.key.pubHex ? BTC : null;
+  const b = BTC.pub === S.key.pubHex ? BTC : null, last = b || BTC.err ? null : lastSeen('btc');
   if (!b && !BTC.loading && !BTC.err) loadBtc().then(() => rerender('btc')).catch(() => {});
   mount(el, html`
     <div class="bal">
       <svg class="tk md" aria-hidden="true"><use href="#tk-btc"/></svg>
-      <div><div class="v num">${b ? fmt(b.sats + b.silent, 8, 8) : BTC.err ? html`<span class="err">—</span>` : html`<span class="mute">reading…</span>`}</div>
+      <div><div class="v num">${b ? fmt(b.sats + b.silent, 8, 8) : BTC.err ? html`<span class="err">—</span>` : last != null ? html`<span class="stale">${fmt(last, 8, 8)}</span>` : html`<span class="sk" style="--w:10ch"></span>`}</div>
         <div class="u">BTC${b?.pending ? ` · ${fmt(b.pending, 8, 8)} arriving` : ''}</div></div>
-      <div class="side">${b || BTC.err ? html`<button class="link" type="button" id="btc-re">${b ? 'refresh' : 'retry'}</button>` : ''}</div>
+      <div class="side">${b || BTC.err ? html`<button class="link" type="button" id="btc-re">${b ? 'refresh' : 'retry'}</button>` : 'updating…'}</div>
     </div>
     ${(b?.held || []).map((a) => html`<div class="kv"><span>${a.ticker} on Bitcoin</span><b class="num">${fmt(a.balance, a.decimals, 4)}</b></div>`)}
     ${segSub('btcm', BTC.mode, [['send', 'Send'], ['receive', 'Receive']])}
@@ -2236,6 +2681,7 @@ function btcSendForm(f, status, b) {
         try { t.invalidateHoldingsCache?.(); } catch {}
         return id;
       });
+      actBtc(txid, `Send ${fmt(v, dec, 8)} ${unit}${token ? ' on Bitcoin' : ''}`);
       const kind = r.kind === 'sp' ? 'sp' : r.kind === 'stealth' ? 'st' : null;
       BTC.share = kind ? { kind, url: `${location.origin}/weld/#${kind}=${txid}` } : null;
       clearField(amt);
@@ -2296,10 +2742,15 @@ async function checkBtcPayment(raw, status) {
 const air = makeTacAirdrop({ call: makeRpcCall({ rpcs: RPCS }), keccak256: keccak_256 });
 let AIR = null;
 const AIR_CLOSE = `Airdrop claims close ${dayFmt(air.config.deadline)}`;
-async function loadAirdrop() {
-  if (!S.wallet) { AIR = null; setFoot('tac', AIR_CLOSE); return; }
-  const who = S.wallet, s = await air.status(who);
-  if (who !== S.wallet) return;
+const AIRL = {};
+function loadAirdrop(force = false) {
+  if (!S.wallet) { AIR = null; setFoot('tac', AIR_CLOSE); return Promise.resolve(); }
+  const who = S.wallet;
+  return once(AIRL, who, (current) => readAirdrop(who, current), force);        // forced after a claim
+}
+async function readAirdrop(who, current) {
+  const s = await air.status(who);
+  if (who !== S.wallet || !current()) return;
   AIR = s;
   if (s.error) setFoot('tac', 'Could not read the airdrop');
   else if (s.claimable) setFoot('tac', `${fmt(BigInt(s.amountWei), 18, 2)} TAC to claim`, 'live');
@@ -2315,6 +2766,7 @@ load.tac = () => Promise.all([TAB.tac === 'air' ? loadAirdrop() : loadPrecision(
 // One TAC balance across its three homes: canonical TAC on Bitcoin (this key's own address and the shielded payments it
 // found), the public ERC20 on Ethereum (the connected wallet and the Tacit account) and private TAC notes in the Tacit pool.
 const TACB = { who: null, erc: null };
+const PUBX = { who: null, tacbtc: 0n, tacusd: 0n };                  // cBTC and cUSD held in public, as tacBTC and tacUSD
 async function loadTacHoldings() {
   const who = [...new Set([S.wallet, S.acct?.address].filter(Boolean).map((a) => a.toLowerCase()))];
   const out = who.length ? await multicall(who.map((a) => ({ to: ADDR.tac, data: SEL.balanceOf + addrWord(a) }))) : [];
@@ -2334,15 +2786,18 @@ function renderTacBal(el) {
   mount(el, html`
     <div class="bal">
       <svg class="tk md" aria-hidden="true"><use href="#tk-tac"/></svg>
-      <div><div class="v num">${known || total ? fmt(total, 18, 2) : html`<span class="mute">reading…</span>`}</div><div class="u">TAC${known ? '' : ', still reading'}</div></div>
+      <div><div class="v num">${known || total ? fmt(total, 18, 2) : html`<span class="sk" style="--w:8ch"></span>`}</div><div class="u">TAC${known ? '' : ', still reading'}</div></div>
       <div class="side"><button class="link" type="button" data-asset="tac">About TAC</button></div>
     </div>
-    <div class="parts">${parts.map(([label, v]) => html`<span>${label} <b class="num">${v == null ? '…' : fmt(v, 18, 2)}</b></span>`)}</div>
-    ${k && P.scan?.tac?.value ? html`<div class="callout"><span>${fmt(P.scan.tac.value * E10, 18, 2)} TAC is in private notes. Make it public TAC in ${your()} to sell or farm it here.</span><button class="btn ghost" type="button" id="tac-pub">Make public</button></div>
-      <div class="status" role="status" id="tac-pub-status"></div>` : ''}`);
+    <div class="parts">${parts.map(([label, v]) => html`<span>${label} <b class="num">${v == null ? html`<span class="sk" style="--w:4ch"></span>` : fmt(v, 18, 2)}</b></span>`)}</div>
+    ${k ? depositCallout('tac', 'tac-finish') : ''}
+    ${k && P.scan?.tac?.value ? html`<div class="callout"><span>${fmt(P.scan.tac.value * E10, 18, 2)} TAC is in private notes. Make it public TAC in ${your()} to sell or farm it here.</span><button class="btn ghost" type="button" id="tac-pub">Make public</button></div>` : ''}
+    <div class="status" role="status" id="tac-bal-status"></div>`);
+  const fin = $('#tac-finish', el);
+  if (fin) fin.onclick = () => busy(fin, () => finishDeposits('tac', $('#tac-bal-status')));
   const pub = $('#tac-pub', el);
   if (pub) pub.onclick = () => busy(pub, async () => {
-    const status = $('#tac-pub-status');
+    const status = $('#tac-bal-status');
     try {
       const t = await getUx(), priv = walletPriv(), to = await payingAccount(), notes = [...P.scan.tac.notes].sort((a, b) => (BigInt(b.value) > BigInt(a.value) ? 1 : -1));
       const minFee = BigInt(await t.quoteOpFee('cTAC', 'sendunwrap'));
@@ -2350,6 +2805,7 @@ function renderTacBal(el) {
       if (!worth.length) throw new Error('Each private TAC note is worth less than the relay fee to move it.');
       for (const [i, n] of worth.entries()) {
         say(status, `The relay is moving your TAC${worth.length > 1 ? ` (${i + 1} of ${worth.length})` : ''}…`);
+        hint('unwrap', `Make ${fmt(BigInt(n.value), 8, 2)} TAC public`);
         await t.unwrap({ note: n, walletPriv: priv, recipient: to, wait: true, waitOpts: { timeoutMs: 15 * 60e3 } });
       }
       toast('Private TAC made public');
@@ -2358,10 +2814,10 @@ function renderTacBal(el) {
     } catch (e) { sayErr(status, e); }
   });
 }
-const sendWallet = ({ to, data, value }) => sendTx({ to, data, value: BigInt(value || 0), via: 'wallet' });   // the snapshot wallet itself
+const sendWallet = (label) => ({ to, data, value }) => sendTx({ to, data, value: BigInt(value || 0), via: 'wallet', label });   // the snapshot wallet itself
 function renderAirdrop(el) {
   if (!S.wallet) { mount(el, gate('Connect the wallet that held the snapshot tokens.', 'Connect wallet', 'air-connect')); return wireConnect('air-connect', () => rerender('tac')); }
-  if (!AIR) { mount(el, html`<div class="gate"><p>Checking ${short(S.wallet)}…</p></div>`); return; }
+  if (!AIR) { mount(el, html`<div class="gate"><div class="big"><span class="sk" style="--w:4ch"></span></div><p>Checking ${short(S.wallet)}…</p></div>`); return; }
   const s = AIR;
   if (s.error) { mount(el, gate(`Could not read the airdrop: ${s.error.message}`, 'Try again', 'air-retry')); $('#air-retry').onclick = () => { AIR = null; loadAirdrop().then(() => rerender('tac')); rerender('tac'); }; return; }
   const amount = s.amountWei ? fmt(BigInt(s.amountWei), 18, 4) : '0';
@@ -2391,15 +2847,15 @@ function renderAirdrop(el) {
   const finish = async (r) => {
     say(status, html`Claiming… ${txLink(r.txHash)}`);
     const w = await air.waitClaimed(S.wallet);
-    if (w.claimed) { await loadAirdrop(); rerender('tac'); toast('TAC claimed'); }
+    if (w.claimed) { await loadAirdrop(true); rerender('tac'); toast('TAC claimed'); }
     else say(status, html`Still pending. ${txLink(r.txHash)}`);
   };
   const c = $('#air-claim');
-  if (c) c.onclick = () => busy(c, async () => { try { await finish(await air.claim(S.wallet, { send: sendWallet, from: S.wallet })); } catch (e) { sayErr(status, e); } });
+  if (c) c.onclick = () => busy(c, async () => { try { await finish(await air.claim(S.wallet, { send: sendWallet(`Claim ${amount} TAC from the airdrop`), from: S.wallet })); } catch (e) { sayErr(status, e); } });
   const show = $('#air-to-show'); if (show) show.onclick = () => { $('#air-to').hidden = false; show.parentElement.hidden = true; $('#air-to-addr').focus(); };
   $('#air-to-me')?.addEventListener('click', () => { $('#air-to-addr').value = S.acct.address; });
   const ct = $('#air-claim-to');
-  if (ct) ct.onclick = () => busy(ct, async () => { try { await finish(await air.claimTo(S.wallet, recipientOf($('#air-to-addr').value), { send: sendWallet })); } catch (e) { sayErr(status, e); } });
+  if (ct) ct.onclick = () => busy(ct, async () => { try { await finish(await air.claimTo(S.wallet, recipientOf($('#air-to-addr').value), { send: sendWallet(`Claim ${amount} TAC from the airdrop`) })); } catch (e) { sayErr(status, e); } });
   const wa = $('#air-watch');
   if (wa) wa.onclick = () => S.provider.request({ method: 'wallet_watchAsset', params: { type: 'ERC20', options: { address: ADDR.tac, symbol: 'TAC', decimals: 18, image: 'https://tacit.finance/tac-logo.png' } } }).catch(() => {});
   const fm = $('#air-farm'); if (fm) fm.onclick = () => { $('#sheet-tac').close(); Object.assign(FARM, { open: 'precision', mode: 'pair', fill: 'tac' }); openSheet('farm'); };
@@ -2411,7 +2867,7 @@ const venues = makeEvmTradeVenues({ ethCall: (to, data, block = 'latest', o = {}
 function renderBuy(el) {
   if (!S.address) { mount(el, gate('Buy public TAC with ETH at the best quote. The Precision route earns points.', 'Connect wallet', 'buy-connect')); return wireConnect('buy-connect', () => rerender('tac')); }
   mount(el, html`
-    <div class="lbl"><span>Pay</span><button type="button" id="b-max">${payName()} <span id="b-bal">…</span> ETH</button></div>
+    <div class="lbl"><span>Pay</span><button type="button" id="b-max">${payName()} <span id="b-bal"><span class="sk" style="--w:5ch"></span></span> ETH</button></div>
     <div class="amt"><input id="b-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="ETH to spend"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>
     <div class="rcpt" id="b-rcpt" hidden></div>
     <div id="b-ack"></div>
@@ -2455,7 +2911,7 @@ function renderBuy(el) {
     if (!x || !lossOk(ackBox, x.impact)) return;
     try {
       const tx = venues.build({ quote: x, dir: 'ETH_TO_TAC', account: S.address, slippageBps: 50, deadline: deadline() });
-      const hash = await sendTx({ to: tx.to, data: tx.data, value: tx.value });
+      const hash = await sendTx({ to: tx.to, data: tx.data, value: tx.value, label: `Buy TAC with ${fmt(x.paid, 18, 6)} ETH` });
       say(status, html`Buying… ${txLink(hash)}`);
       await waitTx(hash);
       clearField(input); rc.hidden = true; mount(ackBox, html``);
@@ -2470,7 +2926,7 @@ function renderBuy(el) {
 function renderSell(el) {
   if (!S.address) { mount(el, gate('Sell public TAC for ETH at the best quote.', 'Connect wallet', 'sell-connect')); return wireConnect('sell-connect', () => rerender('tac')); }
   mount(el, html`
-    <div class="lbl"><span>Sell</span><button type="button" id="s-max">${payName()} <span id="s-bal">…</span> TAC</button></div>
+    <div class="lbl"><span>Sell</span><button type="button" id="s-max">${payName()} <span id="s-bal"><span class="sk" style="--w:5ch"></span></span> TAC</button></div>
     <div class="amt"><input id="s-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="TAC to sell"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</span></div>
     <div class="rcpt" id="s-rcpt" hidden></div>
     <div id="s-ack"></div>
@@ -2478,7 +2934,7 @@ function renderSell(el) {
     <div class="status" role="status" id="s-status"></div>`);
   const input = $('#s-amt'), go = $('#s-go'), rc = $('#s-rcpt'), status = $('#s-status'), ackBox = $('#s-ack'), who = S.address;
   let bal = null, q = null, seq = 0;
-  multicall([{ to: ADDR.tac, data: SEL.balanceOf + addrWord(who) }]).then(([r]) => { bal = r ? wordAt(r, 0) : null; const e = $('#s-bal'); if (e) e.textContent = bal == null ? '—' : fmt(bal, 18, 2); }).catch(() => {});
+  multicall([{ to: ADDR.tac, data: SEL.balanceOf + addrWord(who) }]).then(([r]) => { bal = r ? wordAt(r, 0) : null; const e = $('#s-bal'); if (e) e.textContent = bal == null ? '—' : fmt(bal, 18, 2); }).catch(() => { const e = $('#s-bal'); if (e) e.textContent = '—'; });
   $('#s-max').onclick = () => { if (bal) { input.value = plain(bal, 18); input.dispatchEvent(new Event('input')); } };
   const gateOk = () => { go.disabled = !q || (bal != null && q.amountIn > bal) || !lossOk(ackBox, q.impact); };
   onEdit([input], go, async (e) => {
@@ -2514,9 +2970,9 @@ function renderSell(el) {
       let tx = venues.build(args);
       if (tx.approval && wordAt(await ethCall(ADDR.tac, SEL.allowance + addrWord(who) + addrWord(tx.approval.spender)), 0) < tx.approval.amount) {
         if (x.venue === 'precision') tx = venues.build({ ...args, permit: { value: x.amountIn, deadline: dl, ...(await permitSig({ token: ADDR.tac, name: 'Tacit Token', spender: tx.approval.spender, value: x.amountIn, deadline: dl, status })) } });
-        else { const h = await sendTx({ to: ADDR.tac, data: encErc20Approve(tx.approval.spender, tx.approval.amount) }); say(status, html`Approving TAC… ${txLink(h)}`); await waitTx(h); }
+        else { const h = await sendTx({ to: ADDR.tac, data: encErc20Approve(tx.approval.spender, tx.approval.amount), label: 'Approve TAC for the sale' }); say(status, html`Approving TAC… ${txLink(h)}`); await waitTx(h); }
       }
-      const hash = await sendTx({ to: tx.to, data: tx.data, value: tx.value });
+      const hash = await sendTx({ to: tx.to, data: tx.data, value: tx.value, label: `Sell ${fmt(x.amountIn, 18, 2)} TAC` });
       say(status, html`Selling… ${txLink(hash)}`);
       await waitTx(hash);
       clearField(input); rc.hidden = true; mount(ackBox, html``);
@@ -2534,21 +2990,28 @@ const WNS = '0x0000000000696760E15f265e828DB644A0c242EB', ZSWAP = 'https://zswap
 const PTS = { at: 0, key: '', rows: null };
 const pointsWho = () => [...new Map([[S.acct?.address, 'Tacit account'], [S.wallet, 'Wallet']].filter(([a]) => a).map(([a, l]) => [a.toLowerCase(), l]))];
 const ptsFmt = (n) => Math.round(Number(n) || 0).toLocaleString('en-US');
-async function loadPoints(force = false) {
+function loadPoints(force = false) {
+  const key = pointsWho().map(([a]) => a).join();
+  if (!force && PTS.key === key && PTS.rows && Date.now() - PTS.at < 60e3) return Promise.resolve();
+  return once(PTS, key, readPoints, force);
+}
+async function readPoints(current) {
   const who = pointsWho(), key = who.map(([a]) => a).join();
-  if (!force && PTS.key === key && PTS.rows && Date.now() - PTS.at < 60e3) return;
   const rows = await Promise.all(who.map(async ([addr, label]) => {
-    const [p, c] = await Promise.all([fetch(`${API}/points/${addr}`).then((r) => r.json()).catch(() => null), fetch(`${API}/claim/${addr}`).then((r) => r.json()).catch(() => null)]);
+    const get = (path) => fetch(`${API}/${path}/${addr}`, { signal: within(20e3) }).then((r) => r.json()).catch(() => null);
+    const [p, c] = await Promise.all([get('points'), get('claim')]);
     // What is claimable comes from the distributor itself, not the service's copy of it.
     const owed = c?.proof && c.cumulativeAmount ? wordAt(await ethCall(DISTRIBUTOR, '787eef2e' + addrWord(addr) + word(BigInt(c.cumulativeAmount))).catch(() => '0x'), 0) : 0n;
     const t = p?.today, today = t && Number(t.totalPoints) > 0 ? BigInt(t.dayBudgetWei) * BigInt(Math.round(Number(t.points) * 1e6)) / BigInt(Math.round(Number(t.totalPoints) * 1e6)) : 0n;
-    return { addr, label, points: Number(p?.points || 0), todayPts: Number(t?.points || 0), today, owed, claim: c?.proof ? c : null, boost: Number((p?.deposits || [])[0]?.tac_boost || 1), read: !!p };
+    return { addr, label, points: Number(p?.points || 0), todayPts: Number(t?.points || 0), today, share: t && Number(t.totalPoints) > 0 ? Number(t.points) / Number(t.totalPoints) : 0,
+      owed, claim: c?.proof ? c : null, boost: Number((p?.deposits || [])[0]?.tac_boost || 1), read: !!p };
   }));
-  if (key !== pointsWho().map(([a]) => a).join()) return;
+  if (key !== pointsWho().map(([a]) => a).join() || !current()) return;
   Object.assign(PTS, { at: Date.now(), key, rows });
   paintPointsFoot();
 }
 load.pts = () => loadPoints();
+RETRY.points = () => loadPoints(true).then(() => rerender('pts')).catch(() => {});
 function paintPointsFoot() {
   const rows = PTS.key && PTS.key === pointsWho().map(([a]) => a).join() ? PTS.rows : null;
   if (!rows || !rows.some((r) => r.read)) { setFoot('pts', '100,000 TAC over 90 days'); return; }
@@ -2559,7 +3022,7 @@ function paintPointsFoot() {
 async function claimPoints(r) {
   const p = r.claim.proof, data = '2f52ebb7' + word(BigInt(r.claim.cumulativeAmount)) + word(64) + word(p.length) + p.map((h) => strip(h).padStart(64, '0')).join('');
   await ethCall(DISTRIBUTOR, data, { from: r.addr });        // fail closed on a stale proof (a root rotated since load) before ever asking for a signature
-  return sendTx({ to: DISTRIBUTOR, data, via: r.addr === S.acct?.address.toLowerCase() ? 'tacit' : 'wallet' });
+  return sendTx({ to: DISTRIBUTOR, data, via: r.addr === S.acct?.address.toLowerCase() ? 'tacit' : 'wallet', label: `Claim ${fmt(r.owed, 18, 2)} TAC from points` });
 }
 const EARN = [
   ['private', 'teth', 'Wrap ETH into the Tacit pool', '1,250 points per ETH'],
@@ -2578,10 +3041,12 @@ render.pts = () => {
     ${rows ? rows.map((r, i) => html`
       <div class="pt">
         <div class="bal"><div><div class="v num">${ptsFmt(r.points)}</div><div class="u">points · ${r.label} ${short(r.addr)}</div></div>
-          <div class="side">${r.read ? html`today ${ptsFmt(r.todayPts)}<br>about ${fmt(r.today, 18, 2)} TAC` : html`<span class="err">unavailable</span>`}</div></div>
+          <div class="side">${r.read ? html`today ${ptsFmt(r.todayPts)}<br>about ${fmt(r.today, 18, 2)} TAC` : html`<span class="err">unavailable</span><br><button class="link" type="button" data-retry="points">Try again</button>`}</div></div>
         ${r.boost > 1 ? html`<div class="kv"><span>Holder boost</span><b>${r.boost}×</b></div>` : ''}
         ${r.owed > 0n ? html`<button class="btn" type="button" data-claim="${i}">Claim ${fmt(r.owed, 18, 2)} TAC</button>` : ''}
-      </div>`) : html`<p class="note">Reading your points…</p>`}
+      </div>`) : pointsWho().map(([, label]) => html`
+      <div class="pt"><div class="bal"><div><div class="v"><span class="sk" style="--w:5ch"></span></div><div class="u">points · ${label}</div></div>
+        <div class="side"><span class="sk" style="--w:8ch"></span><br><span class="sk" style="--w:11ch"></span></div></div></div>`)}
     <div class="lbl"><span>Earn more</span></div>
     <div class="opts">${EARN.map(([go, ic, t, m]) => html`<button class="opt" type="button" data-earn="${go}"><span class="opt-t"><svg class="tk sm" aria-hidden="true"><use href="#tk-${ic}"/></svg>${t}</span><span class="opt-m">${m}</span></button>`)}
       <a class="opt" href="${ZSWAP}" target="_blank" rel="noopener"><span class="opt-t"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Swap or bet with ETH on zSwap ↗</span><span class="opt-m">1,000 per ETH</span></a></div>
@@ -2668,7 +3133,7 @@ function weiForm(f, status) {
         let at = wordAt(await ethCall(WNS, '839df945' + commitment), 0);
         if (!at || BigInt(await chainTime()) > at + 86400n) {                 // none yet, or older than the day a reveal accepts
           say(status, 'Step 1 of 2: reserving the name…');
-          await waitTx(await sendTx({ to: WNS, data: 'f14fcbc8' + commitment }));
+          await waitTx(await sendTx({ to: WNS, data: 'f14fcbc8' + commitment, label: `Reserve ${label}.wei` }));
           for (let i = 0; !(at = wordAt(await ethCall(WNS, '839df945' + commitment), 0)) && i < 20; i++) await sleep(3000);   // a read behind the chain
           if (!at) throw new Error('The reservation landed but is not visible yet. Press Register again in a minute; it picks up from here.');
         }
@@ -2684,12 +3149,12 @@ function weiForm(f, status) {
         const calls = ['2cb9f974' + word(96) + secret + addrWord(to) + abiStr(label), 'cb019b84' + addrWord('0x' + '0'.repeat(40)) + word(0) + word(0) + addrWord(to)];
         let off = calls.length * 32, heads = '', tails = '';
         for (const c of calls) { heads += word(off); const t = word(c.length / 2) + c.padEnd(Math.ceil(c.length / 64) * 64, '0'); tails += t; off += t.length / 2; }
-        await waitTx(await sendTx({ to: ZROUTER, data: 'ac9650d8' + word(32) + word(calls.length) + heads + tails, value: price }));
+        await waitTx(await sendTx({ to: ZROUTER, data: 'ac9650d8' + word(32) + word(calls.length) + heads + tails, value: price, label: `Register ${label}.wei` }));
         toast(`${label}.wei is yours`);
       }
       say(status, `Publishing your Tacit address on ${label}.wei…`);
       const key = 'finance.tacit', rec = abiStr(key);
-      await waitTx(await sendTx({ to: WNS, data: '3fb24782' + weiNode(label) + word(96) + word(96 + rec.length / 2) + rec + abiStr(S.key.tacit) }));
+      await waitTx(await sendTx({ to: WNS, data: '3fb24782' + weiNode(label) + word(96) + word(96 + rec.length / 2) + rec + abiStr(S.key.tacit), label: `Publish your Tacit address on ${label}.wei` }));
       say(status, html`<span class="ok">${label}.wei now pays you privately.</span>`);
       WEI.label = ''; loadPoints(true).then(() => rerender('pts')).catch(() => {});
     } catch (e) { sayErr(status, e); }
@@ -2697,7 +3162,9 @@ function weiForm(f, status) {
 }
 
 // ── farms ────────────────────────────────────────────────────────────────────────────────────────────────
-const FARM = { precision: null, program: null, open: 'precision', mode: null, positions: null, outPct: '100', outAs: 'both', fill: null, wtac: 0n };
+// The public farm program is kept from the last visit and shown until the fresh read replaces it.
+const PROGRAM_KEY = 'tacit-lite-farm-program-v1', FARM_FOOT_KEY = 'tacit-lite-farm-foot-v1';
+const FARM = { precision: null, program: store.get(PROGRAM_KEY), open: 'precision', mode: null, positions: null, outPct: '100', outAs: 'both', fill: null, wtac: 0n };
 const WTAC = '0x2018139a8fdd3666855be3315c7683b4d6ab7aef';        // WrappedTac: the private farms' reward token, 1:1 for TAC
 let precisionSeq = 0;
 async function loadPrecision() {
@@ -2710,6 +3177,10 @@ async function loadPrecision() {
   if (S.address) calls.push({ to: f, data: SEL.staked + addrWord(S.address) }, { to: f, data: SEL.earned + addrWord(S.address) },
     { to: ADDR.tac, data: SEL.balanceOf + addrWord(S.address) }, { to: ADDR.tac, data: SEL.allowance + addrWord(S.address) + addrWord(f) },
     { to: p, data: SEL.balanceOf + addrWord(S.address) }, { to: p, data: SEL.allowance + addrWord(S.address) + addrWord(f) });
+  // The TAC, tacBTC and tacUSD the wallet and the Tacit account hold on Ethereum ride the same request, for the TAC balance
+  // and the dashboard.
+  const holders = S.address ? [...new Set([S.wallet, S.acct?.address].filter(Boolean).map((a) => a.toLowerCase()))] : [];
+  for (const token of [ADDR.tac, ADDR.tacbtc, ADDR.tacusd]) for (const a of holders) calls.push({ to: token, data: SEL.balanceOf + addrWord(a) });
   const r = await multicall(calls);
   const w = (i) => r[i] ? wordAt(r[i], 0) : 0n;
   const x = { who: S.address, r0: w(0), r1: w(1), supply: w(2), sp: w(3), totalStaked: w(4), rate: w(5), finish: Number(w(6)), t: Number(w(7)) || now(), staked: w(8), earned: w(9), tac: w(10), allowance: w(11), lp: w(12), lpAllow: w(13) };
@@ -2723,22 +3194,30 @@ async function loadPrecision() {
   if (S.address) x.bal = await ethBalance();
   if (my !== precisionSeq) return FARM.precision;             // a newer read is in flight or done; keep its answer
   FARM.precision = x;
+  const held = (j) => (holders.every((_, i) => r[14 + j * holders.length + i]) ? holders.reduce((sum, _, i) => sum + w(14 + j * holders.length + i), 0n) : null);
+  if (holders.length && held(0) != null) Object.assign(TACB, { who: holders.join(), erc: held(0) });
+  if (holders.length && held(1) != null && held(2) != null) Object.assign(PUBX, { who: holders.join(), tacbtc: held(1), tacusd: held(2) });
+  dashSoon();
   return x;
 }
 async function loadProgram() {
-  const r = await fetch(`${API}/farm/program?network=mainnet`);
+  const r = await fetch(`${API}/farm/program?network=mainnet`, { signal: within(20e3) });
   if (!r.ok) throw new Error(`farm program ${r.status}`);
   FARM.program = await r.json();
+  store.set(PROGRAM_KEY, FARM.program);
   return FARM.program;
 }
 async function loadPositions() {
   if (!S.key) { FARM.positions = null; return; }
-  const t = await getUx();
-  FARM.positions = await t.farmPositions({ walletPriv: walletPriv() });
+  const t = await getUx(), pub = S.key.pubHex, got = await t.farmPositions({ walletPriv: walletPriv() });
+  if (S.key?.pubHex === pub) { FARM.positions = got; dashSoon(); }
 }
-async function loadFarms() {
-  await Promise.allSettled([loadPrecision(), loadProgram(), S.key ? loadPositions() : null, S.key ? scanPrivate() : null,
+const loadFarms = (force = false) => once(FARM, `${S.address}|${S.key?.pubHex}`, readFarms, force);   // forced after an action
+async function readFarms(current) {
+  const [pr, pg] = await Promise.allSettled([loadPrecision(), loadProgram(), S.key ? loadPositions() : null, S.key ? scanPrivate() : null,
     S.address ? ethCall(WTAC, SEL.balanceOf + addrWord(S.address)).then((r) => { FARM.wtac = wordAt(r, 0); }) : null]);
+  if (!current()) return;
+  FARM.errs = { precision: pr.status === 'rejected' && !FARM.precision ? pr.reason : null, program: pg.status === 'rejected' && !FARM.program ? pg.reason : null };
   const x = FARM.precision, prog = FARM.program;
   const shielded = prog?.epoch?.active ? Number(prog.epoch.ratePerDayTac) : 0;
   const pub = x ? Number(x.perDay / 10n ** 14n) / 1e4 : 0;
@@ -2746,10 +3225,11 @@ async function loadFarms() {
   const mine = (FARM.positions || []).length;
   if (x && (x.staked > 0n || x.earned > 0n)) setFoot('farm', `Farming · ${fmt(x.earned, 18, 2)} TAC earned`, 'on');
   else if (mine) setFoot('farm', `${mine} shielded position${mine === 1 ? '' : 's'} earning`, 'on');
-  else if (total) setFoot('farm', `${total.toLocaleString('en-US')} TAC a day across ${1 + (prog?.pools?.length || 0)} farms`, 'live');
+  else if (total) { const t = `${total.toLocaleString('en-US')} TAC a day across ${1 + (prog?.pools?.length || 0)} farms`; setFoot('farm', t, 'live'); store.set(FARM_FOOT_KEY, t); }
   else if (!x && !prog) setFoot('farm', 'Reading farms…');            // both reads failed; a real "between periods" claim needs at least one to answer
   else setFoot('farm', 'Farms are between reward periods');
 }
+RETRY.farm = () => { FARM.errs = null; rerender('farm'); loadFarms().then(() => rerender('farm')).catch(() => {}); };
 load.farm = () => loadFarms();
 
 const LOGO = { TAC: 'tk-tac', cETH: 'tk-teth', cUSD: 'tk-cusd', cBTC: 'tk-cbtc', ETH: 'tk-eth' };
@@ -2778,10 +3258,12 @@ render.farm = () => {
       <button type="button" aria-controls="farm-precision" aria-expanded="${FARM.open === 'precision'}">
         ${logoPair('TAC', 'ETH')}
         <span><span class="name">TAC / ETH</span><span class="kind">Precision pool · public${x?.staked > 0n ? html`<span class="tag">yours</span>` : ''}</span></span>
-        <span class="rate">${x ? html`<b>${fmt(x.perDay, 18, 0)} TAC</b><span>a day${x.live && precisionApr(x) != null ? ` · ${aprShort(precisionApr(x))}` : ''}</span>` : html`<span>…</span>`}</span>
+        <span class="rate">${x ? html`<b>${fmt(x.perDay, 18, 0)} TAC</b><span>a day${x.live && precisionApr(x) != null ? ` · ${aprShort(precisionApr(x))}` : ''}</span>` : FARM.errs?.precision ? html`<b>—</b>` : html`<b><span class="sk" style="--w:7ch"></span></b><span class="sk" style="--w:11ch"></span>`}</span>
       </button>
       <div class="body" id="farm-precision"></div>
     </li>`];
+  if (!prog && FARM.errs?.program) rows.push(html`<li class="farm"><p class="note err">The private farms could not be read. <button class="link" type="button" data-retry="farm">Try again</button></p></li>`);
+  else if (!prog) rows.push(html`<li class="farm"><button type="button" disabled>${logoPair('TAC', 'cETH')}<span><span class="name"><span class="sk" style="--w:10ch"></span></span><span class="kind">Tacit pool · private</span></span><span class="rate"><b><span class="sk" style="--w:7ch"></span></b><span class="sk" style="--w:11ch"></span></span></button></li>`);
   for (const p of prog?.pools || []) {
     const [a, b] = p.pair.split('/');
     rows.push(html`
@@ -2827,18 +3309,19 @@ function renderFarmNotes(el) {
       <p class="note">wTAC is the farms' reward token, one for one with TAC: it becomes TAC in ${your()}. Liquidity that is not bonded earns nothing; taking it out returns both assets as private notes.</p>
       <div class="status" role="status" id="fn-status"></div>
     </div>`);
-  const status = $('#fn-status', el), done = async (msg) => { say(status, html`<span class="ok">${msg}</span>`); await Promise.allSettled([scanPrivate(true), loadFarms()]); rerender('farm'); };
+  const status = $('#fn-status', el), done = async (msg) => { say(status, html`<span class="ok">${msg}</span>`); await Promise.allSettled([scanPrivate(true), loadFarms(true)]); rerender('farm'); };
   const rd = $('#fn-redeem', el);
   if (rd) rd.onclick = () => busy(rd, async () => {
     try {
       const t = await getUx(), priv = walletPriv(), to = await payingAccount();
       for (const [i, n] of wtac.entries()) {
         say(status, `The relay is unwrapping your rewards${wtac.length > 1 ? ` (${i + 1} of ${wtac.length})` : ''}…`);
+        hint('unwrap', `Unwrap ${fmt(BigInt(n.value), 8, 2)} wTAC of farm rewards`);
         await t.farmRedeem({ walletPriv: priv, note: n, to, wait: true, waitOpts: { timeoutMs: 15 * 60e3 } });
       }
       // WrappedTac turns the wTAC ERC20 in the paying account into TAC, one for one: what is there now, whatever its source.
       const bal = wordAt(await ethCall(WTAC, SEL.balanceOf + addrWord(to)), 0);
-      if (bal > 0n) { const h = await sendTx({ to: WTAC, data: SEL.wtacWithdraw + word(bal) + addrWord(to) }); say(status, html`Turning wTAC into TAC… ${txLink(h)}`); await waitTx(h); }
+      if (bal > 0n) { const h = await sendTx({ to: WTAC, data: SEL.wtacWithdraw + word(bal) + addrWord(to), label: `Turn ${fmt(bal, 18, 2)} wTAC into TAC` }); say(status, html`Turning wTAC into TAC… ${txLink(h)}`); await waitTx(h); }
       toast('Rewards turned into TAC');
       await done(`Your rewards are TAC in ${your()}.`);
     } catch (e) {
@@ -2853,6 +3336,7 @@ function renderFarmNotes(el) {
       const t = await getUx(), priv = walletPriv();
       for (const [i, n] of x.notes.entries()) {
         say(status, `The relay is taking your liquidity out${x.notes.length > 1 ? ` (${i + 1} of ${x.notes.length})` : ''}…`);
+        hint('lpremove', `Take out ${pairName(x.p.pair)} liquidity`);
         await t.lpRemove({ walletPriv: priv, assetA: r.assetA, assetB: r.assetB, feeBps: Number(x.p.feeBps || 30), shareNote: n, waitOpts: { timeoutMs: 15 * 60e3 } });
       }
       toast('Liquidity taken out');
@@ -2869,9 +3353,10 @@ function renderFarmNotes(el) {
 // see, claim and withdraw a position — part or all of it, as both assets or swapped into one.
 function renderPrecision(el) {
   const x = FARM.precision;
-  if (!x) { mount(el, html`<p class="note">Reading the farm…</p>`); return; }
+  const reading = html`<div class="kv"><span>Stream ends</span><b><span class="sk" style="--w:10ch"></span></b></div><div class="kv"><span>APR now</span><b><span class="sk" style="--w:9ch"></span></b></div>`;
+  if (!x) { mount(el, FARM.errs?.precision ? html`<p class="note err">The farm could not be read. <button class="link" type="button" data-retry="farm">Try again</button></p>` : reading); return; }
   if (!S.address) { mount(el, gate('Deposit ETH, TAC or both, and the farm stakes it for you. TAC streams to you every second.', 'Connect wallet', 'pf-connect')); return wireConnect('pf-connect', () => rerender('farm')); }
-  if (x.who !== S.address) { mount(el, html`<p class="note">Reading your balances…</p>`); loadFarms().then(() => rerender('farm')).catch(() => {}); return; }
+  if (x.who !== S.address) { mount(el, reading); loadFarms().then(() => rerender('farm')).catch(() => {}); return; }
   if (!FARM.mode) FARM.mode = x.tac >= 10n ** 18n ? 'pair' : 'eth';
   const has = x.staked > 0n, mode = FARM.mode, withEth = mode !== 'tac', withTac = mode !== 'eth';
   const myDay = has && x.totalStaked ? x.perDay * x.staked / x.totalStaked : 0n;
@@ -2907,7 +3392,7 @@ function renderPrecision(el) {
     say(status, html`${what}… ${txLink(hash)}`);
     await waitTx(hash);
     say(status, html`<span class="ok">${note}</span> ${txLink(hash)}`);
-    await loadFarms(); rerender('farm');
+    await loadFarms(true); rerender('farm');
   };
   wireSub(el, 'pfm', (m) => { FARM.mode = m; keep($('#sheet-farm'), render.farm); });
 
@@ -2975,7 +3460,8 @@ function renderPrecision(el) {
       if (mode === 'eth') tx = { data: SEL.zapETH + word(0) + tail, value: z.wei };
       else if (mode === 'tac') tx = { data: x.allowance >= z.tac ? SEL.zapToken + word(z.tac) + word(0) + tail : SEL.zapTokenWithPermit + word(z.tac) + word(0) + tail + await permit() };
       else tx = { data: x.allowance >= z.tac ? SEL.addAndStake + word(z.tac) + tail : SEL.addAndStakeWithPermit + word(z.tac) + tail + await permit(), value: z.wei };
-      const hash = await sendTx({ to: ADDR.precisionFarm, ...tx });
+      const what = [z.wei ? `${fmt(z.wei, 18, 6)} ETH` : '', z.tac ? `${fmt(z.tac, 18, 2)} TAC` : ''].filter(Boolean).join(' + ');
+      const hash = await sendTx({ to: ADDR.precisionFarm, ...tx, label: `Farm with ${what}` });
       [ethIn, tacIn].forEach((i) => i && clearField(i)); delete acked['pf-ackv'];
       await done(hash, 'Staking', 'Staked.');
       toast('Staked. TAC is streaming to you.');
@@ -2989,7 +3475,7 @@ function renderPrecision(el) {
       const dl = deadline();
       let data = SEL.stake + word(x.lp);
       if (x.lpAllow < x.lp) { const sig = await permitSig({ token: ADDR.precisionPool, name: 'Precision LP', spender: ADDR.precisionFarm, value: x.lp, deadline: dl, status }); data = SEL.stakeWithPermit + word(x.lp) + word(dl) + word(sig.v) + strip(sig.r) + strip(sig.s); }
-      await done(await sendTx({ to: ADDR.precisionFarm, data }), 'Staking', 'Staked.');
+      await done(await sendTx({ to: ADDR.precisionFarm, data, label: 'Stake LP shares in the farm' }), 'Staking', 'Staked.');
       toast('Staked. TAC is streaming to you.');
     } catch (e) { sayErr(status, e); }
   });
@@ -2997,7 +3483,7 @@ function renderPrecision(el) {
   // ── the position: claim and withdraw ──
   const c = $('#pf-claim');
   if (c) c.onclick = () => busy(c, async () => {
-    try { await done(await sendTx({ to: ADDR.precisionFarm, data: SEL.claim }), 'Claiming', `Claimed to ${your()}.`); toast('TAC claimed'); }
+    try { await done(await sendTx({ to: ADDR.precisionFarm, data: SEL.claim, label: `Claim ${fmt(x.earned, 18, 2)} TAC from the farm` }), 'Claiming', `Claimed to ${your()}.`); toast('TAC claimed'); }
     catch (e) { sayErr(status, e); }
   });
   const ex = $('#pf-exit');
@@ -3041,7 +3527,7 @@ function renderPrecision(el) {
       // Simulate for the exact outputs, then hold each to 0.5% below.
       const dl = deadline(), sim = strip(await ethCall(ADDR.precisionFarm, outData(z.all, z.as, z.shares, 0n, 0n, dl), { from: S.address }));
       const min0 = wordAt(sim, 0) * 995n / 1000n, min1 = z.as === 'both' ? wordAt(sim, 1) * 995n / 1000n : 0n;
-      const hash = await sendTx({ to: ADDR.precisionFarm, data: outData(z.all, z.as, z.shares, min0, min1, dl) });
+      const hash = await sendTx({ to: ADDR.precisionFarm, data: outData(z.all, z.as, z.shares, min0, min1, dl), label: `Withdraw ${z.all ? 'all' : `${FARM.outPct}%`} from the farm${z.as === 'both' ? '' : ` as ${z.as === 'eth' ? 'ETH' : 'TAC'}`}` });
       delete acked['pf-outv'];
       await done(hash, 'Withdrawing', `Withdrawn to ${your()}.`);
       toast(`Withdrawn to ${your()}`);
@@ -3062,7 +3548,7 @@ function renderShielded(el, p) {
     <div class="status" role="status" id="sf-status-${p.pid}"></div>`);
   const box = $(`#sf-${p.pid}`), status = $(`#sf-status-${p.pid}`);
   if (!needKey(box, 'Open your Tacit wallet to see your private positions here.')) return;
-  if (FARM.positions == null) { mount(box, html`<p class="note">Finding your positions…</p>`); loadPositions().then(() => rerender('farm')).catch((e) => sayErr(status, e)); return; }
+  if (FARM.positions == null) { mount(box, html`<div class="kv"><span><span class="sk" style="--w:11ch"></span></span><b><span class="sk" style="--w:12ch"></span></b></div>`); loadPositions().then(() => rerender('farm')).catch((e) => sayErr(status, e)); return; }
   mount(box, html`
     ${mine.map((pos, i) => { const locked = Number(pos.unlockAt || 0) > chainNow(); return html`
       <div class="kv"><span>${Number(pos.shares).toLocaleString('en-US')} shares</span><b>${pos.pendingTac} TAC earned</b></div>
@@ -3081,7 +3567,7 @@ function renderShielded(el, p) {
 
 // ── borrow on Bitcoin: lock → bond → mint cBTC → borrow cUSD ─────────────────────────────────────────────
 // The lock record holds no secret: the cBTC note's blinding re-derives from the key and the lock's funding anchor.
-const LOCK = { rec: null, state: null, lm: null, bonds: [], list: [], pick: null, found: null, repayOver: null };
+const LOCK = { rec: null, state: null, lm: null, bonds: [], list: [], pick: null, found: null, repayOver: null, q: null };
 const lockKey = () => `tacit-lite-cbtc-v1:${S.key.pubHex}`;
 const outpointOf = (t, rec) => t.pool.outpointKey('0x' + rec.lockTxid.match(/../g).reverse().join(''), rec.lockVout);
 const getLockMod = lazy(async () => {
@@ -3096,15 +3582,25 @@ async function lockMint(skip = [], priv = walletPriv()) {
 // lock made on another device or on tacit.finance is found too): the output paying the key's lock script, and its note's
 // blinding anchor, the first input of the commit that the lock's reveal spends. Read at most once a minute unless fresh.
 const lockId = (l) => `${l.lockTxid}:${l.lockVout}`;
+// One reader of the key's Bitcoin history: what it fetched for the locks is reused for 20 seconds, so the bonds read
+// the same lock-script history without asking again.
+const btcHistory = lazy(async () => {
+  const { makeBtcHistoryProvider } = await import('/confidential-recovery-btc.js');
+  const seen = new Map();
+  const fetchImpl = (url, opts) => {
+    for (const [u, x] of seen) if (Date.now() - x.at > 20e3) seen.delete(u);
+    if (!seen.has(url)) seen.set(url, { at: Date.now(), p: fetch(url, opts).then((r) => { if (!r.ok) seen.delete(url); return r; }, (e) => { seen.delete(url); throw e; }) });
+    return seen.get(url).p.then((r) => r.clone());
+  };
+  return { h: makeBtcHistoryProvider({ sha256, hrp: 'bc', fetchImpl }), forget: () => seen.clear() };
+});
 async function findLocks(t, priv = walletPriv(), fresh = false) {
   const pub = S.key?.pubHex, f = LOCK.found;
   if (!fresh && f && f.pub === pub && Date.now() - f.at < 60e3) return f.locks;
-  const { makeBtcHistoryProvider } = await import('/confidential-recovery-btc.js');
-  const live = [];
-  for (const l of await makeBtcHistoryProvider({ sha256, hrp: 'bc' }).locks(priv)) {
-    const s = await t.cbtcLockState(l.lockTxid, l.lockVout);
-    if (!s.spent && !s.redeemed) live.push(l);
-  }
+  const hist = await btcHistory();
+  if (fresh) hist.forget();
+  const all = await hist.h.locks(priv), states = await Promise.all(all.map((l) => t.cbtcLockState(l.lockTxid, l.lockVout)));
+  const live = all.filter((_, i) => !states[i].spent && !states[i].redeemed);
   LOCK.found = { pub, at: Date.now(), locks: live };
   return live;
 }
@@ -3127,8 +3623,7 @@ const lockNext = (l) => (l.minted ? 'minted' : !l.bonded ? 'post its bond' : !l.
 async function findBonds(t, priv = walletPriv(), rec = null) {
   const who = [...new Map([[S.acct?.address, 'tacit'], [S.wallet, 'wallet']].filter(([a]) => a).map(([a, via]) => [a.toLowerCase(), via]))];
   if (!who.length) return [];
-  const { makeBtcHistoryProvider } = await import('/confidential-recovery-btc.js');
-  const h = makeBtcHistoryProvider({ sha256, hrp: 'bc' }), spk = h.walletScripts(priv).lock, want = bytesToHex(spk);
+  const { h } = await btcHistory(), spk = h.walletScripts(priv).lock, want = bytesToHex(spk);
   const locks = [];
   for (const tx of await h.txsOf(spk)) (tx.vout || []).forEach((o, vout) => { if (String(o.scriptpubkey).toLowerCase() === want) locks.push({ txid: tx.txid, vout, op: outpointOf(t, { lockTxid: tx.txid, lockVout: vout }) }); });
   if (rec && !locks.some((l) => l.txid === rec.lockTxid && l.vout === rec.lockVout)) locks.push({ txid: rec.lockTxid, vout: rec.lockVout, op: outpointOf(t, rec) });   // history can trail a fresh lock
@@ -3151,12 +3646,22 @@ async function lockPad() {
   const j = await esplora('/fee-estimates').catch(() => null);
   return BigInt(400 * Math.max(1, Math.ceil(j?.['2'] || j?.['3'] || j?.['6'] || 5)) + 600);
 }
-// Reads for one key, and written only under that key: nothing lands once the key has changed. `fresh` (after an action)
-// rescans the private notes rather than reusing a recent scan.
-async function loadBorrow(fresh = false) {
+// Reads for one key, and written only under that key and only by the newest read: nothing lands once the key has changed
+// or a newer read has begun. `fresh` (after an action) rescans the private notes rather than reusing a recent scan.
+const loadBorrow = (fresh = false) => once(LOCK, S.key?.pubHex, (current) => readBorrow(fresh, current), fresh);
+async function readBorrow(fresh, current) {
   if (!S.key) return;
-  const pub = S.key.pubHex, key = lockKey(), priv = walletPriv(), same = () => S.key?.pubHex === pub;
+  const pub = S.key.pubHex, key = lockKey(), priv = walletPriv(), same = () => S.key?.pubHex === pub && current();
   const t = await getUx();
+  // What does not depend on the lock the sheet follows is read beside the lock walk: the deposit address and its coins,
+  // Bitcoin's tip, how far Bitcoin's proof on Ethereum has reached, and the engine's loan lines.
+  const lmP = LOCK.lm ? Promise.resolve(LOCK.lm) : lockMint([], priv);
+  lmP.catch(() => {});
+  const sideP = Promise.all([
+    lmP.then((lm) => esplora(`/address/${lm.wallet.address()}/utxo`)).catch(() => null), esplora('/blocks/tip/height').catch(() => null),
+    fetch(`${API}/reflection/status?network=mainnet`, { signal: within(20e3) }).then((r) => r.json()).catch(() => null),
+    multicall([{ to: ADDR.engine, data: SEL.cdpRatioBps }, { to: ADDR.engine, data: SEL.liqRatioBps }]).catch(() => null),    // the loan floor and liquidation line, as governance sets them
+  ]);
   // The record is a cache of the lock the sheet follows. Every live lock comes back from the key's own history (another
   // device, cleared storage, or one made on tacit.finance); a fresh lock the history does not show yet stays until the
   // pool retires it, and a lock the pool has retired (spent or redeemed) gives way to the next one.
@@ -3177,15 +3682,12 @@ async function loadBorrow(fresh = false) {
     ...(cached && lockId(cached) === lockId(next) ? { minted: cached.minted, borrowed: cached.borrowed, borrowedAt: cached.borrowedAt } : {}) };
   if (rec) for (const k of ['minted', 'borrowed', 'borrowedAt']) if (rec[k] === undefined) delete rec[k];
   if (JSON.stringify(rec) !== JSON.stringify(cached)) store.set(key, rec);
-  const lm = LOCK.lm || await lockMint([], priv);
+  const bondsP = findBonds(t, priv, rec).catch(() => null);
+  const lm = await lmP;
   if (!same()) return;
   LOCK.lm = lm;
   const addr = lm.wallet.address();
-  const [utxos, tip, refl, lr] = await Promise.all([
-    esplora(`/address/${addr}/utxo`).catch(() => null), esplora('/blocks/tip/height').catch(() => null),
-    fetch(`${API}/reflection/status?network=mainnet`).then((r) => r.json()).catch(() => null),
-    multicall([{ to: ADDR.engine, data: SEL.cdpRatioBps }, { to: ADDR.engine, data: SEL.liqRatioBps }]).catch(() => null),    // the loan floor and liquidation line, as governance sets them
-  ]);
+  const [utxos, tip, refl, lr] = await sideP;
   // The state carries the record it was computed for, so a render never pairs a new record with old numbers.
   const pending = (utxos || []).filter((u) => !u.status?.confirmed);
   const st = { rec, addr, sats: utxos ? utxos.reduce((s, u) => s + BigInt(u.value), 0n) : null, pendingSats: pending.reduce((s, u) => s + BigInt(u.value), 0n), unconfirmed: pending.map((u) => `${u.txid}:${u.vout}`.toLowerCase()), tip, refl, needEth: 0n, payEth: 0n, needWst: 0n, have: 0n, usd: 0n,
@@ -3235,9 +3737,10 @@ async function loadBorrow(fresh = false) {
       if (JSON.stringify(cached) !== JSON.stringify(rec)) { store.set(key, cached); st.rec = rec = cached; }
     }
   }
-  const bonds = await findBonds(t, priv, st.rec).catch(() => LOCK.bonds);
+  const bonds = (await bondsP) ?? LOCK.bonds;
   if (!same()) return;
   LOCK.rec = st.rec; LOCK.state = st; LOCK.bonds = bonds;
+  dashSoon();
 }
 load.borrow = () => loadBorrow();
 // The bond step's view of the paying account: its ETH against the bond plus the gas a send holds back for it (the
@@ -3256,11 +3759,20 @@ function bondFunds() {
   }
   return BF.for === who ? BF : null;
 }
+RETRY.borrow = () => { delete FLASH['bw-status']; rerender('borrow'); };
 render.borrow = () => {
   const el = $('#borrow-body');
   if (!needKey(el, 'Lock BTC in an output only your key can spend, mint cBTC one to one, and borrow cUSD against it. Open your Tacit wallet to start.')) return;
   const st = LOCK.state, rec = st?.rec;
-  if (!st) { mount(el, html`<p class="note">Reading your Bitcoin…</p><div class="status" role="status" id="bw-status"></div>`); loadBorrow().then(() => rerender('borrow')).catch((e) => sayErr($('#bw-status'), e)); return; }
+  const wireFinish = () => { const fin = $('#bw-finish', el); if (fin) fin.onclick = () => busy(fin, () => finishDeposits('borrow', $('#bw-status'))); };
+  if (!st) {
+    mount(el, html`${depositCallout('borrow', 'bw-finish')}
+      <ol class="steps">${['Lock BTC', 'Post the ETH bond', 'Mint cBTC', 'Borrow cUSD'].map((h, i) => html`<li class="step"><span class="n">${i + 1}</span><div><h3>${h}</h3><div class="d"><span class="sk ln" style="--w:92%"></span><span class="sk ln" style="--w:55%"></span></div></div></li>`)}</ol>
+      <div class="status" role="status" id="bw-status"></div>`);
+    wireFinish();
+    loadBorrow().then(() => rerender('borrow')).catch((e) => sayRetry($('#bw-status'), e, 'borrow'));
+    return;
+  }
   const stepCls = (done, now2) => done ? 'step done' : now2 ? 'step now' : 'step';
   const s1 = !!rec, s3 = !!st.minted, s2 = !!st.bonded || s3, s4 = !!st.borrowed;          // once minted, the bond has done its part
   const confs = Math.max(0, Math.min(24, st.confs || 0));
@@ -3276,6 +3788,7 @@ render.borrow = () => {
             <p class="note">Xverse, Leather or UniSat send it in one popup, or pay the address from anywhere. Locking waits for one confirmation.</p>
             ${lag != null ? html`<p class="note">Minting waits for Bitcoin's proof on Ethereum to reach the lock's block, which trails Bitcoin by at least 24 blocks (about 4 hours). It is at block ${attested.toLocaleString('en-US')}, ${lag.toLocaleString('en-US')} behind Bitcoin${lag > 36 ? ' and catching up' : ''}. Until it is minted, its bond can be taken back.</p>` : ''}`;
   mount(el, html`
+    ${depositCallout('borrow', 'bw-finish')}
     <ol class="steps">
       <li class="${stepCls(s1, !s1)}">
         <span class="n">${s1 ? '✓' : '1'}</span>
@@ -3346,11 +3859,11 @@ render.borrow = () => {
       const bal = BigInt(await rpc('eth_getBalance', [S.acct.address, 'latest'])), gap = ((st.payEth + BF.gas) * 105n) / 100n - bal;
       if (gap > 0n) {
         say(status, `Confirm ${fmt(gap, 18, 5)} ETH to your Tacit account in your wallet…`);
-        const h = await sendTx({ to: S.acct.address, data: '0x', value: gap, via: 'wallet' });
+        const h = await sendTx({ to: S.acct.address, data: '0x', value: gap, via: 'wallet', label: `Add ${fmt(gap, 18, 6)} ETH to your Tacit account` });
         say(status, html`Topping up your Tacit account… ${txLink(h)}`);
         await waitTx(h);
       }
-      const hash = await sendTx({ to: ADDR.escrow, data: SEL.postEscrowWithETH + strip(outpointOf(t, rec)), value: st.payEth, via: 'tacit' });
+      const hash = await sendTx({ to: ADDR.escrow, data: SEL.postEscrowWithETH + strip(outpointOf(t, rec)), value: st.payEth, via: 'tacit', label: `${st.have ? 'Top up' : 'Post'} the bond for ${fmt(BigInt(rec.vBtc), 8, 8)} BTC` });
       say(status, html`Posting the bond… ${txLink(hash)}`);
       await waitTx(hash);
       say(status, html`<span class="ok">Bond posted.</span> ${txLink(hash)} Mint once the lock is proven.`);
@@ -3359,10 +3872,11 @@ render.borrow = () => {
       await loadBorrow(true); rerender('borrow');
     } catch (e) { sayErr(status, e); }
   });
+  wireFinish();
   $$('[data-reclaim]', el).forEach((b) => b.onclick = () => busy(b, async () => {
     const x = LOCK.bonds[Number(b.dataset.reclaim)];
     try {
-      const hash = await sendTx({ to: ADDR.escrow, data: SEL.reclaimEscrow + strip(x.op), via: x.via });
+      const hash = await sendTx({ to: ADDR.escrow, data: SEL.reclaimEscrow + strip(x.op), via: x.via, label: `Take back a ${fmt(x.share, 18, 5)} wstETH bond` });
       say(status, html`Taking the bond back… ${txLink(hash)}`);
       await waitTx(hash);
       say(status, html`<span class="ok">The bond is back in your ${x.via === 'tacit' ? 'Tacit account' : 'wallet'} as wstETH.</span> ${txLink(hash)}`);
@@ -3382,7 +3896,7 @@ render.borrow = () => {
       if (!sats || sats < 10000n) throw new Error('Enter the BTC to lock first: at least 0.0001.');
       const need = sats + await lockPad() - (st.sats ?? 0n);                            // what is already on its way counts
       if (need <= 0n) throw new Error(st.pendingSats ? 'Enough is already on its way to the deposit address. Lock it once it confirms.' : 'The deposit address already holds enough. Lock it now.');
-      const txid = await btcSend(st.addr, Number(need));
+      const txid = actBtc(await btcSend(st.addr, Number(need)), `Fund the lock address with ${fmt(need, 8, 8)} BTC`);
       say(status, html`Sent ${fmt(need, 8, 8)} BTC <a href="${MEMPOOL}/tx/${txid}" target="_blank" rel="noopener">${short(txid, 6)} ↗</a>. Lock once it confirms.`);
       await loadBorrow(true); rerender('borrow');
     } catch (e) { sayErr(status, e); }
@@ -3400,6 +3914,7 @@ render.borrow = () => {
       const lm = await lockMint(st.unconfirmed, priv);
       say(status, 'Signing and broadcasting your lock…');
       const res = await lm.lock({ amountSats: sats });
+      actBtc(res.lockTxid, `Lock ${fmt(sats, 8, 8)} BTC`);
       m.protectOutpoint(res.lockTxid, res.lockVout, res.vBtc);                       // never spent as ordinary change
       store.set(key, { lockTxid: res.lockTxid, lockVout: res.lockVout, vBtc: String(res.vBtc), anchor: { txid: res.anchor.txid, vout: res.anchor.vout }, at: Date.now() });
       LOCK.pick = `${res.lockTxid}:${res.lockVout}`;                                     // the sheet follows the lock just made
@@ -3413,7 +3928,7 @@ render.borrow = () => {
     try {
       const t = await getUx();
       if (!st.payEth) throw new Error('The bond size could not be read. Try again in a few minutes.');
-      const hash = await sendTx({ to: ADDR.escrow, data: SEL.postEscrowWithETH + strip(outpointOf(t, rec)), value: st.payEth });
+      const hash = await sendTx({ to: ADDR.escrow, data: SEL.postEscrowWithETH + strip(outpointOf(t, rec)), value: st.payEth, label: `${st.have ? 'Top up' : 'Post'} the bond for ${fmt(BigInt(rec.vBtc), 8, 8)} BTC` });
       say(status, html`Posting the bond… ${txLink(hash)}`);
       await waitTx(hash);
       say(status, html`<span class="ok">Bond posted.</span> ${txLink(hash)} Mint once the lock is proven.`);
@@ -3428,6 +3943,7 @@ render.borrow = () => {
       const r = m.makeCbtcNoteRecovery({ hmac, sha256, curveOrder: secp.CURVE.n });
       const b = r.deriveCbtcNoteBlinding({ privkey: priv, anchorOutpoint: r.anchorBytes(rec.anchor.txid, rec.anchor.vout), outputIndex: 0 });
       say(status, 'The relay is proving your mint…');
+      hint('cbtcmint', `Mint ${fmt(BigInt(rec.vBtc), 8, 8)} cBTC`);
       const out = await t.mintCbtc({ walletPriv: priv, outpoint: outpointOf(t, rec), vBtc: BigInt(rec.vBtc), blinding: '0x' + b.toString(16).padStart(64, '0'), waitOpts: { timeoutMs: 20 * 60e3 } });
       store.set(key, { ...rec, minted: out?.txHash || true });
       say(status, html`<span class="ok">cBTC minted.</span> ${out?.txHash ? txLink(out.txHash) : ''}`);
@@ -3470,11 +3986,12 @@ render.borrow = () => {
       const selfSettle = async (x) => {
         sentSelf = true;
         say(status, `Sending the loan from ${your()}…`);
-        const hash = await sendTx({ to: t.cfg.pool, data: t.settleCalldata(x) });
+        const hash = await sendTx({ to: t.cfg.pool, data: t.settleCalldata(x), label: `Send the ${fmt(debtValue, 8, 2)} cUSD loan` });
         await waitTx(hash);
         return { txHash: hash };
       };
       say(status, 'The relay is proving your loan…');
+      hint('cdpmint', `Borrow ${fmt(debtValue, 8, 2)} cUSD`);
       const r = await t.defiActions(priv).openCdp({ controller: c, debtValue, rateSnapshot: rate, fee: 0n, collateral: [leg], spendRoot: n.root, debtBlinding: d.blindingHex, positionOwner, debtNk: d.nk, ...(self ? { selfSettle } : {}), waitOpts: { timeoutMs: 20 * 60e3 } });
       await ps.add(priv, { controller: c, debtValue: debtValue.toString(), nonce: '0x' + '0'.repeat(64), keyNonce, positionOwner, rateSnapshot: rate, debtAnchor: anchor, basket: [{ asset: leg.asset, value: String(BigInt(leg.value)) }], openedAt: r?.txHash || null }).catch(() => {});
       store.set(key, { ...rec, borrowed: debtValue.toString(), borrowedAt: Date.now() });
@@ -3517,6 +4034,7 @@ render.borrow = () => {
       const nu = cdp.positionNullifier(leaf);
       const keys = basket.map((_l, i) => t.deriveOutput(priv, nu, 'cdpRelease', i));
       say(status, 'The relay is proving your repayment…');
+      hint('cdpclose', `Repay ${fmt(debtValue, 8, 2)} cUSD`);
       const r = await t.defiActions(priv).closeCdp({
         controller: p.controller, debtValue, rateSnapshot: p.rateSnapshot, positionOwner: p.positionOwner, positionOwnerPriv: ownerPriv,
         basket, positionIndex: index, positionPath: tree.pathFor(index).path, spendRoot: picked[0].root, cdpPositionRoot: tree.root, fee: 0n,
@@ -3539,6 +4057,7 @@ render.borrow = () => {
       const t = await getUx(), priv = walletPriv(), to = await payingAccount();
       const note = st.cusd.notes.slice().sort((a, b) => (BigInt(b.value) > BigInt(a.value) ? 1 : -1))[0];
       say(status, 'The relay is proving your withdrawal…');
+      hint('unwrap', `Withdraw ${fmt(BigInt(note.value), 8, 2)} cUSD as tacUSD`);
       const r = await t.unwrap({ note, walletPriv: priv, recipient: to, waitOpts: { timeoutMs: 15 * 60e3 } });
       toast(`tacUSD sent to ${your()}`);
       await loadBorrow(true); rerender('borrow'); say($('#bw-status'), html`<span class="ok">Withdrawn.</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
@@ -3650,7 +4169,7 @@ function cSend(el, status) {
     if (!x) return;
     try {
       if (src.pub) {
-        const hash = await sendTx({ to: a.token, data: SEL.transfer + addrWord(x.recipient) + word(x.units) });
+        const hash = await sendTx({ to: a.token, data: SEL.transfer + addrWord(x.recipient) + word(x.units), label: `Send ${show(x.units)} ${a.out}` });
         say(status, html`Sent ${txLink(hash)}. Waiting for it to land…`);
         await waitTx(hash);
         CSEND.pubAt = 0;
@@ -3666,12 +4185,15 @@ function cSend(el, status) {
         await noteFor(t, priv, x.units, (n) => BigInt(n.value) >= x.units, status, k);
         const note = P.scan[k].notes.filter((n) => BigInt(n.value) >= x.units).sort((m, n) => (BigInt(m.value) > BigInt(n.value) ? 1 : -1))[0];
         say(status, `The relay is proving your transfer, which arrives as ${a.out}…`);
+        for (const type of ['sendunwrap', 'unwrap']) hint(type, `Send ${show(x.units)} ${a.tk} out as ${a.out}`);
         r = await t.sendUnwrap({ note, walletPriv: priv, recipient: x.recipient, amount: x.units, waitOpts: w });
+        HINT.delete('unwrap');
       } else {
         await noteFor(t, priv, x.units, (n) => BigInt(n.value) === x.units, status, k);          // a lock spends a note of its exact size
         const { makeStealthSendStore } = await import('/confidential-secret-store.js');
         let built = null;
         say(status, 'Locking it to a one-time address only they can open…');
+        hint('stealthlock', `Send ${show(x.units)} ${a.tk} privately`);
         r = await t.stealthSend({ walletPriv: priv, recipientPubHex: x.who.pubHex, notes: P.scan[k].notes, amount: x.units, onBuilt: (b) => { built = b; }, waitOpts: w });
         if (built) {
           await makeStealthSendStore({ sha256 }).add(priv, {
@@ -3714,7 +4236,8 @@ async function paintPrivateFeet() {
   const foot = (s) => {
     const bits = [];
     if (s.eth.value > 0n) bits.push(`${fmt(s.eth.value, 8, 4)} tETH private`);
-    if (s.pending.length) bits.push(`${s.pending.length} to finish`);
+    const due = pendingFor('eth').length;
+    if (due) bits.push(`${due} to finish`);
     if (LK.pub === S.key?.pubHex && LK.mine.length) bits.push(`${LK.mine.length} to claim`);
     if (!bits.length) {
       // No live scan yet of the on-device pool (it is not synced until that tab is opened): a balance last seen in
@@ -3727,8 +4250,11 @@ async function paintPrivateFeet() {
   };
   scanPrivate().then((s) => { if (!s) return; foot(s); return loadLocks().then(() => foot(s)); }).catch(() => {});
   // The tile names the next step of the lock the sheet would open on, so a returning holder sees what to do before opening it.
-  const lockFoot = (rec) => setFoot('borrow', rec.borrowed ? `${fmt(BigInt(rec.borrowed), 8, 2)} cUSD borrowed` : rec.minted ? 'cBTC minted · borrow next'
-    : `${fmt(BigInt(rec.vBtc), 8, 6)} BTC locked${rec.next ? ` · ${rec.next}` : ''}`, rec.borrowed ? 'on' : 'live');
+  const lockFoot = (rec) => {
+    const text = rec.borrowed ? `${fmt(BigInt(rec.borrowed), 8, 2)} cUSD borrowed` : rec.minted ? 'cBTC minted · borrow next' : `${fmt(BigInt(rec.vBtc), 8, 6)} BTC locked${rec.next ? ` · ${rec.next}` : ''}`;
+    Object.assign(LOCKNOTE, { pub: S.key?.pubHex, text: rec.borrowed ? 'backs a loan' : rec.minted ? 'minted · borrow next' : text, borrowed: big(rec.borrowed) });
+    setFoot('borrow', text, rec.borrowed ? 'on' : 'live');
+  };
   const cached = store.get(lockKey()), key = lockKey();
   if (cached) lockFoot(cached);
   getUx().then(async (t) => {
@@ -3739,6 +4265,113 @@ async function paintPrivateFeet() {
   }).catch(() => {});
 }
 
+// ── your Tacit: what this key and wallet hold, from what the page has already read ─────────────────────────
+// It reads nothing itself: it paints the state the sheets and tile feet load. A snapshot per key and wallet, kept in
+// this browser, shows the last values at once on a return visit (dimmed until read again) and what changed since.
+const DASH = { id: null, base: null, bases: {}, cur: {}, view: '' };
+const LOCKNOTE = { pub: null, text: '', borrowed: null };          // the next step of this key's cBTC lock, from the tile foot
+const dashId = () => (S.key || S.wallet ? `tacit-lite-dash-v1:${S.key?.pubHex || ''}|${(S.wallet || '').toLowerCase()}` : null);
+const lastSeen = (key) => { const id = dashId(); return id ? big(store.get(id)?.v?.[key]?.v) : null; };
+const sharePct = (f) => (f * 100 < 0.1 ? 'under 0.1%' : pctFmt(f * 100));
+let dashQ = 0, dashSaveT = 0;
+function dashSoon() { if (!dashQ) dashQ = requestAnimationFrame(() => { dashQ = 0; paintDash(); }); }
+function dashItems() {
+  const k = S.key?.pubHex, s = k ? P.scan : null, scanErr = !!(k && !s && P.err), out = [];
+  if (k) {
+    out.push({ key: 'teth', icon: 'tk-teth', label: 'tETH', dec: 8, max: 6, v: s ? s.eth.value : null, err: scanErr, meta: 'private', open: 'private', core: true });
+    let dev = null;
+    for (const c of DEVICE_CHAINS) { const v = big(store.get(`tacit-lite-device-bal-v1:${c.chainId}:${k}`)?.v); if (v != null) dev = (dev || 0n) + v; }
+    out.push({ key: 'dev', icon: 'tk-eth', label: 'ETH', dec: 18, max: 5, v: dev, meta: 'private on this device', open: 'device', show: dev > 0n });
+  }
+  const who = [...new Set([S.wallet, S.acct?.address].filter(Boolean).map((a) => a.toLowerCase()))].join();
+  const pubTac = who && TACB.who === who ? TACB.erc : null, privTac = k ? (s ? s.tac.value * E10 : null) : 0n;
+  out.push({ key: 'tac', icon: 'tk-tac', label: 'TAC', dec: 18, max: 2, v: pubTac != null && privTac != null ? pubTac + privTac : null, err: scanErr, open: 'tac', core: true,
+    meta: !k ? 'on Ethereum' : pubTac != null && privTac != null ? `${fmt(privTac, 18, 2)} private · ${fmt(pubTac, 18, 2)} public` : '' });
+  if (k) {
+    const b = BTC.pub === k ? BTC : null, tacB = b?.held.find((a) => a.id === TAC_BTC_ID), lk = LOCKNOTE.pub === k ? LOCKNOTE : null;
+    out.push({ key: 'btc', icon: 'tk-btc', label: 'BTC', dec: 8, max: 6, v: b ? b.sats + b.silent : null, lazy: true, open: 'btc', show: !!b && (b.sats + b.silent > 0n || !!tacB),
+      meta: tacB ? `and ${fmt(tacB.balance, tacB.decimals, 2)} TAC on Bitcoin` : b ? 'at your Bitcoin address' : 'open to read' });
+    const cb = s ? s.cbtc.notes.reduce((a, n) => a + BigInt(n.value), 0n) : null;
+    out.push({ key: 'cbtc', icon: 'tk-cbtc', label: 'cBTC', dec: 8, max: 6, v: cb, err: scanErr, meta: lk?.text || 'private', open: 'borrow', show: cb > 0n || !!lk?.text });
+    out.push({ key: 'cusd', icon: 'tk-cusd', label: 'cUSD', dec: 8, max: 2, v: s ? s.cusd.value : null, err: scanErr, open: 'borrow', show: s?.cusd.value > 0n || !!lk?.borrowed,
+      meta: lk?.borrowed ? `${fmt(lk.borrowed, 8, 2)} borrowed` : 'private' });
+  }
+  // cBTC and cUSD withdrawn to an account, as the public ERC-20s; each opens its asset card.
+  if (who && PUBX.who === who) {
+    out.push({ key: 'tacbtc', icon: 'tk-tacbtc', label: 'tacBTC', dec: 18, max: 6, v: PUBX.tacbtc, meta: 'public', asset: 'tacbtc', show: PUBX.tacbtc > 0n });
+    out.push({ key: 'tacusd', icon: 'tk-tacusd', label: 'tacUSD', dec: 18, max: 2, v: PUBX.tacusd, meta: 'public', asset: 'tacusd', show: PUBX.tacusd > 0n });
+  }
+  const pw = pointsWho(), rows = PTS.key && PTS.key === pw.map(([a]) => a).join() ? PTS.rows : null;
+  if (pw.length) {
+    const owed = rows ? rows.reduce((a, r) => a + r.owed, 0n) : 0n, share = rows ? rows.reduce((a, r) => a + (r.share || 0), 0) : 0, day = rows ? rows.reduce((a, r) => a + r.today, 0n) : 0n;
+    out.push({ key: 'pts', icon: 'i-pts', label: 'Points', num: true, v: rows ? rows.reduce((a, r) => a + r.points, 0) : null, err: !!rows && rows.every((r) => !r.read), live: owed > 0n, open: 'pts', core: true,
+      meta: !rows ? '' : owed > 0n ? `${fmt(owed, 18, 2)} TAC to claim` : share > 0 ? `${sharePct(share)} of today · about ${fmt(day, 18, 2)} TAC` : 'none yet today' });
+  }
+  const x = FARM.precision && FARM.precision.who === S.address ? FARM.precision : null, pos = S.key ? FARM.positions || [] : [];
+  if (x?.staked > 0n || x?.earned > 0n || pos.length) {
+    const scale = big(FARM.program?.unitScale) || E10, earned = (x?.earned || 0n) + pos.reduce((a, p) => a + (big(p.pendingUnits) || 0n) * scale, 0n);
+    const myDay = x?.staked > 0n && x.totalStaked ? x.perDay * x.staked / x.totalStaked : 0n, apr = x?.staked > 0n && x.live ? precisionApr(x) : null;
+    out.push({ key: 'farm', icon: 'tk-tac', label: 'Farm rewards', unit: 'TAC', dec: 18, max: 2, v: earned, live: earned > 0n, open: 'farm', show: true,
+      meta: apr != null ? `${aprShort(apr)} · ${fmt(myDay, 18, 2)} a day` : `${pos.length} private position${pos.length === 1 ? '' : 's'}` });
+  }
+  if (S.wallet && AIR && !AIR.error && (AIR.claimable || AIR.claimed)) out.push({ key: 'air', icon: 'tk-tac', label: 'Airdrop', unit: 'TAC', dec: 18, max: 2, v: BigInt(AIR.amountWei || 0),
+    noDelta: true, live: !!AIR.claimable, open: 'airdrop', show: true, meta: AIR.claimed ? 'claimed' : `claim by ${dayFmt(AIR.deadline)}` });
+  return out;
+}
+// What needs the user now, each a line with the button that does it in its sheet.
+const DASH_DO = { eth: ['private', 'eth', 'v1-finish'], tac: ['tac', 'tac', 'tac-finish'], borrow: ['borrow', 'borrow', 'bw-finish'], claim: ['private', 'eth', 'v1-claim'], back: ['private', 'eth', 'v1-back'] };
+function paintDash() {
+  const id = dashId(), sec = $('#dash');
+  if (!id) { sec.hidden = true; DASH.id = null; DASH.view = ''; return; }
+  if (DASH.id !== id) { if (!(id in DASH.bases)) DASH.bases[id] = store.get(id); Object.assign(DASH, { id, base: DASH.bases[id], cur: {} }); }
+  const base = DASH.base?.v || {}, k = S.key?.pubHex;
+  let changed = false;
+  const cell = (it) => {
+    const raw = base[it.key]?.v, prev = it.noDelta || raw == null ? null : it.num ? (Number.isFinite(Number(raw)) ? Number(raw) : null) : big(raw);
+    const show = (v) => (it.num ? ptsFmt(v) : fmt(v, it.dec, it.max));
+    let delta = '';
+    if (it.v != null && prev != null) {
+      const d = it.num ? Math.round(it.v) - Math.round(prev) : it.v - prev, txt = it.num ? ptsFmt(Math.abs(d)) : fmt(d < 0n ? -d : d, it.dec, it.max);
+      if (!/^0(\.0*)?$/.test(txt)) { changed = true; delta = html`<span class="${d > 0 ? 'up' : ''}">${d > 0 ? '+' : '−'}${txt}</span> · `; }
+    }
+    if (it.v != null) DASH.cur[it.key] = it.num ? String(Math.round(it.v)) : String(it.v);
+    const value = it.v != null ? html`${show(it.v)}${it.unit ? html` <small>${it.unit}</small>` : ''}` : prev != null && !it.err ? html`<span class="stale">${show(prev)}</span>`
+      : it.err || it.lazy ? '—' : html`<span class="sk" style="--w:7ch"></span>`;
+    return html`<li><button class="di" type="button" ${it.asset ? html`data-asset="${it.asset}"` : html`data-dash-open="${it.open}"`}>
+      <span class="di-k"><svg class="tk" aria-hidden="true"><use href="#${it.icon}"/></svg>${it.label}${it.live ? html`<span class="dot live"></span>` : ''}</span>
+      <span class="di-v num">${value}</span><span class="di-m">${delta}${it.err ? 'could not read · open to retry' : it.meta || (it.v == null ? html`<span class="sk" style="--w:12ch"></span>` : '')}</span></button></li>`;
+  };
+  const items = dashItems().filter((it) => it.core || it.show || Number(base[it.key]?.v || 0) > 0);
+  const due = [];
+  if (k && P.scan) for (const sheet of ['eth', 'tac', 'borrow']) { const ps = pendingFor(sheet); if (ps.some((p) => p.ticker)) due.push([waitingText(ps), sheet, 'Finish']); }
+  if (k && LK.pub === k && LK.mine.length) due.push([`${LK.mine.length === 1 ? 'A private payment was' : `${LK.mine.length} private payments were`} sent to you.`, 'claim', 'Claim']);
+  if (k && LK.pub === k && LK.back.length) due.push([`${LK.back.length === 1 ? 'A private send was' : `${LK.back.length} private sends were`} never claimed and can come back.`, 'back', 'Take back']);
+  const dueHtml = html`${due.map(([t, go, label]) => html`<div class="callout"><span>${t}</span><button class="btn ghost" type="button" data-dash-do="${go}">${label}</button></div>`)}`.s;
+  const gridHtml = html`${items.map(cell)}`.s, view = dueHtml + gridHtml;
+  sec.hidden = false;
+  $('#dash-since').textContent = changed && DASH.base?.at ? `Changes since ${new Date(DASH.base.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : '';
+  // Painted again only when something shown changed, and the button that had focus keeps it.
+  if (view !== DASH.view) {
+    const f = document.activeElement?.closest?.('#dash button');
+    const was = f && (f.dataset.dashOpen ? `[data-dash-open="${f.dataset.dashOpen}"]` : f.dataset.asset ? `[data-asset="${f.dataset.asset}"]` : `[data-dash-do="${f.dataset.dashDo}"]`);
+    $('#dash-due').innerHTML = dueHtml; $('#dash-g').innerHTML = gridHtml; DASH.view = view;
+    $$('[data-dash-open]', sec).forEach((b) => b.onclick = () => openSheet(b.dataset.dashOpen));
+    // The line opens its sheet and presses that sheet's own button there, unless an action is already running in it.
+    $$('[data-dash-do]', sec).forEach((b) => b.onclick = () => { const [link, sheet, btn] = DASH_DO[b.dataset.dashDo]; const busyThere = running(sheet); openSheet(link); if (!busyThere) $('#' + btn)?.click(); });
+    if (was) $(was, sec)?.focus();
+  }
+  clearTimeout(dashSaveT);
+  dashSaveT = setTimeout(dashWrite, 1000);
+}
+function dashWrite() {
+  clearTimeout(dashSaveT); dashSaveT = 0;
+  if (!DASH.id) return;
+  const v = store.get(DASH.id)?.v || {};
+  for (const [key, x] of Object.entries(DASH.cur)) v[key] = { v: x, at: Date.now() };
+  store.set(DASH.id, { at: Date.now(), v });
+}
+addEventListener('pagehide', () => { if (dashSaveT) dashWrite(); });
+
 // ── boot ─────────────────────────────────────────────────────────────────────────────────────────────────
 function refreshAll() {
   AIR = null; FARM.positions = null;
@@ -3748,9 +4381,14 @@ function refreshAll() {
   if (S.wallet || S.key) loadPoints(true).then(() => rerender('pts')).catch(() => {});
   if (T && S.key) loadBtc().then(() => rerender('btc')).catch(() => {});
   for (const n of SHEETS) rerender(n);
+  dashSoon();
 }
 paintWallet();          // a returning visitor's chip says "Open wallet", not the default "Connect wallet", before any action runs
+// The farms' last public rate stands in on the tile until the fresh one is read.
+const farmFoot = store.get(FARM_FOOT_KEY);
+if (typeof farmFoot === 'string' && farmFoot) setFoot('farm', farmFoot, 'live');
 refreshAll();
+resumeActivity();
 setInterval(() => {
   if (document.hidden) return;
   for (const n of SHEETS) if ($(`#sheet-${n}`).open && !running(n)) load[n]?.().then(() => rerender(n)).catch(() => {});
@@ -3759,6 +4397,7 @@ const route = () => {
   const h = location.hash.slice(1), pay = h.match(/^(sp|st)=([0-9a-fA-F]{64})/);
   if (pay) { BTC.mode = 'receive'; BTC.check = { kind: pay[1], txid: pay[2].toLowerCase() }; openSheet('btc'); }
   else if (SHEETS.includes(h) || ALIAS[h]) openSheet(h);
+  else if (h === 'activity') openAct();
 };
 route();
 window.addEventListener('hashchange', route);

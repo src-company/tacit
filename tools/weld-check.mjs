@@ -28,6 +28,14 @@
 //            or out as tacUSD to an 0x… address, with fees shown first and an amount over the balance refused
 //   btc      a pasted key's Bitcoin sheet: balances read, BTC routes (tacit1 and sp1 as silent payments, bc1 plain), TAC
 //            routes refuse plain addresses, a tacit1's silent-payment keys are the ones this wallet scans, a payment link checks
+//   activity relayed jobs (dispatched as tacit:job, as the relay client does) move Queued → Proving → Done or Failed, with
+//            toasts and Etherscan links; a transaction the page sends is followed to its receipt; after a reload the list
+//            is still there, a job left proving is followed to its settle, a failure from the last six hours is asked
+//            about again and flips to done, an older one is not; a system notification goes out only while hidden
+//   dash     the "your Tacit" dashboard: the first paint at phone width has no sideways scroll; a connected wallet's
+//            dashboard shows placeholders first, then values, and what changed since the last visit's snapshot
+//   tacdeposit  a real 20 TAC deposit whose settle never landed: the TAC sheet and the dashboard offer to finish it,
+//            and Finish submits a wrap job rebuilt with the TAC asset and its own scale
 //   PLAYWRIGHT=<path to playwright-core> node tools/weld-check.mjs [scenario,…] [fork rpc]   (SHOTS=<dir> saves screenshots)
 
 import { spawn } from 'node:child_process';
@@ -44,7 +52,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,mainbond,locks,repay,csend,keys,saved,bitcoin,passkey,acct,devmove,btc,pts').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,mainbond,locks,repay,csend,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,activity,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -101,8 +109,13 @@ async function openPage({ account, key = null, host = '127.0.0.1', init = null, 
     const u = new URL(route.request().url());
     if (u.pathname === '/confidential/submit') { submits.push(JSON.parse(route.request().postData() || '{}')); return json(route, { jobId: 'stub-' + submits.length }); }
     if (u.pathname === '/confidential/status') return json(route, { status: 'failed', error: 'stubbed in the fork check' });
-    const r = await fetch('https://api.tacit.finance' + u.pathname + u.search, { method: route.request().method(), headers: { 'content-type': 'application/json' }, body: route.request().method() === 'GET' ? undefined : route.request().postData() });
-    return route.fulfill({ status: r.status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: await r.text() });
+    // A live API that does not answer is the page's to report, as it would be for a user; the run goes on.
+    try {
+      const r = await fetch('https://api.tacit.finance' + u.pathname + u.search, { method: route.request().method(), headers: { 'content-type': 'application/json' }, body: route.request().method() === 'GET' ? undefined : route.request().postData(), signal: AbortSignal.timeout(60000) });
+      return route.fulfill({ status: r.status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: await r.text() });
+    } catch (e) {
+      return route.fulfill({ status: 502, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ error: `the live API did not answer: ${e.message}` }) });
+    }
   };
   await ctx.route(/^https:\/\/api\.tacit\.finance\/confidential\/(submit|status)/, relay);
   await ctx.route(new RegExp(`^http://(127\\.0\\.0\\.1|localhost):${WEB}/(confidential|farm|reflection)/`), relay);
@@ -225,7 +238,7 @@ await step('apr', async () => {
   await page.goto(url + '#farm');
   await page.waitForSelector('#pf-connect, [data-pfm]', { timeout: 60000 });
   if (await page.$('#pf-connect')) await page.click('#pf-connect');
-  await until(page, () => /APR now/.test(document.querySelector('#farm-precision')?.textContent || ''), null, 120000);
+  await until(page, () => /APR now\s*(about [\d,]+%|over 100,000%)/.test(document.querySelector('#farm-precision')?.textContent || ''), null, 120000);
   const rows = await page.$$eval('.farm .rate', (r) => r.map((x) => x.textContent.replace(/\s+/g, ' ').trim()));
   const card = await page.$eval('#farm-precision', (e) => e.textContent.replace(/\s+/g, ' '));
   console.log('   rows:', rows.join(' | '));
@@ -961,12 +974,241 @@ await step('pts', async () => {
   if (w.errors.length) { fails++; console.log('FAIL pts page errors: ' + w.errors.slice(0, 3).join(' | ')); }
   await w.browser.close();
 });
+// Relayed jobs reach the page as tacit:job events; here they are dispatched the way the relay client dispatches them, and
+// /confidential/status answers from `served`, so a reload can find settled a job that had failed. Notification records
+// what would be shown instead of showing it.
+const NOTIFY_STUB = () => {
+  window.__notes = [];
+  window.Notification = class { static permission = 'granted'; static requestPermission() { return Promise.resolve('granted'); }
+    constructor(title, o = {}) { window.__notes.push({ title, body: o.body || '', tag: o.tag || '' }); } close() {} };
+};
+const hideTab = (p, on) => p.evaluate((h) => {
+  for (const [k, v] of [['hidden', h], ['visibilityState', h ? 'hidden' : 'visible']]) Object.defineProperty(document, k, { configurable: true, get: () => v });
+  document.dispatchEvent(new Event('visibilitychange'));
+}, on);
+const actRows = (p) => p.evaluate(() => [...document.querySelectorAll('#act-body .actr')].map((li) => ({ id: li.dataset.act, text: li.textContent.replace(/\s+/g, ' ').trim(),
+  now: li.querySelector('.stp .now')?.textContent || '', bad: li.querySelector('.stp .bad')?.textContent || '', links: [...li.querySelectorAll('.actr-f a')].map((a) => a.href) })));
+const openActivity = async (p) => { await p.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close())); await p.click('#act'); await p.waitForSelector('#sheet-act[open]'); };
+const serveStatus = (ctx, served) => ctx.route(/\/confidential\/status\?id=/, (route) => {
+  const id = new URL(route.request().url()).searchParams.get('id'), b = served[id];
+  return b ? json(route, { jobId: id, mode: 'settle', txHash: null, error: null, createdAt: Date.now(), ...b })
+    : route.fulfill({ status: 404, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"error":"unknown job"}' });
+});
+const pasteKey = async (p, hex) => {
+  await p.evaluate(() => { location.hash = ''; location.hash = '#wallet'; });
+  await p.click('#wallet-body [data-in="paste"]');
+  await p.fill('#ws-hex', hex);
+  await p.click('#wallet-body [data-in="key"]');
+  await until(p, () => !!document.querySelector('#wallet-dot.on'));
+};
+await step('activity', async () => {
+  const served = {}, H = (b) => '0x' + b.repeat(32);
+  const r = await openPage({ account: A0, key: K0, viewport: { width: 390, height: 900 }, init: { fn: NOTIFY_STUB } });
+  await serveStatus(r.ctx, served);
+  const fire = (d) => r.page.evaluate((x) => dispatchEvent(new CustomEvent('tacit:job', { detail: { txHash: null, error: null, at: Date.now(), ...x } })), d);
+  const toastHas = (re) => until(r.page, (s) => new RegExp(s).test(document.querySelector('#toast-container')?.textContent || ''), re.source, 15000).then(() => true, () => false);
+  const row = async (id) => (await actRows(r.page)).find((x) => x.id === id) || { text: '', links: [], now: '', bad: '' };
+  let seed = null;
+  try {
+    await r.page.goto(r.url);
+    await r.page.waitForSelector('.tile');
+    ok(await r.page.$eval('#act', (b) => b.hidden), 'activity: no Activity button before anything has happened');
+    await fire({ jobId: 'j-wrap', type: 'wrap', status: 'pending' });
+    await until(r.page, () => !document.querySelector('#act').hidden && document.querySelector('#act-n').textContent === '1', null, 15000);
+    ok(await toastHas(/Wrap: queued for the relay/), 'activity: a queued job shows in the header with a count, and is toasted');
+    await openActivity(r.page);
+    ok((await row('job:j-wrap')).now === 'Queued', `activity: its row is at Queued (${(await row('job:j-wrap')).text.slice(0, 50)})`);
+    await fire({ jobId: 'j-wrap', type: 'wrap', status: 'proving' });
+    await until(r.page, () => document.querySelector('[data-act="job:j-wrap"] .stp .now')?.textContent === 'Proving', null, 15000);
+    ok(true, 'activity: then at Proving');
+    await fire({ jobId: 'j-wrap', type: 'wrap', status: 'settled', txHash: H('a1') });
+    await until(r.page, () => /Done in/.test(document.querySelector('[data-act="job:j-wrap"]')?.textContent || ''), null, 15000);
+    const done = await row('job:j-wrap');
+    ok(done.links.includes(`https://etherscan.io/tx/${H('a1')}`) && await r.page.$eval('#act-n', (n) => n.hidden), `activity: done, linked to its transaction, nothing left in flight (${done.text.slice(0, 60)})`);
+    ok(await toastHas(/Wrap: done\./), 'activity: done is toasted');
+    // A failure reads as the relay wrote it, with the transaction it names linked.
+    await fire({ jobId: 'j-send', type: 'stealthlock', status: 'pending' });
+    await fire({ jobId: 'j-send', type: 'stealthlock', status: 'failed', error: `this note was already spent in ${H('b2')}; if that was this same request, it went through` });
+    await until(r.page, () => document.querySelector('[data-act="job:j-send"] .stp .bad')?.textContent === 'Failed', null, 15000);
+    const failed = await row('job:j-send');
+    ok(/This note was already spent in 0xb2b2/.test(failed.text) && failed.links.includes(`https://etherscan.io/tx/${H('b2')}`), `activity: a failure reads as the relay wrote it (${failed.text.slice(0, 80)})`);
+    ok(await toastHas(/Send privately did not go through: This note was already spent/), 'activity: the failure is toasted with its reason');
+    // A system notification only while the tab is out of sight.
+    await r.page.click('#act-notify');
+    await until(r.page, () => localStorage.getItem('tacit-lite-notify-v1') === 'true', null, 15000);
+    const n0 = await r.page.evaluate(() => window.__notes.length);
+    await fire({ jobId: 'j-seen', type: 'transfer', status: 'pending' });
+    await fire({ jobId: 'j-seen', type: 'transfer', status: 'settled', txHash: H('c3') });
+    await sleep(500);
+    const n1 = await r.page.evaluate(() => window.__notes.length);
+    await hideTab(r.page, true);
+    await fire({ jobId: 'j-away', type: 'unwrap', status: 'pending' });
+    await fire({ jobId: 'j-away', type: 'unwrap', status: 'settled', txHash: H('d4') });
+    await sleep(500);
+    const notes = await r.page.evaluate(() => window.__notes);
+    await hideTab(r.page, false);
+    ok(n1 === n0 && notes.length === n0 + 1 && notes.at(-1).title === 'Withdraw' && /Done/.test(notes.at(-1).body),
+      `activity: a system notification goes out only while the tab is hidden (${n0} → ${n1} → ${notes.length}: ${notes.at(-1)?.title} · ${notes.at(-1)?.body})`);
+    // A transaction the page sends is followed to its receipt: ETH from the connected wallet to a pasted key's Tacit account.
+    await pasteKey(r.page, 'ac71'.padEnd(64, '6'));
+    await toWallet(r.page);
+    await r.page.waitForSelector('[data-pay="wallet"]');
+    await r.page.click('[data-pay="wallet"]');
+    await until(r.page, () => document.querySelector('[data-pay="wallet"]')?.classList.contains('main'));
+    await r.page.waitForSelector('#ac-go');
+    await r.page.fill('#ac-mv', '0.001');
+    await r.page.click('#ac-go');
+    await until(r.page, () => /Added\.|err/.test(document.querySelector('#ac-status')?.innerHTML || ''), null, 120000);
+    await openActivity(r.page);
+    await until(r.page, () => [...document.querySelectorAll('#act-body .actr')].some((li) => /Add 0\.001 ETH/.test(li.textContent) && /Confirmed in/.test(li.textContent)), null, 60000).catch(() => {});
+    const add = (await actRows(r.page)).find((x) => /Add 0\.001 ETH/.test(x.text)) || { text: '', links: [] };
+    ok(/Confirmed in/.test(add.text) && add.links.some((l) => /^https:\/\/etherscan\.io\/tx\/0x[0-9a-f]{64}$/.test(l)), `activity: a transaction sent from the page is followed to its receipt (${add.text.slice(0, 70)})`);
+    // Before a reload: a job left proving, one failed within six hours (above), and one that failed longer ago.
+    await fire({ jobId: 'j-mint', type: 'cbtcmint', status: 'pending' });
+    await fire({ jobId: 'j-mint', type: 'cbtcmint', status: 'proving' });
+    await sleep(600);                                                         // the list is written shortly after each change
+    seed = await r.page.evaluate(() => localStorage.getItem('tacit-lite-activity-v1'));
+    await r.page.evaluate(() => {
+      const k = 'tacit-lite-activity-v1', s = JSON.parse(localStorage.getItem(k)), t = Date.now();
+      s.items.push({ id: 'job:j-old', kind: 'job', type: 'unwrap', label: 'Withdraw', status: 'failed', err: 'settle reverted: stale root', at: t - 8 * 3600e3, up: t - 7 * 3600e3, end: t - 7 * 3600e3 });
+      localStorage.setItem(k, JSON.stringify(s));
+    });
+    Object.assign(served, { 'j-send': { type: 'stealthlock', status: 'settled', txHash: H('e5') }, 'j-mint': { type: 'cbtcmint', status: 'settled', txHash: H('f6') }, 'j-old': { type: 'unwrap', status: 'settled', txHash: H('a7') } });
+    await r.page.reload();
+    await r.page.waitForSelector('.tile');
+    ok(await toastHas(/Send privately went through after all/), 'activity: after a reload, a job that failed in the last six hours is asked about again, and found settled');
+    await openActivity(r.page);
+    await until(r.page, () => /Done in/.test(document.querySelector('[data-act="job:j-mint"]')?.textContent || ''), null, 30000).catch(() => {});
+    const [send2, mint2, old2] = [await row('job:j-send'), await row('job:j-mint'), await row('job:j-old')];
+    ok(send2.bad === '' && /Went through after all/.test(send2.text) && send2.links.includes(`https://etherscan.io/tx/${H('e5')}`), `activity: it now reads done, with the settle's transaction (${send2.text.slice(0, 70)})`);
+    ok(/Done in/.test(mint2.text) && mint2.links.includes(`https://etherscan.io/tx/${H('f6')}`), `activity: a job still proving at the reload is followed until it settles (${mint2.text.slice(0, 60)})`);
+    ok(old2.bad === 'Failed', `activity: a failure older than six hours is left as it was (${old2.text.slice(0, 40)})`);
+    ok((await actRows(r.page)).some((x) => /Add 0\.001 ETH/.test(x.text) && /Confirmed/.test(x.text)), 'activity: the list, and each outcome, survives the reload');
+    await shot(r.page, 'activity-phone');
+    // At most twenty entries are kept, newest first.
+    for (let i = 0; i < 22; i++) await fire({ jobId: `j-n${i}`, type: 'transfer', status: 'settled', txHash: H('ab') });
+    await sleep(600);
+    const kept = await r.page.evaluate(() => JSON.parse(localStorage.getItem('tacit-lite-activity-v1')).items.map((x) => x.id));
+    ok(kept.length === 20 && kept[0] === 'job:j-n21', `activity: the list keeps the newest twenty (${kept.length}, newest ${kept[0]})`);
+    if (r.errors.length) { fails++; console.log('FAIL activity page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { await r.browser.close(); }
+  // The same list in the other widths and schemes, with one job still proving.
+  if (SHOTS && seed) {
+    const live = JSON.parse(seed);
+    live.items.unshift({ id: 'job:j-live', kind: 'job', type: 'sendunwrap', label: 'Withdraw 0.05 ETH', status: 'proving', prov: true, at: Date.now() - 42e3, up: Date.now() - 20e3 });
+    for (const [tag, viewport, colorScheme] of [['phone-dark', { width: 390, height: 900 }, 'dark'], ['desk', { width: 1280, height: 900 }, 'light'], ['desk-dark', { width: 1280, height: 900 }, 'dark']]) {
+      const v = await openPage({ account: A0, key: K0, viewport, colorScheme, init: { fn: (s) => localStorage.setItem('tacit-lite-activity-v1', s), arg: JSON.stringify(live) } });
+      await serveStatus(v.ctx, { 'j-live': { status: 'proving' }, 'j-mint': { status: 'settled', txHash: H('f6') } });
+      await v.page.goto(v.url);
+      await v.page.waitForSelector('.tile');
+      await shot(v.page, `activity-home-${tag}`);
+      await openActivity(v.page);
+      await sleep(800);
+      await shot(v.page, `activity-${tag}`);
+      await v.browser.close();
+    }
+  }
+});
+
+// The dashboard paints what the page has read. A wallet holding 5 TAC, whose last visit here saw 2, reads +3.
+await step('dash', async () => {
+  const W = '0xd45b000000000000000000000000000000000d45', id = `tacit-lite-dash-v1:|${W}`, t0 = Date.now() - 2 * 86400e3;
+  if ((await tacOf(W)) !== 5n * 10n ** 18n) await fundTac(W, 5n * 10n ** 18n - (await tacOf(W)));
+  const seed = JSON.stringify({ at: t0, v: { tac: { v: String(2n * 10n ** 18n), at: t0 } } });
+  const wide = (p) => p.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: innerWidth }));
+  for (const [tag, viewport, colorScheme] of [['phone', { width: 390, height: 1000 }, 'light'], ['phone-dark', { width: 390, height: 1000 }, 'dark'], ['desk', { width: 1280, height: 1000 }, 'light'], ['desk-dark', { width: 1280, height: 1000 }, 'dark']]) {
+    const r = await openPage({ account: W, viewport, colorScheme, init: { fn: ([k, v]) => { if (!localStorage.getItem(k)) localStorage.setItem(k, v); }, arg: [id, seed] } });
+    await r.ctx.route('https://api.tacit.finance/points/**', async (route) => { await sleep(3000); await route.continue(); });     // placeholders stay a moment
+    try {
+      await r.page.goto(r.url);
+      await r.page.waitForSelector('.tile');
+      if (tag === 'phone') { const w = await wide(r.page); ok(w.sw <= w.iw, `dash: the first paint at 390px has no sideways scroll (${w.sw} ≤ ${w.iw})`); }
+      await shot(r.page, `first-paint-${tag}`);
+      await go(r.page, '#buy');
+      await r.page.click('#buy-connect');
+      await until(r.page, () => !document.querySelector('#dash').hidden, null, 30000);
+      await r.page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+      const early = await r.page.evaluate(() => document.querySelectorAll('#dash .sk').length);
+      if (tag === 'phone') await shot(r.page, 'dash-loading-phone');
+      await until(r.page, () => /^5( TAC)?$/.test(document.querySelector('[data-dash-open="tac"] .di-v')?.textContent.trim() || ''), null, 60000);
+      await until(r.page, () => !document.querySelector('#dash .sk'), null, 60000).catch(() => {});
+      const tac = await r.page.$eval('[data-dash-open="tac"]', (b) => b.textContent.replace(/\s+/g, ' ').trim()), since = await text(r.page, '#dash-since');
+      if (tag === 'phone') {
+        ok(early > 0, `dash: a connected wallet's dashboard shows placeholders first (${early})`);
+        ok(/\+3 · /.test(tac) && /since/.test(since), `dash: 5 TAC now, against 2 at the last visit, reads +3 (${tac} | ${since})`);
+        ok(!!(await r.page.$('[data-dash-open="pts"]')) && !(await r.page.$('#dash .sk')), 'dash: then every placeholder gives way to a value');
+        const w = await wide(r.page);
+        ok(w.sw <= w.iw, `dash: still no sideways scroll at 390px with it showing (${w.sw})`);
+      }
+      await shot(r.page, `dash-${tag}`);
+      if (r.errors.length) { fails++; console.log(`FAIL dash ${tag} page errors: ` + r.errors.slice(0, 3).join(' | ')); }
+    } finally { await r.browser.close(); }
+  }
+  // An opened key: its private tETH, TAC and points, tETH a placeholder while its notes are read, each opening its sheet.
+  const k = await openPage({ account: A0, key: K0, viewport: { width: 390, height: 1000 } });
+  try {
+    await k.page.goto(k.url);
+    await pasteKey(k.page, 'da5b'.padEnd(64, '8'));
+    await k.page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    await until(k.page, () => !document.querySelector('#dash').hidden, null, 30000);
+    const cells = await k.page.$$eval('#dash .di', (b) => b.map((x) => x.dataset.dashOpen));
+    ok(['private', 'tac', 'pts'].every((c) => cells.includes(c)) && !!(await k.page.$('#dash [data-dash-open="private"] .sk')), `dash: an opened key shows tETH, TAC and points, tETH as a placeholder while its notes are read (${cells.join(', ')})`);
+    await shot(k.page, 'dash-key-phone');
+    await k.page.click('#dash [data-dash-open="private"]');
+    await k.page.waitForSelector('#sheet-eth[open]', { timeout: 15000 });
+    ok(true, 'dash: an item opens its sheet');
+    if (k.errors.length) { fails++; console.log('FAIL dash key page errors: ' + k.errors.slice(0, 3).join(' | ')); }
+  } finally { await k.browser.close(); }
+});
+
+// A 20 TAC deposit made the way tacit.finance makes one (a router wrap with a TAC permit, from the key's Tacit account),
+// whose settle never landed: weld finds it from the key, offers Finish on the TAC sheet and on the dashboard, and the
+// settle it submits is the wrap rebuilt under TAC's own asset id and scale.
+await step('tacdeposit', async () => {
+  const hex = 'dec0de'.padEnd(64, '4'), acct = makeEvmAccount({ secp, keccak256: keccak_256, sha256 }).deriveEvmAccount(Buffer.from(hex, 'hex'), 'mainnet').address;
+  await rpc('anvil_setBalance', [acct, '0x' + (10n ** 17n).toString(16)]);
+  await fundTac(acct, 20n * 10n ** 18n);
+  const r = await openPage({ account: A0, key: K0 });
+  try {
+    await r.page.goto(r.url);
+    await r.page.waitForSelector('.tile');
+    const dep = await r.page.evaluate(async (h) => {
+      const d = await import('/vendor/tacit-deps.min.js'), cd = await import('/confidential-deployments.js');
+      cd.setActiveNetwork('mainnet');
+      const { makeConfidentialPoolUx } = await import('/confidential-pool-ux.js');
+      const ux = makeConfidentialPoolUx({ secp: d.secp, keccak256: d.keccak_256, sha256: d.sha256, network: 'mainnet' });
+      const w = await ux.routerWrap({ walletPriv: d.hexToBytes(h), amountWei: (20n * 10n ** 18n).toString(), ticker: 'TAC', index: 0 });
+      return { txHash: w.txHash, asset: w.wrapOp.asset, value: String(w.wrapOp.value) };
+    }, hex);
+    const landed = await chainUntil(async () => (await rpc('eth_getTransactionReceipt', [dep.txHash]))?.status === '0x1', 60000);
+    ok(landed && dep.value === '2000000000', `tacdeposit: a 20 TAC deposit lands on the fork (${String(dep.txHash).slice(0, 12)}…, ${dep.value} units of ${dep.asset.slice(0, 10)}…)`);
+    await pasteKey(r.page, hex);
+    await go(r.page, '#tac');
+    await r.page.waitForSelector('#tac-finish', { timeout: 1200000 });                  // once the key's notes are read
+    const call = (await text(r.page, '#tac-bal .callout')).replace(/\s+/g, ' ').trim();
+    ok(/^20 TAC is waiting to become private\./.test(call), `tacdeposit: the TAC sheet offers to finish it, counted once (${call})`);
+    await r.page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    await until(r.page, () => /20 TAC is waiting/.test(document.querySelector('#dash-due')?.textContent || ''), null, 30000).catch(() => {});
+    ok(/20 TAC is waiting to become private/.test(await text(r.page, '#dash-due')), 'tacdeposit: so does the dashboard');
+    await shot(r.page, 'tacdeposit-dash');
+    const n0 = submits.length;
+    await r.page.click('#dash-due [data-dash-do="tac"]');                               // opens the TAC sheet and presses its Finish
+    await until(r.page, () => /stubbed|err/i.test(document.querySelector('#tac-bal-status')?.innerHTML || ''), null, 600000).catch(() => {});
+    const subs = submits.slice(n0).filter((s) => s.type === 'wrap');
+    ok(subs.length === 1 && String(subs[0].op?.asset).toLowerCase() === dep.asset.toLowerCase() && String(subs[0].op?.value) === dep.value,
+      `tacdeposit: Finish submits one wrap, rebuilt under TAC's asset and scale (${subs.length} submitted, value ${subs[0]?.op?.value})`);
+    await openActivity(r.page);
+    ok(/Finish a 20 TAC deposit/.test(await text(r.page, '#act-body')), 'tacdeposit: the settle shows in Activity');
+    if (r.errors.length) { fails++; console.log('FAIL tacdeposit page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { await r.browser.close(); }
+});
+
 // A walk through every sheet and its main states for design review: one screenshot each, at phone and desktop widths
 // and in the dark scheme too. Opt-in (`tour`), and it writes to SHOTS.
 await step('tour', async () => {
   if (!SHOTS) throw new Error('the tour needs SHOTS=<dir>');
   const other = tacit1('b0b'.padEnd(64, '5'));
-  const loaded = (p, sel, ms = 180000) => p.waitForFunction((s) => { const e = document.querySelector(s); return !!e && !/reading…|Reading|Finding|Checking/.test(e.textContent); }, sel, { timeout: ms }).catch(() => {});
+  const loaded = (p, sel, ms = 180000) => p.waitForFunction((s) => { const e = document.querySelector(s); return !!e && !/reading…|Reading|Finding|Checking/.test(e.textContent) && !e.querySelector('.sk'); }, sel, { timeout: ms }).catch(() => {});
   const shown = (p, sel, ms = 60000) => p.waitForSelector(sel, { timeout: ms }).catch(() => {});
   for (const [tag, viewport, colorScheme] of [['phone', { width: 390, height: 1400 }, 'light'], ['desk', { width: 1280, height: 1200 }, 'light'], ['phone-dark', { width: 390, height: 1400 }, 'dark']]) {
     const r = await openPage({ account: A0, key: K0, viewport, colorScheme });
