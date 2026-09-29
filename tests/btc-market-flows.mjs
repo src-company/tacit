@@ -387,6 +387,17 @@ await test('a buy that only fits above the price limit offers a one-tap raise, a
   assert.match(await page.textContent('.bm-modal'), /at most 265\.00 sats\/TAC/);
 });
 
+await test('at my price warns when you already have an open order at that price', async (page) => {
+  await page.evaluate(() => { const W = window.__w; W.bids = [W.bid('mine', 25, 5000, { buyer_pubkey: W.me.pubHex })]; });
+  await mount(page); await settle(page, 300);
+  await page.click('[data-act=type][data-v=limit]'); await settle(page);
+  await page.fill('[data-k=limit-price]', '200');
+  await page.fill('[data-k=amount]', '30'); await settle(page);
+  assert.match(await page.textContent('[data-k=quote]'), /already have an open bid for 25 TAC at this price/);
+  await page.fill('[data-k=limit-price]', '150'); await page.dispatchEvent('[data-k=limit-price]', 'input'); await settle(page);
+  assert.doesNotMatch(await page.textContent('[data-k=quote]'), /already have an open/);
+});
+
 await b.close();
 srv.close();
 console.log(`btc-market flows: ${passed} passed${process.exitCode ? ' — FAILURES above' : ''}`);

@@ -384,12 +384,14 @@ function createMarket(host, ctx) {
     if (hid) notes.push(`${hid} OTC offer${hid === 1 ? '' : 's'} that need${hid === 1 ? 's' : ''} trust in the seller ${hid === 1 ? 'isn\'t' : 'aren\'t'} shown`);
     const stale = (ex.asks.stale || 0) + (ex.asks.claimed || 0);
     if (stale) notes.push(`${stale} offer${stale === 1 ? ' is' : 's are'} busy or inactive and hidden`);
+    // Each fact on its own line rather than one dense run-on sentence — a small "key"
+    // for the dots and the few whole-piece/online-only asks, not a paragraph to parse.
     const legend = [];
-    if (b.asks.some((x) => !x.mine && x.whole)) legend.push('Asks sell in whole pieces');
-    if (b.asks.some((x) => !x.mine && !x.instant)) legend.push('<i class="bm-dot wait"></i> seller confirms your claim');
+    if (b.asks.some((x) => !x.mine && x.whole)) legend.push('Asks sell as whole pieces');
+    if (b.asks.some((x) => !x.mine && !x.instant)) legend.push('<i class="bm-dot wait"></i> the seller confirms your claim');
     if (b.bids.some((x) => !x.mine && x.auto)) legend.push('<i class="bm-dot auto"></i> settles automatically');
-    if (b.bids.some((x) => !x.mine && !x.auto)) legend.push('other bids settle only while the bidder is online');
-    const nb = [...legend, ...notes.map(esc)].join(' · ');
+    if (b.bids.some((x) => !x.mine && !x.auto)) legend.push('some bids need the bidder online');
+    const nb = [...legend, ...notes.map(esc)].map((t) => `<span>${t}</span>`).join('');
     if (el.bookNote.innerHTML !== nb) el.bookNote.innerHTML = nb;
   }
 
@@ -659,11 +661,14 @@ function createMarket(host, ctx) {
       html += row('Total', `<b>up to ${fmtSats(o.totalSats)} sats</b>${usd(o.totalSats)}`, 'big');
       if (nowFill) html += row('Fills now', `${fmtAmount(nowFill.amount, dec, 4)} ${T} for ${fmtSats(nowFill.sats)} sats`);
       if (bidBase > 0n) html += row(nowFill ? 'Rest becomes a bid' : 'Your bid', `${fmtAmount(bidBase, dec, 4)} ${T} at ${fmtUnit(o.unit)}`);
+      if (bidBase > 0n) html += existingOrderNote('buy', o.unit);
       const bidSats = bidBase > 0n ? satsForAmount(bidBase, o.unit, dec) : 0;
       const wt = watchtowerState(bidSats);
       if (bidBase > 0n) {
-        html += `<label class="bm-check"><input type="checkbox" data-act="wt"${wt.on ? ' checked' : ''}${wt.ok ? '' : ' disabled'}><span>Fill it while I'm away <em>${wt.ok ? `— a watchtower completes fills; sets aside ${fmtSats(bidSats + 10000)} sats in a wallet only you can reclaim` : esc(wt.why)}</em></span></label>`;
-        if (!wt.on) html += `<div class="bm-q bm-muted">Without it, fills complete only while this page is open.</div>`;
+        const wtDetail = !wt.ok ? esc(wt.why)
+          : wt.on ? `— sets aside ${fmtSats(bidSats + 10000)} sats in a wallet only you can reclaim`
+          : `— otherwise, fills complete only while this page stays open`;
+        html += `<label class="bm-check"><input type="checkbox" data-act="wt"${wt.on ? ' checked' : ''}${wt.ok ? '' : ' disabled'}><span>Fill it while I'm away <em>${wtDetail}</em></span></label>`;
       }
       el.quote.innerHTML = html;
       if (m && m.unlocked && m.sats != null && m.sats < o.totalSats + (wt.on ? 10000 : 0) + 1000) { setGo('Not enough sats', true, 'fund'); return; }
@@ -678,11 +683,23 @@ function createMarket(host, ctx) {
       return;
     }
     html += row('Listed as', sh.k >= 2 ? `${sh.k} pieces of ${fmtAmount(sh.perLotBase, dec, 4)} ${T}` : 'one piece');
+    html += existingOrderNote('sell', o.unit);
     if (q.crosses) html += `<div class="bm-q bm-note">Bids already pay ${fmtUnit(q.bestSellable)} or more — a <button type="button" class="bm-link" data-act="to-market">market sell</button> gets you that now.</div>`;
     html += `<div class="bm-q bm-muted">Buyers take it without you online. Cancel any time (one network fee).</div>`;
     el.quote.innerHTML = html;
     if (m && m.unlocked && m.assetBase != null && o.base > m.assetBase) { setGo(`Not enough ${asset0.ticker}`, false); return; }
     setGo('Review listing', true, 'review');
+  }
+
+  // "At my price" rests as an open order — if you already have one at the same displayed
+  // price, a second click adds a SECOND one rather than changing the first. Surface that
+  // before Review, not after, so it's a choice, not a surprise found later in Your orders.
+  function existingOrderNote(side, unit) {
+    if (!S.myRows) return '';
+    const target = fmtUnit(unit);
+    const dup = [...S.myRows.values()].find((r) => r.side === side && fmtUnit(r.unit) === target);
+    if (!dup) return '';
+    return `<div class="bm-q bm-note">You already have an open ${side === 'buy' ? 'bid' : 'listing'} for ${fmtAmount(dup.amount, dec, 4)} ${T} at this price — this adds a second one.</div>`;
   }
 
   // A limit buy's resting bid: what the remaining sats buy at the limit, never more than

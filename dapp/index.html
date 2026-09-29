@@ -8630,7 +8630,7 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm-types button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 2px 0; cursor: pointer; color: var(--ink-mid); font-size: 12px; }
 .bm-types button[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--ink); font-weight: 700; }
 .bm-mode-note { margin: 2px 0 4px; font-size: 11px; line-height: 1.45; color: var(--ink-mid); }
-.bm-unit-static { cursor: default; display: inline-flex; align-items: center; gap: 6px; color: var(--ink-mid); }
+.bm-unit-static { cursor: default; display: inline-flex; align-items: center; gap: 6px; color: var(--ink-mid); border-left: 1px solid var(--ink-faint); background: transparent !important; }
 .bm-unit-static:hover { background: transparent; }
 .bm-field { display: block; margin-top: 8px; }
 .bm-label { display: block; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-mid); margin-bottom: 4px; }
@@ -8640,7 +8640,8 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm-inputrow:focus-within { outline: 2px solid var(--orange); outline-offset: -1px; }
 .bm-unit { background: transparent; border: 0; border-left: 1px solid var(--ink-faint); padding: 0 12px; cursor: pointer; font-size: 12px; white-space: nowrap; }
 .bm-unit:hover { background: var(--bg-alt); }
-.bm-chips, .bm-pricechips { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+.bm-chips, .bm-pricechips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.bm-pricechips button { flex: 1 1 auto; text-align: center; }
 .bm-chips:empty, .bm-pricechips:empty { display: none; }
 .bm-bal { font-size: 11px; color: var(--ink-mid); margin-top: 6px; }
 .bm-bal b { color: var(--ink); }
@@ -8720,7 +8721,8 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm-more { display: block; width: 100%; background: none; border: 0; border-top: 1px solid var(--bm-line); height: 30px; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-mid); cursor: pointer; }
 .bm-more:hover { color: var(--ink); background: var(--bg-alt); }
 .bm-empty { padding: 14px 12px; color: var(--ink-mid); font-size: 11px; }
-.bm-book-note { padding: 7px 12px 9px; font-size: 10px; line-height: 1.5; color: var(--ink-faint); border-top: 1px solid var(--bm-line); }
+.bm-book-note { display: flex; flex-wrap: wrap; column-gap: 14px; row-gap: 4px; padding: 8px 12px 10px; font-size: 10px; line-height: 1.4; color: var(--ink-faint); border-top: 1px solid var(--bm-line); }
+.bm-book-note span { white-space: nowrap; }
 .bm-book-note:empty { display: none; }
 
 /* orders + trades */
