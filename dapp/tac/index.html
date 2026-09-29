@@ -165,6 +165,18 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .eyebrow { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--mute); margin: 0 0 12px; }
 code { font-size: 12px; overflow-wrap: anywhere; }
 
+.chart { width: 100%; height: 132px; display: block; margin: 6px 0 4px; overflow: visible; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+.chipx { display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 9px; border: 1px solid var(--hair); background: var(--field); font-size: 11.5px; }
+.chipx i { font-style: normal; color: var(--mute); text-transform: uppercase; letter-spacing: .06em; font-size: 10px; }
+.chipx b { font-weight: 500; }
+.depth { margin-top: 10px; border-top: 1px solid var(--hair); }
+.dep { position: relative; display: grid; grid-template-columns: 62px 1fr auto; gap: 10px; align-items: center;
+  padding: 7px 8px; border-bottom: 1px solid var(--hair); font-size: 12px; }
+.dep .bar { position: absolute; left: 0; top: 0; bottom: 0; background: var(--orange); opacity: .10; }
+.dep b { font-weight: 500; }
+.dep span.mute { text-align: right; }
+
 .facts { list-style: none; margin: 14px 0 0; padding: 0; border-top: 1px solid var(--hair); }
 .facts li { display: flex; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--hair); font-size: 12.5px; color: var(--mute); }
 .facts li b { font-weight: 400; color: var(--ink); flex: none; width: 92px; }
@@ -236,6 +248,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
       <button role="tab" id="tab-send">Send</button>
       <button role="tab" id="tab-withdraw">Withdraw</button>
       <button role="tab" id="tab-receive">Receive</button>
+      <button role="tab" id="tab-market">Market</button>
     </div>
 
     <div class="bal">
@@ -286,6 +299,8 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
         <div id="sats-body"></div>
       </div>
     </div>
+
+    <div id="pane-market" hidden><div id="market-body"></div></div>
 
     <div id="pane-receive" hidden>
       <p class="eyebrow">Your pool address</p>
@@ -356,6 +371,6 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
   </form>
 </div>
 <div id="toast-container" aria-live="polite"></div>
-<script type="module" src="/tac/app.js?cb=32491cc7"></script>
+<script type="module" src="/tac/app.js?cb=11ec44c1"></script>
 </body>
 </html>

@@ -8,7 +8,8 @@
 // then the sender needs no BTC at all and pays the relayer inside the pool. Shields and exits always fund
 // their own carrier, by design, so those need a little BTC in the wallet.
 
-const SATS_URL = '/tac/sats.js?cb=6655b51b';   // token rewritten by build/build.mjs (TAC_CB_FILES)
+const SATS_URL = '/tac/sats.js?cb=6655b51b';     // tokens rewritten by build/build.mjs (TAC_CB_FILES)
+const MARKET_URL = '/tac/market.js?cb=b5a39c64';
 const WORKER = 'https://api.tacit.finance';
 const ASSET = 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
 
@@ -550,8 +551,12 @@ async function scanEverything(statusId = 'st-recv') {
 
 // ── boot ──
 (async function boot() {
-  tabs(['tab-shield', 'tab-send', 'tab-withdraw', 'tab-receive'], ['pane-shield', 'pane-send', 'pane-withdraw', 'pane-receive'],
-    (i) => { if (i === 3 && poolWallet) $('recv-addr').value = poolWallet.addressString; });
+  tabs(['tab-shield', 'tab-send', 'tab-withdraw', 'tab-receive', 'tab-market'],
+    ['pane-shield', 'pane-send', 'pane-withdraw', 'pane-receive', 'pane-market'],
+    (i) => {
+      if (i === 3 && poolWallet) $('recv-addr').value = poolWallet.addressString;
+      if (i === 4) renderMarket();
+    });
   tabs(['wtab-self', 'wtab-sats'], ['wpane-self', 'wpane-sats'], (i) => { if (i === 1) renderSats(); });
 
   $('wallet-chip').onclick = async () => {
@@ -603,6 +608,17 @@ async function scanEverything(statusId = 'st-recv') {
   await Promise.all([loadStats(), loadPrice()]);
   if (unlocked()) await refreshAll();
 })();
+
+// ── market ──
+// Lazy: the Bitcoin book and an Ethereum pool read are both off this page's critical path.
+let marketMounted = false;
+function renderMarket() {
+  if (marketMounted) return;
+  marketMounted = true;
+  import(MARKET_URL)
+    .then((m) => m.mount($('market-body'), { markSats }))
+    .catch((e) => { marketMounted = false; $('market-body').replaceChildren(); errSay('st-recv', e); });
+}
 
 // ── withdraw to sats ──
 function renderSats() {

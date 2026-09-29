@@ -158,7 +158,7 @@ const SATS_CB_FILES = ['sats/join-worker.js', 'sats/mix.js', 'sats/secret.js', '
 const WELD_CB_FILES = ['weld/index.html'];
 // dapp/tac/ is the shielded-TAC page: app.js lazy-imports sats.js, so sats.js is hashed first and the page
 // that loads app.js last, same importer-last order as the sats page above.
-const TAC_CB_FILES = ['tac/sats.js', 'tac/app.js', 'tac/index.html'];
+const TAC_CB_FILES = ['tac/sats.js', 'tac/market.js', 'tac/app.js', 'tac/index.html'];
 function pageCacheBust(files, write) {
   const drift = [];
   for (const rel of files) {
