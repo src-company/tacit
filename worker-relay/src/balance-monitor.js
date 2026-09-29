@@ -5,8 +5,9 @@
 //
 // Alerts (log always; POST to ALERT_WEBHOOK_URL if set) when:
 //   * PROVE balance (relay wallet's undeposited PROVE) < floor
-//   * a wallet with the settle role cannot pay for the next settle (critical: relayed jobs wait in the queue); the
-//     relay wallet cannot pay for an attest, or a settle wallet has under N days of runway (warnings)
+//   * a wallet can no longer do its job (critical): the settle wallet cannot pay for the next settle, so relayed jobs
+//     wait in the queue, or the relay wallet cannot keep an attest back and still send headers, so the Bitcoin headers
+//     and attests stop; a settle wallet with under N days of runway, or any wallet under the buffer (warnings)
 //   * reflection lag (relay tip - attested Bitcoin height) > N blocks
 //   * reflection snapshot size > warn threshold — the one cumulative resource
 //   * reflection stalled: no successful attest for REFLECTION_STALL_HOURS with blocks waiting, or the API's cursor
@@ -72,13 +73,16 @@ async function checkProve() {
 
 // Check EVERY wallet the relay spends from, not just RELAY_KEY.
 //
-// It pages (critical) only where users wait on a wallet: one with the settle role that cannot pay for the next settle
-// at today's gas, the test the settle relay itself makes before taking a job, so a critical here means relayed jobs are
-// sitting in the queue. Everything else about gas is a warning. The relay role (headers, attests) waits out a short
-// balance by design: the header relay sizes its batches to what the wallet holds, and the reflection waits rather than
-// buy a proof it cannot submit. If the reflection does fall behind, the lag and stall checks page on that. A settle
-// wallet's runway, in days at EXPECTED_OPS_PER_DAY and the live gas price, and the ETH_GAS_BUFFER_WEI floor say when
-// to top up.
+// It pages (critical) only when a wallet can no longer do its job, judged the way the service that spends from it does:
+//   settle role: the next settle at today's gas (the settle relay's own test before it takes a job), so a critical
+//     means relayed jobs are sitting in the queue;
+//   relay role: one attest kept back plus two headers (the header relay's smallest advance, one of margin), at today's
+//     gas capped at the ceiling it advances under while a user waits (DEMAND_MAX_GAS_GWEI). Above that ceiling it
+//     waits by design, and a balance that covers a short advance is not an outage: the header relay sizes each batch to
+//     what the wallet holds. Below it, headers and attests stop, and nothing else pages on that, since the lag and
+//     stall checks measure against the relay's own tip, which stops with them.
+// A settle wallet's runway, in days at EXPECTED_OPS_PER_DAY and the live gas price, and the ETH_GAS_BUFFER_WEI floor
+// are warnings: they say when to top up.
 async function checkEth() {
   let gasPrice = null, base = null, tip = null;
   try { gasPrice = await publicClient.getGasPrice(); }
@@ -101,8 +105,9 @@ async function checkEth() {
       if (bal < need) await alert('critical', `${who} holds ${formatEther(bal)} ETH, under the ${formatEther(need)} ETH the next settle can cost at today's gas: relayed jobs wait in the queue until it is topped up`, extra);
     }
     if (base !== null && roles.includes('relay')) {
-      const need = CFG.attestGasBudget * (2n * base + tip);
-      if (bal < need) await alert('warning', `${who} holds ${formatEther(bal)} ETH, under the ${formatEther(need)} ETH an attest can cost at today's gas: attests wait for a top-up or cheaper gas`, extra);
+      const cap = BigInt(Math.round(CFG.demandMaxGasGwei * 1e9)), fee = 2n * (base < cap ? base : cap) + tip;
+      const need = (CFG.attestGasBudget + 2n * OP_GAS.maintenance) * fee;
+      if (bal < need) await alert('critical', `${who} holds ${formatEther(bal)} ETH, under the ${formatEther(need)} ETH it needs to keep an attest back and still send headers: Bitcoin headers and attests stop until it is topped up`, extra);
     }
 
     // Runway in DAYS of the wallet's burn at the live gas price, from the roles it carries:

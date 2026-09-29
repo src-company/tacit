@@ -87,15 +87,15 @@ test('runway is measured in DAYS of the wallet\'s real burn, not in settles', ()
   ok(/getGasPrice\(\)/.test(monitor), 'runway must read the live gas price');
 });
 
-// A wallet pages only where users wait on it: a settle wallet that cannot pay the next settle, the settle relay's own
-// test before it takes a job. The relay wallet (headers, attests) waits out a short balance by design, and the lag and
-// stall checks page if the reflection actually falls behind; runway and the buffer only say when to top up.
-test('gas pages only when the next settle cannot be paid', () => {
+// A wallet pages only when it can no longer do its job, judged as the service spending from it judges it: a settle
+// wallet that cannot pay the next settle (the settle relay's own test), a relay wallet that cannot keep an attest back
+// and still send two headers at gas up to its demand ceiling. Runway and the buffer only say when to top up.
+test('gas pages only when a wallet can no longer do its job', () => {
   const block = monitor.slice(monitor.indexOf('async function checkEth'), monitor.indexOf('async function checkSnapshotCapacity'));
   const crit = block.match(/alert\('critical'/g) || [];
-  ok(crit.length === 1, `checkEth has exactly one critical, got ${crit.length}`);
-  ok(/roles\.includes\('settle'\)\) \{\s*const need = CFG\.settleFundsGas \* \(3n \* base \+ CFG\.settleTipFloorWei\);\s*if \(bal < need\) await alert\('critical'/.test(block), 'the critical is not the next-settle cost the settle relay checks');
-  ok(/roles\.includes\('relay'\)\) \{\s*const need = CFG\.attestGasBudget \* \(2n \* base \+ tip\);\s*if \(bal < need\) await alert\('warning'/.test(block), 'a relay wallet short of an attest must warn, not page');
+  ok(crit.length === 2, `checkEth has a critical per role, got ${crit.length}`);
+  ok(/roles\.includes\('settle'\)\) \{\s*const need = CFG\.settleFundsGas \* \(3n \* base \+ CFG\.settleTipFloorWei\);\s*if \(bal < need\) await alert\('critical'/.test(block), 'the settle critical is not the next-settle cost the settle relay checks');
+  ok(/const cap = BigInt\(Math\.round\(CFG\.demandMaxGasGwei \* 1e9\)\), fee = 2n \* \(base < cap \? base : cap\) \+ tip;\s*const need = \(CFG\.attestGasBudget \+ 2n \* OP_GAS\.maintenance\) \* fee;\s*if \(bal < need\) await alert\('critical'/.test(block), 'the relay critical is not an attest plus two headers at gas capped at the demand ceiling');
   ok(!/runwayDaysCritical/.test(block) && !/alert\('critical', `\$\{who\} ETH/.test(block), 'runway and the buffer must not page');
   const settle = readFileSync(join(ROOT, 'worker-relay/src/settle-relay.js'), 'utf8'), folder = readFileSync(join(ROOT, 'worker-relay/src/reflection-folder.js'), 'utf8');
   ok(/const SETTLE_FUNDS_GAS = CFG\.settleFundsGas;/.test(settle) && /const TIP_FLOOR_WEI = CFG\.settleTipFloorWei;/.test(settle), 'the settle relay and the monitor must price a settle alike');
