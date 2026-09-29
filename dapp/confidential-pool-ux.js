@@ -1428,12 +1428,28 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     return { op, dShares, assetA, assetB, dA, dB, lpAsset, pid, bondNonce, receiptOwner: owner, receiptLeaf, anchorLeaf };
   }
 
+  // Two notes one op spends prove their membership against one root, the A note's. A note made by a split moments
+  // ago and a note from an earlier scan carry paths to different roots, and the guest cannot prove the second against
+  // the first's: the proof request comes back unexecutable. Notes whose roots differ are both taken from one fresh
+  // scan (`scan` stands in for balance()).
+  async function sameRoot(walletPriv, a, b, { scan = balance } = {}) {
+    const lcs = (x) => String(x || '').toLowerCase();
+    if (a && b && a.root && lcs(a.root) === lcs(b.root)) return [a, b];
+    const same = (x, n) => (x.leaf && n.leaf ? lcs(x.leaf) === lcs(n.leaf) : BigInt(x.cx) === BigInt(n.cx) && BigInt(x.cy) === BigInt(n.cy));
+    const { notes = [] } = await scan(walletPriv);
+    const a2 = notes.find((x) => same(x, a)), b2 = notes.find((x) => same(x, b));
+    if (!a2 || !b2) throw new Error('a note to spend is not in a fresh scan (already spent, or not visible yet) — rescan and retry in a moment');
+    if (lcs(a2.root) !== lcs(b2.root)) throw new Error('the notes to spend came back under two roots — retry in a moment');
+    return [a2, b2];
+  }
+
   // Build + settle a 1-click farm entry. Reads the pair's live reserves, derives the shares, and submits the
   // OP_LP_BOND witness through the relay. The guest emits one leaf (the receipt), so the settle carries one memo
   // for it: the empty seed-derived memo, since the receipt key and nonce re-derive from the wallet key and the
   // spent A note (lpBondPosition) and the shares are public in the bond's CdpMint.
   async function lpBond({ walletPriv, controller, aNote, bNote, feeBps = 30, selfRelay = false, maxDonationBps, waitOpts } = {}) {
     if (!controller) throw new Error('lp-bond: farm controller not configured for this network');
+    [aNote, bNote] = await sameRoot(walletPriv, aNote, bNote);
     const res = await poolReserves(routePoolId(aNote.asset, bNote.asset, feeBps));
     if (!res) throw new Error('lp-bond: pool not initialized for this pair / fee tier');
     const b = buildLpBondOp({
@@ -1703,6 +1719,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   async function lpAdd({ walletPriv, aNote, bNote, feeBps = 30, fee = 0n, deadline = 0n, selfRelay = false, contributeA = null, contributeB = null, maxDonationBps, waitOpts } = {}) {
     if (!aNote || !bNote) throw new Error('lp-add: need an A note and a B note');
     if (BigInt(aNote.asset) === BigInt(bNote.asset)) throw new Error('lp-add: A and B must be different assets');
+    [aNote, bNote] = await sameRoot(walletPriv, aNote, bNote);
     const id = identity(walletPriv);
     let nA = aNote, nB = bNote;
     let cA = contributeA == null ? null : BigInt(contributeA);
@@ -3399,7 +3416,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
 
   return { cfg, assets: _poolAssets, assetByTicker, account, identity, rpc, ethCall, fetchEvents, balance, poolStatsFromEvents, tickerOf,
     deriveOutput, buildWrap, nextWrapIndex, wrap, submitWrapSettle, buildRouterWrap, routerWrap, routerConfigured, buildWrapTransferOp, wrapAndSend, resumeWrapAndSend, sendPreparedTx, buildTransferOp, transfer, stealthSend, scanStealthLocks, stealthClaim, stealthRefund, stealthLockPosition, crossOut, payInvoice, quoteUnwrapFee, holderFeeBps, setPublicTacHeld, quoteTransferFee, quoteOpFee: gasAwareMinFee, feeUsdFor, relayFeeEligible, buildUnwrap, unwrap, sendUnwrap, buildAttestMeta, chainBindingHex,
-    erc2612Nonce: _erc2612Nonce, waitReceipt: _waitReceipt, poolReserves, poolCurrentRoot, routePoolId, quoteRoute, route, swapBatched, swapBatchPending, swapBatchFlush, lpBondPosition, buildLpBondOp, lpBond, farmProgram, farmBond, farmPositions, importFarmPosition, recover, recoverCdpPositions, scanSentLocks, farmHarvest, farmUnbond, farmRedeem, buildFastlaneExitOp, fastlaneExit, lpAdd, lpRemove, quoteLpAdd, wrapLp, wrapSwap, ensureExactNote, mintCbtc, defiActions, cdp: _cdp, cdpPositionTree, submitSettle, settleCalldata,
+    erc2612Nonce: _erc2612Nonce, waitReceipt: _waitReceipt, poolReserves, poolCurrentRoot, sameRoot, routePoolId, quoteRoute, route, swapBatched, swapBatchPending, swapBatchFlush, lpBondPosition, buildLpBondOp, lpBond, farmProgram, farmBond, farmPositions, importFarmPosition, recover, recoverCdpPositions, scanSentLocks, farmHarvest, farmUnbond, farmRedeem, buildFastlaneExitOp, fastlaneExit, lpAdd, lpRemove, quoteLpAdd, wrapLp, wrapSwap, ensureExactNote, mintCbtc, defiActions, cdp: _cdp, cdpPositionTree, submitSettle, settleCalldata,
     cbtcLockState, syncCbtcLockReservations,
     relay, indexer, evmLog, evmTx, pool, memo, router: _router, stealth: _stealth, bridgeMint: _bridgeMint, bridgeBurn: _bridgeBurn, bridgeBurnToPool, airdrop: _airdrop, tacAirdrop: _tacAirdrop, lockScan: _lockScan };
 }

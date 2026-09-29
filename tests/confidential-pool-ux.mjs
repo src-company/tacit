@@ -1107,3 +1107,24 @@ test('balance: a connected wallet\'s public TAC also counts toward the holder ra
     assert.equal(ux.holderFeeBps(), 30n, 'no connected wallet -> only the account\'s own TAC counts');
   } finally { setExternalTacHolders(() => []); }
 });
+
+// A farm entry or LP add spends two notes against one root, the A note's. When a split has just made one of them, the
+// two carry paths from different scans, and the guest cannot prove the second note against the first's root (the proof
+// request comes back unexecutable). Both are then taken from one fresh scan.
+test('two notes spent together: paths from different scans are replaced by one fresh scan', async () => {
+  const ux = makeConfidentialPoolUx({ ...deps, fetchImpl: async () => {} });
+  const priv = '0x' + '41'.repeat(32);
+  const A = { leaf: '0xaa', cx: '0x1', cy: '0x2', root: '0x01', path: ['a-old'] };
+  const B = { leaf: '0xbb', cx: '0x3', cy: '0x4', root: '0x02', path: ['b-new'] };
+  let scans = 0;
+  const scan = async () => { scans++; return { notes: [{ ...A, root: '0x02', path: ['a-new'] }, { ...B }, { leaf: '0xdd', root: '0x02' }] }; };
+  const [a, b] = await ux.sameRoot(priv, A, B, { scan });
+  assert.equal(scans, 1, 'one scan');
+  assert.deepEqual([a.root, a.path, b.root, b.path], ['0x02', ['a-new'], '0x02', ['b-new']], 'both under the fresh root, each with its path there');
+  const same = { ...B, root: '0x01' };
+  const [c, d] = await ux.sameRoot(priv, A, same, { scan: async () => { throw new Error('no scan when the roots already agree'); } });
+  assert.ok(c === A && d === same, 'notes already under one root pass through untouched');
+  await assert.rejects(ux.sameRoot(priv, A, { leaf: '0xcc', root: '0x03' }, { scan }), /not in a fresh scan/, 'a note the scan does not list is refused plainly');
+  const byCoords = await ux.sameRoot(priv, { cx: '0x1', cy: '0x2', root: '0x09' }, B, { scan });
+  assert.equal(byCoords[0].root, '0x02', 'a note without its leaf is matched by its commitment');
+});
