@@ -59,7 +59,8 @@ function wireWrap(wallet, ux) {
       // The deposit itself may already be irreversibly on-chain even though this failed (a dropped
       // connection after broadcast, a settle timeout) — never imply otherwise, since the fix here is to
       // resubmit the SAME index's settle, not to re-wrap and double-deposit.
-      if (st) st.textContent = r && r.txHash
+      // A deposit that reverted deposited nothing, so there is nothing to resume.
+      if (st) st.textContent = r && r.txHash && !(e && e.reverted)
         ? `${m} — the deposit (${r.txHash}) is on-chain; do not re-wrap the same amount. Reload this tab — the pending deposit will show below with a Resume button.`
         : m;
       notify(m, 'error');

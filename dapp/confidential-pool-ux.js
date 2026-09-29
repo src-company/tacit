@@ -7,7 +7,7 @@
 // The wrap (on-chain deposit) + transfer/unwrap BUILD paths layer the op assemblers + evm-tx on top of
 // this; this module owns the read path (account + balance) + the live config + the settle/RPC handles.
 
-import { getConfidentialDeployment, activeNetwork, syncProtectedOutpoints } from './confidential-deployments.js';
+import { getConfidentialDeployment, activeNetwork, syncProtectedOutpoints, shownTicker } from './confidential-deployments.js';
 import { makeEvmAccount } from './evm-account.js';
 import { makeConfidentialIndexer } from './confidential-indexer.js';
 import { makeConfidentialEvmLog } from './confidential-evm-log.js';
@@ -905,15 +905,35 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       const need = tx.gasLimit * tx.maxFeePerGas + tx.value;
       const have = BigInt(await rpc('eth_getBalance', [acct.address, 'latest']));
       if (have < need) throw new Error(`insufficient ETH for gas: ${acct.address} holds ${have} wei and this transaction reserves ${need} wei up front (gas limit x max fee + value)`);
+      // A transaction that would revert is never sent: it costs gas and does nothing. Run it first at its own gas
+      // limit, so running out of gas is caught too. A node that cannot be asked is not a verdict.
+      const hexq = (v) => '0x' + BigInt(v).toString(16);
+      let why = null;
+      try { await rpc('eth_call', [{ from: acct.address, to, value: hexq(tx.value), data, gas: hexq(tx.gasLimit) }, 'latest']); }
+      catch (e) { const m = String((e && e.message) || e); if (/revert|out of gas|gas required exceeds/i.test(m)) why = m; }
+      if (why) {
+        const err = new Error(`this transaction would fail on chain, so it was not sent (${why.slice(0, 160)})`);
+        err.wouldRevert = true;
+        throw err;
+      }
     }
     const signed = evmTx.signEip1559(tx, acct.priv);
     const txHash = send ? await rpc('eth_sendRawTransaction', [signed.raw]) : null;
     return { txHash, nonce: n, signedRaw: signed.raw };
   }
+  // Resolves with the receipt of a transaction that succeeded. A reverted one throws, marked `reverted`: it moved
+  // nothing, so nothing that follows it (a wrap's settle, above all) may run as if it had.
   async function _waitReceipt(txHash, tries = 60) {
     for (let i = 0; i < tries; i++) {
       const r = await rpc('eth_getTransactionReceipt', [txHash]);
-      if (r && r.blockNumber) return r;
+      if (r && r.blockNumber) {
+        if (r.status === '0x0') {
+          const err = new Error(`transaction ${txHash} reverted on chain, so it changed nothing`);
+          err.reverted = true; err.receipt = r;
+          throw err;
+        }
+        return r;
+      }
       await new Promise((res) => setTimeout(res, 3000));
     }
     throw new Error(`receipt timeout ${txHash}`);
@@ -932,6 +952,18 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       await _waitReceipt(ap.txHash);
       w = await buildRouterWrap({ walletPriv, amountWei, ticker, index });
       if (w.needsPermit2Approval) throw new Error('Permit2 approval did not take effect');
+    }
+    // A token wrap pulls the tokens from this wallet's Tacit account, not from a connected wallet: say plainly when
+    // they are not there, rather than letting the send fail.
+    const meta = assetByTicker[ticker];
+    if (broadcast && w.permitType !== 'native' && meta && meta.underlying) {
+      const held = BigInt(await ethCall(meta.underlying, '0x70a08231' + _word(acct.address)) || '0x0'); // balanceOf(address)
+      const want = BigInt(amountWei);
+      if (held < want) {
+        const dec = Number(meta.decimals ?? 18), unit = shownTicker(ticker);
+        const show = (v) => { const t = (Number(v) / 10 ** dec).toLocaleString('en-US', { maximumFractionDigits: 6 }); return `${t} ${unit}`; };
+        throw new Error(`your Tacit account ${acct.address} holds ${show(held)}; wrapping ${show(want)} needs that much there first`);
+      }
     }
     const sent = await _sendEvmTx({ acct, to: w.to, value: BigInt(w.value), data: w.calldata, gasLimit, send: broadcast });
     return { ...w, from: acct.address, nonce: sent.nonce.toString(), signedRaw: sent.signedRaw, txHash: sent.txHash };
