@@ -1028,7 +1028,12 @@ function createMarket(host, ctx) {
         foot.innerHTML = btns.map((b, i) => `<button type="button" data-i="${i}" class="${b.primary ? 'bm-go' : ''}"${b.disabled ? ' disabled' : ''}>${esc(b.label)}</button>`).join('');
         foot.querySelectorAll('button').forEach((n) => {
           n.onclick = () => {
-            if (btns[+n.dataset.i].once !== false) foot.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+            if (btns[+n.dataset.i].once !== false) {
+              foot.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+              // A slow unlock prompt or network round-trip can leave the button sitting
+              // disabled for a while; say so instead of just going quiet.
+              if (n.classList.contains('bm-go')) n.textContent = 'Working…';
+            }
             btns[+n.dataset.i].onClick();
           };
         });
@@ -1102,8 +1107,8 @@ function createMarket(host, ctx) {
       const exp = EXPIRY_CHOICES.find(([s]) => s === S.expirySec)?.[1] || '1 day';
       md.set(`<h2>Limit buy ${fmtAmount(o.base, dec, 6)} ${T} at ${fmtUnit(o.unit)}</h2>
         ${now ? row('Fills now', `${fmtAmount(now.amount, dec, 6)} ${T} for ${fmtSats(now.sats)} sats`) : ''}
-        ${bidBase > 0n ? row('Bid', `${fmtAmount(bidBase, dec, 6)} ${T} for up to ${fmtSats(bidSats)} sats · lasts ${exp}`) : ''}
-        ${bidBase > 0n && wt.on ? row('Watchtower', `moves ${fmtSats(bidSats + 10000)} sats into a bid wallet only you can reclaim (includes 10,000 for fees)`) : ''}
+        ${bidBase > 0n ? row('Bid', `${fmtAmount(bidBase, dec, 6)} ${T} for up to ${fmtSats(bidSats)} sats <em>(lasts ${exp})</em>`) : ''}
+        ${bidBase > 0n && wt.on ? row('Watchtower', `moves ${fmtSats(bidSats + 10000)} sats into a bid wallet only you can reclaim <em>(includes 10,000 for fees)</em>`) : ''}
         <p class="bm-q bm-muted">${bidBase > 0n ? (wt.on ? 'Sellers can fill your bid while you\'re away; cancel any time from Your orders and reclaim what\'s left.' : 'Fills complete while this page is open. Cancel any time from Your orders.') : ''}</p>`);
       md.buttons([{ label: 'Cancel', onClick: close }, { label: 'Place order', primary: true, onClick: () => runLimitBuy(md, { order: o, now, bidBase, bidSats, watchtower: wt.on && bidBase > 0n }) }]);
       return;

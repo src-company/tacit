@@ -274,6 +274,8 @@
   --green-positive: #1A7548;
   --red: #b8341d;
   --red-warn: #a04030;
+  --buy: var(--green);
+  --sell: var(--red);
   --amber: #b8651d;
   --level: #c76b26;
   --purple: #6a1b9a;
@@ -8521,7 +8523,7 @@ button.evm-cer-result-hash { display: block; white-space: normal; word-break: br
 body[data-market-mode="asset"] #market-list > [data-btc-market] { padding: 0; }
 body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm [hidden] { display: none !important; }
-.bm { --buy: var(--green); --sell: var(--red); --bm-line: var(--hairline); font-size: 12px; color: var(--ink); }
+.bm { --bm-line: var(--hairline); font-size: 12px; color: var(--ink); }
 .bm em { font-style: normal; color: var(--ink-mid); }
 .bm button { font: inherit; }
 .bm-loading { padding: 28px 16px; color: var(--ink-mid); font-size: 12px; }
@@ -8680,7 +8682,7 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 .bm-go[data-kind="fund"]:not(:disabled) { background: var(--ink) !important; }
 .bm-go:hover:not(:disabled) { filter: brightness(1.08); }
 .bm-go:active:not(:disabled) { transform: translateY(1px); }
-.bm-go:disabled { background: var(--bg-alt) !important; color: var(--ink-mid); cursor: default; }
+.bm-go:disabled { background: var(--bg-alt) !important; color: var(--ink-mid) !important; cursor: default; }
 .bm-fine { margin: 8px 0 0; font-size: 10px; color: var(--ink-mid); text-align: center; }
 
 /* book */
@@ -8760,23 +8762,29 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
 
 /* review / progress dialog */
 .bm-modal { position: fixed; inset: 0; z-index: 1005; background: rgba(10,10,10,0.45); display: grid; place-items: center; padding: 16px; }
-.bm-card { width: min(460px, 100%); max-height: calc(100vh - 32px); overflow: auto; background: var(--bg); border: 1px solid var(--ink); box-shadow: 6px 6px 0 rgba(10,10,10,0.18); font-size: 12px; }
-.bm-mbody { padding: 16px 18px 6px; }
-.bm-mbody h2 { font-family: var(--serif); font-weight: 400; font-size: 24px; margin: 0 0 10px; line-height: 1.15; }
-.bm-mfoot { display: flex; gap: 8px; justify-content: flex-end; padding: 10px 18px 16px; }
-.bm-mfoot:empty { display: none; }
-.bm-card { border-top: 4px solid var(--ink); }
+.bm-card { width: min(460px, 100%); max-height: calc(100vh - 32px); overflow: auto; background: var(--bg); border: 1px solid var(--ink); border-top: 4px solid var(--ink); box-shadow: 6px 6px 0 rgba(10,10,10,0.18); font-size: 12px; }
 .bm-card[data-side="buy"] { border-top-color: var(--buy); }
 .bm-card[data-side="sell"] { border-top-color: var(--sell); }
-.bm-mbody .bm-qr { padding: 4px 0; border-bottom: 1px dotted var(--bm-line); }
+.bm-mbody { padding: 18px 20px 4px; }
+.bm-mbody h2 { font-family: var(--serif); font-weight: 400; font-size: 24px; margin: 0 0 12px; line-height: 1.2; }
+.bm-mbody .bm-qr { padding: 7px 0; border-bottom: 1px dotted var(--bm-line); }
 .bm-mbody .bm-qr em { color: var(--ink-mid); font-style: normal; }
-.bm-mfoot button { font: inherit; font-size: 12px; text-transform: none; letter-spacing: 0; border-radius: 0; background: transparent; border: 1px solid var(--ink); color: var(--ink); padding: 10px 16px; cursor: pointer; }
-.bm-mfoot button:hover:not(:disabled) { background: var(--bg-alt); }
-.bm-mfoot button:disabled { opacity: 0.5; cursor: default; }
-.bm-mfoot .bm-go { width: auto; margin: 0; background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-.bm-card[data-side="buy"] .bm-mfoot .bm-go { background: var(--buy); border-color: var(--buy); }
-.bm-card[data-side="sell"] .bm-mfoot .bm-go { background: var(--sell); border-color: var(--sell); }
-.bm-mfoot .bm-go:hover:not(:disabled) { filter: brightness(1.08); background: inherit; }
+/* Footer: one unmistakable primary action, reusing the ticket's own CTA language
+   (full-width, bold, side-colored) so confirming here feels like the same button —
+   not a second, weaker decision. Anything else (Cancel, a bail-out offer, Stop) is a
+   quiet text link underneath it, never competing with the primary action for attention. */
+.bm-mfoot { display: flex; flex-direction: column-reverse; gap: 10px; padding: 16px 20px 20px; margin-top: 8px; border-top: 1px solid var(--bm-line); }
+.bm-mfoot:empty { display: none; }
+.bm-mfoot button { font: inherit; font-size: 12px; text-transform: none; letter-spacing: 0; border-radius: 0; cursor: pointer; }
+.bm-mfoot button:not(.bm-go) { align-self: center; background: transparent; border: 0; color: var(--ink-mid); text-decoration: underline; text-underline-offset: 3px; padding: 6px 8px; }
+.bm-mfoot button:not(.bm-go):hover:not(:disabled) { color: var(--ink); }
+.bm-mfoot button:not(.bm-go):disabled { opacity: 0.5; text-decoration: none; cursor: default; }
+.bm-mfoot .bm-go { display: block; width: 100%; margin: 0; padding: 13px; border: 0; background: var(--ink); color: var(--bg); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.bm-card[data-side="buy"] .bm-mfoot .bm-go { background: var(--buy); }
+.bm-card[data-side="sell"] .bm-mfoot .bm-go { background: var(--sell); }
+.bm-mfoot .bm-go:hover:not(:disabled) { filter: brightness(1.08); }
+.bm-mfoot .bm-go:active:not(:disabled) { transform: translateY(1px); }
+.bm-mfoot .bm-go:disabled { background: var(--bg-alt) !important; color: var(--ink-mid) !important; cursor: default; }
 .bm-steps { list-style: none; margin: 10px 0 4px; padding: 0; border-top: 1px solid var(--bm-line); }
 .bm-steps li { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--bm-line); line-height: 1.4; }
 .bm-steps .st { width: 14px; flex: 0 0 14px; text-align: center; }

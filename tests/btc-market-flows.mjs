@@ -13,8 +13,26 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
 
+// Pull every top-level `:root { … }` token block straight out of the real stylesheet
+// (brace-balanced, not line-scoped) instead of hand-copying a token subset — a hand-copy
+// silently drifts as tokens are added/renamed and lets a real "this var doesn't resolve"
+// bug (e.g. a background using an undefined custom property) render invisibly-but-"fine"
+// in tests while broken live. Only :root is pulled; component styles still come from the
+// real market-page CSS slice below.
+function extractRootBlocks(css) {
+  let out = '', idx = 0;
+  while ((idx = css.indexOf(':root', idx)) !== -1) {
+    const open = css.indexOf('{', idx);
+    if (open === -1) break;
+    let depth = 1, i = open + 1;
+    while (i < css.length && depth > 0) { if (css[i] === '{') depth++; else if (css[i] === '}') depth--; i++; }
+    out += css.slice(idx, i) + '\n';
+    idx = i;
+  }
+  return out;
+}
 const HARNESS = `<!doctype html><html><head><meta charset="utf-8"><style>${
-  (() => { const h = readFileSync(join(DAPP, 'index.html'), 'utf8'); const i = h.indexOf('/* ── Market page (btc-market.js)'); const j = h.indexOf("/* ── TAC's Ethereum trading lane"); return ':root{--bg:#f4efe6;--bg-alt:#ebe3d4;--bg-warm:#fff8eb;--ink:#0a0a0a;--ink-mid:#555;--ink-faint:#999;--orange:#f7931a;--green:#0a7d3a;--red:#b8341d;--red-warn:#a04030;--amber:#b8651d;--hairline:rgba(10,10,10,.12);--serif:Georgia,serif}body{font-family:monospace;background:#e8e0cc}' + h.slice(i, j); })()
+  (() => { const h = readFileSync(join(DAPP, 'index.html'), 'utf8'); const i = h.indexOf('/* ── Market page (btc-market.js)'); const j = h.indexOf("/* ── TAC's Ethereum trading lane"); return extractRootBlocks(h) + 'body{font-family:monospace;background:#e8e0cc}' + h.slice(i, j); })()
 }</style></head><body><div id="host"></div><div id="host2"></div>
 <script type="module">
 import { mountBtcMarket } from '/btc-market.js';
