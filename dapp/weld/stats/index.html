@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module, its sha256 pinned in script-src by build/build.mjs. It reads public data only: no wallet,
      no key, nothing stored but a cached copy of the last reading. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-pQrWIa+FcmwNKJVUDkOM10Rut1V4vFrMgaJKKo5Z2Jo='; connect-src https://eth.blockscout.com https://base.blockscout.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://api.tacit.finance https://mempool.space https://blockstream.info; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-FvWugihdBb7zVa5xq0MTEehoftZkQR/fjE5lubIy7sM='; connect-src https://eth.blockscout.com https://base.blockscout.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://api.tacit.finance https://mempool.space https://blockstream.info; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>Tacit v1 stats</title>
-<meta name="description" content="Tacit v1 in numbers, read live from Ethereum and Bitcoin: private ETH, Bitcoin-backed cBTC and cUSD, TAC bridged, and Bitcoin's state proven on Ethereum.">
+<meta name="description" content="Tacit v1 stats, live from Ethereum and Bitcoin: private ETH, cBTC and cUSD, TAC, and Bitcoin's state on Ethereum.">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 @font-face { font-family: 'IBM Plex Mono'; font-weight: 400; font-display: swap; src: url('/fonts/ibm-plex-mono-400-latin.woff2') format('woff2'); }
@@ -73,17 +73,12 @@ a:hover { text-decoration-thickness: 2px; }
 .brand i { font-style: normal; font-size: 12px; color: var(--mute); text-transform: uppercase; letter-spacing: .12em; }
 .top > a:last-child { font-size: 13px; color: var(--mute); }
 
-.hero { padding: 18px 0 8px; }
-h1 { font: 400 clamp(40px, 8vw, 64px)/1 var(--serif); letter-spacing: -.02em; margin: 0 0 14px; }
-h1 i { font-style: italic; }
-.lede { max-width: 620px; margin: 0 0 10px; color: var(--mute); }
-.asof { font-size: 12px; color: var(--mute); margin: 0; min-height: 1.6em; }
+.asof { font-size: 12px; color: var(--mute); margin: 0 0 4px; min-height: 1.6em; }
 
-section.grp { margin-top: 38px; }
-.grp-h { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+section.grp { margin-top: 30px; }
+section.grp > h2 { margin-bottom: 12px; }
 h2 { font: italic 400 30px/1.1 var(--serif); margin: 0; display: flex; align-items: center; gap: 10px; }
 h2 .tk { width: 26px; height: 26px; }
-.grp-h p { margin: 0; font-size: 12px; color: var(--mute); max-width: 460px; }
 
 .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .card { background: var(--card); border: 1px solid var(--hair); border-radius: 14px; padding: 14px 16px 13px; min-width: 0; }
@@ -157,6 +152,7 @@ footer a:hover { color: var(--ink); }
     <symbol id="tk-cusd" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#0a0a0a"/><circle cx="16" cy="16" r="13" fill="none" stroke="#f4efe6" stroke-width="2.5" stroke-dasharray="2.4 1.4"/><path d="M16.5 7 L15.5 25" stroke="#16a34a" stroke-width="2.7" stroke-linecap="round"/><path d="M18.9 13 C 18.9 10.3 13.1 10.3 13.1 13.2 C 13.1 15.5 18.9 16.4 18.9 19.4 C 18.9 22.3 13.1 22.3 13.1 19.6" fill="none" stroke="#16a34a" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="tk-tacusd" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#0a0a0a"/><circle cx="16" cy="16" r="13" fill="none" stroke="#f4efe6" stroke-width="2.5"/><g fill="none" stroke="#16a34a" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 7 L15.5 25" stroke-width="2.7"/><path d="M18.9 13 C 18.9 10.3 13.1 10.3 13.1 13.2 C 13.1 15.5 18.9 16.4 18.9 19.4 C 18.9 22.3 13.1 22.3 13.1 19.6" stroke-width="2.6"/></g></symbol>
     <symbol id="tk-btc" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#F7931A"/><path fill="#FFF" d="M23.189 14.02c.314-2.096-1.283-3.223-3.465-3.975l.708-2.84-1.728-.43-.69 2.765c-.454-.114-.92-.22-1.385-.326l.695-2.783L15.596 6l-.708 2.839c-.376-.086-.746-.17-1.104-.26l.002-.009-2.384-.595-.46 1.846s1.283.294 1.256.312c.7.175.826.638.805 1.006l-.806 3.235c.048.012.11.03.18.057l-.183-.045-1.13 4.532c-.086.212-.303.531-.793.41.018.025-1.256-.313-1.256-.313l-.858 1.978 2.25.561c.418.105.828.215 1.231.318l-.715 2.872 1.727.43.708-2.84c.472.127.93.245 1.378.357l-.706 2.828 1.728.43.715-2.866c2.948.558 5.164.333 6.097-2.333.752-2.146-.037-3.385-1.588-4.192 1.13-.26 1.98-1.003 2.207-2.538zm-3.95 5.538c-.533 2.147-4.148.986-5.32.695l.95-3.805c1.172.293 4.929.872 4.37 3.11zm.535-5.569c-.487 1.953-3.495.96-4.47.717l.86-3.45c.975.243 4.118.696 3.61 2.733z"/></symbol>
+    <symbol id="i-pts" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#0a0a0a"/><circle cx="16" cy="16" r="13" fill="none" stroke="#f4efe6" stroke-width="2.5"/><path d="M16 8.5L18 14L23.5 16L18 18L16 23.5L14 18L8.5 16L14 14Z" fill="#f7931a"/></symbol>
     <symbol id="tk-eth" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#627EEA"/><g fill="#FFF"><path fill-opacity=".602" d="M16.498 4v8.87l7.497 3.35z"/><path d="M16.498 4L9 16.22l7.498-3.35z"/><path fill-opacity=".602" d="M16.498 21.968v6.027L24 17.616z"/><path d="M16.498 27.995v-6.028L9 17.616z"/><path fill-opacity=".2" d="M16.498 20.573l7.497-4.353-7.497-3.348z"/><path fill-opacity=".602" d="M9 16.22l7.498 4.353v-7.701z"/></g></symbol>
   </defs>
 </svg>
@@ -167,70 +163,68 @@ footer a:hover { color: var(--ink); }
     <a href="/weld/">Open weld →</a>
   </header>
 
-  <section class="hero">
-    <h1>Tacit v1 <i>in numbers</i></h1>
-    <p class="lede">One confidential pool across Bitcoin and Ethereum, read live from both chains. Every figure below comes from the chain itself or the relay's public record, counted as described at the foot of the page.</p>
-    <p class="asof num" id="asof">Reading the chains…</p>
-  </section>
+  <p class="asof num" id="asof">Reading the chains…</p>
 
   <section class="grp" id="g-eth">
-    <div class="grp-h"><h2><svg class="tk" aria-hidden="true"><use href="#tk-teth"/></svg>Private ETH</h2>
-      <p>ETH wrapped into the Tacit pool becomes tETH, a private note: amounts and owners stay hidden from then on.</p></div>
+    <h2><svg class="tk" aria-hidden="true"><use href="#tk-teth"/></svg>Private ETH</h2>
     <div class="cards" data-cards="eth"></div>
     <div class="figure" id="f-eth" hidden>
-      <div class="k"><span>ETH in the Tacit pool over time</span><span class="legend"><span><i style="background:var(--eth)"></i>Shielded in, all time</span><span><i style="background:var(--ink)"></i>Held in the pool</span></span></div>
+      <div class="k"><span>ETH over time</span><span class="legend"><span><i style="background:var(--eth)"></i>Shielded</span><span><i style="background:var(--ink)"></i>Held</span></span></div>
       <div id="c-eth"></div>
     </div>
     <div class="figure" id="f-dev" hidden>
-      <div class="k"><span>Private ETH on devices: the client-proved pools, one per chain</span></div>
+      <div class="k"><span>On-device pools</span></div>
       <div id="c-dev"></div>
     </div>
   </section>
 
   <section class="grp" id="g-btc">
-    <div class="grp-h"><h2><svg class="tk" aria-hidden="true"><use href="#tk-cbtc"/></svg>Bitcoin in the pool</h2>
-      <p>BTC stays in its owner's own Bitcoin output; a staked-ETH bond makes the lock count on Ethereum, where it mints cBTC and backs cUSD loans.</p></div>
+    <h2><svg class="tk" aria-hidden="true"><use href="#tk-cbtc"/></svg>cBTC and cUSD</h2>
     <div class="cards" data-cards="btc"></div>
   </section>
 
   <section class="grp" id="g-tac">
-    <div class="grp-h"><h2><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</h2>
-      <p>TAC is issued once, on Bitcoin. Every TAC on Ethereum was minted by the pool from TAC proven to have left Bitcoin.</p></div>
+    <h2><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</h2>
     <div class="cards" data-cards="tac"></div>
   </section>
 
+  <section class="grp" id="g-pts">
+    <h2><svg class="tk" aria-hidden="true"><use href="#i-pts"/></svg>Points</h2>
+    <div class="cards" data-cards="pts"></div>
+  </section>
+
   <section class="grp" id="g-link">
-    <div class="grp-h"><h2><svg class="tk" aria-hidden="true"><use href="#tk-btc"/></svg>Bitcoin and Ethereum, one pool</h2>
-      <p>Bitcoin's headers are relayed to Ethereum, its state is proven there in zero knowledge, and Ethereum's cross-chain moves are folded back into it.</p></div>
+    <h2><svg class="tk" aria-hidden="true"><use href="#tk-btc"/></svg>Bitcoin ↔ Ethereum</h2>
     <div class="cards" data-cards="link"></div>
     <div class="figure" id="f-act" hidden>
-      <div class="k"><span>Activity by day (UTC)</span></div>
+      <div class="k"><span>Per day (UTC)</span></div>
       <div id="c-act"></div>
     </div>
   </section>
 
   <details class="how">
-    <summary>How these are counted</summary>
+    <summary>How it's counted</summary>
     <dl>
-      <dt>Shielded in</dt><dd>The sum of every Wrap the pool emitted for native ETH, the exact amount each deposit escrowed.</dd>
-      <dt>Held in the pool</dt><dd>The pool contract's own ETH balance now.</dd>
-      <dt>Taken out</dt><dd>Shielded in, less what the pool holds: withdrawals to public addresses plus the relay fees paid out of notes.</dd>
-      <dt>Depositing wallets</dt><dd>Distinct accounts that sent a transaction carrying a Wrap.</dd>
-      <dt>Devices</dt><dd>Each chain's client-proved pool: deposits and withdrawals from its Transact events, the balance from the chain.</dd>
-      <dt>BTC locked, cBTC minted</dt><dd>Every lock bonded through the CollateralEngine (its EscrowPosted events), checked on the pool: recorded locks count toward BTC locked, minted ones toward cBTC minted.</dd>
-      <dt>Bonds</dt><dd>The wstETH each bonded lock holds in escrow now.</dd>
-      <dt>cUSD</dt><dd>CdpMinted, CdpClosed and CdpLiquidated events: borrowed, repaid, and what is still out.</dd>
-      <dt>TAC on Ethereum</dt><dd>The TAC ERC-20's total supply. Only the pool mints it, from TAC proven to have left Bitcoin, and burns it when TAC goes back in.</dd>
-      <dt>Airdrop</dt><dd>The airdrop contract's Claimed events.</dd>
-      <dt>Bitcoin headers on Ethereum</dt><dd>The light relay's tip height, and the blocks it has taken on since its anchor.</dd>
-      <dt>Bitcoin state proven</dt><dd>The Bitcoin block the pool's last reflection attested to, and every attestation transaction.</dd>
-      <dt>Settles</dt><dd>Distinct transactions that inserted or spent notes, however they reached the pool.</dd>
-      <dt>Cross-chain</dt><dd>The pool's counters of moves out to Bitcoin and of Bitcoin notes spent on Ethereum, and the reflection's count of moves folded into Bitcoin's state.</dd>
+      <dt>Shielded</dt><dd>The pool's Wrap events for ETH.</dd>
+      <dt>Held</dt><dd>The pool's ETH balance.</dd>
+      <dt>Withdrawn</dt><dd>Shielded less held: withdrawals and relay fees.</dd>
+      <dt>Wallets</dt><dd>Distinct senders of those wraps.</dd>
+      <dt>On-device pools</dt><dd>Each chain's Transact events and balance.</dd>
+      <dt>BTC locked, cBTC minted</dt><dd>Each bonded lock (EscrowPosted), read on the pool.</dd>
+      <dt>Bonds</dt><dd>wstETH in escrow now.</dd>
+      <dt>cUSD</dt><dd>CdpMinted, CdpClosed and CdpLiquidated events.</dd>
+      <dt>TAC on Ethereum</dt><dd>The ERC-20's supply: only the pool mints it, from TAC that left Bitcoin.</dd>
+      <dt>Airdrop claimed</dt><dd>The airdrop's Claimed events.</dd>
+      <dt>Points</dt><dd>Every account on the points leaderboard; TAC allocated and claimed from the points distributor.</dd>
+      <dt>Bitcoin headers</dt><dd>The light relay's tip, and blocks relayed since its anchor.</dd>
+      <dt>Proven to</dt><dd>The Bitcoin block the pool last attested to.</dd>
+      <dt>Settles</dt><dd>Transactions that made or spent notes.</dd>
+      <dt>Cross-chain</dt><dd>Moves out to Bitcoin (and how many are folded into its state), and Bitcoin notes spent on Ethereum.</dd>
     </dl>
   </details>
 
   <footer>
-    <span>tacit weld · mainnet · public data only</span>
+    <span>tacit weld · mainnet</span>
     <nav aria-label="Sources">
       <a href="/weld/">Weld</a>
       <a href="https://etherscan.io/address/0x000000000Ed1eabD231Be41d93b719056F7febFC" rel="noopener">Pool contract</a>
@@ -251,6 +245,7 @@ const A = {
   tacbtc: '0xdf1d99148bEb7a9AFf1d95C49B3d22b7ed90D696',
   tacusd: '0x23cACFFAc2674514A6d4F6cD420B4cc2aC921564',
   airdrop: '0x4b4cb98D0C836c2783Ac46f0078b904dab533AE8',
+  points: '0x000000C918e44A3a443937fA7594eA4f7C95D6b9',
   evmPool: '0x000000c2A20657CE25f2Ba99737933D031AFBEE9',
 };
 const ID = { ceth: '0x3cba71e1114af183cdeacc6b8457a474d17529fd28704480ca799d0d03126f34', tac: '0xf0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b' };
@@ -271,7 +266,7 @@ const TOPIC = {
 const SEL = {
   tipHeight: '0x1fd4827a', blockHeight: '0x59a53331', nextLeafIndex: '0x0be4f422', crossOuts: '0xa6f8c9d6', consumed: '0x281d8cc9',
   attestedTip: '0x182f6171', totalSupply: '0x18160ddd', lockVBtc: '0x7cea1c1a', minted: '0xe2c2a40c', escrowTotal: '0xe06e89c9',
-  attest: '0x0b36171c', anchorTip: '0x89fa7909',
+  attest: '0x0b36171c', anchorTip: '0x89fa7909', totalAllocated: '0x45f7f249', totalClaimed: '0xd54ad2a1',
 };
 const CHAINS = {
   1: { name: 'Ethereum', explorer: 'https://etherscan.io', bs: 'https://eth.blockscout.com', rpc: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org', 'https://rpc.flashbots.net'] },
@@ -425,10 +420,11 @@ function cardHtml(c) {
 }
 function paint(group, cards) { $(`[data-cards="${group}"]`).innerHTML = cards.map(cardHtml).join(''); }
 const PLACE = {
-  eth: [{ k: 'Shielded in', icon: 'tk-eth' }, { k: 'Held in the pool now', icon: 'tk-teth' }, { k: 'Taken out' }, { k: 'Depositing wallets' }],
-  btc: [{ k: 'BTC locked', icon: 'tk-btc' }, { k: 'cBTC minted', icon: 'tk-cbtc' }, { k: 'Bonds held' }, { k: 'cUSD borrowed', icon: 'tk-cusd' }],
-  tac: [{ k: 'TAC on Ethereum', icon: 'tk-tac' }, { k: 'TAC shielded' }, { k: 'Airdrop claimed' }, { k: 'Other assets shielded' }],
-  link: [{ k: 'Bitcoin headers on Ethereum', icon: 'tk-btc' }, { k: 'Bitcoin state proven' }, { k: 'Settles' }, { k: 'Across the chains' }],
+  eth: [{ k: 'Shielded', icon: 'tk-eth' }, { k: 'Held', icon: 'tk-teth' }, { k: 'Withdrawn' }, { k: 'Wallets' }],
+  btc: [{ k: 'BTC locked', icon: 'tk-btc' }, { k: 'cBTC minted', icon: 'tk-cbtc' }, { k: 'Bonds' }, { k: 'cUSD borrowed', icon: 'tk-cusd' }],
+  tac: [{ k: 'TAC on Ethereum', icon: 'tk-tac' }, { k: 'TAC shielded' }, { k: 'Airdrop claimed' }, { k: 'Other shielded' }],
+  pts: [{ k: 'Participants' }, { k: 'Points' }, { k: 'TAC allocated' }, { k: 'TAC claimed' }],
+  link: [{ k: 'Bitcoin headers', icon: 'tk-btc' }, { k: 'Proven to' }, { k: 'Settles' }, { k: 'Cross-chain' }],
 };
 const failed = (group, e) => paint(group, PLACE[group].map((c) => ({ ...c, v: '—', err: true, m: esc(e?.message || String(e)) })));
 
@@ -452,10 +448,13 @@ function ethChart(ins, outs, now, Wd = 640) {
     ${ticks(t0, t1, x, Wd).map(([t, xx]) => `<text x="${xx}" y="${H - 4}" text-anchor="middle">${esc(shortDay(t))}</text>`).join('')}
     <text x="${P.l}" y="${H - 4}">${esc(shortDay(t0))}</text><text x="${Wd - P.r}" y="${H - 4}" text-anchor="end">now</text></svg>`;
 }
-// A few dates between the ends, none crowding them: about one per 150 pixels.
+// A few dates between the ends, none crowding them (about one per 150 pixels), and no date shown twice.
 function ticks(t0, t1, x, Wd) {
-  const n = Math.max(0, Math.floor(Wd / 150) - 1), out = [];
-  for (let i = 1; i <= n; i++) { const t = t0 + ((t1 - t0) * i) / (n + 1), xx = x(t); if (xx > 90 && xx < Wd - 60) out.push([t, xx.toFixed(1)]); }
+  const n = Math.max(0, Math.floor(Wd / 150) - 1), out = [], seen = new Set([shortDay(t0), shortDay(t1)]);
+  for (let i = 1; i <= n; i++) {
+    const t = t0 + ((t1 - t0) * i) / (n + 1), xx = x(t), d = shortDay(t);
+    if (xx > 90 && xx < Wd - 60 && !seen.has(d)) { seen.add(d); out.push([t, xx.toFixed(1)]); }
+  }
   return out;
 }
 // Activity by day, one row of bars per kind, each scaled to its own busiest day.
@@ -502,10 +501,10 @@ async function readEth() {
 }
 function showEth(r) {
   paint('eth', [
-    { k: 'Shielded in', icon: 'tk-eth', v: fmt(r.inWei, 18, 4), u: 'ETH', m: `${int(r.deposits)} deposits${r.lastAt ? `, the latest ${ago(r.lastAt)}` : ''}` },
-    { k: 'Held in the pool now', icon: 'tk-teth', v: fmt(r.held, 18, 4), u: 'ETH', m: `as private tETH notes · ${addr(A.pool, 1, 'the pool')}` },
-    { k: 'Taken out', v: fmt(r.outWei, 18, 4), u: 'ETH', m: 'withdrawals, and relay fees paid from notes' },
-    { k: 'Depositing wallets', v: int(r.wallets), m: 'distinct accounts that wrapped ETH' },
+    { k: 'Shielded', icon: 'tk-eth', v: fmt(r.inWei, 18, 4), u: 'ETH', m: `${int(r.deposits)} deposits${r.lastAt ? ` · latest ${ago(r.lastAt)}` : ''}` },
+    { k: 'Held', icon: 'tk-teth', v: fmt(r.held, 18, 4), u: 'ETH', m: `as tETH in ${addr(A.pool, 1, 'the pool')}` },
+    { k: 'Withdrawn', v: fmt(r.outWei, 18, 4), u: 'ETH', m: 'incl. relay fees' },
+    { k: 'Wallets', v: int(r.wallets), m: 'that shielded ETH' },
   ]);
   $('#f-eth').hidden = false;
   const svg = ethChart(r.series.ins, r.series.outs, Math.floor(Date.now() / 1000), widthOf($('#c-eth')));
@@ -529,9 +528,9 @@ async function readDevices() {
 function showDevices(rows) {
   const cell = (v, n) => (v == null ? '—' : `${fmt(v, 18, 4)}${n != null ? ` <span style="color:var(--mute)">(${int(n)})</span>` : ''}`);
   const total = rows.reduce((s, r) => s + (r.bal ?? 0n), 0n);
-  $('#c-dev').innerHTML = `<div class="tscroll"><table class="chains num"><thead><tr><th>Chain</th><th>Held now</th><th>Deposited</th><th>Withdrawn</th><th class="moves">Private moves</th></tr></thead><tbody>
+  $('#c-dev').innerHTML = `<div class="tscroll"><table class="chains num"><thead><tr><th>Chain</th><th>Held</th><th>In</th><th>Out</th><th class="moves">Moves</th></tr></thead><tbody>
     ${rows.map((r) => `<tr><td>${addr(A.evmPool, r.chain, CHAINS[r.chain].name)}</td><td>${r.bal == null ? '—' : fmt(r.bal, 18, 4)}</td><td>${cell(r.dep, r.nd)}</td><td>${cell(r.wd, r.nw)}</td><td class="moves">${r.moves == null ? '—' : int(r.moves)}</td></tr>`).join('')}
-    <tr><td>All chains</td><td>${fmt(total, 18, 4)} ETH</td><td></td><td></td><td class="moves"></td></tr></tbody></table></div>`;
+    <tr><td>Total</td><td>${fmt(total, 18, 4)} ETH</td><td></td><td></td><td class="moves"></td></tr></tbody></table></div>`;
   $('#f-dev').hidden = false;
 }
 
@@ -554,10 +553,10 @@ async function readBtc() {
 }
 function showBtc(r) {
   paint('btc', [
-    { k: 'BTC locked', icon: 'tk-btc', v: fmt(r.locked, 8, 8), u: 'BTC', m: `${int(r.nLocked)} lock${r.nLocked === 1 ? '' : 's'} recorded on Ethereum${r.waiting ? `, ${r.waiting} more waiting on Bitcoin's proof` : ''}` },
-    { k: 'cBTC minted', icon: 'tk-cbtc', v: fmt(r.mint, 8, 8), u: 'cBTC', m: `from ${int(r.nMint)} lock${r.nMint === 1 ? '' : 's'} · ${fmt(r.tacbtc, 18, 8)} held publicly as tacBTC` },
-    { k: 'Bonds held', v: fmt(r.bonds, 18, 4), u: 'wstETH', m: `staked ETH in escrow behind ${int(r.bonded)} bonded lock${r.bonded === 1 ? '' : 's'}` },
-    { k: 'cUSD borrowed', icon: 'tk-cusd', v: fmt(r.borrowed, 8, 2), u: 'cUSD', m: `${fmt(r.out, 8, 2)} still out on ${int(r.open)} open loan${r.open === 1 ? '' : 's'}, ${fmt(r.repaid, 8, 2)} repaid${r.liq ? `, ${fmt(r.liq, 8, 2)} liquidated` : ''}` },
+    { k: 'BTC locked', icon: 'tk-btc', v: fmt(r.locked, 8, 8), u: 'BTC', m: `${int(r.nLocked)} lock${r.nLocked === 1 ? '' : 's'}${r.waiting ? ` · ${r.waiting} awaiting proof` : ''}` },
+    { k: 'cBTC minted', icon: 'tk-cbtc', v: fmt(r.mint, 8, 8), u: 'cBTC', m: `${int(r.nMint)} mint${r.nMint === 1 ? '' : 's'} · ${fmt(r.tacbtc, 18, 8)} as tacBTC` },
+    { k: 'Bonds', v: fmt(r.bonds, 18, 4), u: 'wstETH', m: `on ${int(r.bonded)} lock${r.bonded === 1 ? '' : 's'}` },
+    { k: 'cUSD borrowed', icon: 'tk-cusd', v: fmt(r.borrowed, 8, 2), u: 'cUSD', m: `${fmt(r.out, 8, 2)} open on ${int(r.open)} loan${r.open === 1 ? '' : 's'} · ${fmt(r.repaid, 8, 2)} repaid${r.liq ? ` · ${fmt(r.liq, 8, 2)} liquidated` : ''}` },
   ]);
 }
 
@@ -578,12 +577,29 @@ async function readTac() {
   return { supply: BigInt(supply), tacIn, claims: claims.length, claimed: claims.reduce((s, l) => s + W(l.data, 0), 0n), claimers: new Set(claims.map((l) => lc(l.topics[2]))).size, others };
 }
 function showTac(r) {
-  const other = r.others.length ? r.others.map((o) => `${fmt(o.v, o.m?.decimals ?? 18, 4)} ${esc(o.m?.symbol || 'units')}`).join(' · ') : 'none yet';
+  const other = r.others.length ? r.others.map((o) => `${o.m?.symbol || 'other'} ${fmt(o.v, o.m?.decimals ?? 18, 4)}`).join(' · ') : 'none yet';
   paint('tac', [
-    { k: 'TAC on Ethereum', icon: 'tk-tac', v: fmt(r.supply, 18, 0), u: 'TAC', m: `bridged from Bitcoin and public as the ERC-20 · ${addr(A.tac, 1, 'token')}` },
-    { k: 'TAC shielded', v: fmt(r.tacIn.v, 18, 2), u: 'TAC', m: `${int(r.tacIn.n)} deposit${r.tacIn.n === 1 ? '' : 's'} into private notes` },
-    { k: 'Airdrop claimed', v: fmt(r.claimed, 18, 0), u: 'TAC', m: `${int(r.claimers)} wallet${r.claimers === 1 ? '' : 's'}, ${int(r.claims)} claim${r.claims === 1 ? '' : 's'}` },
-    { k: 'Other assets shielded', v: int(r.others.reduce((s, o) => s + o.n, 0)), u: 'deposits', m: esc(other) },
+    { k: 'TAC on Ethereum', icon: 'tk-tac', v: fmt(r.supply, 18, 0), u: 'TAC', m: `bridged from Bitcoin · <a href="https://etherscan.io/token/${A.tac}" target="_blank" rel="noopener">ERC-20 ↗</a> · <a href="https://etherscan.io/token/${A.tac}#balances" target="_blank" rel="noopener">holders ↗</a>` },
+    { k: 'TAC shielded', v: fmt(r.tacIn.v, 18, 2), u: 'TAC', m: `${int(r.tacIn.n)} deposit${r.tacIn.n === 1 ? '' : 's'}` },
+    { k: 'Airdrop claimed', v: fmt(r.claimed, 18, 0), u: 'TAC', m: `${int(r.claimers)} wallet${r.claimers === 1 ? '' : 's'} · ${addr(A.airdrop, 1, 'contract')}` },
+    { k: 'Other shielded', v: int(r.others.reduce((s, o) => s + o.n, 0)), u: 'deposits', m: esc(other) },
+  ]);
+}
+
+async function readPoints() {
+  const [board, [allocated, claimed]] = await Promise.all([
+    fetch(`${API}/leaderboard?limit=5000`, { signal: AbortSignal.timeout(15e3) }).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`points API ${r.status}`)))),
+    calls(1, [[A.points, SEL.totalAllocated], [A.points, SEL.totalClaimed]]),
+  ]);
+  const list = Array.isArray(board) ? board : [];
+  return { participants: list.length, points: list.reduce((s, x) => s + (Number(x.points) || 0), 0), allocated: BigInt(allocated), claimed: BigInt(claimed) };
+}
+function showPoints(r) {
+  paint('pts', [
+    { k: 'Participants', v: int(r.participants), m: 'accounts earning points' },
+    { k: 'Points', v: int(Math.round(r.points)), m: '<a href="/weld/#points">leaderboard ↗</a>' },
+    { k: 'TAC allocated', v: fmt(r.allocated, 18, 0), u: 'TAC', m: `to points holders · ${addr(A.points, 1, 'distributor')}` },
+    { k: 'TAC claimed', v: fmt(r.claimed, 18, 2), u: 'TAC', m: 'from points so far' },
   ]);
 }
 
@@ -613,16 +629,16 @@ function showLink(r, eth) {
   const behind = r.btcTip != null ? r.btcTip - r.tip : null;
   const folded = r.status?.foldedCrossoutCount;
   paint('link', [
-    { k: 'Bitcoin headers on Ethereum', icon: 'tk-btc', v: int(r.tip), u: 'block', m: `${int(r.tip - r.anchorHeight)} Bitcoin blocks relayed since ${int(r.anchorHeight)}${behind == null ? '' : behind <= 0 ? ', level with Bitcoin' : `, ${int(behind)} behind its tip`}` },
-    { k: 'Bitcoin state proven', v: int(r.attestedHeight), u: 'block', m: `${int(r.attests)} attestations${r.lastAttest ? `, the latest ${ago(Number(r.lastAttest.timeStamp))} ${tx(r.lastAttest.hash)}` : ''}` },
-    { k: 'Settles', v: int(r.settles), m: `${int(r.notes)} private notes created, ${int(r.spent)} spent` },
-    { k: 'Across the chains', v: int(r.crossOuts + r.consumed), u: 'moves', m: `${int(r.crossOuts)} out to Bitcoin${folded != null ? ` (${int(folded)} folded into its state)` : ''}, ${int(r.consumed)} Bitcoin note${r.consumed === 1 ? '' : 's'} spent on Ethereum${r.status?.liveNotes != null ? ` · ${int(r.status.liveNotes)} Bitcoin notes in view` : ''}` },
+    { k: 'Bitcoin headers', icon: 'tk-btc', v: int(r.tip), u: 'block', m: `${int(r.tip - r.anchorHeight)} relayed${behind == null ? '' : behind <= 0 ? ' · at the tip' : ` · ${int(behind)} behind`}` },
+    { k: 'Proven to', v: int(r.attestedHeight), u: 'block', m: `${int(r.attests)} attestations${r.lastAttest ? ` · latest ${ago(Number(r.lastAttest.timeStamp))} ${tx(r.lastAttest.hash)}` : ''}` },
+    { k: 'Settles', v: int(r.settles), m: `${int(r.notes)} notes made · ${int(r.spent)} spent` },
+    { k: 'Cross-chain', v: int(r.crossOuts + r.consumed), u: 'moves', m: `${int(r.crossOuts)} to Bitcoin${folded != null ? ` (${int(folded)} folded)` : ''} · ${int(r.consumed)} from Bitcoin` },
   ]);
   const t0 = Math.min(...[...r.times.settles, ...r.times.attests, ...(eth?.series.ins.map(([t]) => t) || [])].filter(Boolean));
   $('#f-act').hidden = false;
   const svg = Number.isFinite(t0) ? activityChart([
     { label: 'Settles', color: 'var(--ink)', times: r.times.settles },
-    { label: 'Bitcoin state attested', color: 'var(--orange)', times: r.times.attests },
+    { label: 'Attestations', color: 'var(--orange)', times: r.times.attests },
     ...(eth ? [{ label: 'ETH deposits', color: 'var(--eth)', times: eth.series.ins.map(([t]) => t) }] : []),
   ], t0, Math.floor(Date.now() / 1000), widthOf($('#c-act'))) : '';
   if (svg) $('#c-act').innerHTML = svg; else $('#f-act').hidden = true;
@@ -642,26 +658,28 @@ if (cached?.at) {
   if (c.dev) showDevices(c.dev);
   if (c.btc) showBtc(c.btc);
   if (c.tac) showTac(c.tac);
+  if (c.pts) showPoints(c.pts);
   if (c.link) showLink(c.link, c.eth);
-  $('#asof').textContent = `Last read ${new Date(c.at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}; reading again…`;
+  $('#asof').textContent = `As of ${new Date(c.at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })} · updating…`;
 }
 const recent = cached?.at && Date.now() - cached.at < FRESH_MS && !cached.partial && !/[?&]fresh/.test(location.search);
 if (recent) {
-  $('#asof').textContent = `Read ${new Date(cached.at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}${cached.block ? ` · Ethereum block ${int(cached.block)}` : ''}${cached.link?.btcTip ? ` · Bitcoin block ${int(cached.link.btcTip)}` : ''} · read again each hour`;
+  $('#asof').textContent = `As of ${new Date(cached.at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}${cached.block ? ` · Ethereum ${int(cached.block)}` : ''}${cached.link?.btcTip ? ` · Bitcoin ${int(cached.link.btcTip)}` : ''} · hourly`;
 } else {
   const fresh = { at: Date.now() };
-  const [eth, dev, btc, tac, link] = await Promise.allSettled([
+  const [eth, dev, btc, tac, pts, link] = await Promise.allSettled([
     readEth().then((r) => { fresh.eth = r; showEth(r); return r; }),
     readDevices().then((r) => { fresh.dev = r; showDevices(r); return r; }),
     readBtc().then((r) => { fresh.btc = r; showBtc(r); return r; }),
     readTac().then((r) => { fresh.tac = r; showTac(r); return r; }),
+    readPoints().then((r) => { fresh.pts = r; showPoints(r); return r; }),
     readLink().then((r) => { fresh.link = r; return r; }),
   ]);
   if (link.status === 'fulfilled') showLink(link.value, eth.status === 'fulfilled' ? eth.value : null);
-  for (const [g, r] of [['eth', eth], ['btc', btc], ['tac', tac], ['link', link]]) if (r.status === 'rejected' && !cached?.[g]) failed(g, r.reason);
+  for (const [g, r] of [['eth', eth], ['btc', btc], ['tac', tac], ['pts', pts], ['link', link]]) if (r.status === 'rejected' && !cached?.[g]) failed(g, r.reason);
   const block = await rpc(1, 'eth_blockNumber', []).then((h) => Number(BigInt(h))).catch(() => null);
-  const partial = [eth, dev, btc, tac, link].some((r) => r.status === 'rejected');
-  $('#asof').textContent = `Read ${new Date(fresh.at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}${block ? ` · Ethereum block ${int(block)}` : ''}${link.status === 'fulfilled' && link.value.btcTip ? ` · Bitcoin block ${int(link.value.btcTip)}` : ''}${partial ? ` · some parts could not be read just now${cached?.at ? ', and show their last reading' : ''}` : ''}`;
+  const partial = [eth, dev, btc, tac, pts, link].some((r) => r.status === 'rejected');
+  $('#asof').textContent = `As of ${new Date(fresh.at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}${block ? ` · Ethereum ${int(block)}` : ''}${link.status === 'fulfilled' && link.value.btcTip ? ` · Bitcoin ${int(link.value.btcTip)}` : ''}${partial ? ` · some figures ${cached?.at ? 'are from the last reading' : 'could not be read'}` : ''}`;
   fresh.block = block;
   if (!partial) store.set(fresh);
   else store.set({ ...(cached || {}), ...fresh, partial: true });

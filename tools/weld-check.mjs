@@ -1406,31 +1406,35 @@ await step('stats', async () => {
     return json(route, { jsonrpc: '2.0', id: b.id, result: res });
   });
   await r.ctx.route(/^https:\/\/api\.tacit\.finance\/reflection\/status/, (route) => json(route, { attestedHeight: 969159, tipHeight: 969159, foldedCrossoutCount: 5, consumedCount: 2, liveNotes: 1234 }));
+  await r.ctx.route(/^https:\/\/api\.tacit\.finance\/leaderboard/, (route) => json(route, [{ address: W1, points: 10 }, { address: W2, points: 20 }]));
   await r.ctx.route(/^https:\/\/(mempool\.space|blockstream\.info)\/api\/blocks\/tip\/height/, (route) => route.fulfill({ status: 200, contentType: 'text/plain', headers: { 'access-control-allow-origin': '*' }, body: '969200' }));
   // A card as "key | value | context".
   const card = async (k) => (await r.page.$$eval('.card', (cs) => cs.map((c) => ['.k', '.v', '.m'].map((x) => c.querySelector(x).textContent.replace(/\s+/g, ' ').trim()).join(' | ')))).find((t) => t.startsWith(k + ' |')) || '';
   try {
     await r.page.goto(r.url + 'stats/');
-    await until(r.page, () => /^Read /.test(document.querySelector('#asof')?.textContent || ''), null, 120000)
+    await until(r.page, () => /^As of /.test(document.querySelector('#asof')?.textContent || '') && !/updating/.test(document.querySelector('#asof')?.textContent || ''), null, 120000)
       .catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | asof: ${await text(r.page, '#asof')} | errors: ${r.errors.slice(0, 2).join(' | ')}`); });
-    ok(!/could not be read/.test(await text(r.page, '#asof')), `stats: every part read (${await text(r.page, '#asof')})`);
-    const s = await card('Shielded in');
-    ok(/^Shielded in \| 1\.5ETH \| 2 deposits/.test(s), `stats: ETH shielded in is the sum of the pool's ETH wraps (${s})`);
-    ok(/^Depositing wallets \| 2 \|/.test(await card('Depositing wallets')), `stats: wallets are the senders of those wraps, however they reached the pool (${await card('Depositing wallets')})`);
+    ok(!/some figures/.test(await text(r.page, '#asof')), `stats: every part read (${await text(r.page, '#asof')})`);
+    const s = await card('Shielded');
+    ok(/^Shielded \| 1\.5ETH \| 2 deposits/.test(s), `stats: ETH shielded in is the sum of the pool's ETH wraps (${s})`);
+    ok(/^Wallets \| 2 \|/.test(await card('Wallets')), `stats: wallets are the senders of those wraps, however they reached the pool (${await card('Wallets')})`);
     ok(await r.page.$eval('#f-eth', (f) => !f.hidden), 'stats: the ETH-over-time chart is drawn');
     const st = await card('Settles');
     ok(/^Settles \| 3 \| .*3 spent/.test(st), `stats: settles are the transactions that inserted or spent notes, attestations apart (${st})`);
-    ok(/2 attestations/.test(await card('Bitcoin state proven')), `stats: only successful attestations count (${await card('Bitcoin state proven')})`);
+    ok(/2 attestations/.test(await card('Proven to')), `stats: only successful attestations count (${await card('Proven to')})`);
     const cu = await card('cUSD borrowed');
-    ok(/^cUSD borrowed \| 3\.5cUSD \| 2\.5 still out on 1 open loan, 1 repaid/.test(cu), `stats: cUSD borrowed, repaid and still out (${cu})`);
+    ok(/^cUSD borrowed \| 3\.5cUSD \| 2\.5 open on 1 loan · 1 repaid/.test(cu), `stats: cUSD borrowed, repaid and still out (${cu})`);
     const ad = await card('Airdrop claimed');
-    ok(/^Airdrop claimed \| 60TAC \| 2 wallets, 3 claims/.test(ad), `stats: airdrop claims summed, claimers counted once (${ad})`);
+    ok(/^Airdrop claimed \| 60TAC \| 2 wallets/.test(ad), `stats: airdrop claims summed, claimers counted once (${ad})`);
     ok(/^TAC shielded \| 100TAC \| 1 deposit/.test(await card('TAC shielded')), `stats: TAC shielded (${await card('TAC shielded')})`);
-    ok(/2\.5 USDC/.test(await card('Other assets shielded')) && /4\.63 USDT/.test(await card('Other assets shielded')), `stats: other assets are named from the pool's registry (${await card('Other assets shielded')})`);
-    const ac = await card('Across the chains');
-    ok(/\(5 folded into its state\)/.test(ac) && /1,234 Bitcoin notes in view/.test(ac), `stats: the reflection's folded moves and live notes are shown (${ac})`);
-    const bl = await card('BTC locked'), bh = await card('Bonds held');
-    ok(/^BTC locked \| 0BTC \| 0 locks recorded/.test(bl) && /behind 2 bonded locks/.test(bh), `stats: each bonded lock is read on the pool, and one never recorded counts toward none (${bl} | ${bh})`);
+    ok(/USDC 2\.5/.test(await card('Other shielded')) && /USDT 4\.63/.test(await card('Other shielded')), `stats: other assets are named from the pool's registry, or their token (${await card('Other shielded')})`);
+    ok(await r.page.evaluate(() => [...document.querySelectorAll('.card .m a')].some((a) => /etherscan\.io\/token\/0xA1313eb9f3A445606D9583bcAc3ebeB56a858279#balances$/.test(a.href))), 'stats: TAC links to its ERC-20 holders on Etherscan');
+    const pa = await card('Participants'), pp = await card('Points'), ta = await card('TAC allocated');
+    ok(/^Participants \| 2 \|/.test(pa) && /^Points \| 30 \|/.test(pp) && /^TAC allocated \| [\d,]+TAC/.test(ta), `stats: points participants and totals from the leaderboard, TAC allocated from the distributor (${pa} | ${pp} | ${ta})`);
+    const ac = await card('Cross-chain');
+    ok(/\(5 folded\)/.test(ac) && /from Bitcoin/.test(ac), `stats: moves out to Bitcoin, with the reflection's folded count, and in from Bitcoin (${ac})`);
+    const bl = await card('BTC locked'), bh = await card('Bonds');
+    ok(/^BTC locked \| 0BTC \| 0 locks/.test(bl) && /on 2 locks/.test(bh), `stats: each bonded lock is read on the pool, and one never recorded counts toward none (${bl} | ${bh})`);
     const rows = await r.page.$$eval('#c-dev tbody tr', (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent.replace(/\s+/g, ' ').trim())));
     const row = Object.fromEntries(rows.map((c) => [c[0].replace(/ ↗$/, ''), c]));
     ok(row.Ethereum?.[2] === '0.3 (1)' && row.Ethereum?.[3] === '0.1 (1)' && row.Ethereum?.[4] === '2' && row.Base?.[1] === '0.5' && row.Base?.[2] === '0 (0)'
@@ -1446,8 +1450,8 @@ await step('stats', async () => {
     const n = hits.length;
     ok(n <= 7, `stats: one reading makes at most seven explorer calls, six on Ethereum and one on Base (${n})`);
     await r.page.reload();
-    await until(r.page, () => /read again each hour/.test(document.querySelector('#asof')?.textContent || ''), null, 30000).catch(() => {});
-    ok(hits.length === n && /^Shielded in \| 1\.5ETH/.test(await card('Shielded in')), `stats: a second visit within the hour shows the last reading and asks the explorer nothing (${hits.length - n} calls)`);
+    await until(r.page, () => /hourly/.test(document.querySelector('#asof')?.textContent || ''), null, 30000).catch(() => {});
+    ok(hits.length === n && /^Shielded \| 1\.5ETH/.test(await card('Shielded')), `stats: a second visit within the hour shows the last reading and asks the explorer nothing (${hits.length - n} calls)`);
     if (r.errors.length) { fails++; console.log('FAIL stats page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   } finally { await r.browser.close(); }
 });
