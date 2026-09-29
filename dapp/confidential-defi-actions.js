@@ -65,7 +65,7 @@ export function makeConfidentialDefiActions({ pool, cdp, farm, relay, id, chainB
     }
     const spec = { type: 'cdpmint', op, leaves, outputs, ephRand };
     if (!selfSettle) return relay.settle(spec, waitOpts);
-    const job = await relay.submitOp({ ...spec, mode: 'prove' });
+    const job = await relay.submitOp({ ...spec, mode: 'prove' }, waitOpts);
     const proven = job.status === 'proven' || job.status === 'settled' ? await relay.status(job.jobId) : await relay.waitForProof(job.jobId, waitOpts);
     if (proven.status === 'settled') return { ...proven, jobId: job.jobId };
     return { jobId: job.jobId, ...(await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos: job.sealedMemos })) };

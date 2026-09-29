@@ -252,4 +252,31 @@ const swapOp = { reserveAPre: 1000, reserveBPre: 1000, intents: [{ amountIn: 100
   ok('an honest settle still runs the emitted-memo comparison');
 }
 
+// The caller that queued a job hears its id first: waitOpts.onJob runs before `tacit:job` announces it, so a page
+// can tell its own jobs from any other queued meanwhile. The same holds for a prove-only job.
+{
+  // Polls here yield to timers (a microtask-only wait would starve the simulated box below).
+  const order = [], was = globalThis.dispatchEvent, tick = () => new Promise((r) => setTimeout(r, 1));
+  globalThis.dispatchEvent = (e) => { if (e.type === 'tacit:job') order.push(`event ${e.detail.status} ${e.detail.jobId}`); return true; };
+  try {
+    const q = makeConfidentialSettler({ storage: freshStore(), hash });
+    const relay = makeConfidentialRelay({ base: '', fetchImpl: mockFetch(q) });
+    const settling = relay.settle({ type: 'swap', op: swapOp, memos: [] }, { intervalMs: 0, sleep: tick, onJob: (id, type) => order.push(`onJob ${type} ${id}`) });
+    while (!order.length) await tick();
+    const { jobId } = await q.nextJob(); await q.ackJob(jobId, { txHash: '0xbeef' });
+    await settling;
+    assert.deepStrictEqual(order.slice(0, 2), [`onJob swap ${jobId}`, `event pending ${jobId}`], `onJob comes first (${order.join(' | ')})`);
+    assert.strictEqual(order.filter((x) => x.startsWith('onJob')).length, 1, 'onJob fires once per job');
+    const pq = makeConfidentialSettler({ storage: freshStore(), hash });
+    const prelay = makeConfidentialRelay({ base: '', fetchImpl: mockFetch(pq) });
+    const seen = [];
+    const proving = prelay.prove({ type: 'swap', op: swapOp, memos: [] }, { intervalMs: 0, sleep: tick, onJob: (id) => seen.push(id) });
+    while (!seen.length) await tick();
+    const pj = await pq.nextJob(); await pq.ackJob(pj.jobId, { publicValues: '0x01', proof: '0x02' });
+    await proving;
+    assert.deepStrictEqual(seen, [pj.jobId], 'a prove-only job names itself to onJob once');
+  } finally { globalThis.dispatchEvent = was; }
+  ok('onJob names a queued job to its caller before the job is announced, once, for settles and proofs');
+}
+
 console.log(`\n${n} confidential-relay checks passed.`);

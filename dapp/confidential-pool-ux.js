@@ -698,7 +698,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // object returned by buildWrap.
   async function submitWrapSettle({ built, waitOpts } = {}) {
     if (!built || !built.wrapOp) throw new Error('submitWrapSettle: pass the buildWrap() result');
-    const sub = await relay.submitOp({ type: 'wrap', op: built.wrapOp, leaves: [built.leaf], outputs: built.outputs, memos: built.memos, ephRand: built.ephRand, mode: 'settle' });
+    const sub = await relay.submitOp({ type: 'wrap', op: built.wrapOp, leaves: [built.leaf], outputs: built.outputs, memos: built.memos, ephRand: built.ephRand, mode: 'settle' }, waitOpts);
     const st = sub.status === 'settled' ? { jobId: sub.jobId, ...sub } : await relay.waitForSettle(sub.jobId, waitOpts);
     return relay.verifyEmittedMemos(st, [built.leaf], sub.sealedMemos);
   }
@@ -3131,7 +3131,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     const ticker = tickerOf(note.asset) || 'cETH';
     const minFee = (feeOpts && feeOpts.minFee != null) ? feeOpts.minFee : await gasAwareMinFee(ticker, 'unwrap');
     const built = buildUnwrap({ note, walletPriv, recipient, feeOpts: { ...feeOpts, minFee } });
-    const sub = await relay.submitOp({ type: 'unwrap', op: built.op, memos: [] }); // no new leaf ⇒ no memo
+    const sub = await relay.submitOp({ type: 'unwrap', op: built.op, memos: [] }, waitOpts); // no new leaf ⇒ no memo
     if (!wait) return { ...built, jobId: sub.jobId, status: sub.status };
     const st = await waitForExit({ walletPriv, note, jobId: sub.jobId, waitOpts });
     return { ...built, jobId: sub.jobId, status: st.status, txHash: st.txHash };
@@ -3182,7 +3182,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       pokR: built.pokR, pokZv: built.pokZv, pokZr: built.pokZr, change: built.change,
       rangeProof: built.rangeProof, kernel: { R: built.kernelR, z: built.kernelZ },
     };
-    const sub = await relay.submitOp({ type: 'sendunwrap', op, leaves: [changeLeaf], outputs: changeOut, ephRand });
+    const sub = await relay.submitOp({ type: 'sendunwrap', op, leaves: [changeLeaf], outputs: changeOut, ephRand }, waitOpts);
     const out = { ...built, fee, payout, change, recipient: to, ticker };
     // The memo comparison is the only thing that catches a relay sealing something other than what was handed to
     // it, and the change note is the leaf it would substitute. Not waiting for the settle must not quietly skip

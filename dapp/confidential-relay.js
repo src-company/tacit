@@ -68,7 +68,10 @@ export function makeConfidentialRelay({ base, fetchImpl, guard, checkEmittedMemo
   // memos with no `outputs` specifically to stop a note leaf's memo from bypassing the guard. Lock memos
   // are already fully sealed by the caller (confidential-stealth.js / confidential-airdrop.js) before
   // this call — there is nothing here for the guard to check.
-  async function submitOp({ type, op, leaves = [], outputs = null, ephRand, memos = null, mode, feeAsset = null, lockMemos = null } = {}) {
+  // `onJob(jobId, type)` (from the caller's waitOpts) fires the moment the relay accepts the job, before `tacit:job`
+  // announces it, so a caller can tell its own jobs from any other the page sends meanwhile.
+  async function submitOp({ type, op, leaves = [], outputs = null, ephRand, memos = null, mode, feeAsset = null, lockMemos = null } = {}, waitOpts) {
+    const onJob = waitOpts && waitOpts.onJob;
     let sealedMemos;
     if (lockMemos != null) {
       sealedMemos = lockMemos;
@@ -100,7 +103,11 @@ export function makeConfidentialRelay({ base, fetchImpl, guard, checkEmittedMemo
       body: JSON.stringify({ type, op, memos: sealedMemos, ...(mode ? { mode } : {}), ...(feeAsset ? { feeAsset } : {}) }, bigintSafe),
     });
     const body = await asJson(res);
-    if (body && body.jobId) { jobTypes.set(body.jobId, type); announce({ ...body, type, status: body.status || 'pending' }); }
+    if (body && body.jobId) {
+      jobTypes.set(body.jobId, type);
+      if (onJob) { try { onJob(body.jobId, type); } catch { /* best-effort */ } }
+      announce({ ...body, type, status: body.status || 'pending' });
+    }
     return { ...body, sealedMemos };
   }
 
@@ -173,7 +180,7 @@ export function makeConfidentialRelay({ base, fetchImpl, guard, checkEmittedMemo
 
   // Convenience: submit and block until on-chain.
   async function settle(opSpec, waitOpts) {
-    const { sealedMemos, ...sub } = await submitOp(opSpec);
+    const { sealedMemos, ...sub } = await submitOp(opSpec, waitOpts);
     const { jobId, status: s } = sub;
     // A relay answering the submit with "already settled" used to skip straight past the memo check: the
     // literal {jobId, status} built here carried no txHash, and verifyEmittedMemos has nothing to read
@@ -211,8 +218,7 @@ export function makeConfidentialRelay({ base, fetchImpl, guard, checkEmittedMemo
   // the job is queued (before the long prove wait) so a caller can persist a resumable record — a prove-timeout
   // then leaves the jobId recoverable instead of orphaning the in-flight proof.
   async function prove(opSpec, waitOpts = {}) {
-    const r = await submitOp({ ...opSpec, mode: 'prove' });
-    if (waitOpts.onJob) { try { waitOpts.onJob(r.jobId); } catch { /* best-effort */ } }
+    const r = await submitOp({ ...opSpec, mode: 'prove' }, waitOpts);
     if (r.status === 'proven' || r.status === 'settled') return { jobId: r.jobId, ...(await status(r.jobId)) };
     return waitForProof(r.jobId, waitOpts);
   }
