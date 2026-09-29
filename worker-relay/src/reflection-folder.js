@@ -119,6 +119,15 @@ async function cycle() {
     await heartbeat('reflection', `waiting for gas <= ${CFG.maxGasGwei} gwei (now ${dear.toFixed(3)})`);
     return false;
   }
+  // Funds guard: the attest is paid from the relay wallet after the proof is bought, and a node refuses a send
+  // whose worst-case fee the wallet cannot cover, so a short wallet turns the proof into a loss. Also decided
+  // before any spend.
+  const funds = await attestFunds();
+  if (funds.short) {
+    log(`relay wallet holds ${eth(funds.have)} ETH, under the ${eth(funds.need)} ETH an attest can cost at today's gas — waiting for a top-up`);
+    await heartbeat('reflection', `relay wallet short: holds ${eth(funds.have)} ETH, an attest needs ${eth(funds.need)}`);
+    return false;
+  }
   log(`job attestedTo=${attestedTo} pending=${job.pending ?? '?'} — proving (network groth16)...`);
   await heartbeat('reflection', `proving ${newDigest}`);
   const { publicValues, proofBytes } = await proveReflection(job.input);
@@ -142,6 +151,23 @@ async function cycle() {
     if (attempt >= CFG.reflectionResubmits) return false;
     log(`sending the same proof again (${attempt + 1}/${CFG.reflectionResubmits})`);
   }
+}
+
+// What an attest can cost the relay wallet right now against what it holds. The budget covers the padded
+// estimate of a large batch; the fee is the cap a send carries (twice the base fee plus the tip), which is what
+// the node checks the balance against. An unreadable chain is not a reason to stop.
+const ATTEST_GAS_BUDGET = BigInt(process.env.REFLECTION_ATTEST_GAS_BUDGET || '700000');
+const eth = (wei) => (Number(wei) / 1e18).toFixed(4);
+async function attestFunds() {
+  try {
+    const [have, blk, tip] = await Promise.all([
+      publicClient.getBalance({ address: relayWallet.account.address }),
+      publicClient.getBlock({ blockTag: 'latest' }),
+      publicClient.estimateMaxPriorityFeePerGas().catch(() => 10n ** 9n),
+    ]);
+    const need = ATTEST_GAS_BUDGET * (2n * (blk.baseFeePerGas ?? 0n) + tip);
+    return { have, need, short: have < need };
+  } catch { return { short: false }; }
 }
 
 // The nonce a just-sent tx took, read back while the node still holds it; null when it cannot be read.
