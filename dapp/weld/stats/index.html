@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module, its sha256 pinned in script-src by build/build.mjs. It reads public data only: no wallet,
      no key, nothing stored but a cached copy of the last reading. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-FvWugihdBb7zVa5xq0MTEehoftZkQR/fjE5lubIy7sM='; connect-src https://eth.blockscout.com https://base.blockscout.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://api.tacit.finance https://mempool.space https://blockstream.info; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-JmjlhELfZNHYHG8pANGniw5sK3mI75w1c46a0UfOEZA='; connect-src https://eth.blockscout.com https://base.blockscout.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://api.tacit.finance https://mempool.space https://blockstream.info; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>Tacit v1 stats</title>
 <meta name="description" content="Tacit v1 stats, live from Ethereum and Bitcoin: private ETH, cBTC and cUSD, TAC, and Bitcoin's state on Ethereum.">
@@ -207,13 +207,14 @@ footer a:hover { color: var(--ink); }
     <dl>
       <dt>Shielded</dt><dd>The pool's Wrap events for ETH.</dd>
       <dt>Held</dt><dd>The pool's ETH balance.</dd>
-      <dt>Withdrawn</dt><dd>Shielded less held: withdrawals and relay fees.</dd>
+      <dt>Withdrawn</dt><dd>All the pool has paid out: withdrawals and relay fees.</dd>
       <dt>Wallets</dt><dd>Distinct senders of those wraps.</dd>
-      <dt>On-device pools</dt><dd>Each chain's Transact events and balance.</dd>
-      <dt>BTC locked, cBTC minted</dt><dd>Each bonded lock (EscrowPosted), read on the pool.</dd>
+      <dt>On-device pools</dt><dd>Each chain's Transact events and balance. Out includes relay fees.</dd>
+      <dt>BTC locked</dt><dd>Proven locks not yet spent or redeemed, each found by its bond (EscrowPosted).</dd>
+      <dt>cBTC minted</dt><dd>Every mint on those locks, including on locks since closed.</dd>
       <dt>Bonds</dt><dd>wstETH in escrow now.</dd>
-      <dt>cUSD</dt><dd>CdpMinted, CdpClosed and CdpLiquidated events.</dd>
-      <dt>TAC on Ethereum</dt><dd>The ERC-20's supply: only the pool mints it, from TAC that left Bitcoin.</dd>
+      <dt>cUSD</dt><dd>CdpMinted, CdpClosed and CdpLiquidated events; open is the engine's outstanding debt.</dd>
+      <dt>TAC ERC-20</dt><dd>Its supply. The pool mints it as TAC is withdrawn and burns it as TAC is shielded, so private TAC isn't in it.</dd>
       <dt>Airdrop claimed</dt><dd>The airdrop's Claimed events.</dd>
       <dt>Points</dt><dd>Every account on the points leaderboard; TAC allocated and claimed from the points distributor.</dd>
       <dt>Bitcoin headers</dt><dd>The light relay's tip, and blocks relayed since its anchor.</dd>
@@ -267,6 +268,7 @@ const SEL = {
   tipHeight: '0x1fd4827a', blockHeight: '0x59a53331', nextLeafIndex: '0x0be4f422', crossOuts: '0xa6f8c9d6', consumed: '0x281d8cc9',
   attestedTip: '0x182f6171', totalSupply: '0x18160ddd', lockVBtc: '0x7cea1c1a', minted: '0xe2c2a40c', escrowTotal: '0xe06e89c9',
   attest: '0x0b36171c', anchorTip: '0x89fa7909', totalAllocated: '0x45f7f249', totalClaimed: '0xd54ad2a1',
+  lockSpent: '0x993ed045', lockRedeemed: '0xb5229671', outstandingCusd: '0xa42542c0',
 };
 const CHAINS = {
   1: { name: 'Ethereum', explorer: 'https://etherscan.io', bs: 'https://eth.blockscout.com', rpc: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org', 'https://rpc.flashbots.net'] },
@@ -275,7 +277,7 @@ const CHAINS = {
 };
 const API = 'https://api.tacit.finance';
 const ESPLORA = ['https://mempool.space/api', 'https://blockstream.info/api'];
-const CACHE = 'tacit-weld-stats-v1', FRESH_MS = 60 * 60e3;
+const CACHE = 'tacit-weld-stats-v2', FRESH_MS = 60 * 60e3;
 
 // ── small helpers ─────────────────────────────────────────────────────────────────────────────────────────
 const $ = (s, el = document) => el.querySelector(s);
@@ -291,11 +293,12 @@ function abiString(data, at) {
   const off = Number(W(data, at)) / 32, len = Number(W(data, off)), hex = strip(data).slice((off + 1) * 64, (off + 1) * 64 + len * 2);
   return new TextDecoder().decode(Uint8Array.from(hex.match(/../g) || [], (b) => parseInt(b, 16)));
 }
-// Amounts: whole units with thousands separators, at most `dp` decimals, trailing zeros dropped.
+// Amounts: whole units with thousands separators, rounded to at most `dp` decimals, trailing zeros dropped.
 function fmt(v, dec = 18, dp = 4) {
   v = BigInt(v);
-  const neg = v < 0n, a = neg ? -v : v, base = 10n ** BigInt(dec);
-  const whole = a / base, fracFull = (a % base).toString().padStart(dec, '0').slice(0, dp).replace(/0+$/, '');
+  const neg = v < 0n, base = 10n ** BigInt(dec), a = neg ? -v : v;
+  const r = dp < dec ? a + 5n * 10n ** BigInt(dec - dp - 1) : a;
+  const whole = r / base, fracFull = (r % base).toString().padStart(dec, '0').slice(0, dp).replace(/0+$/, '');
   const w = whole.toLocaleString('en-US');
   if (!fracFull && whole === 0n && a > 0n) return `${neg ? '-' : ''}<${dp ? '0.' + '0'.repeat(dp - 1) + '1' : '1'}`;
   return `${neg ? '-' : ''}${w}${fracFull ? '.' + fracFull : ''}`;
@@ -357,13 +360,15 @@ async function txs(chain, address, action = 'txlist') {
   }
   return out;
 }
-async function rpc(chain, method, params) {
+// The first node's answer, or with `found` the first node's that isn't empty (a node may not serve older transactions).
+async function rpc(chain, method, params, found = false) {
   let last = null;
   for (const url of CHAINS[chain].rpc) {
     try {
       const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: AbortSignal.timeout(20e3) });
       const j = await r.json();
       if (j.error) throw new Error(j.error.message || 'rpc error');
+      if (found && j.result == null) throw new Error('not found');
       return j.result;
     } catch (e) { last = e; }
   }
@@ -422,22 +427,22 @@ function paint(group, cards) { $(`[data-cards="${group}"]`).innerHTML = cards.ma
 const PLACE = {
   eth: [{ k: 'Shielded', icon: 'tk-eth' }, { k: 'Held', icon: 'tk-teth' }, { k: 'Withdrawn' }, { k: 'Wallets' }],
   btc: [{ k: 'BTC locked', icon: 'tk-btc' }, { k: 'cBTC minted', icon: 'tk-cbtc' }, { k: 'Bonds' }, { k: 'cUSD borrowed', icon: 'tk-cusd' }],
-  tac: [{ k: 'TAC on Ethereum', icon: 'tk-tac' }, { k: 'TAC shielded' }, { k: 'Airdrop claimed' }, { k: 'Other shielded' }],
+  tac: [{ k: 'TAC ERC-20', icon: 'tk-tac' }, { k: 'TAC shielded' }, { k: 'Airdrop claimed' }, { k: 'Other shielded' }],
   pts: [{ k: 'Participants' }, { k: 'Points' }, { k: 'TAC allocated' }, { k: 'TAC claimed' }],
   link: [{ k: 'Bitcoin headers', icon: 'tk-btc' }, { k: 'Proven to' }, { k: 'Settles' }, { k: 'Cross-chain' }],
 };
 const failed = (group, e) => paint(group, PLACE[group].map((c) => ({ ...c, v: '—', err: true, m: esc(e?.message || String(e)) })));
 
 // ── charts ────────────────────────────────────────────────────────────────────────────────────────────────
-// ETH shielded in, and held, over time: steps at each deposit and each transfer out.
+// ETH shielded, and held, over time: a step at each deposit, and at each ETH movement in or out (signed `flows`).
 const widthOf = (el) => Math.max(300, Math.min(900, Math.round(el?.getBoundingClientRect().width || 640)));
-function ethChart(ins, outs, now, Wd = 640) {
-  const ev = [...ins.map(([t, v]) => [t, v, 0n]), ...outs.map(([t, v]) => [t, 0n, v])].sort((a, b) => a[0] - b[0]);
+function ethChart(ins, flows, now, Wd = 640) {
+  const ev = [...ins.map(([t, v]) => [t, v, 0n]), ...flows.map(([t, v]) => [t, 0n, v])].sort((a, b) => a[0] - b[0] || (a[2] < 0n) - (b[2] < 0n));
   if (ev.length < 2) return '';
   const t0 = ev[0][0], t1 = Math.max(now, ev.at(-1)[0] + 1), H = 180, P = { l: 44, r: 8, t: 8, b: 20 };
-  let cin = 0n, cout = 0n;
-  const pts = ev.map(([t, i, o]) => { cin += i; cout += o; return [t, cin, cin - cout]; });
-  const max = Number(cin) || 1, x = (t) => P.l + ((t - t0) / (t1 - t0)) * (Wd - P.l - P.r), y = (v) => P.t + (1 - Number(v) / max) * (H - P.t - P.b);
+  let cin = 0n, held = 0n, top = 1n;
+  const pts = ev.map(([t, i, d]) => { cin += i; held += d; top = [top, cin, held].reduce((a, b) => (b > a ? b : a)); return [t, cin, held]; });
+  const max = Number(top), x = (t) => P.l + ((t - t0) / (t1 - t0)) * (Wd - P.l - P.r), y = (v) => P.t + (1 - Number(v) / max) * (H - P.t - P.b);
   const step = (k) => { let d = `M${x(t0)},${y(0)}`; for (const p of pts) d += `H${x(p[0]).toFixed(1)}V${y(p[k]).toFixed(1)}`; return d + `H${x(t1).toFixed(1)}`; };
   const heldArea = `${step(2)}V${y(0)}H${x(t0)}Z`;
   const grid = [0.5, 1].map((f) => `<line x1="${P.l}" x2="${Wd - P.r}" y1="${y(max * f)}" y2="${y(max * f)}" stroke="var(--hair)"/><text x="${P.l - 6}" y="${y(max * f) + 3}" text-anchor="end">${fmt(BigInt(Math.round(max * f)), 18, 2)}</text>`).join('');
@@ -484,30 +489,47 @@ const byTopic = (ls, t) => ls.filter((l) => lc(l.topics?.[0]) === t);
 const wraps = () => poolLogs().then((ls) => byTopic(ls, TOPIC.wrap));
 
 async function readEth() {
-  const [ws, held, internal] = await Promise.all([wraps(), rpc(1, 'eth_getBalance', [A.pool, 'latest']).then(BigInt), txs(1, A.pool, 'txlistinternal')]);
+  const [ws, held, internal, direct] = await Promise.all([wraps(), rpc(1, 'eth_getBalance', [A.pool, 'latest']).then(BigInt), txs(1, A.pool, 'txlistinternal'), poolTxs()]);
   const eth = ws.filter((l) => lc(l.topics[2]) === ID.ceth);
   const inWei = eth.reduce((s, l) => s + W(l.data, 0), 0n);
-  // Real transfers out: a delegatecall frame repeats its caller's value without moving any ETH.
-  const outs = internal.filter((t) => lc(t.from) === lc(A.pool) && BigInt(t.value) > 0n && t.isError === '0' && (t.callType || 'call') === 'call');
+  // Every ETH movement in and out, deposits or not (a public swap also brings ETH in). A delegatecall frame repeats its
+  // caller's value without moving any ETH, so only calls count.
+  const moved = (t) => t.isError === '0' && BigInt(t.value) > 0n && (t.callType || 'call') === 'call';
+  const ins = [...direct, ...internal].filter((t) => moved(t) && lc(t.to) === lc(A.pool));
+  const outs = internal.filter((t) => moved(t) && lc(t.from) === lc(A.pool));
   // Who sent each deposit, whatever contract it went through: every deposit transaction, read in one batch.
-  const hashes = [...new Set(eth.map((l) => lc(l.transactionHash)))];
-  const sent = hashes.length ? await batch(1, hashes.map((h) => ['eth_getTransactionByHash', [h]])) : [];
-  const wallets = new Set(sent.map((t) => lc(t?.from)).filter(Boolean));
+  const sent = await senders([...new Set(eth.map((l) => lc(l.transactionHash)))]);
   const last = eth.at(-1);
   return {
-    inWei, held, outWei: inWei - held, deposits: eth.length, wallets: wallets.size, lastAt: last ? num(last.timeStamp) : null,
-    series: { ins: eth.map((l) => [num(l.timeStamp), W(l.data, 0)]), outs: outs.map((t) => [Number(t.timeStamp), BigInt(t.value)]) },
+    inWei, held, outWei: outs.reduce((s, t) => s + BigInt(t.value), 0n), deposits: eth.length, lastAt: last ? num(last.timeStamp) : null,
+    wallets: new Set(sent.filter(Boolean)).size, unread: sent.filter((s) => !s).length,
+    series: {
+      ins: eth.map((l) => [num(l.timeStamp), W(l.data, 0)]),
+      flows: [...ins.map((t) => [Number(t.timeStamp), BigInt(t.value)]), ...outs.map((t) => [Number(t.timeStamp), -BigInt(t.value)])],
+    },
   };
+}
+// The sender of each transaction: one batch, then each one it missed asked node by node. A sender never changes, so
+// those already known are kept with the reading and not asked again; one no node answers for comes back null.
+const SENDERS = {};
+async function senders(hashes) {
+  const todo = hashes.filter((h) => !SENDERS[h]);
+  const got = todo.length ? await batch(1, todo.map((h) => ['eth_getTransactionByHash', [h]])) : [];
+  for (let i = 0; i < todo.length; i++) {
+    const from = got[i]?.from || (await rpc(1, 'eth_getTransactionByHash', [todo[i]], true).then((t) => t.from).catch(() => null));
+    if (from) SENDERS[todo[i]] = lc(from);
+  }
+  return hashes.map((h) => SENDERS[h] || null);
 }
 function showEth(r) {
   paint('eth', [
     { k: 'Shielded', icon: 'tk-eth', v: fmt(r.inWei, 18, 4), u: 'ETH', m: `${int(r.deposits)} deposits${r.lastAt ? ` · latest ${ago(r.lastAt)}` : ''}` },
     { k: 'Held', icon: 'tk-teth', v: fmt(r.held, 18, 4), u: 'ETH', m: `as tETH in ${addr(A.pool, 1, 'the pool')}` },
     { k: 'Withdrawn', v: fmt(r.outWei, 18, 4), u: 'ETH', m: 'incl. relay fees' },
-    { k: 'Wallets', v: int(r.wallets), m: 'that shielded ETH' },
+    { k: 'Wallets', v: int(r.wallets), m: `that shielded ETH${r.unread ? ` · ${int(r.unread)} deposit${r.unread === 1 ? '' : 's'} unread` : ''}` },
   ]);
   $('#f-eth').hidden = false;
-  const svg = ethChart(r.series.ins, r.series.outs, Math.floor(Date.now() / 1000), widthOf($('#c-eth')));
+  const svg = ethChart(r.series.ins, r.series.flows, Math.floor(Date.now() / 1000), widthOf($('#c-eth')));
   if (svg) $('#c-eth').innerHTML = svg; else $('#f-eth').hidden = true;
 }
 
@@ -519,8 +541,9 @@ async function readDevices() {
       ls = CHAINS[chain].bs ? await logs(chain, A.evmPool, TOPIC.transact, FROM.evm[chain])
         : await rpc(chain, 'eth_getLogs', [{ address: A.evmPool, topics: [TOPIC.transact], fromBlock: '0x' + FROM.evm[chain].toString(16), toBlock: 'latest' }]);
     } catch {}
+    // Out is what the pool paid: each withdrawal, and each relayer fee, which it pays on top.
     let dep = 0n, wd = 0n, nd = 0, nw = 0;
-    for (const l of ls || []) { const x = I256(W(l.data, 5)); if (x > 0n) { dep += x; nd++; } else if (x < 0n) { wd -= x; nw++; } }
+    for (const l of ls || []) { const x = I256(W(l.data, 5)); if (x > 0n) { dep += x; nd++; } else if (x < 0n) { wd -= x; nw++; } wd += W(l.data, 7); }
     return { chain, bal, dep: ls ? dep : null, wd: ls ? wd : null, nd, nw, moves: ls ? ls.length : null };
   }));
   return rows;
@@ -535,27 +558,33 @@ function showDevices(rows) {
 }
 
 async function readBtc() {
-  const [ls, supplies] = await Promise.all([engineLogs(), calls(1, [[A.tacbtc, SEL.totalSupply], [A.tacusd, SEL.totalSupply]])]);
+  const [ls, [tacbtc, tacusd, outstanding]] = await Promise.all([engineLogs(), calls(1, [[A.tacbtc, SEL.totalSupply], [A.tacusd, SEL.totalSupply], [A.engine, SEL.outstandingCusd]])]);
   const [posted, minted, closed, liquidated] = [TOPIC.posted, TOPIC.cdpMinted, TOPIC.cdpClosed, TOPIC.cdpLiquidated].map((t) => byTopic(ls, t));
+  // Each lock, found by its bond: its proven sats, whether cBTC was minted on it, whether it has since been spent on
+  // Bitcoin or redeemed, and the bond it holds now.
   const outpoints = [...new Set(posted.map((l) => lc(l.topics[1])))];
-  const reads = outpoints.length ? await calls(1, outpoints.flatMap((o) => [[A.pool, SEL.lockVBtc + word32(o)], [A.pool, SEL.minted + word32(o)], [A.engine, SEL.escrowTotal + word32(o)]])) : [];
-  let locked = 0n, nLocked = 0, mint = 0n, nMint = 0, bonds = 0n, waiting = 0;
+  const per = [[A.pool, SEL.lockVBtc], [A.pool, SEL.minted], [A.pool, SEL.lockSpent], [A.pool, SEL.lockRedeemed], [A.engine, SEL.escrowTotal]];
+  const reads = outpoints.length ? await calls(1, outpoints.flatMap((o) => per.map(([to, sel]) => [to, sel + word32(o)]))) : [];
+  let locked = 0n, nLocked = 0, mint = 0n, nMint = 0, bonds = 0n, nBonds = 0, waiting = 0, redeemed = 0, unlocked = 0;
   outpoints.forEach((_, i) => {
-    const v = BigInt(reads[i * 3]), m = BigInt(reads[i * 3 + 1]) !== 0n, b = BigInt(reads[i * 3 + 2]);
-    if (v > 0n) { locked += v; nLocked++; } else if (b > 0n) waiting++;
+    const [v, m, spent, red, b] = reads.slice(i * per.length, (i + 1) * per.length).map(BigInt);
+    if (red) redeemed++;
+    else if (spent) unlocked++;
+    else if (v > 0n) { locked += v; nLocked++; }
+    else if (b > 0n) waiting++;
     if (m) { mint += v; nMint++; }
-    bonds += b;
+    if (b > 0n) { bonds += b; nBonds++; }
   });
   const sum = (ls) => ls.reduce((s, l) => s + W(l.data, 0), 0n);
-  const borrowed = sum(minted), repaid = sum(closed), liq = sum(liquidated);
-  return { locked, nLocked, mint, nMint, bonds, waiting, bonded: outpoints.length, borrowed, repaid, liq, out: borrowed - repaid - liq,
-    loans: minted.length, open: minted.length - closed.length - liquidated.length, tacbtc: BigInt(supplies[0]), tacusd: BigInt(supplies[1]) };
+  return { locked, nLocked, redeemed, unlocked, waiting, mint, nMint, bonds, nBonds, borrowed: sum(minted), repaid: sum(closed), liq: sum(liquidated),
+    out: BigInt(outstanding), open: minted.length - closed.length - liquidated.length, tacbtc: BigInt(tacbtc), tacusd: BigInt(tacusd) };
 }
 function showBtc(r) {
+  const also = [[r.redeemed, 'redeemed'], [r.unlocked, 'unlocked'], [r.waiting, 'awaiting proof']].filter(([n]) => n).map(([n, w]) => ` · ${int(n)} ${w}`).join('');
   paint('btc', [
-    { k: 'BTC locked', icon: 'tk-btc', v: fmt(r.locked, 8, 8), u: 'BTC', m: `${int(r.nLocked)} lock${r.nLocked === 1 ? '' : 's'}${r.waiting ? ` · ${r.waiting} awaiting proof` : ''}` },
+    { k: 'BTC locked', icon: 'tk-btc', v: fmt(r.locked, 8, 8), u: 'BTC', m: `${int(r.nLocked)} lock${r.nLocked === 1 ? '' : 's'}${also}` },
     { k: 'cBTC minted', icon: 'tk-cbtc', v: fmt(r.mint, 8, 8), u: 'cBTC', m: `${int(r.nMint)} mint${r.nMint === 1 ? '' : 's'} · ${fmt(r.tacbtc, 18, 8)} as tacBTC` },
-    { k: 'Bonds', v: fmt(r.bonds, 18, 4), u: 'wstETH', m: `on ${int(r.bonded)} lock${r.bonded === 1 ? '' : 's'}` },
+    { k: 'Bonds', v: fmt(r.bonds, 18, 4), u: 'wstETH', m: `on ${int(r.nBonds)} lock${r.nBonds === 1 ? '' : 's'}` },
     { k: 'cUSD borrowed', icon: 'tk-cusd', v: fmt(r.borrowed, 8, 2), u: 'cUSD', m: `${fmt(r.out, 8, 2)} open on ${int(r.open)} loan${r.open === 1 ? '' : 's'} · ${fmt(r.repaid, 8, 2)} repaid${r.liq ? ` · ${fmt(r.liq, 8, 2)} liquidated` : ''}` },
   ]);
 }
@@ -579,25 +608,27 @@ async function readTac() {
 function showTac(r) {
   const other = r.others.length ? r.others.map((o) => `${o.m?.symbol || 'other'} ${fmt(o.v, o.m?.decimals ?? 18, 4)}`).join(' · ') : 'none yet';
   paint('tac', [
-    { k: 'TAC on Ethereum', icon: 'tk-tac', v: fmt(r.supply, 18, 0), u: 'TAC', m: `bridged from Bitcoin · <a href="https://etherscan.io/token/${A.tac}" target="_blank" rel="noopener">ERC-20 ↗</a> · <a href="https://etherscan.io/token/${A.tac}#balances" target="_blank" rel="noopener">holders ↗</a>` },
+    { k: 'TAC ERC-20', icon: 'tk-tac', v: fmt(r.supply, 18, 0), u: 'TAC', m: `public, on Ethereum · <a href="https://etherscan.io/token/${A.tac}" target="_blank" rel="noopener">ERC-20 ↗</a> · <a href="https://etherscan.io/token/${A.tac}#balances" target="_blank" rel="noopener">holders ↗</a>` },
     { k: 'TAC shielded', v: fmt(r.tacIn.v, 18, 2), u: 'TAC', m: `${int(r.tacIn.n)} deposit${r.tacIn.n === 1 ? '' : 's'}` },
     { k: 'Airdrop claimed', v: fmt(r.claimed, 18, 0), u: 'TAC', m: `${int(r.claimers)} wallet${r.claimers === 1 ? '' : 's'} · ${addr(A.airdrop, 1, 'contract')}` },
     { k: 'Other shielded', v: int(r.others.reduce((s, o) => s + o.n, 0)), u: 'deposits', m: esc(other) },
   ]);
 }
 
+// The points API lists at most BOARD_MAX accounts; a full list means there are at least that many.
+const BOARD_MAX = 500;
 async function readPoints() {
   const [board, [allocated, claimed]] = await Promise.all([
-    fetch(`${API}/leaderboard?limit=5000`, { signal: AbortSignal.timeout(15e3) }).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`points API ${r.status}`)))),
+    fetch(`${API}/leaderboard?limit=${BOARD_MAX}`, { signal: AbortSignal.timeout(15e3) }).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`points API ${r.status}`)))),
     calls(1, [[A.points, SEL.totalAllocated], [A.points, SEL.totalClaimed]]),
   ]);
   const list = Array.isArray(board) ? board : [];
-  return { participants: list.length, points: list.reduce((s, x) => s + (Number(x.points) || 0), 0), allocated: BigInt(allocated), claimed: BigInt(claimed) };
+  return { participants: list.length, full: list.length >= BOARD_MAX, points: list.reduce((s, x) => s + (Number(x.points) || 0), 0), allocated: BigInt(allocated), claimed: BigInt(claimed) };
 }
 function showPoints(r) {
   paint('pts', [
-    { k: 'Participants', v: int(r.participants), m: 'accounts earning points' },
-    { k: 'Points', v: int(Math.round(r.points)), m: '<a href="/weld/#points">leaderboard ↗</a>' },
+    { k: 'Participants', v: `${int(r.participants)}${r.full ? '+' : ''}`, m: 'accounts earning points' },
+    { k: 'Points', v: int(Math.round(r.points)), m: `${r.full ? `across the top ${int(BOARD_MAX)} · ` : ''}<a href="/weld/#points">leaderboard ↗</a>` },
     { k: 'TAC allocated', v: fmt(r.allocated, 18, 0), u: 'TAC', m: `to points holders · ${addr(A.points, 1, 'distributor')}` },
     { k: 'TAC claimed', v: fmt(r.claimed, 18, 2), u: 'TAC', m: 'from points so far' },
   ]);
@@ -614,10 +645,9 @@ async function readLink() {
   const [leafLogs, spentLogs, lockLogs] = [TOPIC.leaves, TOPIC.spent, TOPIC.locks].map((t) => byTopic(pl, t));
   const ok = (t) => t.isError === '0';
   const attests = pt.filter((t) => ok(t) && lc(t.methodId || t.input?.slice(0, 10)) === SEL.attest);
-  const attestTx = new Set(attests.map((t) => lc(t.hash)));
   // A settle is a transaction that inserted or spent notes, whoever sent it to the pool.
   const settles = new Map();
-  for (const l of [...leafLogs, ...spentLogs, ...lockLogs]) { const h = lc(l.transactionHash); if (!attestTx.has(h) && !settles.has(h)) settles.set(h, num(l.timeStamp)); }
+  for (const l of [...leafLogs, ...spentLogs, ...lockLogs]) { const h = lc(l.transactionHash); if (!settles.has(h)) settles.set(h, num(l.timeStamp)); }
   const spent = spentLogs.reduce((s, l) => { try { return s + arrayLen(l.data, 0); } catch { return s; } }, 0);
   return {
     tip: Number(BigInt(tipHex)), btcTip, attestedHeight, anchorHeight, attests: attests.length, lastAttest: attests.at(-1),
@@ -651,7 +681,9 @@ const store = {
 };
 const revive = (v) => JSON.parse(JSON.stringify(v), (_, x) => (x && typeof x === 'object' && '$n' in x ? BigInt(x.$n) : x));
 for (const g of Object.keys(PLACE)) paint(g, PLACE[g]);
+try { localStorage.removeItem('tacit-weld-stats-v1'); } catch {}
 const cached = store.get();
+Object.assign(SENDERS, cached?.senders);
 if (cached?.at) {
   const c = revive(cached);
   if (c.eth) showEth(c.eth);
@@ -681,6 +713,7 @@ if (recent) {
   const partial = [eth, dev, btc, tac, pts, link].some((r) => r.status === 'rejected');
   $('#asof').textContent = `As of ${new Date(fresh.at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}${block ? ` · Ethereum ${int(block)}` : ''}${link.status === 'fulfilled' && link.value.btcTip ? ` · Bitcoin ${int(link.value.btcTip)}` : ''}${partial ? ` · some figures ${cached?.at ? 'are from the last reading' : 'could not be read'}` : ''}`;
   fresh.block = block;
+  fresh.senders = SENDERS;
   if (!partial) store.set(fresh);
   else store.set({ ...(cached || {}), ...fresh, partial: true });
 }

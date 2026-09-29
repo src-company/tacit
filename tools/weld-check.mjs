@@ -1344,7 +1344,9 @@ await step('stats', async () => {
   let li = 0;
   const log = (address, topics, data, txh, t) => ({ address, topics, data: '0x' + data, blockNumber: h(26000000 + li), timeStamp: h(t), transactionHash: txh, logIndex: h(li++) });
   const str = (s) => { const b = Buffer.from(s); return w(b.length) + b.toString('hex').padEnd(64, '0'); };
-  const OUTPOINTS = ['0x' + 'b1'.repeat(32), '0x' + 'b2'.repeat(32)];              // bonded here, never recorded on the fork's pool
+  // Real locks, read from the fork's pool and engine: one since unlocked on Bitcoin, one still locked (both minted on), and
+  // one bonded in the fixtures only, which the pool never recorded.
+  const OUTPOINTS = ['0x552c481efffbf72bf5b510bdf4ba49a0f2b41490e1b6cd5c8ac404ca6739eb74', '0xd43d367f46953e71789582054fb46e22ae428008b544eeadc11eebe10db6d7f1', '0x' + 'b1'.repeat(32)];
   const W1 = '0x' + '1a'.repeat(20), W2 = '0x' + '2b'.repeat(20), CL1 = '0x' + '3c'.repeat(20), CL2 = '0x' + '4d'.repeat(20);
   const poolLogs = [
     log(POOLA, [TOPIC.asset, USDC, '0x' + '00'.repeat(12) + 'a0'.repeat(20)], w(1) + w(0x80) + w(0xc0) + w(6) + str('USD Coin') + str('USDC'), tx('e0'), T),
@@ -1367,8 +1369,8 @@ await step('stats', async () => {
   ];
   const addr32 = (a) => '0x' + '00'.repeat(12) + a.slice(2);
   const airLogs = [[CL1, 10], [CL1, 20], [CL2, 30]].map(([a, v], i) => log(AIR, [TOPIC.claimed, w(i), addr32(a)], w(BigInt(v) * 10n ** 18n), tx('c' + i), T));
-  const transact = (v, i, t) => log(EVMP, [TOPIC.transact, tx('e' + i), tx('e' + (i + 5))], [w(0), w(0), w(0), w(0), w(0), w(v), w(0), w(0), w(0x140), w(0x160), w(0), w(0)].join(''), tx('9' + i), t);
-  const devLogs = [transact(3n * 10n ** 17n, 1, T), transact(-(10n ** 17n), 2, T + 86400)];
+  const transact = (v, i, t, fee = 0n) => log(EVMP, [TOPIC.transact, tx('e' + i), tx('e' + (i + 5))], [w(0), w(0), w(0), w(0), w(0), w(v), w(0), w(fee), w(0x140), w(0x160), w(0), w(0)].join(''), tx('9' + i), t);
+  const devLogs = [transact(3n * 10n ** 17n, 1, T), transact(-(10n ** 17n), 2, T + 86400, 10n ** 16n)];
   const rhLogs = [transact(2n * 10n ** 17n, 3, T)];
   const TXS = {
     [POOLA]: [
@@ -1378,10 +1380,17 @@ await step('stats', async () => {
       { hash: tx('c3'), from: '0x68575b073de49a94e3e3acf6f3a0d6e3b66267c7', to: POOLA, blockNumber: '26000004', timeStamp: String(T + 2 * 86400), isError: '1', methodId: '0x0b36171c', value: '0' },
     ],
   };
+  // A deposit through the router, its delegatecall frame (which moves nothing), ETH in from a public swap (no deposit), and
+  // one withdrawal out.
   const INTERNAL = [
-    { transactionHash: tx('a1'), index: '0', from: POOLA, to: '0x141e653de94438258fdab245896c189f56522554', value: '1000000000000000000', callType: 'delegatecall', isError: '0', timeStamp: String(T), blockNumber: '26000000' },
+    { transactionHash: tx('a1'), index: '0', from: ROUTER, to: POOLA, value: '1000000000000000000', callType: 'call', isError: '0', timeStamp: String(T), blockNumber: '26000000' },
+    { transactionHash: tx('a1'), index: '1', from: POOLA, to: '0x141e653de94438258fdab245896c189f56522554', value: '1000000000000000000', callType: 'delegatecall', isError: '0', timeStamp: String(T), blockNumber: '26000000' },
+    { transactionHash: tx('a6'), index: '0', from: '0x00000000e36c7ec997cc59dcda9e03673b448119', to: POOLA, value: '300000000000000000', callType: 'call', isError: '0', timeStamp: String(T + 86400), blockNumber: '26000002' },
     { transactionHash: tx('b2'), index: '1', from: POOLA, to: W1, value: '200000000000000000', callType: 'call', isError: '0', timeStamp: String(T + 2 * 86400), blockNumber: '26000005' },
   ];
+  // The engine's outstanding debt, pinned for the scenario to match the fixtures' loans (2 + 1.5 borrowed, 1 repaid).
+  const CUSD_SLOT = '0x' + word(19), cusdWas = await rpc('eth_getStorageAt', [ENGINE, CUSD_SLOT, 'latest']);
+  await rpc('anvil_setStorageAt', [ENGINE, CUSD_SLOT, '0x' + word(250000000)]);
   const r = await openPage({ account: A0, key: K0, viewport: { width: 1280, height: 1100 } });
   const hits = [];
   // Who sent each deposit comes from the chain in one batch: the fixtures' deposits answer here, the rest go to the fork.
@@ -1418,9 +1427,10 @@ await step('stats', async () => {
     const s = await card('Shielded');
     ok(/^Shielded \| 1\.5ETH \| 2 deposits/.test(s), `stats: ETH shielded in is the sum of the pool's ETH wraps (${s})`);
     ok(/^Wallets \| 2 \|/.test(await card('Wallets')), `stats: wallets are the senders of those wraps, however they reached the pool (${await card('Wallets')})`);
+    ok(/^Withdrawn \| 0\.2ETH/.test(await card('Withdrawn')), `stats: withdrawn is what the pool paid out, whatever else came in (${await card('Withdrawn')})`);
     ok(await r.page.$eval('#f-eth', (f) => !f.hidden), 'stats: the ETH-over-time chart is drawn');
     const st = await card('Settles');
-    ok(/^Settles \| 3 \| .*3 spent/.test(st), `stats: settles are the transactions that inserted or spent notes, attestations apart (${st})`);
+    ok(/^Settles \| 3 \| .*3 spent/.test(st), `stats: settles are the transactions that inserted or spent notes (${st})`);
     ok(/2 attestations/.test(await card('Proven to')), `stats: only successful attestations count (${await card('Proven to')})`);
     const cu = await card('cUSD borrowed');
     ok(/^cUSD borrowed \| 3\.5cUSD \| 2\.5 open on 1 loan · 1 repaid/.test(cu), `stats: cUSD borrowed, repaid and still out (${cu})`);
@@ -1434,11 +1444,13 @@ await step('stats', async () => {
     const ac = await card('Cross-chain');
     ok(/\(5 folded\)/.test(ac) && /from Bitcoin/.test(ac), `stats: moves out to Bitcoin, with the reflection's folded count, and in from Bitcoin (${ac})`);
     const bl = await card('BTC locked'), bh = await card('Bonds');
-    ok(/^BTC locked \| 0BTC \| 0 locks/.test(bl) && /on 2 locks/.test(bh), `stats: each bonded lock is read on the pool, and one never recorded counts toward none (${bl} | ${bh})`);
+    const cm = await card('cBTC minted');
+    ok(/^BTC locked \| 0\.000007BTC \| 1 lock · 1 unlocked$/.test(bl) && /^cBTC minted \| 0\.000027cBTC \| 2 mints/.test(cm) && /on 2 locks$/.test(bh),
+      `stats: BTC locked leaves out a lock since spent, cBTC minted counts every mint, bonds count the locks that hold one (${bl} | ${cm} | ${bh})`);
     const rows = await r.page.$$eval('#c-dev tbody tr', (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent.replace(/\s+/g, ' ').trim())));
     const row = Object.fromEntries(rows.map((c) => [c[0].replace(/ ↗$/, ''), c]));
-    ok(row.Ethereum?.[2] === '0.3 (1)' && row.Ethereum?.[3] === '0.1 (1)' && row.Ethereum?.[4] === '2' && row.Base?.[1] === '0.5' && row.Base?.[2] === '0 (0)'
-      && row.Robinhood?.[1] === '0.2' && row.Robinhood?.[2] === '0.2 (1)', `stats: device pools per chain, deposits and withdrawals from their Transact events (${JSON.stringify(rows)})`);
+    ok(row.Ethereum?.[2] === '0.3 (1)' && row.Ethereum?.[3] === '0.11 (1)' && row.Ethereum?.[4] === '2' && row.Base?.[1] === '0.5' && row.Base?.[2] === '0 (0)'
+      && row.Robinhood?.[1] === '0.2' && row.Robinhood?.[2] === '0.2 (1)', `stats: device pools per chain, deposits and withdrawals (with the relayer's fee) from their Transact events (${JSON.stringify(rows)})`);
     await shot(r.page, 'stats-desk');
     await r.page.setViewportSize({ width: 390, height: 900 });
     await r.page.emulateMedia({ colorScheme: 'dark' });
@@ -1453,7 +1465,7 @@ await step('stats', async () => {
     await until(r.page, () => /hourly/.test(document.querySelector('#asof')?.textContent || ''), null, 30000).catch(() => {});
     ok(hits.length === n && /^Shielded \| 1\.5ETH/.test(await card('Shielded')), `stats: a second visit within the hour shows the last reading and asks the explorer nothing (${hits.length - n} calls)`);
     if (r.errors.length) { fails++; console.log('FAIL stats page errors: ' + r.errors.slice(0, 3).join(' | ')); }
-  } finally { await r.browser.close(); }
+  } finally { await r.browser.close(); await rpc('anvil_setStorageAt', [ENGINE, CUSD_SLOT, '0x' + word(cusdWas)]); }
 });
 
 // The dashboard paints what the page has read. A wallet holding 5 TAC, whose last visit here saw 2, reads +3.
