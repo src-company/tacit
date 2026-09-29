@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-JyOC5Z2fwNrNxz1jnKjaTsu4vfzVZg6cRkHxDtmsEzM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-syEO7BQ6T6ca1f8H2bia/AknnH6urPVapRZiN2D3SmQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -1275,6 +1275,9 @@ render.wallet = () => {
 document.addEventListener('click', (e) => { if (e.target.closest?.('[data-fund]')) { WAL.mode = 'add'; openSheet('wallet'); } });
 const lowEth = () => (payer() === 'tacit' ? html`More than your Tacit account holds. <button class="link" type="button" data-fund>Add ETH</button>` : 'More than your wallet holds.');
 const mine = () => (payer() === 'tacit' ? 'My Tacit account' : 'My wallet');
+// Paying a private balance out to an account deposits come from ties the two together on chain; said, not refused.
+const ownAccount = (a) => !!a && [S.address, S.wallet, S.acct?.address].some((x) => x && String(x).toLowerCase() === String(a).toLowerCase());
+const linkNote = () => html`<p class="note">This is one of your own accounts, where deposits come from, so a withdrawal to it can be matched to them on chain. A fresh address keeps them apart.</p>`.s;
 const your = () => (payer() === 'tacit' ? 'your Tacit account' : 'your wallet');
 
 // ── asset cards: what each Tacit asset is, and where to check it ──────────────────────────────────────────
@@ -1739,6 +1742,7 @@ function v1Out(el, status) {
       go.disabled = units + size > held || units <= fee || !raw || !!bad;
       if (units + size > held) warn(rc, 'More than your private balance.');
       else if (bad && !/^0(x[0-9a-fA-F]{0,39})?$/.test(raw)) warn(rc, bad.message);            // not while an address is still being typed
+      else if (!bad && !dev && ownAccount(raw)) rc.insertAdjacentHTML('beforeend', linkNote());
     } catch (e) { if (my === seq) quoteErr(rc, e); }
   };
   onEdit([to, amt], go, check);
@@ -3614,6 +3618,7 @@ function cSend(el, status) {
           mount(rc, html`<div class="kv"><span>Relay fee</span><b>${show(fee)} ${a.tk}</b></div>${size ? html`<div class="kv"><span>Relay fee to ${P.scan[k].notes.some((n) => BigInt(n.value) >= units + size) ? 'split a note' : 'combine notes'}</span><b>${show(size)} ${a.tk}</b></div>` : ''}<div class="kv"><span>Arrives</span><b>${show(units > fee ? units - fee : 0n)} ${a.out}</b></div>`);
           if (units <= fee) { q = null; warn(rc, `Send more than the ${show(fee)} ${a.tk} relay fee.`); }
           else if (units + size > src.held) { q = null; warn(rc, 'More than your private balance.'); }
+          else if (recipient && ownAccount(recipient)) rc.insertAdjacentHTML('beforeend', linkNote());
         }
         rc.hidden = false;
         if (src.pub && units > src.held) { q = null; warn(rc, `More than the ${a.out} in ${your()}.`); }

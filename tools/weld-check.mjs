@@ -639,6 +639,11 @@ await step('csend', async () => {
     await r.page.fill('#cs-to', '0x000000000000000000000000000000000000dEaD');
     await until(r.page, () => /Arrives[^]*tacUSD/.test(document.querySelector('#cs-rcpt')?.textContent || '') && !document.querySelector('#cs-go').disabled, null, 60000);
     ok(/Relay fee/.test(await text(r.page, '#cs-rcpt')), `csend: an 0x recipient gets it as tacUSD, fee first (${(await text(r.page, '#cs-rcpt')).replace(/\s+/g, ' ').trim()})`);
+    // Out to an account this key deposits from: it goes, and the page says it links the two.
+    const own = makeEvmAccount({ secp, keccak256: keccak_256, sha256 }).deriveEvmAccount(Buffer.from(hex, 'hex'), 'mainnet').address;
+    await r.page.fill('#cs-to', own);
+    await until(r.page, () => /one of your own accounts/.test(document.querySelector('#cs-rcpt')?.textContent || ''), null, 60000).catch(() => {});
+    ok(/one of your own accounts/.test(await text(r.page, '#cs-rcpt')) && !(await r.page.$eval('#cs-go', (b) => b.disabled)), 'csend: paying out to an own account says it links them, and still allows it');
     await r.page.fill('#cs-amt', '100');
     await until(r.page, () => /More than your private balance/.test(document.querySelector('#cs-rcpt')?.textContent || ''), null, 60000);
     ok(await r.page.$eval('#cs-go', (b) => b.disabled), 'csend: more than the private balance is refused');
