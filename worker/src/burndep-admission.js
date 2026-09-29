@@ -13,7 +13,7 @@
 // holder could have gotten wrong here that this doesn't independently re-derive).
 import { splitBlockTxs } from './bitcoin-block-parse.js';
 
-const HEADER_CHUNK = 1000;
+export const HEADER_CHUNK = 1000;
 const MAX_HEADER_EXTEND = 4032; // ~4 weeks of Bitcoin blocks — mirrors index.js's registration cap
 // Sanity ceiling on a FRESH (no-provHeaders-submitted) chain build, independent of any per-chunk cache
 // state: a chain from a legitimate etch to today's tip is a few tens of thousands of headers; anything

@@ -104,7 +104,7 @@ import { CONFIDENTIAL_DEPLOYMENTS as _CONFIDENTIAL_DEPLOYMENTS } from '../../dap
 import { decodeCrossoutMint, CONFIDENTIAL_POOL_DEPLOYMENTS as _CROSSOUT_POOL_DEPLOYMENTS } from '../../dapp/confidential-crossout-consumer.js';
 import { classifyConfidentialTx, makeBurnDepositKit } from '../../dapp/burn-deposit-bitcoin.js';
 import { makeScanReflectionIndexer } from '../../dapp/confidential-reflection-scan-indexer.js';
-import { makeBurndepAdmission } from './burndep-admission.js';
+import { makeBurndepAdmission, HEADER_CHUNK as BURNDEP_HEADER_CHUNK } from './burndep-admission.js';
 import { SWAP_BATCH_VK } from '../../dapp/confidential-swapbatch-vk.js';
 import { bpRangeVerify, bpClassicProofLen } from '../../dapp/bulletproofs.js';
 import { bppRangeVerify, bytesToPoint as bppPoint } from '../../dapp/bulletproofs-plus.js';
@@ -2145,6 +2145,44 @@ async function handleBurnDepositSweep(req, env, url, cors) {
   const maxCount = Math.min(Math.max(1, Number(url.searchParams.get('maxCount')) || 3), 20);
   const result = await sweepPendingBurnDeposits(env, network, { maxCount });
   return jsonResponse({ ok: true, ...result }, 200, { ...cors, 'Cache-Control': 'no-store' });
+}
+
+// GET /reflection/burndep/cache-status?network= — how much of the header chain (worker/src/burndep-admission.js)
+// between an asset's etch and the current tip is already cached, so a caller can tell "still warming" apart
+// from "something is actually stuck" without needing the box token every other ops route here needs. Public:
+// this only reports which height ranges have cached (public, immutable) block headers, nothing about any
+// bundle, account, or key.
+async function handleBurndepCacheStatus(req, env, url, cors) {
+  if (!env.REGISTRY_KV) return jsonResponse({ error: 'no kv' }, 500, cors);
+  const network = url.searchParams.get('network') === 'signet' ? 'signet' : 'mainnet';
+  const floor = burndepChainFloor(env, network);
+  if (!floor) return jsonResponse({ ok: true, network, floor: 0, detail: 'no burn-deposit chain floor configured for this network' }, 200, { ...cors, 'Cache-Control': 'no-store' });
+  let tip;
+  try { tip = parseInt((await apiText(env, '/blocks/tip/height', { timeoutMs: 10_000 }, network)).trim(), 10); }
+  catch (e) { return jsonResponse({ ok: false, error: `tip lookup failed: ${e.message || e}` }, 502, cors); }
+  const firstChunk = Math.floor(floor / BURNDEP_HEADER_CHUNK);
+  const lastChunk = Math.floor(tip / BURNDEP_HEADER_CHUNK);
+  const total = lastChunk - firstChunk + 1;
+  // "Usable" coverage is the CONTIGUOUS run of warm chunks starting at firstChunk — a gap in the middle means
+  // a chain from floor can't reach past it regardless of how many later chunks happen to be warm, so that's
+  // the figure warmThroughHeight/complete are built from. chunksWarmTotal is kept alongside purely as a
+  // diagnostic (it should never legitimately exceed the contiguous count, since warmHeaderChunks always fills
+  // lowest-first — a mismatch would itself be worth noticing).
+  let contiguous = 0, warmTotal = 0, gapSeen = false;
+  for (let c = firstChunk; c <= lastChunk; c++) {
+    const raw = await env.REGISTRY_KV.get(`reflection:hdrs:${network}:${c}`);
+    let isWarm = false;
+    if (raw) { try { const arr = JSON.parse(raw); isWarm = Array.isArray(arr) && arr.length === BURNDEP_HEADER_CHUNK; } catch {} }
+    if (isWarm) { warmTotal++; if (!gapSeen) contiguous++; } else { gapSeen = true; }
+  }
+  // floor itself need not land on a chunk boundary (TAC's real etch height doesn't), so the top of contiguous
+  // coverage is computed from the chunk grid, not from floor + contiguous*chunkSize.
+  const warmThroughHeight = contiguous > 0 ? Math.min((firstChunk + contiguous) * BURNDEP_HEADER_CHUNK - 1, tip) : null;
+  return jsonResponse({
+    ok: true, network, floor, tip, chunkSize: BURNDEP_HEADER_CHUNK,
+    chunksWarm: contiguous, chunksWarmTotal: warmTotal, chunksTotal: total,
+    warmThroughHeight, complete: contiguous >= total,
+  }, 200, { ...cors, 'Cache-Control': 'no-store' });
 }
 
 async function handleReflectionAck(req, env, cors) {
@@ -25744,7 +25782,7 @@ export {
   // Exported so tests can drive the burn-deposit auto-completion sweep and its shared bundle-builder directly
   // against a fake KV + real esplora data, without needing a live REGISTRY_KV.
   sweepPendingBurnDeposits, buildBurndepBundle, assetKey, handleBurnDepositStatus, handleBurnDepositCheck,
-  buildProbeBurnTxHex,
+  buildProbeBurnTxHex, handleBurndepCacheStatus,
 };
 
 // ============== DISCORD TOKEN-GATE HANDLERS ==============
@@ -26040,6 +26078,7 @@ async function _routeFetch(req, env, ctx) {
     if (url.pathname === '/reflection/burndep/status' && req.method === 'GET') return handleBurnDepositStatus(req, env, url, cors);
     if (url.pathname === '/reflection/burndep/check' && req.method === 'POST') return handleBurnDepositCheck(req, env, url, cors);
     if (url.pathname === '/reflection/burndep/sweep' && req.method === 'POST') return handleBurnDepositSweep(req, env, url, cors);
+    if (url.pathname === '/reflection/burndep/cache-status' && req.method === 'GET') return handleBurndepCacheStatus(req, env, url, cors);
     if (url.pathname === '/crossout/minted' && req.method === 'GET') return handleCrossoutMinted(url, env, cors);
     // Mode-B eth-side state: the eth-state sidecar POSTs eth_prove's output here.
     if (url.pathname === '/reflection/eth-state' && req.method === 'GET') return handleReflectionEthStateGet(req, env, url, cors);
