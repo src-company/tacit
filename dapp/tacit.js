@@ -78087,4 +78087,7 @@ export {
   // set correctly when Esplora rejects `/address/:addr/utxo` with the
   // "Too many unspent transaction outputs (>500)" 400.
   getUtxos,
+  // BTC/USD spot with its own SWR cache and three-source failover. Exported so a page outside this module
+  // can price sats the same way the market surfaces here do, rather than fetching its own.
+  getBtcUsdPrice,
 };

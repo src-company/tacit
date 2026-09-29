@@ -22,6 +22,7 @@ let pub = { loading: false, notes: [], decimals: 8 };
 let shielded = { loading: false, notes: [] };
 let relayLive = null;
 let markSats = null;   // sats per whole TAC, from the worker's trade-backed mark price
+let btcUsd = null;     // BTC/USD spot, via tacit.js's cached three-source failover
 let busyId = null;
 
 const DECIMALS = 8;
@@ -70,9 +71,16 @@ async function busy(btn, id, fn) {
 // Sats per whole TAC, from the worker's mark price (computed from real trades, outlier-guarded). Used only
 // to annotate amounts — nothing on this page is priced or settled against it.
 const satsFor = (units) => (markSats == null ? null : Math.floor((Number(units) / 10 ** DECIMALS) * markSats));
+const usdFor = (units) => {
+  const s = satsFor(units);
+  return s == null || btcUsd == null ? null : (s / 1e8) * btcUsd;
+};
+const usdText = (usd) => (usd == null ? '' : usd >= 1 ? `$${usd.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : `$${usd.toFixed(4)}`);
 const satsText = (units) => {
   const s = satsFor(units);
-  return s == null ? '' : `≈ ${s.toLocaleString('en-US')} sats`;
+  if (s == null) return '';
+  const usd = usdFor(units);
+  return `≈ ${s.toLocaleString('en-US')} sats${usd == null ? '' : ` · ${usdText(usd)}`}`;
 };
 async function loadPrice() {
   try {
@@ -82,9 +90,15 @@ async function loadPrice() {
     const u = Number(j?.mark_price?.unit);
     if (Number.isFinite(u) && u > 0) markSats = u;
   } catch { /* the page works priceless */ }
+  try { btcUsd = await T.getBtcUsdPrice(); } catch { btcUsd = null; }
   $('s-price').textContent = markSats == null ? '—' : `${markSats.toLocaleString('en-US')}`;
-  const k = $('s-price')?.parentElement?.querySelector('.k');
-  if (k) k.textContent = markSats == null ? 'TAC · market' : 'sats per TAC';
+  const tile = $('s-price')?.closest('div');
+  const k = tile?.querySelector('.k');
+  if (k) {
+    const oneTac = usdFor(BigInt(10 ** DECIMALS));
+    k.textContent = markSats == null ? 'TAC · market'
+      : oneTac == null ? 'sats per TAC' : `sats per TAC · ${usdText(oneTac)}`;
+  }
   renderBalances(); renderAmountHints();
 }
 
