@@ -28,6 +28,19 @@ export function makeConfidentialRelay({ base, fetchImpl, guard, checkEmittedMemo
   if (!f) throw new Error('confidential-relay: no fetch available');
   const root = (base || '').replace(/\/$/, '');
 
+  // A page follows its relayed ops through one event: `tacit:job` on the global object, fired when a job is
+  // queued and at every status change, with detail { jobId, type, status, txHash, error, at }. Nothing here
+  // waits on a listener, and a listener that throws never reaches the op.
+  const jobTypes = new Map();
+  function announce(st) {
+    try {
+      if (!st || !st.jobId || typeof globalThis.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return;
+      const detail = { jobId: st.jobId, type: st.type || jobTypes.get(st.jobId) || null, status: st.status || 'unknown',
+        txHash: st.txHash || null, error: st.error || null, at: Date.now() };
+      globalThis.dispatchEvent(new CustomEvent('tacit:job', { detail }));
+    } catch { /* listeners are best effort */ }
+  }
+
   async function asJson(res) {
     const text = await res.text();
     let body; try { body = text ? JSON.parse(text) : {}; } catch { body = { raw: text }; }
@@ -86,7 +99,9 @@ export function makeConfidentialRelay({ base, fetchImpl, guard, checkEmittedMemo
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ type, op, memos: sealedMemos, ...(mode ? { mode } : {}), ...(feeAsset ? { feeAsset } : {}) }, bigintSafe),
     });
-    return { ...(await asJson(res)), sealedMemos };
+    const body = await asJson(res);
+    if (body && body.jobId) { jobTypes.set(body.jobId, type); announce({ ...body, type, status: body.status || 'pending' }); }
+    return { ...body, sealedMemos };
   }
 
   // Compare what the settle emitted with what was sealed (see checkEmittedMemos above). Only note leaves carry a
@@ -147,7 +162,7 @@ export function makeConfidentialRelay({ base, fetchImpl, guard, checkEmittedMemo
     const pollState = {};
     for (;;) {
       const st = await pollStatus(jobId, pollState, { wait, intervalMs });
-      if (st.status !== last) { last = st.status; if (onUpdate) onUpdate(st); }
+      if (st.status !== last) { last = st.status; announce(st); if (onUpdate) onUpdate(st); }
       if (st.status === 'settled') return st;
       if (st.status === 'failed') throw new Error(`settle failed: ${st.error || 'unknown'}`);
       if (st.status === 'unknown') throw new Error('relay lost the job (worker restart / KV miss)');
@@ -182,7 +197,7 @@ export function makeConfidentialRelay({ base, fetchImpl, guard, checkEmittedMemo
     const pollState = {};
     for (;;) {
       const st = await pollStatus(jobId, pollState, { wait, intervalMs });
-      if (st.status !== last) { last = st.status; if (onUpdate) onUpdate(st); }
+      if (st.status !== last) { last = st.status; announce(st); if (onUpdate) onUpdate(st); }
       if (st.status === 'proven') return st;
       if (st.status === 'settled') return st;
       if (st.status === 'failed') throw new Error(`prove failed: ${st.error || 'unknown'}`);
