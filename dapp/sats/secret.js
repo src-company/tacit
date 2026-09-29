@@ -280,10 +280,12 @@ async function prepare(poolWallet, asset, need, anchor) {
 
 // Pays `amount` of `asset` to a pool address. Relayed when the replay service runs a relayer that quotes the
 // asset (fee paid as an extra pool output); otherwise this wallet posts the carrier from its own sats.
-export async function payPrivately(tacit, { poolWallet, to, amount, asset, anchor = null, say = () => {} }) {
+// `noRelay` forces the self-funded path. Used by the fallback below, so a relayer that quotes and then
+// cannot deliver does not leave the payment stranded.
+export async function payPrivately(tacit, { poolWallet, to, amount, asset, anchor = null, noRelay = false, say = () => {} }) {
   pool.decodeAddress(to, poolWallet.network);
   const client = poolClientFor(poolWallet.network);
-  const info = await client.relayInfo().catch(() => null);
+  const info = noRelay ? null : await client.relayInfo().catch(() => null);
   const fee = info?.fees?.['0x' + String(asset).replace(/^0x/, '').toLowerCase()];
   const q = fee != null ? await client.quote({ asset: '0x' + String(asset).replace(/^0x/, '') }) : null;
   say('finding your notes…');
@@ -295,15 +297,26 @@ export async function payPrivately(tacit, { poolWallet, to, amount, asset, ancho
   const { payload, payloadHex } = await proveHere(built, say);
   if (q) {
     say('handing it to the relayer…');
-    const sub = await client.submit({ payload: payloadHex, quoteId: q.quoteId });
-    for (let i = 0; i < 60; i++) {
-      const stt = await client.relayStatus(sub.id).catch(() => null);
-      if (stt?.carrier) return { revealTxid: stt.carrier, relayed: true, anchor: a.hAnchor };
-      if (stt && ['dropped', 'rejected'].includes(stt.state)) throw new Error(`the relayer dropped the payment: ${stt.reason || stt.state}`);
-      say('waiting for the relayer’s batch…');
-      await new Promise((r) => setTimeout(r, 5000));
-    }
-    throw new Error('the relayer has not posted the payment yet; check back shortly');
+    // A relayer can quote and still fail to post — it needs its own confirmed coins to fund the carrier,
+    // and it reserves one of them as this batch's bind. When that happens the payment must not be stuck:
+    // the body is bound to the relayer's outpoint so this wallet cannot post THIS one, but it can build
+    // the same spend again without a bind and pay for the carrier itself. Rebuilding spends the same
+    // notes, so it publishes the same nullifiers — if the relayer does eventually post its copy, only
+    // whichever lands first is accepted and the other is rejected by the pool. The money cannot go twice.
+    let reason = null;
+    try {
+      const sub = await client.submit({ payload: payloadHex, quoteId: q.quoteId });
+      for (let i = 0; i < 60 && !reason; i++) {
+        const stt = await client.relayStatus(sub.id).catch(() => null);
+        if (stt?.carrier) return { revealTxid: stt.carrier, relayed: true, anchor: a.hAnchor };
+        if (stt && ['dropped', 'rejected'].includes(stt.state)) { reason = stt.reason || stt.state; break; }
+        say('waiting for the relayer’s batch…');
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+      reason = reason || 'it did not post in time';
+    } catch (e) { reason = e?.message || String(e); }
+    say(`the relayer could not post it (${reason}) — sending it from this wallet instead…`);
+    return payPrivately(tacit, { poolWallet, to, amount, asset, anchor, noRelay: true, say });
   }
   say('sending…');
   const own = tacit.p2wpkhScript(tacit.wallet.pub);
