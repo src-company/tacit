@@ -5,7 +5,7 @@
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { keccak256, concat, pad } from '../worker-relay/node_modules/viem/_esm/index.js';
-import { depositsOf, spentInputsOf, noteNullifier, depositIdOf, consumedInputs } from '../worker-relay/src/lib/spent-precheck.js';
+import { depositsOf, spentInputsOf, noteNullifier, depositIdOf, consumedInputs, consumedInput, unlandedDeposits } from '../worker-relay/src/lib/spent-precheck.js';
 import { secp, sha256, keccak_256 } from '../dapp/vendor/tacit-deps.min.js';
 import { makeConfidentialPool } from '../dapp/confidential-pool.js';
 
@@ -39,8 +39,8 @@ for (const [t, [nDep, nNu]] of Object.entries(EXPECT)) {
 
 // A chain where `spent` nullifiers are set and `consumed` deposits have status 2.
 const slotOf = (nu) => lc(keccak256(concat([nu, pad('0x46', { size: 32 })])));
-const chain = ({ spent = [], consumed = [], broken = false } = {}) => ({
-  async readContract({ args }) { if (broken) throw new Error('rpc down'); return consumed.map(lc).includes(lc(args[0])) ? 2 : 1; },
+const chain = ({ spent = [], consumed = [], absent = [], broken = false } = {}) => ({
+  async readContract({ args }) { if (broken) throw new Error('rpc down'); return consumed.map(lc).includes(lc(args[0])) ? 2 : absent.map(lc).includes(lc(args[0])) ? 0 : 1; },
   async getStorageAt({ slot }) { if (broken) throw new Error('rpc down'); return spent.map(slotOf).includes(lc(slot)) ? pad('0x1', { size: 32 }) : pad('0x0', { size: 32 }); },
 });
 const POOL = '0x000000000Ed1eabD231Be41d93b719056F7febFC';
@@ -63,6 +63,19 @@ await okAsync('an unreadable chain lets the job through', async () =>
 await okAsync('an op without recognisable inputs lets the job through', async () => {
   assert.equal(await consumedInputs({ type: 'mystery', op: { foo: 1 } }, { client: chain({ spent: [nuUnwrap] }), pool: POOL }), null);
   assert.equal(await consumedInputs({ type: 'wrap', op: null }, { client: chain(), pool: POOL }), null);
+});
+
+await okAsync('the gone input is named with its kind, so the relay can find what consumed it', async () => {
+  assert.deepEqual(await consumedInput(unwrapJob, { client: chain({ spent: [nuUnwrap] }), pool: POOL }),
+    { kind: 'nullifier', id: nuUnwrap, reason: `input nullifier ${nuUnwrap} is already spent` });
+  assert.equal((await consumedInput(wrapJob, { client: chain({ consumed: [depWrap] }), pool: POOL })).kind, 'deposit');
+});
+await okAsync('a deposit the pool never recorded is named; pending, consumed and unreadable ones are not', async () => {
+  assert.deepEqual(await unlandedDeposits(wrapJob, { client: chain({ absent: [depWrap] }), pool: POOL }), [depWrap]);
+  assert.deepEqual(await unlandedDeposits(wrapJob, { client: chain(), pool: POOL }), []);
+  assert.deepEqual(await unlandedDeposits(wrapJob, { client: chain({ consumed: [depWrap] }), pool: POOL }), []);
+  assert.deepEqual(await unlandedDeposits(wrapJob, { client: chain({ broken: true }), pool: POOL }), []);
+  assert.deepEqual(await unlandedDeposits(unwrapJob, { client: chain({ absent: [depWrap] }), pool: POOL }), []);
 });
 
 console.log(`\n${pass} passed, 0 failed`);

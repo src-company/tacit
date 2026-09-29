@@ -24,13 +24,15 @@ import { CFG, OP_GAS, DEFAULT_OP_GAS, OP_PROVE } from './lib/config.js';
 import { confidentialJob, confidentialBatch, confidentialAck, confidentialActivateAck, heartbeat, heartbeatIdle } from './lib/worker-client.js';
 import { proveSettle } from './lib/prover.js';
 import { assertMemosMatchProof } from './lib/memo-root.js';
-import { consumedInputs } from './lib/spent-precheck.js';
+import { consumedInput, unlandedDeposits } from './lib/spent-precheck.js';
+import { findCarrier, isRevert } from './lib/landed-elsewhere.js';
 import { cbtcMintBlocker } from './lib/cbtc-mint-precheck.js';
 import { cdpBlocker } from './lib/cdp-precheck.js';
 import { settleWallet, settleWallets, publicClient, ethUsdPrice, POOL, POOL_ABI, ROUTER } from './lib/chain.js';
 import { ROUTER_EXIT_ABI, recipeArgs, exitCheck, activationCover } from './lib/exit-activate.js';
 import { quoteRelayFee, provePriceUsd, replenishOnce, drainToSink } from './replenish.js';
 import { safeErr } from './lib/safe-err.js';
+import { encodeFunctionData } from 'viem';
 
 const log = (...a) => console.log(`[settle ${new Date().toISOString()}]`, ...a);
 const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
@@ -43,6 +45,11 @@ const TIP_CAP_WEI = BigInt(process.env.SETTLE_TIP_CAP_WEI || '2000000000'); // 2
 const SUBMIT_ROUNDS = Math.max(1, parseInt(process.env.SETTLE_SUBMIT_ROUNDS || '3', 10));
 const RECEIPT_WAIT_MS = Math.max(30_000, parseInt(process.env.SETTLE_RECEIPT_WAIT_MS || '90000', 10));
 const INCLUSION_POLL_MS = 4_000;
+// How far before a settle's first broadcast to look for another landing of the same proof: covers a second relay
+// that claimed the same job and proved it in parallel.
+const LANDED_MARGIN_BLOCKS = 32n;
+// How far back a job whose inputs are already gone looks for the settle that consumed them (about a day).
+const CONSUMED_LOOKBACK_BLOCKS = BigInt(process.env.SETTLE_CONSUMED_LOOKBACK_BLOCKS || '7200');
 // A node's answer when this key's nonce is already used — by another sender on the key (the header relay can
 // share it) or by an earlier broadcast of ours that landed. Clients word it differently.
 export const NONCE_TAKEN = /nonce ?too ?low|lower than the current nonce|nonce has already been used|NONCE_EXPIRED/i;
@@ -109,7 +116,11 @@ async function submitSettle(proof, memos, label) {
   // The memos shipped with the settle must be the ones the proof commits to; the pool rejects any other set, so
   // a divergence is caught here before a settle is paid for.
   assertMemosMatchProof(proof.publicValues, memos);
-  return submitCall({ address: POOL, abi: POOL_ABI, functionName: 'settle', args: [proof.publicValues, proof.proof, memos] }, label);
+  // Whoever lands this proof settles the op (see lib/landed-elsewhere.js), so a transaction carrying these public
+  // values is this job's result even when another sender landed it first.
+  const fromBlock = (await publicClient.getBlockNumber()) - LANDED_MARGIN_BLOCKS;
+  const landed = () => findCarrier({ client: publicClient, pool: POOL, needles: [proof.publicValues], fromBlock });
+  return submitCall({ address: POOL, abi: POOL_ABI, functionName: 'settle', args: [proof.publicValues, proof.proof, memos] }, label, { landed });
 }
 
 // Wait for a broadcast to land — or for it to become impossible to land.
@@ -150,8 +161,10 @@ export async function awaitInclusion({
 }
 
 // Submit one relay transaction — a settle (gas estimated here), or an exit activation whose `gasLimit` the caller
-// already fixed and simulated at.
-async function submitCall(base, label, gasLimit = null) {
+// already fixed and simulated at. `landed` (optional) names a transaction by another sender that already did this
+// call's work; it is asked whenever the call turns out to have nothing left to do, and its answer is returned as
+// the result.
+async function submitCall(base, label, { gasLimit = null, landed = null } = {}) {
   // Price + estimate on the PUBLIC client, never the private endpoint. Left to itself viem derives the fee
   // cap (and nonce/gas) through the settle transport, and a cap taken from a lagging view of the base fee
   // gets the tx rejected outright as unincludable. Base fee can also climb between pricing and inclusion, so
@@ -161,6 +174,7 @@ async function submitCall(base, label, gasLimit = null) {
     publicClient.getTransactionCount({ address: settleWallet.account.address, blockTag: 'pending' }),
     gasLimit ? null : publicClient.estimateContractGas({ ...base, account: settleWallet.account }).catch(() => null),
   ]);
+  const data = encodeFunctionData({ abi: base.abi, functionName: base.functionName, args: base.args });
   let baseFee = blk.baseFeePerGas ?? 0n;
   // Tip proportional to the base fee, floored so it is never dust and capped so a spike can't run away.
   // The floor matters more than it looks: at sub-gwei base fees the proportional term is worth a fraction of
@@ -177,11 +191,48 @@ async function submitCall(base, label, gasLimit = null) {
   const seen = [];
   let lastErr;
 
-  // Rounds escalate two things at once: the tip, and how far down the endpoint list we start — so a job that
-  // private builders keep ignoring ends up on the public mempool rather than expiring. Submission acceptance
+  // A call that would revert now is never broadcast. The public node is asked, not a private endpoint, and an
+  // unreachable node is not a verdict. Returns the revert, or null.
+  const wouldRevert = async () => {
+    try { await publicClient.call({ account: settleWallet.account, to: base.address, data }); return null; }
+    catch (e) { return isRevert(e) ? e : null; }
+  };
+  // One of our own broadcasts that landed: its hash, or a thrown revert. Null while none has a receipt.
+  const ownReceipt = async () => {
+    for (const h of seen) {
+      const r = await publicClient.getTransactionReceipt({ hash: h }).catch(() => null);
+      if (!r) continue;
+      if (r.status !== 'success') return finishReverted(h);
+      return h;
+    }
+    return null;
+  };
+  const elsewhere = async () => {
+    if (!landed) return null;
+    const h = await landed().catch((e) => { log(`${label} could not look for another landing: ${String(e && e.message).slice(0, 120)}`); return null; });
+    if (h) log(`${label} landed by another sender as ${h}: the op is done, and the bound fee went to that sender`);
+    return h;
+  };
+  // Our transaction reverted: the op is done if another landing of it explains the revert.
+  const finishReverted = async (h) => {
+    const other = await elsewhere();
+    if (other) return other;
+    throw new Error(`${base.functionName} reverted ${h}`);
+  };
+  // Nothing we could send would succeed any more: our own landing, another sender's, or the revert itself.
+  const settledOrDead = async (revert) => {
+    const mine = await ownReceipt();
+    if (mine) return mine;
+    const other = await elsewhere();
+    if (other) return other;
+    throw revert;
+  };
+
+  // Rounds escalate two things at once: the tip, and which private endpoint goes first. Submission acceptance
   // is NOT inclusion: without a bounded wait the job sits on viem's default timeout and then throws away a
   // proof the relay has already paid for. The proof stays in memory across rounds, so escalating is free;
-  // re-proving is not.
+  // re-proving is not. Every round starts with a simulation, so a settle whose inputs went (to our own earlier
+  // broadcast, or to a copy) is resolved instead of sent again.
   let refreshes = 0;
   for (let round = 0; round < SUBMIT_ROUNDS; round++) {
     // Reprice against the LIVE base fee each round, not the snapshot taken before the first submit. The 3x
@@ -197,6 +248,8 @@ async function submitCall(base, label, gasLimit = null) {
         log(`${label} base fee moved to ${baseFee} wei — repricing this round's cap against it`);
       }
     }
+    const dead = await wouldRevert();
+    if (dead) return settledOrDead(dead);
     const tx = { ...call, nonce, maxFeePerGas: baseFee * 3n + tip, maxPriorityFeePerGas: tip };
     let txHash, taken = false;
     for (let i = 0; i < endpoints.length; i++) {
@@ -211,6 +264,8 @@ async function submitCall(base, label, gasLimit = null) {
         lastErr = e;
         log(`${label} submit via ${url} failed: ${String(e.message).slice(0, 160)}`);
         if (NONCE_TAKEN.test(String(e && e.message))) { taken = true; break; } // every endpoint would say the same
+        // An endpoint's revert is only a verdict once the public node agrees; one lagging a block says nothing.
+        if (isRevert(e)) { const dead = await wouldRevert(); if (dead) return settledOrDead(dead); }
       }
     }
 
@@ -223,8 +278,8 @@ async function submitCall(base, label, gasLimit = null) {
         getConfirmedNonce: () => publicClient.getTransactionCount({ address: settleWallet.account.address, blockTag: 'latest' }),
       });
       if (res.state === 'landed') return res.hash;
-      // A revert is the chain's verdict and is terminal.
-      if (res.state === 'reverted') throw new Error(`${base.functionName} reverted ${res.hash}`);
+      // A revert is the chain's verdict and is terminal — unless another landing of the same work caused it.
+      if (res.state === 'reverted') return finishReverted(res.hash);
       if (res.state === 'taken') { log(`${label} nonce ${nonce} was consumed by another sender before ours landed`); taken = true; }
       else log(`${label} not included within ${RECEIPT_WAIT_MS}ms at tip ${tip} wei — escalating`);
     }
@@ -232,13 +287,8 @@ async function submitCall(base, label, gasLimit = null) {
     // The nonce is spent. If one of our own broadcasts spent it, that transaction is the answer; otherwise another
     // sender took it, none of ours can land any more, and the proof is still good — send again at a fresh nonce.
     if (taken) {
-      for (const h of seen) {
-        const r = await publicClient.getTransactionReceipt({ hash: h }).catch(() => null);
-        if (!r) continue;
-        if (r.status !== 'success') throw new Error(`${base.functionName} reverted ${h}`);
-        log(`${label} landed as an earlier broadcast ${h}`);
-        return h;
-      }
+      const mine = await ownReceipt();
+      if (mine) { log(`${label} landed as ${mine}`); return mine; }
       if (refreshes < NONCE_REFRESHES) {
         refreshes += 1;
         nonce = await publicClient.getTransactionCount({ address: settleWallet.account.address, blockTag: 'pending' });
@@ -250,13 +300,8 @@ async function submitCall(base, label, gasLimit = null) {
     }
 
     // A replaced transaction can still be the included one; check before spending another round.
-    for (const h of seen) {
-      const r = await publicClient.getTransactionReceipt({ hash: h }).catch(() => null);
-      if (!r) continue;
-      if (r.status !== 'success') throw new Error(`${base.functionName} reverted ${h}`);
-      log(`${label} landed as an earlier broadcast ${h}`);
-      return h;
-    }
+    const mine = await ownReceipt();
+    if (mine) { log(`${label} landed as ${mine}`); return mine; }
 
     if (tip >= TIP_CAP_WEI) break; // nothing left to escalate; further rounds would be identical
     tip = tip * 3n > TIP_CAP_WEI ? TIP_CAP_WEI : tip * 3n; // a replacement must clear the node's bump rule
@@ -266,13 +311,10 @@ async function submitCall(base, label, gasLimit = null) {
   // than the rounds above wait, so "we stopped waiting" and "it did not land" are different facts — and the
   // job is about to be acked FAILED, which is terminal and never retried. Getting this wrong tells a user
   // their op failed while it is settling, with no way to reach the tx hash.
-  for (const h of seen) {
-    const r = await publicClient.getTransactionReceipt({ hash: h }).catch(() => null);
-    if (!r) continue;
-    if (r.status !== 'success') throw new Error(`${base.functionName} reverted ${h}`);
-    log(`${label} landed as ${h} after the wait window closed`);
-    return h;
-  }
+  const late = await ownReceipt();
+  if (late) { log(`${label} landed as ${late} after the wait window closed`); return late; }
+  const other = await elsewhere();
+  if (other) return other;
   const e = lastErr || new Error(`${base.functionName} accepted but never included after ${SUBMIT_ROUNDS} rounds (last tip ${tip} wei)`);
   // Carry the broadcast hashes so the caller can name them rather than reporting a bare failure: a
   // still-pending bundle may yet land, and these are the only handles on it.
@@ -316,7 +358,7 @@ async function activateRelayedExit(job, settleTx) {
     // Dry-run at the exact gas limit the transaction carries: an uncapped call succeeds where the capped one
     // runs out of gas inside the bridge call.
     await publicClient.simulateContract({ ...call, account: settleWallet.account, gas: cover.gas });
-    const txHash = await submitCall(call, label, cover.gas);
+    const txHash = await submitCall(call, label, { gasLimit: cover.gas });
     log(`${label}: ${txHash} (fee ${cover.feeWei} wei covers ${cover.cost} wei)`);
     await confidentialActivateAck({ jobId: job.jobId, txHash });
   } catch (e) {
@@ -335,13 +377,45 @@ export async function admitJobs(jobs, gate) {
   return { admitted: admitted.map((a) => a.job), refused };
 }
 
-// A job whose inputs are already consumed on chain can only revert, so it is acked failed without paying for a proof.
+// A job whose inputs are already consumed on chain can only revert, so it is never proved. A relayed job served
+// again after its settle landed (an ack lost on the way back) is reported settled with that settle, found by the
+// memos this job sealed, which ride in its calldata. Anything else is failed, naming the transaction that spent
+// the input: a rebuilt request seals fresh memos, so it is never mistaken for the one that landed.
 async function skipConsumed(job) {
-  const gone = await consumedInputs(job, { client: publicClient, pool: POOL });
+  const gone = await consumedInput(job, { client: publicClient, pool: POOL });
   if (!gone) return false;
-  log(`job ${job.jobId} type=${job.type} not proved: ${gone}`);
-  await confidentialAck({ jobId: job.jobId, error: `inputs already spent on chain (${gone}); the op may already have settled` });
+  const fromBlock = (await publicClient.getBlockNumber()) - CONSUMED_LOOKBACK_BLOCKS;
+  const find = (needles) => findCarrier({ client: publicClient, pool: POOL, needles, fromBlock }).catch(() => null);
+  const memos = (Array.isArray(job.memos) ? job.memos : []).filter((m) => String(m || '').replace(/^0x/i, '').length >= 64);
+  const own = (job.mode || 'settle') === 'settle' && memos.length ? await find(memos) : null;
+  if (own) {
+    log(`job ${job.jobId} type=${job.type} already settled in ${own}`);
+    await confidentialAck({ jobId: job.jobId, txHash: own });
+    return true;
+  }
+  const by = await find([gone.id]);
+  log(`job ${job.jobId} type=${job.type} not proved: ${gone.reason}${by ? ` in ${by}` : ''}`);
+  const where = by ? ` in ${by}` : '';
+  await confidentialAck({ jobId: job.jobId, error: gone.kind === 'deposit'
+    ? `this deposit was already settled into a private note${where}`
+    : `this note was already spent${where}; if that was this same request, it went through` });
   return true;
+}
+
+// A relayed wrap whose deposit the pool has not recorded can only revert. The dapp sends the job once the deposit
+// has a receipt, so a node a block behind is the usual cause: look again for a few blocks before failing it, and
+// fail it without proving.
+async function skipUnlanded(job) {
+  for (let i = 0; ; i++) {
+    const missing = await unlandedDeposits(job, { client: publicClient, pool: POOL });
+    if (!missing.length) return false;
+    if (i >= 3) {
+      log(`job ${job.jobId} type=${job.type} not proved: deposit ${missing[0]} is not on chain`);
+      await confidentialAck({ jobId: job.jobId, error: 'the deposit for this wrap is not on chain, so nothing was taken; send it again once the deposit transaction confirms' });
+      return true;
+    }
+    await sleep(8);
+  }
 }
 
 // A cBTC mint the pool's lock gate would refuse, or a cUSD loan or top-up the engine would, can only revert, so it is
@@ -462,7 +536,7 @@ async function cycle() {
     return true;
   }
 
-  if (mode !== 'preproven' && (await skipConsumed(job) || await skipBlockedMint(job))) return true;
+  if (mode !== 'preproven' && (await skipConsumed(job) || (mode === 'settle' && await skipUnlanded(job)) || await skipBlockedMint(job))) return true;
 
   log(`job ${jobId} type=${type} mode=${mode} — proving (network groth16). ${gate.reason} [gas ${gasGwei.toFixed(4)} gwei, ETH $${Number(ethPx).toFixed(2)}, PROVE $${Number(provePx).toFixed(4)}]`);
   await heartbeat('settle', `proving ${jobId} ${type}`);

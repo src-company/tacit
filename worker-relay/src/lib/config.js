@@ -32,6 +32,24 @@ function num(name, dflt) {
 
 // ── Mainnet addresses ──
 // These default to the live mainnet deployment; override via env for Sepolia rehearsal.
+// The mode of a known private endpoint that keeps a settle between the relay and the builders: Flashbots Protect
+// with only the hash hinted to searchers (it drops reverting transactions unless canRevert is set), and MEV
+// Blocker's fullprivacy route (no searchers, no reverts). Any other URL is used as given.
+export function privateSettleUrl(raw) {
+  let u;
+  try { u = new URL(raw); } catch { return raw; }
+  if (u.hostname === 'rpc.flashbots.net') {
+    u.searchParams.delete('hint');
+    u.searchParams.delete('canRevert');
+    u.searchParams.append('hint', 'hash');
+  } else if (u.hostname === 'mevblocker.io' || u.hostname.endsWith('.mevblocker.io')) {
+    u.hostname = 'rpc.mevblocker.io';
+    u.pathname = '/fullprivacy';
+    u.search = '';
+  }
+  return u.toString();
+}
+
 export const ADDR = {
   // ConfidentialPool — settle() + attestBitcoinStateProven() + knownReflectionDigest(). Per-deployment:
   // this default is a fallback only; set POOL_ADDR explicitly per service so every service points at the
@@ -154,14 +172,15 @@ export const CFG = {
   // routes straight to builders AND drops reverting txs (no wasted gas on a lost race). Reads stay on rpcUrl.
   settleRpcUrl: opt('SETTLE_RPC_URL', 'https://rpc.flashbots.net'),
   // Ordered private endpoints to try for a settle. A single endpoint is a single point of failure and a
-  // failed submission throws away an already-paid proof, so fall through to the next on error. All entries
-  // must be PRIVATE (the bound fee is stealable in a public mempool).
-  settleRpcUrls: opt('SETTLE_RPC_URLS', 'https://rpc.flashbots.net,https://rpc.mevblocker.io')
-    .split(',').map((u) => u.trim()).filter(Boolean),
-  // Last-resort public submission, tried only after every private endpoint refused. The worst case is a
-  // searcher copying the proof to collect the bound fee — the user's op still settles either way, which
-  // beats discarding a proof the relay has already paid for. SETTLE_ALLOW_PUBLIC=0 to keep it private-only.
-  settleAllowPublic: opt('SETTLE_ALLOW_PUBLIC', '1') !== '0',
+  // failed submission throws away an already-paid proof, so fall through to the next on error. A settle pays
+  // its fee to whoever sends it, so an endpoint that shows the calldata to searchers invites a copy landed
+  // first for the fee, and ours then reverts: each known endpoint is used in its mode that shares only the
+  // hash and never lands a reverting transaction (privateSettleUrl).
+  settleRpcUrls: opt('SETTLE_RPC_URLS', 'https://rpc.flashbots.net/fast?hint=hash,https://rpc.mevblocker.io/fullprivacy')
+    .split(',').map((u) => u.trim()).filter(Boolean).map(privateSettleUrl),
+  // Public submission, tried only after every private endpoint refused. Off unless SETTLE_ALLOW_PUBLIC=1: in
+  // the public mempool the settle is copied for its fee, and our own transaction lands as a revert.
+  settleAllowPublic: opt('SETTLE_ALLOW_PUBLIC', '0') === '1',
   // Max transfers to batch into one settle. Gas is per-settle, so members split it; proving is per-op and
   // does not amortize, so the win flattens out — and a bigger batch means a longer proof and more ops lost
   // together if it fails. 1 disables batching.

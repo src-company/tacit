@@ -56,8 +56,9 @@ export function spentInputsOf(op) {
   return out;
 }
 
-// A reason string when the job's settle can only revert, else null.
-export async function consumedInputs({ type, op }, { client, pool }) {
+// The first input the job's settle would consume that is already gone, as { kind: 'deposit' | 'nullifier', id,
+// reason }, else null.
+export async function consumedInput({ type, op }, { client, pool }) {
   try {
     if (!op || typeof op !== 'object') return null;
     let reads = 0;
@@ -65,13 +66,35 @@ export async function consumedInputs({ type, op }, { client, pool }) {
       if (++reads > MAX_READS) return null;
       const id = depositIdOf(dep);
       const status = await client.readContract({ address: pool, abi: DEPOSIT_STATUS_ABI, functionName: 'depositStatus', args: [id] });
-      if (Number(status) === DEPOSIT_CONSUMED) return `deposit ${id} was already consumed`;
+      if (Number(status) === DEPOSIT_CONSUMED) return { kind: 'deposit', id, reason: `deposit ${id} was already consumed` };
     }
     for (const nu of new Set(spentInputsOf(op).map(noteNullifier))) {
       if (++reads > MAX_READS) return null;
       const word = await client.getStorageAt({ address: pool, slot: keccak256(concat([nu, NULLIFIER_SPENT_SLOT])) });
-      if (word && word !== '0x' && BigInt(word) !== 0n) return `input nullifier ${nu} is already spent`;
+      if (word && word !== '0x' && BigInt(word) !== 0n) return { kind: 'nullifier', id: nu, reason: `input nullifier ${nu} is already spent` };
     }
   } catch { return null; }
   return null;
 }
+
+// A reason string when the job's settle can only revert, else null.
+export async function consumedInputs(job, ctx) {
+  const gone = await consumedInput(job, ctx);
+  return gone ? gone.reason : null;
+}
+
+// The deposits a relayed wrap-family op consumes that the pool has not recorded at all. Unreadable reads count as
+// present, so this only ever names a deposit the chain says is not there.
+export async function unlandedDeposits({ type, op }, { client, pool }) {
+  const out = [];
+  try {
+    if (!op || typeof op !== 'object') return out;
+    for (const dep of depositsOf(type, op).slice(0, MAX_READS)) {
+      const id = depositIdOf(dep);
+      const status = await client.readContract({ address: pool, abi: DEPOSIT_STATUS_ABI, functionName: 'depositStatus', args: [id] });
+      if (Number(status) === 0) out.push(id);
+    }
+  } catch { return []; }
+  return out;
+}
+
