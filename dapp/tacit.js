@@ -77,7 +77,7 @@ import { makeConfidentialPoolUx, setExternalTacHolders } from './confidential-po
 import { makeBurnDepositUx } from './burndep-ux.js';
 import { renderConfidentialPoolTab } from './confidential-pool-tab.js';
 import { renderLanePanel } from './cross-chain-lane.js';
-import { renderCdpTab } from './confidential-defi-tab.js';
+import { renderCdpTab, announceCbtcBonds } from './confidential-defi-tab.js';
 import { renderOtcTab } from './confidential-otc-tab.js';
 import { renderSendTab } from './confidential-send-tab.js';
 import { renderSwapTab } from './confidential-swap-tab.js';
@@ -3662,10 +3662,18 @@ function _ownLocksReserved(a) {
     const p = _poolUxSingleton().syncCbtcLockReservations(wallet.priv);
     _lockSync = { addr: a, p };
     p.catch((e) => { if (_lockSync.p === p) _lockSync.p = null; console.warn('[tacit] could not rebuild the cBTC lock reservations:', e?.message || e); });
+    p.then(_bondNews, () => {});
   }
   return _lockSync.p;
 }
-
+// Once a session, after the reservations: a bond forfeit to the insurance reserve, or one that can come back, is told as a
+// toast, so it is seen without opening the Borrow tab (which lists every bond).
+async function _bondNews() {
+  try {
+    const ux = _poolUxSingleton(), ext = ethWallet?.state?.address ? '0x' + String(ethWallet.state.address).replace(/^0x/, '') : null;
+    announceCbtcBonds(await ux.cbtcBonds(wallet.priv, { accounts: [ext].filter(Boolean) }), { tacit: ux.account(wallet.priv).address, ext });
+  } catch { /* the Borrow tab reads them again */ }
+}
 async function getUtxos(a, onProgress) {
   await _ownLocksReserved(a)?.catch(() => {});
   // Indexer-lag guard: filter out any UTXOs we *know* are spent in mempool
@@ -46218,6 +46226,17 @@ function _renderCdpTab() {
   renderCdpTab(wallet, {
     unlock: async () => { await ensurePrivkey(); _renderCdpTab(); },
     isUnlockCancelled,
+    // The key's Ethereum wallet, when it came from one (no prompt): its bonds show beside the Tacit account's.
+    ethAccount: () => (ethWallet?.state?.address ? '0x' + String(ethWallet.state.address).replace(/^0x/, '') : null),
+    // A call from that wallet, in one prompt: taking back a bond it posted.
+    ethSend: async ({ to, data }) => {
+      const { provider, address } = await ethWallet.connect();
+      if (String(await provider.request({ method: 'eth_chainId' })).toLowerCase() !== '0x1') {
+        try { await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x1' }] }); }
+        catch { throw new Error('Switch your wallet to Ethereum mainnet to take the bond back.'); }
+      }
+      return provider.request({ method: 'eth_sendTransaction', params: [{ from: '0x' + address, to, data }] });
+    },
     // ETH from a connected browser wallet on Ethereum mainnet, in one prompt: how the Tacit account is topped up.
     ethPay: async ({ to, value }) => {
       const { provider, address } = await ethWallet.connect();

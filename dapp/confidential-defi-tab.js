@@ -372,6 +372,24 @@ async function cbtcLockProgress(ux, rec) {
   };
 }
 
+// Bond news, each told once per account: a bond forfeit to the insurance reserve, and one that can come back. The Borrow
+// tab shows both for as long as they hold; this is the nudge that sends someone there. `r` is pool-ux cbtcBonds.
+export function announceCbtcBonds(r, { tacit, ext = null } = {}) {
+  if (!tacit) return;
+  const key = `tacit-cbtc-bonds-seen-v1:${String(tacit).toLowerCase()}`;
+  let seen;
+  try { seen = new Set(JSON.parse(localStorage.getItem(key) || '[]')); } catch { seen = new Set(); }
+  const mine = new Set([tacit, ext].filter(Boolean).map((a) => String(a).toLowerCase()));
+  const news = [];
+  for (const l of (r && r.locks) || []) {
+    if (l.state === 'forfeit' && !seen.has(`lost:${l.op}`)) news.push([`lost:${l.op}`, `A cBTC lock was spent on Bitcoin before its cBTC was redeemed, so its ${wei6(l.total)} wstETH bond goes to the insurance reserve. See Borrow.`, 'error']);
+    const back = l.bonds.filter((b) => b.take && mine.has(b.account));
+    if (back.length && !seen.has(`take:${l.op}`)) news.push([`take:${l.op}`, `A cBTC bond of ${wei6(back.reduce((t, b) => t + b.share, 0n))} wstETH can come back to you. Take it back under Borrow.`, 'ok']);
+  }
+  for (const [id, msg, kind] of news) { notify(msg, kind); seen.add(id); }
+  if (news.length) { try { localStorage.setItem(key, JSON.stringify([...seen].slice(-200))); } catch { /* told again next time */ } }
+}
+
 // Sats sitting in live locks are still the user's Bitcoin, but they are not spendable change: coin selection
 // skips them, so without this line the wallet simply looks smaller than the chain says it is.
 function renderReservedCbtcLocks() {
@@ -397,6 +415,52 @@ function wireCbtc(wallet, ux, helpers = {}) {
   if (wallet && wallet.priv) {
     ux.syncCbtcLockReservations(wallet.priv).then(renderReservedCbtcLocks).catch(() => {});
     recoverLocks().catch(() => {});
+    renderBonds();
+  }
+
+  // Every lock this wallet made and every bond its accounts posted, however posted (pool-ux cbtcBonds): what each bond does
+  // now, a way to take back each one that can come back, and a notice for one forfeit to the insurance reserve.
+  async function renderBonds() {
+    const box = el('cdp-cbtc-bonds');
+    if (!box || !wallet || !wallet.priv) return;
+    const ext = helpers.ethAccount ? helpers.ethAccount() : null;
+    let r;
+    try { r = await ux.cbtcBonds(wallet.priv, { accounts: [ext].filter(Boolean) }); } catch { return; }
+    const tacit = String(ux.account(wallet.priv).address).toLowerCase();
+    const via = (a) => (a === tacit ? 'tacit' : ext && a === String(ext).toLowerCase() ? 'wallet' : null);
+    const locks = r.locks.filter((l) => l.total > 0n || l.bonds.length);
+    const what = { pending: 'not minted yet, can come back', backing: 'backs your cBTC until you redeem', free: 'can come back', forfeit: 'forfeit', slashed: 'in the insurance reserve' };
+    const link = (l) => (l.txid ? `<a href="https://mempool.space/tx/${esc(l.txid)}" target="_blank" rel="noopener">${esc(l.txid.slice(0, 10))}…</a>` : `<code>${esc(l.op.slice(0, 12))}…</code>`);
+    const note = (text) => `<div style="border-left:2px solid var(--red);padding:6px 10px;margin:4px 0;font-size:12px;">${text}</div>`;
+    box.innerHTML = !locks.length ? '' : '<div style="font-weight:600;margin:12px 0 4px;font-size:12.5px;">Your bonds</div>'
+      + locks.filter((l) => l.state === 'forfeit').map((l) => note(`Lock ${link(l)} was spent on Bitcoin before its cBTC was redeemed, so its ${wei6(l.total)} wstETH bond can't come back. It goes to the insurance reserve, which backs the ${esc(String(l.vBtc))} sats of cBTC minted on it.`)).join('')
+      + locks.filter((l) => l.health && !l.health.healthy).map((l) => note(`Lock ${link(l)}: its bond is ${wei6(l.health.want - l.health.have)} wstETH short of what the engine asks for${l.health.due ? `. Top it up by ${esc(new Date(Number(l.health.due) * 1000).toLocaleString())}` : ''}, or it can go to the insurance reserve.`)).join('')
+      + locks.map((l, i) => `<div class="muted" style="font-size:12px;display:flex;justify-content:space-between;gap:10px;margin:4px 0;"><span>${l.vBtc ? `${esc(String(l.vBtc))} sats` : 'Lock'} · ${link(l)}${l.everyday ? ' · everyday address' : ''}</span><span${l.state === 'forfeit' ? ' style="color:var(--red)"' : ''}>${wei6(l.total)} wstETH · ${what[l.state]}</span></div>`
+        + l.bonds.map((b, j) => (b.take && via(b.account) ? `<button class="cbtc-bond-take" data-l="${i}" data-b="${j}" style="margin:0 0 6px;">Take back ${wei6(b.share)} wstETH to your ${via(b.account) === 'tacit' ? 'Tacit account' : 'wallet'}</button>` : '')).join('')).join('')
+      + (locks.some((l) => l.everyday) ? '<div class="muted" style="font-size:11.5px;margin-top:4px;">Some locks hold their BTC at your everyday Bitcoin address, where early locks put it. This app never spends it, but another Bitcoin wallet using this key would see it as spendable, and spending it gives up its bond. Keep this key out of other Bitcoin wallets until you redeem.</div>' : '')
+      + (locks.length ? '<div class="muted" style="font-size:11.5px;margin-top:4px;">A bond comes back to the account that posted it before its lock is minted against, or once the lock is redeemed. Spending a lock\'s BTC any other way gives its bond to the insurance reserve.</div>' : '');
+    box.querySelectorAll('.cbtc-bond-take').forEach((btn) => btn.onclick = async () => {
+      const l = locks[Number(btn.dataset.l)], b = l && l.bonds[Number(btn.dataset.b)];
+      if (!b || !b.take) return;
+      btn.disabled = true;
+      try {
+        if (statusEl) statusEl.textContent = `Taking back a ${wei6(b.share)} wstETH bond…`;
+        let txHash;
+        if (via(b.account) === 'tacit') ({ txHash } = await ux.sendPreparedTx({ walletPriv: wallet.priv, to: b.take.to, value: 0n, gasLimit: 300000n, calldata: b.take.data }));
+        else if (helpers.ethSend) txHash = await helpers.ethSend({ to: b.take.to, data: b.take.data });
+        else throw new Error('connect the wallet that posted this bond to take it back');
+        const rcpt = await ux.waitReceipt(txHash);
+        if (rcpt.status !== '0x1') throw new Error(`the take-back reverted (${txHash})`);
+        if (statusEl) statusEl.innerHTML = `Bond taken back as wstETH (<code class="addr">${esc(txHash)}</code>).`;
+        notify('cBTC bond taken back', 'ok');
+      } catch (e) {
+        const m = formatSpecErr(e, 'cBTC bond');
+        if (statusEl) statusEl.textContent = m; notify(m, 'error');
+      } finally {
+        renderBonds();
+      }
+    });
+    announceCbtcBonds(r, { tacit, ext });
   }
 
   // Locks this key made that this browser holds no record of (another device, cleared storage, or a lock made on weld)
@@ -477,6 +541,7 @@ function wireCbtc(wallet, ux, helpers = {}) {
       if (rcpt.status !== '0x1') throw new Error(`the bond transaction reverted (${txHash})`);
       if (statusEl) statusEl.innerHTML = `Bond posted (<code class="addr">${esc(txHash)}</code>).`;
       notify('cBTC bond posted', 'ok');
+      renderBonds();
     } catch (e) {
       const m = /insufficient ETH/i.test(String(e && e.message))
         ? `Your Tacit account ${ux.account(wallet.priv).address} needs more ETH for the bond and its gas. Send ETH to it on Ethereum from any wallet or exchange, then post the bond again.`
@@ -691,6 +756,7 @@ export async function renderCdpTab(wallet, helpers = {}) {
       </div>
       <div id="cdp-cbtc-pending" style="margin-top:4px;"></div>
       <div id="cdp-cbtc-reserved" class="muted" style="font-size:11.5px;margin-top:4px;"></div>
+      <div id="cdp-cbtc-bonds"></div>
       <div id="cdp-cbtc-status" class="muted field-status" style="margin-top:6px;"></div>
     </div>
 
