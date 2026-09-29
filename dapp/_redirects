@@ -1,0 +1,19 @@
+# Static-host redirect config (Cloudflare Pages / Netlify format).
+#
+# NOT LIVE ON THE CURRENT HOST, for the same reason as _headers: tacit.finance serves from Render, whose
+# static-site product does not read this file — redirects there are set in the Render Dashboard only. Keep
+# this as the canonical list to copy into that dashboard, and update it here when it changes.
+#
+# Why this file exists at all: nothing about these redirects is automatic on Render. Every bare path that
+# works today has its own dashboard entry, which is easy to forget when adding a page. The evidence, taken
+# from the live site:
+#
+#   /sats /weld /ceremony  301 → their directory, because each has an entry
+#   /verify                301 → /verify.html, likewise
+#   /tac                   200, falling through to the SPA catch-all and serving the whole dapp
+#
+# /tac has a directory with an index.html AND a tac.html stub beside it, and still does not redirect, which
+# is what rules out both "directory index" and "clean URL" being automatic. A new page needs its line here
+# and the matching entry in the dashboard, or the bare URL people type and share lands on the wrong page.
+
+/tac      /tac/      301

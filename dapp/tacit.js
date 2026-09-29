@@ -60407,6 +60407,11 @@ async function renderHoldings() {
       const tacitscanLink = (safeAidForScan && NET.name === 'mainnet')
         ? ` <a href="https://www.tacitscan.io/assets/${escapeHtml(safeAidForScan)}" target="_blank" rel="noopener noreferrer" style="color:var(--ink-mid);text-decoration:underline;font-size:11px;" title="View this asset on tacitscan (independent block explorer)">tacitscan ↗</a>`
         : '';
+      // TAC is the only asset the Bitcoin-native shielded pool takes at launch (SPEC §3.10), so its card is
+      // the one place to point at /tac. Mainnet only — the pool is not deployed anywhere else.
+      const shieldLink = (h.assetIdHex === CANONICAL_TAC_ASSET_ID_HEX && NET.name === 'mainnet')
+        ? `<div style="margin-top:8px;"><a href="/tac/" style="display:inline-flex;align-items:center;gap:6px;font-size:11px;text-decoration:none;border:1px solid var(--ink-soft,var(--ink-mid));padding:5px 10px;color:var(--ink);" title="Shield TAC in the Bitcoin-native pool: hidden amounts, unlinked payments">Shield this privately →</a></div>`
+        : '';
       card.innerHTML = `
         <div class="head" style="display:flex;align-items:center;gap:12px;">
           <span data-region="avatar" style="display:contents;">${avatarHTML(null, h.assetIdHex, h.ticker)}</span>
@@ -60425,6 +60430,7 @@ async function renderHoldings() {
         ${isPetchRooted ? `<div class="muted" style="margin-top:6px;font-size:10px;line-height:1.5;">Permissionless fair-launch — cumulative supply is publicly observable from chain alone. <strong>This is a deliberate trade-off vs. confidential CETCH supply.</strong> Per-holder balances stay confidential after the first transfer.</div>` : ''}
         <div data-region="description">${descriptionHTML(extras)}</div>
         <div data-region="external-url">${externalUrlHTML(extras)}</div>
+        ${shieldLink}
         ${h.ghosts.length ? `<div class="warn" style="margin-top:10px;font-size:11px;">⚠ ${h.ghosts.length} UTXO${h.ghosts.length>1?'s':''} hold commitments this wallet can't open. Try ↻ Rescan, or import a share-link for legacy/incompatible sends.</div>` : ''}
         ${h.pending && h.pending.length ? (() => {
           // Pending T_PMINT mints split into two sub-states: (a) unconfirmed
@@ -60969,11 +60975,23 @@ async function renderHoldings() {
           const target = holdings.get(aid);
           if (!target) return;
           const ux = _burndepUxSingleton();
-          const candidates = target.utxos.map((u) => ({
-            txid: u.utxo.txid, vout: u.utxo.vout, sats: u.utxo.value, assetId: aid,
-            amount: u.amount, blinding: u.blinding,
-            confirmed: !!(u.utxo.status && u.utxo.status.confirmed), stealth: !!u.stealthTweakedSk,
-            stealthTweakedSk: u.stealthTweakedSk || null,
+          // A note carries whatever status the scan that found it recorded, and that can be stale or absent:
+          // a stealth credit discovered while its transaction was still in the mempool keeps `confirmed:
+          // false` until something rebuilds it, and a rehydrated one can carry no status at all. Both read
+          // here as "unconfirmed" and block the bridge on a note that settled hours ago. So trust a positive
+          // and re-check anything else against the chain — getTx caches confirmed transactions forever, so
+          // this costs one round-trip the first time a note is still genuinely pending, and nothing after.
+          const candidates = await Promise.all(target.utxos.map(async (u) => {
+            let confirmed = !!(u.utxo.status && u.utxo.status.confirmed);
+            if (!confirmed) {
+              try { const t = await getTx(u.utxo.txid); confirmed = !!(t && t.status && t.status.confirmed); } catch {}
+            }
+            return {
+              txid: u.utxo.txid, vout: u.utxo.vout, sats: u.utxo.value, assetId: aid,
+              amount: u.amount, blinding: u.blinding,
+              confirmed, stealth: !!u.stealthTweakedSk,
+              stealthTweakedSk: u.stealthTweakedSk || null,
+            };
           }));
           const eligible = ux.eligibleNotes(candidates);
           if (!eligible.length) { toast('No TAC notes to bridge yet.', 'error'); return; }

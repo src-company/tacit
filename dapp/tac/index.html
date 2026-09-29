@@ -231,13 +231,13 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
   </header>
 
   <section class="hero">
-    <h1>TAC that keeps<br><em>its mouth shut.</em></h1>
-    <p>A Bitcoin-native shielded pool for TAC. Amounts are hidden, senders and receivers are unlinked, and every proof is made on your own device. No bridge, no custodian, no multisig.</p>
+    <h1>TAC, <em>shielded</em>.</h1>
+    <p>A pool on Bitcoin itself. Move TAC in, pay anyone without revealing the amount or who received it, and take it out when you want. Proofs are made on your own device — there is no bridge, no custodian and no multisig anywhere in it.</p>
   </section>
 
   <div class="strip" id="strip">
     <div><span class="v num" id="s-set">—</span><span class="k">Anonymity set</span></div>
-    <div><span class="v num" id="s-spends">—</span><span class="k">Private spends</span></div>
+    <div><span class="v num" id="s-spends">—</span><span class="k">Private transfers</span></div>
     <div><span class="v num" id="s-height">—</span><span class="k">Indexed block</span></div>
     <div><span class="v" id="s-proof">—</span><span class="k">Proof system</span></div>
   </div>
@@ -263,7 +263,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
     <div id="pane-shield">
       <div class="lbl"><label for="shield-pick">TAC to move into the pool</label></div>
       <div class="amt text"><select id="shield-pick" style="flex:1;min-width:0;font:400 14px/1.4 var(--mono);color:var(--ink);background:none;border:0;padding:14px;outline:none"><option>Connect a wallet</option></select></div>
-      <p class="note">A shield moves one whole note in at a time, so nothing about the split is public. Once inside, you can send or withdraw any partial amount you like. Your wallet pays the Bitcoin fee for this step — a shield always funds its own carrier.</p>
+      <p class="note">A whole note goes in at once — splitting it first would publish the split. Once it is in the pool you can send or take out any amount you like. This step pays its own Bitcoin fee, so the wallet needs a little BTC.</p>
       <p class="note" id="shield-stealth-note"></p>
       <button class="btn" id="btn-shield">Shield TAC</button>
       <div class="status" id="st-shield"></div>
@@ -275,7 +275,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
       <div class="lbl"><label for="send-amt">Amount</label><button class="link" id="send-max" type="button">max</button></div>
       <div class="amt"><input id="send-amt" inputmode="decimal" autocomplete="off" placeholder="0.00"><span class="u"><img class="tk sm" src="/tac-logo.png" alt="">TAC</span></div>
       <div class="fiat" id="send-sats"></div>
-      <p class="note">Nothing about this payment is public: not the amount, not who receives it. Partial amounts are fine — the rest stays shielded as change.</p>
+      <p class="note">The amount and the recipient stay hidden. Send any part of your balance; the remainder stays in the pool as change.</p>
       <button class="btn" id="btn-send">Send privately</button>
       <div class="status" id="st-send"></div>
     </div>
@@ -290,7 +290,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
         <div class="lbl"><label for="exit-amt">Amount to withdraw</label><button class="link" id="exit-max" type="button">max</button></div>
         <div class="amt"><input id="exit-amt" inputmode="decimal" autocomplete="off" placeholder="0.00"><span class="u"><img class="tk sm" src="/tac-logo.png" alt="">TAC</span></div>
       <div class="fiat" id="exit-sats"></div>
-        <p class="note">Leaves the pool as an ordinary TAC note in this wallet, where it is public again. Withdraw part and the rest stays shielded. This step funds its own Bitcoin fee.</p>
+        <p class="note">Comes back as ordinary TAC in this wallet, public again from that point on. Take out part and the rest stays shielded. This step pays its own Bitcoin fee.</p>
         <button class="btn" id="btn-exit">Withdraw TAC</button>
         <div class="status" id="st-exit"></div>
       </div>
@@ -305,7 +305,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
     <div id="pane-receive" hidden>
       <p class="eyebrow">Your pool address</p>
       <div class="amt text"><input id="recv-addr" readonly value="Connect a wallet"></div>
-      <p class="note">Share this to be paid privately. It reveals nothing about your balance, and every payment to it lands at a different one-time key that only you can find.</p>
+      <p class="note">Give this out to be paid. It says nothing about what you hold, and each payment to it arrives at a different one-time key that only your wallet can find.</p>
       <div class="row2">
         <button class="btn ghost" id="btn-copy">Copy address</button>
         <button class="btn ghost" id="btn-scan">Scan for payments</button>
@@ -317,10 +317,10 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
   <section class="panel">
     <p class="eyebrow">What is and isn't public</p>
     <ul class="facts">
-      <li><b>Public</b><span>That a shield, a spend or a withdrawal happened, and in which Bitcoin block. The number of notes in the pool.</span></li>
-      <li><b>Hidden</b><span>Every amount — inside the pool and at its edges. Which note a spend consumed. Who received it. Your balance.</span></li>
-      <li><b>Yours only</b><span>The pool's total value is not published anywhere, because no amount in it ever is. Only you can add up your own notes.</span></li>
-      <li><b>Trust</b><span>No custodian, federation or multisig. Proofs verify against a key pinned in this page, and the indexer replays Bitcoin itself.</span></li>
+      <li><b>Public</b><span>That something happened, and in which Bitcoin block. How many notes the pool holds.</span></li>
+      <li><b>Hidden</b><span>Every amount, inside the pool and at both edges. Which note was spent, and who was paid. What you hold.</span></li>
+      <li><b>Not even us</b><span>Nobody publishes the pool's total, because no amount in it is ever published. Only you can add up your own notes.</span></li>
+      <li><b>Trust</b><span>No custodian, federation or multisig. Proofs check against a key pinned in this page, and the indexer replays Bitcoin itself rather than trusting a feed.</span></li>
     </ul>
   </section>
 
