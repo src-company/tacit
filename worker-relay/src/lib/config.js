@@ -373,6 +373,11 @@ export const CFG = {
   // ── Replenish / monitor thresholds ──
   proveBalanceFloor: num('PROVE_BALANCE_FLOOR', 50), // PROVE, whole tokens
   ethGasBufferWei: BigInt(opt('ETH_GAS_BUFFER_WEI', '30000000000000000')), // 0.03 ETH
+  // Prover credit the replenish loop keeps on the network. Under the floor, ETH above the gas buffer (not only above
+  // ETH_SWEEP_ABOVE_WEI) turns into PROVE, at most PROVE_TOPUP_MAX_WEI of it a pass, so proving never stops for want of
+  // credit while the wallet can still pay gas.
+  proveCreditFloorWei: BigInt(opt('PROVE_CREDIT_FLOOR_WEI', '100000000000000000000')), // 100 PROVE
+  proveTopUpMaxWei: BigInt(opt('PROVE_TOPUP_MAX_WEI', '20000000000000000')), // 0.02 ETH
   // A floor says "low"; runway says WHEN. The relay stalls when it can no longer afford its next transaction, so
   // the actionable number is how many DAYS the wallet lasts at its real burn and the live gas price — which
   // moves with the market, where a fixed wei floor does not. Critical below the first, a warning below the second.

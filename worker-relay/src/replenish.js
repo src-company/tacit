@@ -15,6 +15,7 @@
 import { getAddress, maxUint256 } from 'viem';
 import { CFG, ADDR, OP_GAS, DEFAULT_OP_GAS, OP_PROVE, MAINTENANCE_RUNS_PER_DAY } from './lib/config.js';
 import { withNonceRetry as _withNonceRetry } from './lib/nonce-retry.js';
+import { proverCredit } from './lib/prover.js';
 import {
   publicClient, relayWallet, fundedWallets, ethUsdPrice, ERC20_ABI, VAPP_ABI, ZQUOTER_ABI, ZROUTER_ABI,
   PROVE, VAPP, ZQUOTER, ZROUTER,
@@ -387,6 +388,12 @@ export async function replenishOnce({ roles = null, convertToProve = true } = {}
   const earners = roles ? fundedWallets.filter((w) => w.roles.some((r) => roles.includes(r))) : fundedWallets;
   if (!earners.length) { log(`no funded wallet holds role ${roles.join('/')} in this service — nothing to do`); return; }
 
+  // Proving stops outright when the network credit runs out, so a low credit outranks keeping a large ETH float:
+  // under the floor, ETH above the gas buffer goes to PROVE this pass (capped), not only ETH above the sweep line.
+  const credit = convertToProve ? await proverCredit() : null;
+  const creditLow = credit != null && credit < CFG.proveCreditFloorWei;
+  if (credit != null) log(`prover credit ${(Number(credit) / 1e18).toFixed(2)} PROVE${creditLow ? ` — under the ${(Number(CFG.proveCreditFloorWei) / 1e18).toFixed(0)} PROVE floor, buying from ETH above the gas buffer` : ''}`);
+
   for (const { address: owner, wallet, roles: held } of earners) {
     const toSink = owner.toLowerCase() !== sinkAddr.toLowerCase();
     log(`— earner ${owner} (${held.join('+')})${toSink ? ` -> sink ${sinkAddr}` : ' (is the sink)'}`);
@@ -417,10 +424,12 @@ export async function replenishOnce({ roles = null, convertToProve = true } = {}
           // Only genuine excess becomes PROVE. Above the gas buffer is not enough on its own: a manual
           // top-up sits there too, and it is gas by intent. Convert what exceeds ETH_SWEEP_ABOVE_WEI.
           const remaining = await publicClient.getBalance({ address: owner });
-          const keep = CFG.ethSweepAboveWei > buffer ? CFG.ethSweepAboveWei : buffer;
-          const excess = remaining > keep ? remaining - keep : 0n;
+          const keep = creditLow ? buffer : CFG.ethSweepAboveWei > buffer ? CFG.ethSweepAboveWei : buffer;
+          let excess = remaining > keep ? remaining - keep : 0n;
+          if (creditLow && excess > CFG.proveTopUpMaxWei) excess = CFG.proveTopUpMaxWei;
           if (excess < MIN_ETH_SWEEP) { log(`  ETH ${remaining} within the gas float (<= ${keep} + dust) — keeping as gas`); continue; }
-          const toProve = excess - await sendBuybackShare(excess, wallet);
+          // Credit short: all of it buys PROVE; the buyback share comes out of genuine surplus only.
+          const toProve = creditLow ? excess : excess - await sendBuybackShare(excess, wallet);
           if (toProve < MIN_ETH_SWEEP) continue;
           const q = await quote(ETH, PROVE, toProve, sinkAddr); // PROVE lands on the sink, which deposits it
           const ethUsd = await ethUsdPrice();

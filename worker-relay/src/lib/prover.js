@@ -258,6 +258,17 @@ const PEROP = {
   fastlane: 'exec-fastlane', crosslane: 'exec-crosslane',
 };
 
+// This network account's prover credit, in PROVE wei (the exec-balance binary); null when it cannot be read.
+export async function proverCredit({ timeoutMs = 30_000 } = {}) {
+  try {
+    await mkdir(CFG.proverOut, { recursive: true });
+    const bin = path.join(path.dirname(CFG.execBin), 'exec-balance');
+    const { code, out } = await run(bin, { env: proverEnv(), cwd: CFG.proverOut, timeoutMs, tag: 'exec:balance' });
+    const m = /BALANCE=(\d+)/.exec(out);
+    return code === 0 && m ? BigInt(m[1]) : null;
+  } catch { return null; }
+}
+
 export async function proveSettle({ type, op, memos = [], timeoutMs }) {
   // Resolve `type` to its binary before anything touches the filesystem. `type` originates in the worker's
   // job queue and is used to build the fixture path (`${type}_op.json`), so the allowlist above is the only

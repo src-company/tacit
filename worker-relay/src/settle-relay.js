@@ -24,7 +24,7 @@ import { CFG, OP_GAS, DEFAULT_OP_GAS, OP_PROVE } from './lib/config.js';
 import { confidentialJob, confidentialBatch, confidentialAck, confidentialActivateAck, heartbeat, heartbeatIdle } from './lib/worker-client.js';
 import { proveSettle } from './lib/prover.js';
 import { assertMemosMatchProof } from './lib/memo-root.js';
-import { consumedInput, unlandedDeposits } from './lib/spent-precheck.js';
+import { consumedInput, unlandedDeposits, spentInputsOf, noteNullifier } from './lib/spent-precheck.js';
 import { findCarrier, isRevert } from './lib/landed-elsewhere.js';
 import { cbtcMintBlocker } from './lib/cbtc-mint-precheck.js';
 import { cdpBlocker } from './lib/cdp-precheck.js';
@@ -462,56 +462,70 @@ async function batchCycle() {
   if (!admitted.length) return true; // we did work (refusing), so the loop should poll again immediately
   jobs = [];
   for (const j of admitted) if (!(await skipConsumed(j))) jobs.push(j);
-  if (!jobs.length) return true;
-  const ids = jobs.map((j) => j.jobId);
-  // These jobs are already CLAIMED, so they must be carried to a terminal state here — releasing them by
-  // acking an error would fail a user's op merely for arriving alone. A lone job is proved on the ordinary
-  // single-op path, which keeps the common case off the batch binary entirely.
-  if (jobs.length === 1) {
-    await settleOne(jobs[0]);
+  // Two members spending the same note can never prove together (the second is a double spend); in practice it is a
+  // user retrying a send that looked stuck. The first stays in the batch, and the rest settle on their own once the
+  // batch is done, where they resolve against what the first one did.
+  const spent = new Set(), later = [];
+  jobs = jobs.filter((j) => {
+    const nus = spentInputsOf(j.op || {}).map((n) => String(noteNullifier(n)).toLowerCase());
+    if (nus.some((n) => spent.has(n))) { later.push(j); return false; }
+    for (const n of nus) spent.add(n);
     return true;
-  }
-  // The batch is proved as `batchtransfer`, which is a TRANSFER-specific guest op — it folds transfer
-  // witnesses and nothing else. `nextBatch` defaults to types:['transfer'], so today the two agree, but
-  // the agreement is implicit: it lives in a default argument on one side of an HTTP boundary and a
-  // hardcoded string on the other. Widening the claim types without a heterogeneous guest batch type
-  // would quietly feed non-transfers into batchtransfer.
-  //
-  // So check it here, where the op is actually built. These jobs are already claimed, so a mismatch is
-  // released back rather than failed — the ordinary single-op path settles them correctly.
-  const wrongType = jobs.filter((j) => j.type !== 'transfer');
-  if (wrongType.length) {
-    log(`REFUSING to batch: ${wrongType.length} non-transfer job(s) claimed (${[...new Set(wrongType.map((j) => j.type))].join(', ')}) — batchtransfer folds transfers only`);
-    for (const id of ids) await confidentialAck({ jobId: id, error: 'released: non-transfer job claimed into a transfer batch' });
-    return true;
-  }
+  });
+  try {
+    if (!jobs.length) return true;
+    const ids = jobs.map((j) => j.jobId);
+    // These jobs are already CLAIMED, so they must be carried to a terminal state here — releasing them by
+    // acking an error would fail a user's op merely for arriving alone. A lone job is proved on the ordinary
+    // single-op path, which keeps the common case off the batch binary entirely.
+    if (jobs.length === 1) {
+      await settleOne(jobs[0]);
+      return true;
+    }
+    // The batch is proved as `batchtransfer`, which is a TRANSFER-specific guest op — it folds transfer
+    // witnesses and nothing else. `nextBatch` defaults to types:['transfer'], so today the two agree, but
+    // the agreement is implicit: it lives in a default argument on one side of an HTTP boundary and a
+    // hardcoded string on the other. Widening the claim types without a heterogeneous guest batch type
+    // would quietly feed non-transfers into batchtransfer.
+    //
+    // So check it here, where the op is actually built. These jobs are already claimed, so a mismatch is
+    // released back rather than failed — the ordinary single-op path settles them correctly.
+    const wrongType = jobs.filter((j) => j.type !== 'transfer');
+    if (wrongType.length) {
+      log(`REFUSING to batch: ${wrongType.length} non-transfer job(s) claimed (${[...new Set(wrongType.map((j) => j.type))].join(', ')}) — batchtransfer folds transfers only`);
+      for (const id of ids) await confidentialAck({ jobId: id, error: 'released: non-transfer job claimed into a transfer batch' });
+      return true;
+    }
 
-  log(`batching ${jobs.length} transfers into one settle: ${ids.map((i) => i.slice(0, 10)).join(' ')}`);
-  const op = {
-    chainBinding: jobs[0].op.chainBinding,
-    spendRoot: jobs[0].op.spendRoot,
-    ops: jobs.map((j) => j.op),
-  };
-  const memos = jobs.flatMap((j) => (Array.isArray(j.memos) ? j.memos : []));
-  let proof;
-  try {
-    proof = await proveSettle({ type: 'batchtransfer', op, memos, timeoutMs: CFG.settleJobTimeoutSecs * 1000 });
-  } catch (e) {
-    // A batch proof covers every member, so one member that cannot prove fails it; settle each member alone
-    // instead, so only that member fails.
-    log(`batch prove failed, settling members one by one: ${e.message}`);
-    for (const j of jobs) await settleOne(j);
+    log(`batching ${jobs.length} transfers into one settle: ${ids.map((i) => i.slice(0, 10)).join(' ')}`);
+    const op = {
+      chainBinding: jobs[0].op.chainBinding,
+      spendRoot: jobs[0].op.spendRoot,
+      ops: jobs.map((j) => j.op),
+    };
+    const memos = jobs.flatMap((j) => (Array.isArray(j.memos) ? j.memos : []));
+    let proof;
+    try {
+      proof = await proveSettle({ type: 'batchtransfer', op, memos, timeoutMs: CFG.settleJobTimeoutSecs * 1000 });
+    } catch (e) {
+      // A batch proof covers every member, so one member that cannot prove fails it; settle each member alone
+      // instead, so only that member fails.
+      log(`batch prove failed, settling members one by one: ${e.message}`);
+      for (const j of jobs) await settleOne(j);
+      return true;
+    }
+    try {
+      const txHash = await submitSettle(proof, memos, `batch(${jobs.length})`);
+      for (const id of ids) await confidentialAck({ jobId: id, txHash });
+      log(`batch settled: n=${jobs.length} tx=${txHash}`);
+    } catch (e) {
+      log(`batch settle failed, settling members one by one: ${e.message}`);
+      for (const j of jobs) await settleOne(j);
+    }
     return true;
+  } finally {
+    for (const j of later) await settleOne(j);
   }
-  try {
-    const txHash = await submitSettle(proof, memos, `batch(${jobs.length})`);
-    for (const id of ids) await confidentialAck({ jobId: id, txHash });
-    log(`batch settled: n=${jobs.length} tx=${txHash}`);
-  } catch (e) {
-    log(`batch settle failed, settling members one by one: ${e.message}`);
-    for (const j of jobs) await settleOne(j);
-  }
-  return true;
 }
 
 // A settle is paid from the settle wallet after its proof is bought, and a node refuses a send whose worst-case fee
