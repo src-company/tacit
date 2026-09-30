@@ -167,3 +167,23 @@ test('the price field is optional, per asset', () => {
   assert.equal(rates.size, 1, 'only the asset that gave a price has one');
   assert.equal(rates.get('bb'.repeat(32)), 558659n);
 });
+
+test('a priced asset still quotes when the fee rate cannot be read', async () => {
+  const r = createRelayer({
+    network: 'signet',
+    btcKey: new Uint8Array(32).fill(0x11),
+    poolSeed: new Uint8Array(32).fill(0x22),
+    fees: { [ASSET.slice(2)]: 10n },
+    feeUnitsPerSat: { [ASSET.slice(2)]: 1n },
+    pool: { tip: () => 100, rootAt: () => ROOT, isSpent: () => false, chainTip: () => 100 },
+    verifier: { enabled: false, verify: async () => true },
+    chain: {
+      utxos: async () => [40000, 40000].map((v, i) => ({ txid: String(i + 6).repeat(64).slice(0, 64), vout: 0, value: v, status: { confirmed: true } })),
+      feeRate: async () => { throw new Error('every esplora refused'); },
+      broadcast: async () => { throw new Error('offline'); },
+      txStatus: async () => null,
+    },
+  });
+  const q = await r.quote({ asset: ASSET });
+  assert.equal(q.fee, '10', 'an unreadable rate must fall back to the floor, not refuse the quote');
+});

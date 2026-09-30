@@ -398,8 +398,14 @@ export function createRelayer({
     const floor = feeFor(asset);
     const perSat = rateTable.get(strip(asset));
     if (!perSat) return floor;
+    // Pricing needs a live fee rate, and reading one can fail — every esplora refusing is the same outage
+    // that would stop the relayer broadcasting anyway. Not a reason to stop quoting: the floor is what the
+    // fee was before any of this, so fall back to it and say so rather than turning a read into an outage.
+    let rate;
+    try { rate = await currentRate(); }
+    catch (e) { log(`fee rate unavailable (${e?.message || e}) — quoting the configured floor`); return floor; }
     const vb = observedSoloVb ?? soloCarrierVb;
-    const sats = Math.ceil((vb * (await currentRate()) * feeMarginPct) / 100);
+    const sats = Math.ceil((vb * rate * feeMarginPct) / 100);
     const units = BigInt(Math.max(0, sats)) * perSat;
     return units > floor ? units : floor;
   }
