@@ -50,7 +50,15 @@ async function cycle() {
   const onchain = await readReflectionDigest();
   if (onchain && newDigest && onchain.toLowerCase() === String(newDigest).toLowerCase()) {
     log(`newDigest already attested on-chain — re-acking attestedTo=${attestedTo}`);
-    await reflectionAck({ attestedTo, txHash: '', jobId: newDigest });
+    // A refused ack leaves the cursor where it was, so the same batch is served again next cycle. Reporting
+    // that as success spends the whole run re-assembling it and exits clean, which is how this lane stalls
+    // quietly: the stash expires after 24h and the ack can then never succeed without a re-seed.
+    const reack = await reflectionAck({ attestedTo, txHash: '', jobId: newDigest });
+    if (!reack?.ok) {
+      log(`CRITICAL: re-ack refused (status ${reack?.status}) — cursor still at its old height, batch will be re-served`);
+      await heartbeat('reflection', `re-ack refused status=${reack?.status} attestedTo=${attestedTo}`);
+      return false;
+    }
     return true;
   }
 
@@ -235,7 +243,14 @@ async function landAttest({ txHash, newDigest, attestedTo, nonce = null }) {
   }
 
   log(`attested: tx=${txHash} attestedTo=${attestedTo}`);
-  await reflectionAck({ attestedTo, txHash, jobId: newDigest });
+  const ack = await reflectionAck({ attestedTo, txHash, jobId: newDigest });
+  if (!ack?.ok) {
+    // The attest is on-chain; only the cursor failed to move. Saying so loudly is what separates this from
+    // the silent re-serve loop — recoverLostAck picks it up next cycle while the stash is still alive.
+    log(`CRITICAL: ack refused (status ${ack?.status}) after tx=${txHash} — attest landed, cursor did not advance`);
+    await heartbeat('reflection', `ack refused status=${ack?.status} tx=${txHash}`);
+    return false;
+  }
   await heartbeat('reflection', `attested ${newDigest}`);
   return 'acked';
 }

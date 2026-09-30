@@ -304,7 +304,10 @@ export async function payPrivately(tacit, { poolWallet, to, amount, asset, ancho
   const client = poolClientFor(poolWallet.network);
   const info = noRelay ? null : await client.relayInfo().catch(() => null);
   const fee = info?.fees?.['0x' + String(asset).replace(/^0x/, '').toLowerCase()];
-  const q = fee != null ? await client.quote({ asset: '0x' + String(asset).replace(/^0x/, '') }) : null;
+  // A relayer that cannot quote must not end the payment. Nothing has been proved yet and the self-funded
+  // path below needs no relayer, so every refusal it can give here — no free coin to bind, quote table full,
+  // rate limited — means "not now", not "impossible". relayInfo() is already caught for the same reason.
+  const q = fee != null ? await client.quote({ asset: '0x' + String(asset).replace(/^0x/, '') }).catch(() => null) : null;
   say('finding your notes…');
   const a = await prepare(poolWallet, asset, amount + (q ? BigInt(q.fee) : 0n), anchor);
   if (a.wait) return { wait: a.wait, tip: a.tip };

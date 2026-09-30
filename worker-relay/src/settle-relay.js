@@ -186,6 +186,16 @@ async function submitCall(base, label, { gasLimit = null, landed = null } = {}) 
 
   const call = { ...base, ...(gasLimit ? { gas: gasLimit } : gasEst ? { gas: (gasEst * 12n) / 10n } : {}) };
   const endpoints = settleWallets.length ? settleWallets : [{ url: 'default', wallet: settleWallet }];
+  // Rotation covers the PRIVATE endpoints only; a public one is appended after them on every round. Rounds
+  // advance on non-inclusion, not on refusal, so rotating a public endpoint into the lead would put a
+  // healthy-but-slow settle into the open mempool — where the bound fee is copied and ours lands as a
+  // revert. Public stays what its comment claims: reached only once every private endpoint has been tried.
+  const isPublicUrl = (u) => /PUBLIC/.test(u);
+  const privateEps = endpoints.filter((e) => !isPublicUrl(e.url));
+  const publicEps = endpoints.filter((e) => isPublicUrl(e.url));
+  const endpointsFor = (r) => (privateEps.length
+    ? [...privateEps.map((_, i) => privateEps[(i + r) % privateEps.length]), ...publicEps]
+    : publicEps);
   // Every broadcast under this nonce. A later round REPLACES an earlier one, but the earlier hash can still
   // be the one that lands, so all of them are checked before the job is called failed.
   const seen = [];
@@ -252,8 +262,7 @@ async function submitCall(base, label, { gasLimit = null, landed = null } = {}) 
     if (dead) return settledOrDead(dead);
     const tx = { ...call, nonce, maxFeePerGas: baseFee * 3n + tip, maxPriorityFeePerGas: tip };
     let txHash, taken = false;
-    for (let i = 0; i < endpoints.length; i++) {
-      const { url, wallet } = endpoints[(i + round) % endpoints.length];
+    for (const { url, wallet } of endpointsFor(round)) {
       try {
         txHash = await wallet.writeContract(tx);
         seen.push(txHash);

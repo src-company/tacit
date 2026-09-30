@@ -201,6 +201,12 @@ export const CFG = {
   // settles its members one at a time.
   batchProverRssKB: num('BATCH_PROVER_RSS_KB', 1_300_000),
   settleProverRssKB: num('SETTLE_PROVER_RSS_KB', 1_700_000),
+  // The reflection prove had no ceiling of either kind, unlike every other prove in the service. A network
+  // call that hangs blocks the cycle for good: the run budget is only consulted BETWEEN cycles, so nothing
+  // inside the process interrupts it. Timeout sits under reflectionRunBudgetSecs so a hung prove ends its
+  // own cycle and the budget check then stops the run, rather than the container being killed mid-write.
+  reflectionProveTimeoutSecs: num('REFLECTION_PROVE_TIMEOUT_SECS', 40 * 60),
+  reflectionProverRssKB: num('REFLECTION_PROVER_RSS_KB', 1_700_000),
   // Replenish from INSIDE the settle service, during idle time. The settle wallet earns the fees and holds
   // the only copy of SETTLE_KEY, so running the sweep here means the key never has to be copied to a cron.
   // It runs between cycles — never concurrently — because a swap and a settle from the same wallet would

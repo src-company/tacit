@@ -123,6 +123,8 @@ export async function proveReflection(input) {
   const { code, out } = await run(CFG.bitcoinProveBin, {
     env: proverEnv({ PROOF_MODE: 'groth16', REFLECT_FIXTURE: fixture }),
     cwd: CFG.proverOut,
+    timeoutMs: CFG.reflectionProveTimeoutSecs * 1000,
+    rssLimitKB: CFG.reflectionProverRssKB,
     tag: 'bitcoin_prove',
   });
   // The GPU client can panic in a cleanup destructor AFTER writing artifacts; treat a
