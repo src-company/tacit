@@ -278,7 +278,7 @@ export function makeConfidentialSettler({ storage, hash, now, feeGate, priceFee,
 
   function ackJob(jobId, ack = {}) { return exclusive(() => ackJobLocked(jobId, ack)); }
 
-  async function ackJobLocked(jobId, { txHash, error, publicValues, proof, activateTx, activateError }) {
+  async function ackJobLocked(jobId, { txHash, error, publicValues, proof, activateTx, activateError, broadcastHashes }) {
     const j = await storage.getJob(jobId);
     if (!j) return { ok: false, reason: 'unknown job' };
     if (j.status === 'settled' || j.status === 'proven') {
@@ -287,11 +287,20 @@ export function makeConfidentialSettler({ storage, hash, now, feeGate, priceFee,
     }
     if (error) {
       j.status = 'failed'; j.error = String(error);
+      // A settle can be given up on and still be included: a private endpoint keeps re-submitting an
+      // accepted bundle long after the relay stops waiting. Keeping the hashes on the job is what makes
+      // that recoverable at all — the relay's own memory of them dies with the process, and afterwards
+      // nobody, including the payer, has a handle on the transaction that may yet land. A later ack
+      // carrying a txHash promotes this job to settled; 'failed' is not one of the short-circuits above.
+      if (Array.isArray(broadcastHashes) && broadcastHashes.length) {
+        j.broadcastHashes = broadcastHashes.slice(0, 8).map((h) => String(h));
+      }
     } else if ((j.mode || 'settle') === 'prove') {
       if (!publicValues || !proof) { j.status = 'failed'; j.error = 'prove-only ack missing publicValues/proof'; }
       else { j.status = 'proven'; j.publicValues = publicValues; j.proof = proof; }
     } else {
       j.status = 'settled'; j.txHash = txHash || null;
+      delete j.broadcastHashes; // resolved: the one that landed is j.txHash
       recordActivation(j, activateTx, activateError);
     }
     await storage.putJob(jobId, j);
@@ -311,7 +320,11 @@ export function makeConfidentialSettler({ storage, hash, now, feeGate, priceFee,
     return { jobId, type: j.type, mode: j.mode || 'settle', status: j.status, txHash: j.txHash, error: j.error,
       createdAt: j.createdAt, publicValues: j.publicValues || null, proof: j.proof || null,
       activation: j.exit ? (j.activateTx ? 'done' : j.activateError ? 'failed' : 'pending') : null,
-      activateTx: j.activateTx || null, activateError: j.activateError || null };
+      activateTx: j.activateTx || null, activateError: j.activateError || null,
+      // Published deliberately: on a failed settle these are the only handles on a transaction that may
+      // still be included, and they are public the moment they are broadcast. With them the payer can
+      // settle the question themselves instead of asking us.
+      broadcastHashes: j.broadcastHashes || null };
   }
 
   // A read-only picture of the queue for the operator: how many jobs are waiting, how many are being proved, and

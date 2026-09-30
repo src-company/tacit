@@ -641,7 +641,7 @@ async function cycle() {
     const pending = Array.isArray(e.broadcastHashes) && e.broadcastHashes.length
       ? ` — broadcast and possibly still pending: ${e.broadcastHashes.join(', ')}`
       : '';
-    await confidentialAck({ jobId, error: `settle reverted: ${safeErr(e, 200 - pending.length)}${pending}` });
+    await confidentialAck({ jobId, error: `settle reverted: ${safeErr(e, 200 - pending.length)}${pending}`, broadcastHashes: e.broadcastHashes });
     rememberAbandoned(jobId, e.broadcastHashes);
     return true;
   }

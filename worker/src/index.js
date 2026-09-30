@@ -2820,7 +2820,7 @@ async function handleConfidentialAck(req, env, cors) {
   try { body = await req.json(); } catch { return jsonResponse({ ok: false, error: 'bad json' }, 400, cors); }
   if (!body.jobId) return jsonResponse({ ok: false, error: 'jobId required' }, 400, cors);
   const r = await q.ackJob(String(body.jobId), { txHash: body.txHash, error: body.error, publicValues: body.publicValues, proof: body.proof,
-    activateTx: body.activateTx, activateError: body.activateError });
+    activateTx: body.activateTx, activateError: body.activateError, broadcastHashes: body.broadcastHashes });
   return jsonResponse(r, 200, cors);
 }
 async function handleConfidentialStatus(env, url, cors) {

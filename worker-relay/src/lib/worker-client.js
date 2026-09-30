@@ -133,8 +133,10 @@ export async function confidentialBatch(max = 8) {
 // claimed until the TTL, is re-served, and is then only resolved if the settle can still be found on chain.
 // postJson does not throw on an error status and no caller reads the result, so a 401/429/500 read exactly
 // like success. Retry the ones worth retrying, and say so loudly when the worker cannot be told at all.
-export async function confidentialAck({ jobId, txHash, error }) {
-  const body = error ? { jobId, error } : { jobId, txHash: txHash || '' };
+export async function confidentialAck({ jobId, txHash, error, broadcastHashes }) {
+  const body = error
+    ? { jobId, error, ...(broadcastHashes?.length ? { broadcastHashes } : {}) }
+    : { jobId, txHash: txHash || '' };
   let status = 0;
   for (let i = 0; i < 3; i++) {
     try {
