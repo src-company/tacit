@@ -25576,10 +25576,25 @@ async function scanForEtches(env, network) {
         if (!cm) continue;
         const cc = buildCrossoutConsumer(env, { network, keccak256: keccak_256, rpcsForNetwork: (n) => _TETH_ETH_RPCS[n] });
         if (!cc) continue;
+        let rc;
         try {
-          await recordCrossoutMint(env, network, cc, { cm, txidHex: String(tx.txid).toLowerCase(), tx, height: h, txIndex });
+          rc = await recordCrossoutMint(env, network, cc, { cm, txidHex: String(tx.txid).toLowerCase(), tx, height: h, txIndex });
         } catch (e) {
           _stallReason = `crossout mint ${tx.txid}: ${String(e?.message || e)}`;
+          break;
+        }
+        // Gen5 keeps the fold itself simple: it decides crossOut membership once, against whichever eth-side
+        // record the scan sees at the moment it reaches this block, with no later retry (unlike burn-deposit's
+        // own pending list, which is a heavier mechanism this generation deliberately doesn't carry yet). The
+        // eth-side record is normally already in place well before its Bitcoin-side reveal even exists, since
+        // the reveal needs the claim's own fields to build — so this is specifically for the sidecar lagging
+        // the claim's own indexing, not the ordinary case. Holding the cursor here, the same posture as the
+        // page-read stall just below, gives that sidecar room to catch up before this block's fold becomes
+        // permanent, so the common lag case clears on its own on a later tick rather than needing anyone to
+        // notice a missed claim after the fact. `/crossout/minted` already reports this same pending status
+        // publicly per-claim, so anyone can watch a specific crossOut's own progress independent of this.
+        if (rc && rc.status === 'pending-reflection') {
+          _stallReason = `crossout mint ${tx.txid} claim ${cm.claimId}: eth-side record not yet visible`;
           break;
         }
       } else if (decoded.opcode === T_WRAPPER_ATTEST) {
