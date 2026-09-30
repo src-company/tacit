@@ -39,19 +39,13 @@
 // spliced between the signature and the real script (the dummy envelope item) — built here by splicing into
 // signTaprootScriptPathInput's normal 3-item return, not by asking for a lower-level variant.
 
-import { extractInputs, classifyConfidentialTx, txOutputScript } from './burn-deposit-bitcoin.js';
+import { extractInputs, classifyConfidentialTx } from './burn-deposit-bitcoin.js';
 import { verifySchnorr } from './bulletproofs.js';
 import { bppRangeProve, bigintToBytes32, pointToBytes, pedersenCommit } from './bulletproofs-plus.js';
 
 const HEX32 = /^0x[0-9a-fA-F]{64}$/;
 const DUST = 546;
 const MIN_RELAY_RATE = 1;
-// OP_DROP's dummy input for a non-envelope spend of homeScriptS — an empty push, the minimal valid witness
-// item. homeScriptS = OP_DROP <K1> OP_CHECKSIG needs exactly one stack item ABOVE the signature for OP_DROP to
-// remove before OP_CHECKSIG runs; the burn-deposit reveal fills that slot with a real (but unexecuted)
-// envelope item so extractTaprootEnvelope can read it, but nothing requires the dropped item to look like
-// anything in particular — Bitcoin's OP_DROP only cares that a stack item is there, never its content.
-const EMPTY_ITEM = new Uint8Array(0);
 const lc = (x) => String(x || '').toLowerCase();
 const stripHex = (x) => String(x).replace(/^0x/, '');
 const reverseHex = (h) => stripHex(h).match(/../g).reverse().join('');
@@ -388,106 +382,7 @@ export function makeBurnDepositReveal({ pool, secp, prims: defaultPrims = null }
     }
   }
 
-  // ---- Phase 3: cancel — reclaim a stuck burn-home directly, bypassing the burn-envelope reveal entirely ----
-  // homeScriptS (OP_DROP <K1> OP_CHECKSIG) carries no envelope constraint at all: its only spend condition is
-  // a valid Schnorr signature from K1. So once migrate-confirmed lands, an ordinary non-envelope spend is just
-  // as cryptographically valid against that exact script/control-block as the real burn-deposit reveal — the
-  // only reason a stuck burn-home ever had "no way out" is that no code path besides buildBurnDepositRevealTxs
-  // ever built a transaction spending it, not because the script requires one to.
-  //
-  // This never continues the note's provenance anywhere: unlike MIGRATE, there is no cxfer, no commitment, no
-  // kernel signature here, and unlike the burn reveal, no envelope for reflect.rs to fold. It only recovers
-  // Bitcoin-level control of the burn-home OUTPUT, which buildMigrationTxs/reconstructBurnHome both pin at
-  // exactly DUST (546 sats) regardless of the confidential amount it was carrying forward — that confidential
-  // amount has no other recognized home once migrated, so cancel is a Bitcoin-side escape hatch for a stuck
-  // record, not a way to re-mint or redirect the value it represented.
-  //
-  //   burnHome    : the object buildMigrationTxs returned under `.burnHome` (or reconstructBurnHome's identical
-  //                 rebuild) — { txid, vout, value(sats), priv, pub, xonly, scriptS, controlBlock, spk }.
-  //   destination : { script } — the exact scriptPubKey (Uint8Array) to pay. Never derived here; the caller
-  //                 supplies it (e.g. the wallet's own current P2WPKH).
-  //   fundingUtxo : required, exactly like buildBurnDepositRevealTxs — the burn-home's own value is fixed at
-  //                 DUST (546 sats), already below this module's own fee floor (feeFor's 500-sat minimum, see
-  //                 bitcoin-taproot-wallet.js) once ANY non-dust output is left over, so it can no more pay its
-  //                 own cancel fee than it can pay the real burn-deposit reveal's fee — both spends of a
-  //                 burn-home need a second, plain-sats input. This is not a rare edge case worth a
-  //                 best-effort fallback: it is true of every burn-home, always, so fundingUtxo is required
-  //                 unconditionally, the same way buildBurnDepositRevealTxs already requires one.
-  //
-  // Build and sign the cancel. Nothing broadcast. Every leftover sat (burn-home + funding, net of the fee)
-  // goes to the single requested destination — there is no separate change output, so the built transaction
-  // always has exactly one output, at index 0.
-  async function buildCancelTx({ prims, burnHome, destination, fundingUtxo, feeRate = null } = {}) {
-    const P = primsOf(prims);
-    if (!burnHome || !burnHome.priv) throw new Error('burn-deposit-reveal: burnHome required (from buildMigrationTxs/reconstructBurnHome)');
-    if (!destination || !(destination.script instanceof Uint8Array) || destination.script.length === 0) {
-      throw new Error('burn-deposit-reveal: destination.script (a Uint8Array scriptPubKey) required');
-    }
-    if (!fundingUtxo || !fundingUtxo.txid || fundingUtxo.value == null) {
-      throw new Error('burn-deposit-reveal: fundingUtxo { txid, vout, value } required — the burn-home\'s own value (fixed at DUST) cannot pay its own cancel fee, same as buildBurnDepositRevealTxs');
-    }
-    const rate = Number(feeRate != null ? feeRate : await P.getFeeRate('priority'));
-    if (!Number.isFinite(rate) || rate < MIN_RELAY_RATE) throw new Error(`burn-deposit-reveal: fee rate ${rate} sat/vB is below the minimum relay rate`);
-
-    const savedPriv = P.wallet.priv, savedPub = P.wallet.pub;
-    try {
-      const fundingSpk = fundingUtxo.scriptpubkey ? P.hexToBytes(fundingUtxo.scriptpubkey) : P.p2wpkhScript(P.wallet.pub);
-      const totalIn = burnHome.value + fundingUtxo.value;
-      const cancelTx = {
-        version: 2, locktime: 0,
-        inputs: [
-          { txid: stripHex(burnHome.txid), vout: burnHome.vout, sequence: 0xfffffffd, witness: [] },
-          { txid: fundingUtxo.txid, vout: fundingUtxo.vout, sequence: 0xfffffffd, witness: [] },
-        ],
-        outputs: [{ value: DUST, script: destination.script }], // placeholder value for the first (measuring) signature pass
-      };
-      const prevouts = [{ value: burnHome.value, script: burnHome.spk }, { value: fundingUtxo.value, script: fundingSpk }];
-      function sign() {
-        P.wallet.priv = burnHome.priv; P.wallet.pub = burnHome.pub || secp.getPublicKey(burnHome.priv, true);
-        let witness3;
-        try { witness3 = P.signTaprootScriptPathInput(cancelTx, prevouts, burnHome.scriptS, burnHome.controlBlock); }
-        finally { P.wallet.priv = savedPriv; P.wallet.pub = savedPub; }
-        // Plain 4-item script-path witness [sig, dummy, S, controlBlock] — see EMPTY_ITEM's own comment above
-        // for why the dummy slot is load-bearing (OP_DROP needs something there), not decorative. A bare
-        // 3-item witness ([sig, S, controlBlock], no dummy) would leave OP_CHECKSIG one stack item short and
-        // the spend would fail Bitcoin's own script rules, not merely fail to carry an envelope.
-        cancelTx.inputs[0].witness = [witness3[0], EMPTY_ITEM, witness3[1], witness3[2]];
-        cancelTx.inputs[1].witness = P.signP2wpkhInput(cancelTx, 1, fundingUtxo.value);
-        return vsizeOf(P, cancelTx).vsize;
-      }
-      const vb = sign();
-      const fee = P.feeFor(vb, rate);
-      const outputValue = totalIn - fee;
-      if (outputValue < DUST) throw new Error(`burn-deposit-reveal: insufficient funds to cancel (short by ${DUST - outputValue} sats)`);
-      cancelTx.outputs[0].value = outputValue;
-      sign(); // the output value changed -> hashOutputs changed -> both inputs' signatures must be redone
-      const cancelStd = checkStandard(P, cancelTx, prevouts, 'burn-home cancel');
-
-      const cancelHex = P.bytesToHex(P.serializeTx(cancelTx));
-
-      // Self-check on the SERIALIZED bytes, not just the object we built them from — mirrors
-      // reconstructBurnHome's own on-chain-script paranoia and crossout-mint-reveal.js's buildCrossoutMintTxs
-      // destination check. A wrong destination here would permanently misdirect a real reclaim, so this must
-      // fail loudly, not silently.
-      if (cancelTx.outputs.length !== 1) throw new Error('burn-deposit-reveal: self-check failed — cancel must have exactly one output');
-      const paidScript = txOutputScript(cancelHex, 0);
-      if (!paidScript || lc(paidScript) !== lc('0x' + P.bytesToHex(destination.script))) {
-        throw new Error('burn-deposit-reveal: self-check failed — cancel output does not pay the requested destination');
-      }
-      if (txOutputScript(cancelHex, 1) !== null) throw new Error('burn-deposit-reveal: self-check failed — cancel serialized with more than one output');
-      const ins = extractInputs('0x' + cancelHex);
-      const burnHomeTxidInternal = '0x' + reverseHex(stripHex(burnHome.txid));
-      if (!ins || ins.length !== 2 || lc(ins[0].prevTxid) !== lc(burnHomeTxidInternal) || ins[0].prevVout !== burnHome.vout) {
-        throw new Error('burn-deposit-reveal: self-check failed — the burn-home is not vin[0] of the built cancel');
-      }
-
-      return { hex: cancelHex, txid: P.txid(cancelTx), fee, feeRate: rate, vsize: cancelStd.vsize };
-    } finally {
-      P.wallet.priv = savedPriv; P.wallet.pub = savedPub;
-    }
-  }
-
-  return { deriveBurnHomeKey, planMigrationToBurnHome, buildMigrationTxs, reconstructBurnHome, planBurnDepositReveal, buildBurnDepositRevealTxs, buildCancelTx };
+  return { deriveBurnHomeKey, planMigrationToBurnHome, buildMigrationTxs, reconstructBurnHome, planBurnDepositReveal, buildBurnDepositRevealTxs };
 }
 
 // ---- small local byte helpers (kept dependency-free rather than importing a whole wallet module for these) ----
