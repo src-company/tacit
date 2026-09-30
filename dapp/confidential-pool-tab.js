@@ -31,13 +31,16 @@ function ethToWei(s) {
 // matters — submitWrapSettle's guest checks the deposit is already registered, so the deposit tx must be
 // mined before submitting the OP_WRAP witness for settle. wrap()/routerWrap() already return every field
 // submitWrapSettle needs (wrapOp, leaf, outputs, memos, ephRand).
-function wireWrap(wallet, ux) {
-  const btn = el('cpool-wrap-btn');
+// ticker/idPrefix/noteName let the same wiring drive more than one asset's wrap panel (cETH, cTAC, ...) —
+// wrap()/routerWrap() are already generic by ticker (confidential-pool-ux.js); this was the one DOM-wiring
+// layer still hard-coded to cETH's own ids and copy.
+function wireWrap(wallet, ux, { ticker = 'cETH', idPrefix = 'cpool-wrap', noteName = 'tETH' } = {}) {
+  const btn = el(`${idPrefix}-btn`);
   if (!btn) return;
   btn.onclick = async () => {
-    const st = el('cpool-wrap-status');
+    const st = el(`${idPrefix}-status`);
     if (!wallet || !wallet.priv) { if (st) st.textContent = 'Unlock your wallet first.'; return; }
-    const wei = ethToWei(el('cpool-wrap-amount') ? el('cpool-wrap-amount').value : '');
+    const wei = ethToWei(el(`${idPrefix}-amount`) ? el(`${idPrefix}-amount`).value : '');
     if (!wei || wei === '0') { if (st) st.textContent = 'Enter an amount.'; return; }
     btn.disabled = true;
     if (st) st.textContent = 'Building + broadcasting the deposit…';
@@ -46,14 +49,14 @@ function wireWrap(wallet, ux) {
       // One-tx ConfidentialRouter wrap when the router is deployed (collapses approve+wrap); otherwise the
       // direct pool deposit. Same note commitment + recovery either way.
       r = ux.cfg.router
-        ? await ux.routerWrap({ walletPriv: wallet.priv, amountWei: wei })
-        : await ux.wrap({ walletPriv: wallet.priv, amountWei: wei });
+        ? await ux.routerWrap({ walletPriv: wallet.priv, amountWei: wei, ticker })
+        : await ux.wrap({ walletPriv: wallet.priv, amountWei: wei, ticker });
       if (st) st.innerHTML = `Deposit broadcast${ux.cfg.router ? ' (one-tx router)' : ''}: <code class="addr">${esc(r.txHash)}</code> — waiting for it to confirm…`;
       await ux.waitReceipt(r.txHash);
-      if (st) st.innerHTML = `Deposit confirmed: <code class="addr">${esc(r.txHash)}</code> — submitting for settle (proving your tETH note; can take a minute)…`;
+      if (st) st.innerHTML = `Deposit confirmed: <code class="addr">${esc(r.txHash)}</code> — submitting for settle (proving your ${esc(noteName)} note; can take a minute)…`;
       await ux.submitWrapSettle({ built: r });
-      if (st) st.innerHTML = `Settled: <code class="addr">${esc(r.txHash)}</code> — your tETH note is ready.`;
-      notify('Wrap settled — tETH note ready', 'ok');
+      if (st) st.innerHTML = `Settled: <code class="addr">${esc(r.txHash)}</code> — your ${esc(noteName)} note is ready.`;
+      notify(`Wrap settled — ${noteName} note ready`, 'ok');
     } catch (e) {
       const m = formatSpecErr(e, 'Wrap');
       // The deposit itself may already be irreversibly on-chain even though this failed (a dropped
@@ -277,6 +280,15 @@ function renderPoolPanel() {
     + `<div id="cpool-exit-status" class="muted field-status" style="margin-top:6px;"></div>`
     + `<div class="muted" style="font-size:11px;margin-top:6px;">Each exit spends one whole note. The relayer settles on-chain so you need no ETH for gas; by default a small fee is taken from your withdrawal. The full value exits to the recipient with no fee when the box settles at no charge.</div>`;
 
+  const wrapTacBody =
+    `<div class="field-row">`
+    + `<input id="cpool-wrap-tac-amount" type="number" step="0.01" min="0" placeholder="100">`
+    + `<span class="muted" style="font-size:12px;align-self:center;">TAC</span>`
+    + `<button id="cpool-wrap-tac-btn" class="primary">Wrap</button>`
+    + `</div>`
+    + `<div id="cpool-wrap-tac-status" class="muted field-status" style="margin-top:6px;"></div>`
+    + `<div class="muted" style="font-size:11px;margin-top:6px;">Hold the public TAC token in this wallet's Ethereum address first. The deposit escrows TAC; your cTAC note appears after the settle.</div>`;
+
   const btcBody =
     `<div class="muted" style="font-size:11px;">Value bridged from Bitcoin lands as the same shielded note — transfer, trade, or borrow against it on either side. Bitcoin-homed value is fast-final on Ethereum, then settles to Bitcoin over ~1 hr.</div>`;
 
@@ -285,6 +297,7 @@ function renderPoolPanel() {
     lanes: [
       { key: 'eth', label: 'Ethereum lane', actions: [
         { title: 'Wrap ETH → tETH', dir: 'in', body: wrapBody },
+        { title: 'Wrap TAC → cTAC', dir: 'in', body: wrapTacBody },
         { title: 'Exit tETH → ETH', dir: 'out', meta: 'gasless — relayer settles for a small fee', body: exitBody },
       ] },
       { key: 'btc', label: 'Bitcoin lane', actions: [
@@ -318,6 +331,7 @@ export async function renderConfidentialPoolTab(wallet) {
   const legacy = el('cpool-legacy-bridge');
   if (legacy) legacy.onclick = (e) => { e.preventDefault(); if (window._openBridgeModal) window._openBridgeModal(); };
   wireWrap(wallet, ux);
+  wireWrap(wallet, ux, { ticker: 'cTAC', idPrefix: 'cpool-wrap-tac', noteName: 'cTAC' });
   wireRestore(wallet, ux);
   if (statusEl) statusEl.textContent = 'Scanning the pool for your notes…';
   if (balEl) balEl.innerHTML = '';
