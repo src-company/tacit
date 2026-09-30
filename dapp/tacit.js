@@ -22455,12 +22455,39 @@ function _renderHoldingsMixerSummary(listEl) {
 // lane — otherwise it's pure noise on a Bitcoin-only wallet. Fully additive:
 // writes into its own #holdings-unified-strip container and never touches the
 // main list rewrite, so a slow/failed EVM read can't disturb holdings.
-async function _renderHoldingsUnifiedStrip() {
+// Sticky "this wallet has shown Ethereum-lane assets before" — the same distinction
+// _holdingsEverSeenAssets/_loadHoldingsSeenFlag makes for the Bitcoin side (60222-60235), applied here too.
+// Without it, a transient EVM RPC/relay hiccup (or scanHoldingsCrossChain throwing) reads identically to
+// "you hold nothing on Ethereum" and the whole strip just vanishes — exactly what made a real bridged TAC
+// note look gone after a routine rescan, when the funds were never at risk (confirmed on-chain separately).
+let _ethLaneEverSeenAssets = false;
+function _ethLaneSeenKey() {
+  if (!wallet.pub) return null;
+  let pubHex; try { pubHex = bytesToHex(wallet.pub); } catch { return null; }
+  return `tacit-eth-lane-seen-v1:${NET.name}:${pubHex}`;
+}
+function _loadEthLaneSeenFlag() { const k = _ethLaneSeenKey(); if (!k) return false; try { return localStorage.getItem(k) === '1'; } catch { return false; } }
+function _saveEthLaneSeenFlag() { const k = _ethLaneSeenKey(); if (k) try { localStorage.setItem(k, '1'); } catch {} }
+
+async function _renderHoldingsUnifiedStrip(force = false) {
   const box = document.getElementById('holdings-unified-strip');
   if (!box) return;
+  const hadAssetsBefore = _ethLaneEverSeenAssets || _loadEthLaneSeenFlag();
+  const showTransient = () => {
+    box.style.display = '';
+    box.innerHTML = `<div class="section" style="padding:12px 14px;">
+      <div class="empty" style="padding:10px 0;text-align:center;">
+        <div style="font-weight:bold;margin-bottom:4px;font-size:12px;">⏳ Ethereum-lane holdings unavailable right now.</div>
+        <div class="muted" style="font-size:11px;line-height:1.6;margin-bottom:8px;">Likely a transient RPC hiccup — you've had assets here before, so the chain state hasn't actually changed. Your funds are on chain regardless of what this reads.</div>
+        <button type="button" id="btn-eth-lane-retry" class="btn-go" style="font-size:11px;padding:5px 12px;">↻ Retry</button>
+      </div>
+    </div>`;
+    const btn = document.getElementById('btn-eth-lane-retry');
+    if (btn) btn.onclick = () => { btn.disabled = true; btn.textContent = 'retrying…'; _renderHoldingsUnifiedStrip(true); };
+  };
   let unified;
-  try { unified = await scanHoldingsCrossChain(false); }
-  catch { box.style.display = 'none'; return; }
+  try { unified = await scanHoldingsCrossChain(force); }
+  catch { if (hadAssetsBefore) showTransient(); else box.style.display = 'none'; return; }
   const rows = [];
   const externalRows = [];
   for (const e of unified.values()) {
@@ -22500,7 +22527,8 @@ async function _renderHoldingsUnifiedStrip() {
       <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;">${badges.join('')}</div>
     </div>`);
   }
-  if (!rows.length && !externalRows.length) { box.style.display = 'none'; return; }
+  if (!rows.length && !externalRows.length) { if (hadAssetsBefore) showTransient(); else box.style.display = 'none'; return; }
+  _ethLaneEverSeenAssets = true; _saveEthLaneSeenFlag();
   box.innerHTML = `<div class="section" style="padding:12px 14px;">
     ${rows.length ? `<div class="note-concept" style="margin-bottom:8px;"><b>One note, two chains.</b> Your Tacit balance is the same confidential note whether it settles on <span class="btc-word">Bitcoin</span> or <span class="eth-word">Ethereum</span> — wrap, send, or trade it from either side.</div>${rows.join('')}` : ''}
     ${externalRows.length ? `<div class="muted" style="font-weight:600;font-size:11px;margin:${rows.length ? '14' : '0'}px 0 2px;">Public Ethereum tokens</div>${externalRows.join('')}` : ''}
