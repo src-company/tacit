@@ -1,9 +1,10 @@
 // Retry a write that lost a nonce race with another service signing from the same key.
 //
-// SETTLE_KEY is deliberately unset in production, so settle, header-relay, reflection-folder and replenish
-// all sign from RELAY_KEY. Settles go out through a private endpoint, which means a public RPC's
-// `getTransactionCount(pending)` does not see one in flight — so two services picking the same nonce is not
-// an edge case, it is the expected behaviour of this configuration.
+// The settle service signs with its own SETTLE_KEY; header-relay and reflection-folder share RELAY_KEY with
+// each other, and replenish signs with whichever wallet the role it runs for uses — inside the settle
+// service, that is the settle wallet. Settles go out through a private endpoint, which means a public RPC's
+// `getTransactionCount(pending)` does not see one in flight — so two writers picking the same nonce is not
+// an edge case, it is the expected behaviour wherever a key is shared.
 //
 // A lost race fails BEFORE broadcast (nonce too low / underpriced / already known), so retrying is safe and
 // cheap; anything else is a real error and is rethrown untouched. What makes this worth doing rather than

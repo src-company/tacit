@@ -214,9 +214,10 @@ services:
       # may go to another submitter. 0 keeps submission private-only.
       - key: SETTLE_ALLOW_PUBLIC
         value: "1"
-      # One key. The settle service signs with RELAY_KEY (the account behind the network prover key, the vApp
-      # depositor and the maintenance wallet), so fee income lands on the wallet that can use it. Do not add a
-      # separate SETTLE_KEY: it splits fees from the account that funds proving.
+      # Settles are signed with SETTLE_KEY, set on this service, so they no longer share a nonce with the
+      # header relay and the reflection folder (which share RELAY_KEY with each other). Fee income therefore
+      # lands on the settle wallet rather than the account that funds proving, which is what replenish moves
+      # across during idle time; SETTLE_ADDRESS must name the same account so the monitor watches it.
       #
       # Fee income -> ETH gas + PROVE, swept from inside this service during idle time (see replenishOnce).
       - key: REPLENISH_IN_SETTLE

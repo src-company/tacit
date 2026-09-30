@@ -174,6 +174,7 @@ async function submitCall(base, label, { gasLimit = null, landed = null } = {}) 
     publicClient.getTransactionCount({ address: settleWallet.account.address, blockTag: 'pending' }),
     gasLimit ? null : publicClient.estimateContractGas({ ...base, account: settleWallet.account }).catch(() => null),
   ]);
+  lastBroadcastNonce = Math.max(lastBroadcastNonce, nonce);
   const data = encodeFunctionData({ abi: base.abi, functionName: base.functionName, args: base.args });
   let baseFee = blk.baseFeePerGas ?? 0n;
   // Tip proportional to the base fee, floored so it is never dust and capped so a spike can't run away.
@@ -656,7 +657,26 @@ async function cycle() {
 // REPLENISH_IN_SETTLE=1, and it can never take the loop down — a failure is logged and retried next interval.
 let lastReplenishAt = 0;
 let drained = false;
+// The highest nonce this process has put on the wire. A settle sent to a private endpoint is invisible to
+// the public node, so "idle" does not mean "nothing of ours is pending".
+let lastBroadcastNonce = -1;
 async function maybeReplenish() {
+  // Serialisation with settles holds only while a settle is being awaited. Once its rounds are exhausted the
+  // job is acked failed and the loop goes idle — but the transaction is still live at the private endpoint
+  // and can still be included. A swap signed here would reuse that nonce, get mined first because it is
+  // public, and kill a user's settle that was about to land. So idle work waits for the chain to move past
+  // anything this process broadcast.
+  if (lastBroadcastNonce >= 0) {
+    const confirmed = await publicClient
+      .getTransactionCount({ address: settleWallet.account.address, blockTag: 'latest' })
+      .catch(() => null);
+    if (confirmed == null) return;                       // cannot tell: assume something is pending
+    if (confirmed <= lastBroadcastNonce) {
+      log(`replenish held: nonce ${lastBroadcastNonce} may still be in flight (confirmed ${confirmed})`);
+      return;
+    }
+    lastBroadcastNonce = -1;
+  }
   // Key consolidation runs once, ahead of everything else, and only where asked. It is idle-time work like the
   // rest, so it can never race a settle on the same nonce.
   if (CFG.replenishDrainToSink && !drained) {

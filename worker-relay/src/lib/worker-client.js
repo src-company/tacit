@@ -129,10 +129,25 @@ export async function confidentialBatch(max = 8) {
   if (r && Array.isArray(r.jobs)) return r.jobs;
   return r && r.jobId ? [r] : [];
 }
+// A refused ack is not a lost message, it is a job the worker still believes is being proved: it stays
+// claimed until the TTL, is re-served, and is then only resolved if the settle can still be found on chain.
+// postJson does not throw on an error status and no caller reads the result, so a 401/429/500 read exactly
+// like success. Retry the ones worth retrying, and say so loudly when the worker cannot be told at all.
 export async function confidentialAck({ jobId, txHash, error }) {
   const body = error ? { jobId, error } : { jobId, txHash: txHash || '' };
-  try { await postJson('/confidential/ack', body); }
-  catch { /* worker reclaims the stale claim after its TTL */ }
+  let status = 0;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const res = await postJson('/confidential/ack', body);
+      if (res.ok) return { ok: true, status: res.status };
+      status = res.status;
+      // A refusal is a verdict; only a blip or a rate limit is worth asking again.
+      if (status >= 400 && status < 500 && status !== 429) break;
+    } catch { status = 0; }
+    if (i < 2) await new Promise((r) => setTimeout(r, 500 * 2 ** i));
+  }
+  console.error(`CRITICAL: /confidential/ack refused for job=${jobId} (status ${status}) — the worker still holds it as proving and will re-serve it after the claim TTL`);
+  return { ok: false, status };
 }
 // The activateExit outcome for a settled exit that carried its recipe. A lost report only means the user's own
 // activate path takes over; the escrow stays activatable by anyone until the recipe deadline.
