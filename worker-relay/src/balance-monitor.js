@@ -398,9 +398,71 @@ async function checkCrossOutFold() {
     { onchain, folded, baseline, gap, attestedHeight, gapSinceHours: Number(hours.toFixed(1)) });
 }
 
+// The EVM pool keepers (evm-pool-keeper.js), one per chain: each relays users' sends and withdrawals and sweeps their
+// deposit addresses, fronting the gas and taking it back, with a margin, from the fee paid to it in the same
+// transaction. So its balance is working capital, and what matters is whether it can front the next send. It pages
+// (critical) when a keeper does not answer, or cannot front an ordinary relay at this block's base fee (the keeper
+// then refuses quotes and every user falls back to sending from their own wallet). It warns when it could not after
+// a fourfold base-fee rise, or cannot front its largest transaction (the gas cap, e.g. a bridge move) with the full
+// headroom it sends with. EVM_POOL_KEEPERS=off skips the check; a JSON list replaces the defaults.
+const EVM_POOL_KEEPERS_DEFAULT = [
+  { chainId: 1, name: 'Ethereum', keeper: 'https://tacit-evm-pool-keeper.onrender.com/evm-pool/keeper', address: '0x7c9f8aE4e48Cbb2727F95b6477a1cf92bCFc43D0', rpc: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org', 'https://mainnet.gateway.tenderly.co'], minTipWei: '50000000' },
+  { chainId: 8453, name: 'Base', keeper: 'https://tacit-evm-pool-keeper-base.onrender.com/evm-pool/keeper', address: '0xfA2afbaB631C7Eda7CeA6AE1440605C504E322Ec', rpc: ['https://mainnet.base.org', 'https://base.drpc.org'] },
+  { chainId: 4663, name: 'Robinhood Chain', keeper: 'https://tacit-evm-pool-keeper-robinhood.onrender.com/evm-pool/keeper', address: '0xc1F8DAc6BC910A5A794b4795b5F9997e0E8A5Fad', rpc: ['https://rpc.mainnet.chain.robinhood.com'] },
+];
+// The keeper's own gas figures (evm-pool-keeper-config.js defaults): an ordinary relay's budget, sent with 30% on
+// the estimate, and the cap on any one transaction.
+const KEEPER_RELAY_GAS = 450_000n * 13n / 10n, KEEPER_GAS_CAP = 1_500_000n;
+async function keeperRpc(urls, method, params = []) {
+  let last;
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: AbortSignal.timeout(15_000) });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error.message);
+      return j.result;
+    } catch (e) { last = e; }
+  }
+  throw last || new Error('no rpc');
+}
+async function checkEvmPoolKeepers() {
+  const raw = process.env.EVM_POOL_KEEPERS;
+  if (raw === 'off') return;
+  const keepers = raw ? JSON.parse(raw) : EVM_POOL_KEEPERS_DEFAULT;
+  await Promise.all(keepers.map(async (k) => {
+    const who = `EVM pool keeper on ${k.name}`;
+    let info = null;
+    try {
+      const r = await fetch(`${k.keeper}/info`, { signal: AbortSignal.timeout(20_000) });
+      if (r.ok) info = await r.json();
+    } catch {}
+    if (!info) {
+      await alert('critical', `${who} (${k.keeper}) does not answer: relayed private sends, withdrawals and deposit-address sweeps on ${k.name} stop; users can still send from their own wallets`, { chainId: k.chainId });
+      return;
+    }
+    let address = k.address;
+    if (info.keeper && info.keeper.toLowerCase() !== String(address).toLowerCase()) {
+      await alert('warning', `${who} now signs as ${info.keeper}, not ${address}; checking the new account (update EVM_POOL_KEEPERS)`, { chainId: k.chainId });
+      address = info.keeper;
+    }
+    const [balHex, block, tipHex] = await Promise.all([
+      keeperRpc(k.rpc, 'eth_getBalance', [address, 'latest']), keeperRpc(k.rpc, 'eth_getBlockByNumber', ['latest', false]),
+      keeperRpc(k.rpc, 'eth_maxPriorityFeePerGas').catch(() => '0x0'),
+    ]);
+    const bal = BigInt(balHex), base = BigInt(block.baseFeePerGas ?? '0x0'), minTip = BigInt(k.minTipWei ?? 0), tip0 = BigInt(tipHex);
+    const tip = tip0 > minTip ? tip0 : minTip;
+    const now = KEEPER_RELAY_GAS * (base + tip), spike = KEEPER_RELAY_GAS * (8n * base + tip), largest = KEEPER_GAS_CAP * (2n * base + tip);
+    const extra = { chainId: k.chainId, address, ethWei: bal.toString(), baseFeeWei: base.toString() };
+    log(`${who} ${address} = ${formatEther(bal)} ETH (a relay now needs ${formatEther(now)}; after a 4x base-fee rise ${formatEther(spike)}; the largest send ${formatEther(largest)})`);
+    if (bal < now) await alert('critical', `${who} ${address} holds ${formatEther(bal)} ETH, under the ${formatEther(now)} ETH it must front for one relay at today's gas: it refuses relays until topped up, and users fall back to their own wallets`, extra);
+    else if (bal < spike) await alert('warning', `${who} ${address} holds ${formatEther(bal)} ETH: enough now, but a 4x base-fee rise would stop its relays (needs ${formatEther(spike)} ETH). Top it up`, extra);
+    else if (bal < largest) await alert('warning', `${who} ${address} holds ${formatEther(bal)} ETH, under the ${formatEther(largest)} ETH to front its largest transaction (up to ${KEEPER_GAS_CAP} gas, e.g. a bridge move) with full headroom`, extra);
+  }));
+}
+
 async function main() {
   log(`monitor run — worker=${CFG.workerBase} relay=${relayWallet ? relayWallet.account.address : '(no key on this service — watching by address)'}`);
-  const results = await Promise.allSettled([checkProve(), checkEth(), checkReflectionLag(), checkProverKinds(), checkSnapshotCapacity(), checkFarmHealth(), checkReflectionStall(), checkQueue(), checkEthStatePending(), checkCrossOutFold()]);
+  const results = await Promise.allSettled([checkProve(), checkEth(), checkReflectionLag(), checkProverKinds(), checkSnapshotCapacity(), checkFarmHealth(), checkReflectionStall(), checkQueue(), checkEthStatePending(), checkCrossOutFold(), checkEvmPoolKeepers()]);
   for (const r of results) if (r.status === 'rejected') log('check threw:', r.reason?.message || r.reason);
   log(`monitor done — ${criticals} critical${criticals === 1 ? '' : 's'}`);
   // Exit non-zero so the cron run is marked failed even with no webhook configured. A check that THREW is
