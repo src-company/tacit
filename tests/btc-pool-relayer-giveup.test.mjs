@@ -187,3 +187,28 @@ test('a priced asset still quotes when the fee rate cannot be read', async () =>
   const q = await r.quote({ asset: ASSET });
   assert.equal(q.fee, '10', 'an unreadable rate must fall back to the floor, not refuse the quote');
 });
+
+// ── fee rate: one base must not set the price ───────────────────────────────
+import { makeEsploraRelayChain } from '../worker-relay/src/lib/btc-pool-relayer.js';
+
+const rateChain = (answers) => makeEsploraRelayChain(answers.map((_, i) => `https://b${i}`), {
+  fetchImpl: async (url) => {
+    const i = Number(/^https:\/\/b(\d+)/.exec(url)[1]);
+    const v = answers[i];
+    if (v == null) throw new Error('down');
+    return { ok: true, text: async () => JSON.stringify({ 3: v, 6: v }) };
+  },
+});
+
+test('the fee rate is the median, so one outlier cannot set it', async () => {
+  // The real spread seen on mainnet: three bases near 1.1, one at 2.29.
+  assert.equal(await rateChain([1.067, 1.08, 1.133, 2.292]).feeRate(), (1.08 + 1.133) / 2);
+  assert.equal(await rateChain([1.067, 1.08, 2.292]).feeRate(), 1.08, 'odd count takes the middle');
+  // An outlier first in the list no longer decides it.
+  assert.equal(await rateChain([9.9, 1.0, 1.1]).feeRate(), 1.1);
+});
+
+test('bases that are down do not vote, and all of them down is an error not a guess', async () => {
+  assert.equal(await rateChain([null, 2, null]).feeRate(), 2);
+  await assert.rejects(() => rateChain([null, null]).feeRate(), /no base answered/);
+});

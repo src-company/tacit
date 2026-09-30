@@ -1173,7 +1173,23 @@ export function makeEsploraRelayChain(bases, { fetchImpl = fetch, feeTarget = '3
   }
   return {
     utxos: async (addr) => JSON.parse(await req(`/address/${addr}/utxo`)),
-    feeRate: async () => { const f = JSON.parse(await req('/fee-estimates')); return Number(f[feeTarget] ?? f['6'] ?? 1); },
+    // The bases disagree, and not slightly: 1.07, 1.08, 1.13 and 2.29 sat/vB for the same target at the
+    // same moment. Taking whichever answered first made the carrier's price depend on which host was
+    // quickest that second, and let one outlier set it for everybody. Ask them all and take the middle
+    // one — a single base cannot move a median, and a base that is down simply does not vote.
+    feeRate: async () => {
+      const seen = (await Promise.all(list.map(async (b) => {
+        try {
+          const r = await fetchImpl(b + '/fee-estimates', { signal: AbortSignal.timeout(timeoutMs) });
+          if (!r.ok) return null;
+          const f = JSON.parse((await r.text()).trim());
+          const v = Number(f[feeTarget] ?? f['6']);
+          return Number.isFinite(v) && v > 0 ? v : null;
+        } catch { return null; }
+      }))).filter((v) => v != null).sort((a, b) => a - b);
+      if (!seen.length) throw new Error('/fee-estimates: no base answered');
+      return seen.length % 2 ? seen[(seen.length - 1) / 2] : (seen[seen.length / 2 - 1] + seen[seen.length / 2]) / 2;
+    },
     broadcast: async (hex) => {
       try { return await req('/tx', { method: 'POST', body: hex, headers: { 'Content-Type': 'text/plain' } }); }
       catch (e) {
