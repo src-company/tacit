@@ -241,6 +241,16 @@ async function cycle() {
 // var so this never fires by accident against a deployment with still-pending-confirmation local state.
 async function resetLocalStateIfRequested() {
   if (process.env.RESET_ETH_PROVE_STATE !== '1') return;
+  // Safe only on a pool that has never landed a Mode-B batch. Past that, the documented recovery pairs
+  // this with clearing the worker's `confirmed` record — and with `confirmed` gone the resume guard reads
+  // a cold start, opens, and the sidecar publishes candidates whose batches all panic. The runbook says
+  // so in prose; the pool can say so in code, and it is the one source that cannot be misread.
+  const landed = await readPool('attestedCrossOutCount').catch(() => null);
+  if (landed != null && BigInt(landed) > 0n) {
+    log(`RESET_ETH_PROVE_STATE=1 IGNORED: the pool has attested ${landed} cross-out(s), so Mode-B history exists. `
+      + 'Resetting here is only safe before the first Mode-B batch lands; see ops/runbooks/eth-state-recovery.md.');
+    return;
+  }
   const committed = path.join(CFG.ethProveOutDir, 'eth_set_state.json');
   await Promise.all([
     rm(committed, { force: true }),

@@ -49,6 +49,14 @@ async function cycle() {
   // Idempotency: batch already on-chain (lost ack) → re-ack and skip.
   const onchain = await readReflectionDigest();
   if (onchain && newDigest && onchain.toLowerCase() === String(newDigest).toLowerCase()) {
+    // The cursor cannot be rewound, so it is only moved on a reading a reorg cannot take back: deep enough
+    // to be settled, and seen by a second provider. The other two ack paths already insist on both; this
+    // one advanced on a bare head-of-chain read from a single endpoint.
+    if (!(await landedDeep(onchain)) || !(await confirmDigestOn(verifyClient, onchain))) {
+      log(`batch ${onchain} is on-chain but not yet deep enough, or the verify endpoint does not see it — not acking yet`);
+      await heartbeat('reflection', `landed batch ${onchain} awaiting depth before re-ack`);
+      return false;
+    }
     log(`newDigest already attested on-chain — re-acking attestedTo=${attestedTo}`);
     // A refused ack leaves the cursor where it was, so the same batch is served again next cycle. Reporting
     // that as success spends the whole run re-assembling it and exits clean, which is how this lane stalls
@@ -134,6 +142,17 @@ async function cycle() {
   if (funds.short) {
     log(`relay wallet holds ${eth(funds.have)} ETH, under the ${eth(funds.need)} ETH an attest can cost at today's gas — waiting for a top-up`);
     await heartbeat('reflection', `relay wallet short: holds ${eth(funds.have)} ETH, an attest needs ${eth(funds.need)}`);
+    return false;
+  }
+  // Once the pool has attested a cross-out, every forward batch must be Mode-B: a mode_b=0 batch commits
+  // the permanent 0 sentinel for crossOutCount and the pool rejects it (ReflectionLib ConsumedCountStale).
+  // On-chain that is safe — it reverts, nothing is corrupted — but the proof is bought first, so a sidecar
+  // outage would buy one groth16 proof every cycle for a transaction that cannot land. The worker's own
+  // guard for this is opt-in and was never switched on; the pool knows the answer, so ask it.
+  const crossOuts = await readPool('attestedCrossOutCount').catch(() => null);
+  if (crossOuts != null && BigInt(crossOuts) > 0n && !job.input.modeB) {
+    log(`CRITICAL: pool has attested ${crossOuts} cross-out(s) so every batch must be Mode-B, but this job is forward-only — not proving it`);
+    await heartbeat('reflection', `mode_b required (crossOuts=${crossOuts}) but job is forward-only — eth-state candidate missing?`);
     return false;
   }
   log(`job attestedTo=${attestedTo} pending=${job.pending ?? '?'} — proving (network groth16)...`);

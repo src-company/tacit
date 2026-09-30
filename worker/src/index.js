@@ -1363,8 +1363,25 @@ async function handleReflectionReset(req, env, url, cors) {
   if (!checkConfidentialAuth(req, env)) return jsonResponse({ error: 'not found' }, 404, cors);
   if (!env.REGISTRY_KV) return jsonResponse({ error: 'no kv' }, 500, cors);
   const network = url.searchParams.get('network') === 'signet' ? 'signet' : 'mainnet';
+  // This deletes the canonical snapshot outright. On a pool that has attested anything, the next job
+  // re-initialises from genesis and every attest then reverts until somebody reconstructs and re-seeds a
+  // verified snapshot by hand — unlike /reflection/seed, which recomputes and checks a digest before
+  // writing. Nothing about that is recoverable from here, so it asks to be meant.
+  let attested = 0, unreadable = false;
+  try {
+    const raw = await env.REGISTRY_KV.get(`reflection:scan:${network}`);
+    if (raw) attested = Number(JSON.parse(raw)?.attestedHeight || 0);
+  } catch { unreadable = true; }
+  if (unreadable) return jsonResponse({ error: 'cannot read the current reflection state — refusing to delete it blind' }, 503, { ...cors, 'Cache-Control': 'no-store' });
+  if (attested > 0 && url.searchParams.get('confirm') !== String(attested)) {
+    return jsonResponse({
+      error: 'refusing to reset a reflection state that has history',
+      attestedHeight: attested,
+      hint: `re-send with ?confirm=${attested} if you really mean it, or use /reflection/seed to move the cursor to a verified snapshot`,
+    }, 409, { ...cors, 'Cache-Control': 'no-store' });
+  }
   await env.REGISTRY_KV.delete(`reflection:scan:${network}`);
-  return jsonResponse({ ok: true, reset: `reflection:scan:${network}` }, 200, { ...cors, 'Cache-Control': 'no-store' });
+  return jsonResponse({ ok: true, reset: `reflection:scan:${network}`, wasAttestedTo: attested }, 200, { ...cors, 'Cache-Control': 'no-store' });
 }
 // Seed the persisted reflection state (`reflection:scan:{net}`) to a known-good snapshot — used once to
 // hand reflection off to the worker (e.g. after an out-of-band catch-up left the worker cursor
