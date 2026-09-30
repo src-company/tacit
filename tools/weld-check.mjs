@@ -55,6 +55,7 @@ import { extname, join, normalize } from 'node:path';
 import * as secp from '@noble/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { hmac } from '@noble/hashes/hmac';
+import { depositIdOf } from '../worker-relay/src/lib/spent-precheck.js';
 import { sha256 } from '@noble/hashes/sha256';
 
 secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m));
@@ -90,9 +91,13 @@ const server = createServer((req, res) => {
 }).listen(WEB);
 
 const RPC_HOSTS = ['ethereum-rpc.publicnode.com', 'eth.drpc.org', '1rpc.io', 'mainnet.gateway.tenderly.co', 'cloudflare-eth.com', 'rpc.flashbots.net'];
-const submits = [], relays = [];
+const submits = [], refused = [], relays = [], walletTxs = [];
 // Submits the relay refuses before taking them, as it does once the day's free settles are used up.
 let refuseSubmits = 0;
+// With `proveStub`, a job asked for as a proof only reads proven (a stand-in proof, with the memos it was sent with),
+// for a page that sends the settle itself.
+let proveStub = false;
+const provenJobs = {};
 
 // router.withdrawToV1(tx, intent), encoded as evm-pool-wallet.js encodes it for a self-sent move.
 const { calldata } = await import(new URL('../dapp/evm-pool-gateway.js', import.meta.url));
@@ -129,11 +134,20 @@ async function openPage({ account, key = null, host = '127.0.0.1', init = null, 
     const u = new URL(route.request().url());
     if (u.pathname === '/confidential/submit' && refuseSubmits > 0) {
       refuseSubmits--;
+      refused.push(JSON.parse(route.request().postData() || '{}'));
       return route.fulfill({ status: 429, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
         body: JSON.stringify({ ok: false, error: 'free relayed settles for today are used up (300/300) — attach a fee above the floor, or prove-mode and settle it yourself', code: 'free_budget' }) });
     }
-    if (u.pathname === '/confidential/submit') { submits.push(JSON.parse(route.request().postData() || '{}')); return json(route, { jobId: 'stub-' + submits.length }); }
-    if (u.pathname === '/confidential/status') return json(route, { status: 'failed', error: 'stubbed in the fork check' });
+    if (u.pathname === '/confidential/submit') {
+      const b = JSON.parse(route.request().postData() || '{}'), jobId = 'stub-' + (submits.push(b));
+      if (proveStub && b.mode === 'prove') provenJobs[jobId] = { memos: b.memos || [] };
+      return json(route, { jobId });
+    }
+    if (u.pathname === '/confidential/status') {
+      const id = u.searchParams.get('id'), pj = provenJobs[id];
+      if (pj) return json(route, { jobId: id, mode: 'prove', status: 'proven', publicValues: '0x' + '01'.repeat(32), proof: '0x' + '02'.repeat(32), memos: pj.memos });
+      return json(route, { status: 'failed', error: 'stubbed in the fork check' });
+    }
     // A live API that does not answer is the page's to report, as it would be for a user; the run goes on.
     try {
       const r = await fetch('https://api.tacit.finance' + u.pathname + u.search, { method: route.request().method(), headers: { 'content-type': 'application/json' }, body: route.request().method() === 'GET' ? undefined : route.request().postData(), signal: AbortSignal.timeout(60000) });
@@ -153,13 +167,16 @@ async function openPage({ account, key = null, host = '127.0.0.1', init = null, 
     if (/\/relay$/.test(p)) {
       const b = JSON.parse(route.request().postData() || '{}');
       relays.push(b);
-      if (!b.wrap) return route.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ error: 'stubbed in the fork check' }) });
+      // A plain spend is refused as a keeper that cannot front its gas refuses it; a bridge call is just stubbed.
+      if (!b.wrap) return route.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify({ error: b.call ? 'stubbed in the fork check' : "the relay can't take this one right now; send it from your own wallet, or try again later" }) });
       b.txHash = await rpc('eth_sendTransaction', [{ from: KEEPER, to: EVM_ROUTER, data: withdrawToV1Data(b.tx, b.wrap), gas: '0x2dc6c0' }]);
       return json(route, { txHash: b.txHash });
     }
     return json(route, { ok: true });
   });
   await ctx.exposeFunction('__wallet', async (method, params = []) => {
+    if (method === 'eth_sendTransaction') walletTxs.push(params[0]);
     if (method === 'eth_requestAccounts' || method === 'eth_accounts') return [account];
     if (method === 'eth_chainId') return '0x1';
     if (method === 'wallet_switchEthereumChain' || method === 'wallet_watchAsset') return null;
@@ -438,8 +455,41 @@ await step('v1refuse', async () => {
     ok(/Your deposit is in the Tacit pool/.test(kept) && /free settles for today are used up/.test(kept) && /no need to send it again/.test(kept)
       && await r.page.$eval('#w-amt', (i) => i.value === '') && await r.page.$eval('#w-go', (b) => b.disabled), `v1refuse: a settle the relay refuses after the deposit empties the form and points to Finish (${kept.slice(0, 130)})`);
     ok(await until(r.page, () => !!document.querySelector('#v1-finish'), null, 600000).then(() => true, () => false), 'v1refuse: the deposit is then offered to Finish');
+    // Or from the wallet: the relay is asked for the proof only, and settle() goes to the pool from the wallet. The
+    // proof is a stand-in here, so the pool refuses it and the page says so; the deposit is still offered after.
+    ok(/Or finish from your wallet/.test(await text(r.page, '#v1-finish-self')), 'v1refuse: it can also be finished from the wallet');
+    const wrapSub = refused.findLast((x) => x.type === 'wrap');
+    proveStub = true;
+    const n1 = submits.length, t1 = walletTxs.length, before = await r.page.$eval('#v1-status', (e) => e.innerHTML);
+    await r.page.click('#v1-finish-self');
+    await until(r.page, (b) => { const h = document.querySelector('#v1-status')?.innerHTML || ''; return h !== b && /class="err"/.test(h); }, before, 600000);
+    const prove = submits.slice(n1).find((x) => x.type === 'wrap' && x.op.cx === wrapSub?.op.cx);   // every waiting deposit is finished, this one among them
+    const settle = walletTxs.slice(t1).find((x) => String(x.to).toLowerCase() === '0x000000000ed1eabd231be41d93b719056f7febfc');
+    ok(prove?.mode === 'prove' && prove.op.cx === wrapSub?.op.cx && prove.op.owner === wrapSub?.op.owner, 'v1refuse: finishing from the wallet asks the relay for this deposit\'s proof only');
+    ok(settle && settle.from.toLowerCase() === A0 && settle.data.startsWith('0x' + Buffer.from(keccak_256(Buffer.from('settle(bytes,bytes,bytes[])'))).toString('hex').slice(0, 8)),
+      `v1refuse: and sends settle() to the pool from the wallet (${(await text(r.page, '#v1-status')).slice(0, 90)})`);
+    // The same from its receipt, once it has waited in line: a receipt as another tab of this page would write it (the
+    // page takes in what other tabs write), still queued, for the deposit the scan above found waiting.
+    const depositId = depositIdOf(wrapSub.op);
+    await r.ctx.route(/\/confidential\/status\?id=stub-inline/, (route) => json(route, { jobId: 'stub-inline', type: 'wrap', mode: 'settle', status: 'pending', txHash: null, error: null, createdAt: Date.now() }));
+    await r.page.evaluate((dep) => {
+      const k = 'tacit-lite-activity-v1', s = JSON.parse(localStorage.getItem(k) || '{"items":[]}'), t = Date.now();
+      s.items.unshift({ id: 'job:stub-inline', kind: 'job', type: 'wrap', label: 'Finish a 0.01 tETH deposit', status: 'pending', at: t - 120e3, up: t - 120e3, self: { deps: ['d:' + dep] } });
+      dispatchEvent(new StorageEvent('storage', { key: k, newValue: JSON.stringify(s) }));
+    }, depositId);
+    await r.page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    await r.page.click('#act'); await r.page.waitForSelector('#sheet-act[open]');
+    const inline = () => r.page.evaluate(() => document.querySelector('[data-act="job:stub-inline"]')?.textContent.replace(/\s+/g, ' ').trim() || '');
+    const offered = await until(r.page, () => /Finish it from your wallet/.test(document.querySelector('[data-act="job:stub-inline"]')?.textContent || ''), null, 60000).then(() => true, () => false);
+    ok(offered, `v1refuse: a deposit's receipt in line offers to finish it from the wallet (${(await inline()).slice(0, 160)})`);
+    const t2 = walletTxs.length;
+    if (offered) {
+      await r.page.click('[data-act="job:stub-inline"] [data-self]');
+      await until(r.page, () => !!document.querySelector('[data-act="job:stub-inline"] .actr-f.err'), null, 600000).catch(() => {});
+      ok(walletTxs.slice(t2).some((x) => String(x.to).toLowerCase() === '0x000000000ed1eabd231be41d93b719056f7febfc'), `v1refuse: pressed, it proves and sends from the wallet, and a refusal shows on the receipt (${(await inline()).slice(0, 160)})`);
+    }
     if (r.errors.length) { fails++; console.log('FAIL v1refuse page errors: ' + r.errors.slice(0, 3).join(' | ')); }
-  } finally { refuseSubmits = 0; await r.browser.close(); }
+  } finally { refuseSubmits = 0; proveStub = false; await r.browser.close(); }
 });
 
 await step('devsend', async () => {
@@ -1173,6 +1223,25 @@ await step('devmove', async () => {
   await r.page.click('#d-go');
   await until(r.page, () => /On its way|stubbed|err/i.test(document.querySelector('#d-status')?.innerHTML || ''), null, 600000);
   ok(relays.slice(k1).some((b) => b.call), `devmove: a move to Base asks the relayer for its bridge call ${(await st()).slice(0, 60)}`);
+
+  // A withdrawal the keeper cannot take says so plainly and offers the paying account instead, which then sends it
+  // itself, proved here, with no relay fee.
+  const BEEF = '0x000000000000000000000000000000000000beef';
+  await r.page.click('[data-dest="addr"]');
+  await r.page.fill('#d-to', BEEF);
+  await r.page.fill('#d-amt', '0.0005');
+  const k2 = relays.length, b0 = await balOf(BEEF);
+  await r.page.click('#d-go');
+  await until(r.page, () => /data-retry="d-self"|class="err"/.test(document.querySelector('#d-status')?.innerHTML || ''), null, 600000);
+  const said = await st();
+  ok(relays.slice(k2).some((b) => !b.wrap && !b.call) && /can’t take this one/.test(said) && !/gas/i.test(said) && !!(await r.page.$('#d-status [data-retry="d-self"]')),
+    `devmove: a withdrawal the keeper cannot take says so plainly and offers the Tacit account instead (${said.slice(0, 110)})`);
+  await r.page.click('#d-status [data-retry="d-self"]');
+  await r.page.waitForSelector('#d-relay', { timeout: 30000 });
+  await until(r.page, () => !document.querySelector('#d-go').disabled, null, 30000);
+  await r.page.click('#d-go');
+  await until(r.page, () => /Withdrawn|class="err"/.test(document.querySelector('#d-status')?.innerHTML || ''), null, 600000);
+  ok(/Withdrawn/.test(await st()) && (await balOf(BEEF)) - b0 === 5n * 10n ** 14n, `devmove: then the Tacit account sends it, proved here, with no relay fee (${(await st()).slice(0, 60)})`);
   if (r.errors.length) { fails++; console.log('FAIL devmove page errors: ' + r.errors.slice(0, 3).join(' | ')); }
 });
 await step('btc', async () => {
@@ -1400,9 +1469,10 @@ await step('activity', async () => {
     ok(old2.bad === 'Failed', `activity: a failure older than six hours is left as it was (${old2.text.slice(0, 40)})`);
     ok((await actRows(r.page)).some((x) => /Add 0\.001 ETH/.test(x.text) && /Confirmed/.test(x.text)), 'activity: the list, and each outcome, survives the reload');
     await shot(r.page, 'activity-phone');
-    // A job still in line after a minute says why, from the relay's heartbeat: here, a settle wallet waiting on gas.
+    // A job still in line after a minute says it keeps its place. The relay's heartbeat says why it is holding settles;
+    // the page does not repeat that, and a job it cannot finish itself (a transfer) offers nothing more.
     await r.ctx.route(/\/prover-health\?/, (route) => json(route, { services: { settle: { healthy: true, age_seconds: 20,
-      note: 'settle: settle wallet holds 0.0010 ETH, under the 0.0031 ETH a settle can cost at today’s gas — leaving jobs queued until it is topped up' } } }));
+      note: 'settle: settle wallet holds 0.0010 ETH, under the 0.0031 ETH a settle can cost at today’s gas — proving only jobs a page settles itself; the rest wait until it is topped up' } } }));
     served['j-wait'] = { type: 'transfer', status: 'pending' };
     await sleep(600);
     await r.page.evaluate(() => {
@@ -1413,9 +1483,9 @@ await step('activity', async () => {
     await r.page.reload();
     await r.page.waitForSelector('.tile');
     await openActivity(r.page);
-    const waitOk = await until(r.page, () => /topping up its gas/.test(document.querySelector('[data-act="job:j-wait"]')?.textContent || ''), null, 20000).then(() => true, () => false);
+    const waitOk = await until(r.page, () => /In line\. It keeps its place/.test(document.querySelector('[data-act="job:j-wait"]')?.textContent || ''), null, 20000).then(() => true, () => false);
     const wait = await row('job:j-wait');
-    ok(waitOk && wait.now === 'Queued' && /keeps its place/.test(wait.text), `activity: a job in line past a minute says the relay is waiting on gas, and that it keeps its place (${wait.text.slice(0, 110)})`);
+    ok(waitOk && wait.now === 'Queued' && !/gas|top/i.test(wait.text) && !/from your/.test(wait.text), `activity: a job in line past a minute says it keeps its place, and nothing about the relay's wallet (${wait.text.slice(0, 110)})`);
     served['j-wait'] = { type: 'transfer', status: 'settled', txHash: H('b8') };
     await until(r.page, () => /Done in/.test(document.querySelector('[data-act="job:j-wait"]')?.textContent || ''), null, 30000).catch(() => {});
     ok(/Done in/.test((await row('job:j-wait')).text), 'activity: and it reads done once the relay settles it');

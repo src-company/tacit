@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-KOt/VZ7J/7Ehk9WCzFmk3WeRtPEADWzjMj0B+aD+aaQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-bnk6SFkjPEgrO2VAjWkyhxqkxGgDin9P5pWPJHiLrk8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -835,6 +835,8 @@ const errText = (e) => {
   if (/settle timed out|status polling for job/i.test(m)) return `Still in the relay’s queue. It goes through on its own; follow it in Activity, and don’t send it again.`;
   if (/prove timed out/i.test(m)) return 'The relay is taking longer than usual to prove this, and this page stopped waiting for it. Try again in a few minutes.';
   if (/relay lost the job/i.test(m)) return 'The relay lost track of this request. Check Activity before sending it again.';
+  // A device-pool keeper not taking sends right now (see keeperTrouble): the page offers the paying account instead.
+  if (/short of gas|can.t take this one/i.test(m)) return 'The relay can’t take this one right now.';
   // The relay's daily allowance of settles that carry no fee in the op (a wrap's tip rides on its deposit, so a wrap
   // counts): it opens again at midnight UTC, not in a moment.
   if (/free relayed settles for today are used up/i.test(m)) return 'The relay’s free settles for today are used up. They open again at midnight UTC.';
@@ -843,6 +845,8 @@ const errText = (e) => {
   if (/timed? ?out|timeout/i.test(m)) return 'The network took too long to answer. Try again.';
   return m.replace(/^Error:\s*/, '').slice(0, 240);
 };
+// A keeper that could not take a send (unreachable, busy, or not taking sends right now), not a send that failed.
+const keeperTrouble = (e) => /relay|keeper|failed to fetch|\b5\d\d\b|\b429\b|timed? ?out|capacity/i.test(String(e?.message || e)) && !revertText(e);
 // A reason without its "try again": said of a deposit already made, that would ask for the deposit a second time.
 const noRetry = (t) => String(t).split(/(?<=[.!?])\s+/).filter((s) => !/\btry(ing)? again\b/i.test(s)).join(' ');
 // A wrap that stopped once its deposit was sent: the deposit waits in the pool for Finish, and is never asked for again.
@@ -1060,8 +1064,8 @@ function newRun(sheet) {
   // action itself; without, each job is a receipt of its own (claims, taken one after another).
   run.go = (to) => { run.to = { one: true, ...to }; };
   // waitOpts for its next relay job. `step`: a step taken first ({ step, doing }), a job's own name in a batch, or
-  // nothing for the action's own job.
-  run.wait = (step, timeoutMs) => { run.check(); return { timeoutMs, onJob: (jobId) => runJob(run, jobId, step) }; };
+  // nothing for the action's own job. `self`: what finishing it from the paying account takes (see selfWork).
+  run.wait = (step, timeoutMs, self = null) => { run.check(); return { timeoutMs, onJob: (jobId) => runJob(run, jobId, step, self) }; };
   run.switched = () => !!run.pub && S.key?.pubHex !== run.pub;
   run.check = () => { if (run.switched()) throw new Error('Another Tacit key was opened, so this stopped before its next step.'); };
   run.take = (...keys) => { for (const k of keys) run.keys.add(k); };
@@ -1109,18 +1113,19 @@ function reattempt(id) {
   ACT.items = ACT.items.map((x) => (x === it ? old : x));
   actSave();
 }
-function runJob(run, jobId, step) {
+function runJob(run, jobId, step, self = null) {
   const main = !step, id = 'job:' + jobId, to = run.to;
   reattempt(id);
   run.jobs.push(id);
   if (to?.one && !run.op) { run.op = `op:${Date.now().toString(36)}${(++runSeq).toString(36)}`; RUN_OF.set(run.op, run); }
-  JOBS.set(jobId, { run, in: to?.one ? run.op : null, label: main ? to?.label : step.step || step });
+  JOBS.set(jobId, { run, in: run.nest || (to?.one ? run.op : null), label: main ? to?.label : step.step || step, self });
   if (to && !run.away) { try { handoff(run); } catch (e) { console.error('hand-off', e); } }
   if (!to?.one) return;
   // The receipt: transactions this action sent come first as its steps, then each job as it is queued.
   const op = actGet(run.op) || actPut(run.op, { kind: 'op', label: to.label, steps: [], status: 'pending', pub: run.pub });
   for (const t of run.txs.splice(0)) { const x = actGet(t.id); if (x) { x.in = run.op; op.steps.push({ id: t.id, main: false, step: t.step, doing: t.doing }); } }
   op.steps.push({ id, main, step: main ? null : step.step, doing: main ? null : step.doing });
+  if (self && main) op.self = self;
   actSave(); paintAct();
 }
 // Gives the sheet back: the form is emptied and drawn afresh, and its status line says where the action went.
@@ -1236,7 +1241,7 @@ addEventListener('tacit:job', ({ detail: d }) => {
     SESS.add(id);
     if (!j) OWN.set(id, busySheet());
     actPut(id, { kind: 'job', type: d.type || null, label: j?.label || JOB_LABEL[d.type] || 'Relayed action', in: j?.in || undefined, pub: j ? j.run.pub : undefined,
-      status: d.status, hash: d.txHash || null, err: d.error || null });
+      status: d.status, hash: d.txHash || null, err: d.error || null, self: (!j?.in && j?.self) || undefined });
   } else actPut(id, { status: d.status, hash: d.txHash || undefined, err: d.error || undefined });
   followJob(id);
 });
@@ -1249,14 +1254,15 @@ async function jobStatus(jobId) {
   if (!r.ok) throw new Error(`relay ${r.status}`);
   return r.json();
 }
-// Why the relay has not picked a job up yet, from its public heartbeat (read at most every 30 seconds): waiting on a
-// gas top-up, busy with another job, or not beating (restarting). Null when all looks normal or it cannot be read.
+// Why the relay has not picked a job up yet, from its public heartbeat (read at most every 30 seconds): holding settles
+// for now (it still proves what a page sends itself), busy with another job, or not beating (restarting). Null when all
+// looks normal or it cannot be read.
 const RS = { at: 0, why: null, reading: null };
 function relayWhy() {
   if (Date.now() - RS.at < 30e3 || RS.reading) return RS.why;
   RS.reading = fetch(`${API}/prover-health?network=mainnet`, { cache: 'no-store', signal: within(10e3) }).then((r) => r.json()).then((h) => {
     const st = h?.services?.settle, note = String(st?.note || '');
-    const why = !st || !st.healthy || Number(st.age_seconds) > 600 ? 'down' : /leaving jobs queued/i.test(note) ? 'gas' : /settle: proving/i.test(note) ? 'busy' : null;
+    const why = !st || !st.healthy || Number(st.age_seconds) > 600 ? 'down' : /leaving jobs queued|a page settles itself/i.test(note) ? 'held' : /settle: proving/i.test(note) ? 'busy' : null;
     const changed = why !== RS.why;
     Object.assign(RS, { at: Date.now(), why });
     if (changed) paintAct();
@@ -1264,7 +1270,7 @@ function relayWhy() {
   return RS.why;
 }
 const WAIT_WHY = {
-  gas: 'In line: the relay is topping up its gas before it settles more. It keeps its place and goes through on its own.',
+  held: 'In line. It keeps its place and goes through on its own.',
   down: 'In line: the relay has been quiet for a few minutes (a long proof, or a restart). It keeps its place and goes through on its own.',
   busy: 'In line behind another request.',
 };
@@ -1295,10 +1301,11 @@ const recheckJob = (id) => jobStatus(id.slice(4)).then((st) => { if (st?.status 
 const runTx = (run, hash, step, doing) => { if (run && hash) run.txs.push({ id: `tx:1:${String(hash).toLowerCase()}`, step, doing }); return hash; };
 
 // A transaction this page sent, followed to its receipt. `via: 'keeper'` marks one a device-pool keeper submitted.
-function actTx(hash, { label, chainId = 1, via = null } = {}) {
+// `nest`: the receipt it is a step of (see selfFinish), where it is kept rather than listed.
+function actTx(hash, { label, chainId = 1, via = null, nest = null } = {}) {
   if (!hash) return hash;
   const id = `tx:${chainId}:${String(hash).toLowerCase()}`;
-  if (!ACT.items.some((x) => x.id === id)) { SESS.add(id); OWN.set(id, busySheet()); actPut(id, { kind: 'tx', label: label || 'Transaction', chain: chainId, hash, via, status: 'pending' }); }
+  if (!ACT.items.some((x) => x.id === id)) { SESS.add(id); OWN.set(id, busySheet()); actPut(id, { kind: 'tx', label: label || 'Transaction', chain: chainId, hash, via, status: 'pending', in: nest || undefined }); }
   followTx(id);
   return hash;
 }
@@ -1437,7 +1444,7 @@ function actFoot(it) {
   const link = it.hash ? html`<a href="${txUrl(it)}" target="_blank" rel="noopener">${txSite(it)} ↗</a>` : '';
   if (it.status === 'failed' || it.status === 'unknown') return html`<div class="actr-f err">${linked(failText(it))}</div>`;
   const took = it.end ? clock(it.end - it.at) : '';
-  if (it.kind === 'op' && !ended(it)) return html`<div class="actr-f">${opWhere(it)}</div>`;
+  if (it.kind === 'op' && !ended(it)) return html`<div class="actr-f">${opWhere(it)}</div>${selfLine(it)}`;
   // Only the line for the entry's own status is built (a job in line asks the relay's heartbeat why).
   const say_ = {
     pending: () => (it.kind === 'job' ? jobWhere(it)
@@ -1449,7 +1456,83 @@ function actFoot(it) {
     confirmed: () => html`${it.flip ? 'Confirmed' : `Confirmed in ${took}`} · ${link}`,
     stale: () => html`${it.kind === 'btc' ? 'Not confirmed after three days.' : 'Not seen on chain after half an hour; it may have been dropped or replaced.'} ${link}`,
   }[it.status];
-  return html`<div class="actr-f">${say_ ? say_() : ''}</div>${it.warn ? html`<div class="actr-f err">${it.warn}</div>` : ''}`;
+  return html`<div class="actr-f">${say_ ? say_() : ''}</div>${it.warn ? html`<div class="actr-f err">${it.warn}</div>` : ''}${selfLine(it)}`;
+}
+
+// ── finishing from the paying account ─────────────────────────────────────────────────────────────────────────
+// A deposit waiting for its settle, or an exit, that the relay has not taken after a minute and a half can be finished
+// from the paying account instead: the relay proves it, which is all it is asked for, and the settle goes out from here,
+// the account paying its network fee (an exit then pays no relay fee). A deposit's id commits to the note it becomes,
+// so it is the same wrap whoever sends it; an exit spends the same note, so only one of the two can land. What it takes
+// is read from the last scan: the deposits still waiting, or the note still unspent. `self` on a receipt: { deps: [kDep]
+// } or { exit: { to, units, note: kNote, from: scan key, sheet } }.
+const SELF = new Map();                                            // receipt id → what finishing it is doing now
+const OFFERED = new Set();                                         // receipts drawn with the offer
+function selfWork(it) {
+  const s = it.self;
+  if (!s || !S.key || otherKey(it) || ended(it) || !P.scan) return null;
+  const j = it.kind === 'op' ? actGet(it.steps.find((x) => x.main)?.id || '') : it;
+  if (!j || j.status !== 'pending' || Date.now() - j.at < 90e3) return null;
+  if (s.deps) { const ps = P.scan.pending.filter((p) => p.ticker && s.deps.includes(kDep(p))); return ps.length ? { ps } : null; }
+  const note = s.exit && (P.scan[s.exit.from]?.notes || []).find((n) => kNote(n) === s.exit.note);
+  return note ? { note } : null;
+}
+function selfLine(it) {
+  if (SELF.has(it.id)) return html`<div class="actr-f">${SELF.get(it.id)}</div>`;
+  const err = it.selfErr ? html`<div class="actr-f err">${it.selfErr}</div>` : '';
+  if (!selfWork(it)) { OFFERED.delete(it.id); return err; }
+  OFFERED.add(it.id);
+  return html`${err}<div class="actr-f"><button class="link" type="button" data-self="${it.id}">${it.self.exit ? 'Send it' : 'Finish it'} from ${your()}</button>
+    instead: ${it.self.exit ? `no relay fee; ${your()} pays the network fee, and its address shows on the withdrawal.` : `${your()} pays the network fee.`}</div>`;
+}
+document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-self]'); if (b) selfFinish(b.dataset.self); });
+// The offer appears once a receipt has waited long enough, which no change of its own marks: the open list is drawn
+// again when one comes due. It needs a scan, which is read if none has been yet.
+setInterval(() => {
+  if (!$('#sheet-act').open || !S.key) return;
+  const due = listed().filter((x) => x.self && !ended(x));
+  if (due.length && !P.scan) { scanPrivate().then(paintAct).catch(() => {}); return; }
+  if (due.some((x) => !OFFERED.has(x.id) && !SELF.has(x.id) && selfWork(x))) paintAct();
+}, 5000);
+// The settle a proof was bought for, sent from the paying account and followed to its receipt. `nest`: the receipt it
+// finishes, which keeps it as a step.
+const settleFrom = (t, { label, nest = null, say: tell }) => async (x) => {
+  tell(`Sending it from ${your()}…`);
+  const hash = await sendTx({ to: t.cfg.pool, data: t.settleCalldata(x), label, nest });
+  tell(html`Sent ${txLink(hash)}. Waiting for it to land…`);
+  await waitTx(hash);
+  return { txHash: hash };
+};
+async function selfFinish(id) {
+  const it = actGet(id), w = it && selfWork(it);
+  if (!w || SELF.has(id)) return;
+  const tell = (v) => { SELF.set(id, v); paintAct(); };
+  const run = newRun('act');
+  run.nest = id; run.release = () => {};
+  actPut(id, { selfErr: '' });
+  tell('The relay is proving it for you to send, about a minute…');
+  let hash = null;
+  try {
+    await payingAccount();
+    const t = await getUx(), priv = walletPriv();
+    if (w.ps) {
+      for (const p of w.ps) {
+        run.take(kDep(p));
+        const what = `${fmt(p.value, p.dec, 6)} ${p.shown}`;
+        const built = t.buildWrap({ walletPriv: priv, amountWei: (p.value * p.scale).toString(), ticker: p.ticker, index: p.index });
+        hash = (await t.submitWrapSettle({ built, waitOpts: run.wait(`Prove a ${what} deposit`, 15 * 60e3), selfSettle: settleFrom(t, { label: `Finish a ${what} deposit`, nest: id, say: tell }) })).txHash || hash;
+      }
+    } else {
+      const x = it.self.exit;
+      run.take(kNote(w.note));
+      hash = (await t.sendUnwrap({ note: w.note, walletPriv: priv, recipient: x.to, amount: BigInt(x.units), waitOpts: run.wait(`Prove: ${it.label}`, 15 * 60e3),
+        selfSettle: settleFrom(t, { label: it.label, nest: id, say: tell }) })).txHash;
+    }
+    // The receipt is done by this transaction; the relay, once it gets to its own copy, finds it done too.
+    const main = it.kind === 'op' ? it.steps.find((x) => x.main)?.id : id;
+    if (hash && actGet(main)) actPut(main, { status: 'settled', hash });
+  } catch (e) { actPut(id, { selfErr: errText(e) }); }
+  finally { SELF.delete(id); endRun(run); paintAct(); afterActivity(); }
 }
 // The list is this browser's, whichever key is open: an entry another key made says so, since what it points to
 // (a Finish, a balance) is that key's.
@@ -1807,13 +1890,13 @@ async function ensureChain(id) {
 }
 // A public transaction goes out from the paying account: the connected wallet, or the Tacit account signing here. The
 // Activity list follows it to its receipt under `label`.
-async function sendTx({ to, data, value = 0n, chainId = 1, via = payer(), label }) {
-  if (via === 'tacit') return actTx(await sendFromTacit({ to, data, value: BigInt(value), chainId }), { label, chainId });
+async function sendTx({ to, data, value = 0n, chainId = 1, via = payer(), label, nest = null }) {
+  if (via === 'tacit') return actTx(await sendFromTacit({ to, data, value: BigInt(value), chainId }), { label, chainId, nest });
   if (!S.provider || !S.wallet) await connect();
   await ensureChain(chainId);
   const tx = { from: S.wallet, to, data: '0x' + strip(data) };
   if (BigInt(value) > 0n) tx.value = '0x' + BigInt(value).toString(16);
-  return actTx(await S.provider.request({ method: 'eth_sendTransaction', params: [tx] }), { label, chainId });
+  return actTx(await S.provider.request({ method: 'eth_sendTransaction', params: [tx] }), { label, chainId, nest });
 }
 // The paying account's address, asking the wallet to connect when it was chosen to pay but is not connected.
 async function payingAccount() {
@@ -2140,7 +2223,7 @@ function wireSub(el, name, set) { $$(`[data-${name}]`, el).forEach((b) => b.oncl
 
 // ── Tacit V1 pool: shared module, loaded on first use ────────────────────────────────────────────────────
 const getUx = lazy(async () => {
-  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=ea084947'), import('/confidential-deployments.js')]);
+  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=49868f3d'), import('/confidential-deployments.js')]);
   dep.setActiveNetwork('mainnet');
   setExternalTacHolders(() => (S.wallet ? [S.wallet] : []));      // public TAC in the connected wallet counts toward the exit-fee tier, as on tacit.finance
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
@@ -2207,27 +2290,41 @@ function waitingText(ps) {
   const odd = ps.some((x) => !x.ticker) ? 'Another deposit is waiting too; finish it on tacit.finance.' : '';
   return [parts.length ? `${parts.join(' and ')} ${parts.length > 1 ? 'are' : 'is'} waiting to become private.` : '', odd].filter(Boolean).join(' ');
 }
+// Finish, relayed; or from the paying account, which pays the network fee (see selfWork).
 const depositCallout = (sheet, id) => {
-  const ps = pendingFor(sheet);
-  return ps.length ? html`<div class="callout"><span>${waitingText(ps)}</span>${ps.some((p) => p.ticker) ? html`<button class="btn ghost" type="button" id="${id}">Finish</button>` : ''}</div>` : html``;
+  const ps = pendingFor(sheet), can = ps.some((p) => p.ticker);
+  return ps.length ? html`<div class="callout"><span>${waitingText(ps)}${can ? html` <button class="link" type="button" id="${id}-self">Or finish from ${your()}</button>` : ''}</span>${can ? html`<button class="btn ghost" type="button" id="${id}">Finish</button>` : ''}</div>` : html``;
+};
+const wireFinish = (root, sheet, id, statusId) => {
+  for (const self of [false, true]) {
+    const b = $(`#${id}${self ? '-self' : ''}`, root);
+    if (b) b.onclick = () => busy(b, (run) => finishDeposits(run, sheet, $('#' + statusId), { self }));
+  }
 };
 // Each of the sheet's waiting deposits is settled in turn, rebuilt from the key at its own index and scale; one that
-// fails does not stop the rest. Once the relay has the first, the rest go on by themselves, each its own receipt.
-async function finishDeposits(run, sheet, status) {
+// fails does not stop the rest. Relayed, once the relay has the first, the rest go on by themselves, each its own
+// receipt. With `self`, the relay proves each and the paying account sends it, so the sheet stays with it to the end.
+async function finishDeposits(run, sheet, status, { self = false } = {}) {
   const ps = pendingFor(sheet).filter((x) => x.ticker), sid = status.id;
   if (!ps.length) return;
   run.take(...ps.map(kDep));
-  run.go({ label: ps.length > 1 ? `Finishing ${ps.length} deposits` : `Finishing a ${fmt(ps[0].value, ps[0].dec, 6)} ${ps[0].shown} deposit`, one: false, status: () => $('#' + sid) });
+  if (!self) run.go({ label: ps.length > 1 ? `Finishing ${ps.length} deposits` : `Finishing a ${fmt(ps[0].value, ps[0].dec, 6)} ${ps[0].shown} deposit`, one: false, status: () => $('#' + sid) });
   let err = null, done = 0;
   const miss = (e) => { if (run.away) run.fail(status, e); else err ||= e; };
   try {
+    if (self) await payingAccount();
     const t = await getUx(), priv = walletPriv();
     for (const p of ps) {
       if (run.switched()) { miss(new Error('Another Tacit key was opened, so the rest stopped.')); break; }
       const what = `${fmt(p.value, p.dec, 6)} ${p.shown}`;
-      run.say(status, `Settling a ${what} deposit into a private note…`);
-      try { await t.submitWrapSettle({ built: t.buildWrap({ walletPriv: priv, amountWei: (p.value * p.scale).toString(), ticker: p.ticker, index: p.index }), waitOpts: run.wait(`Finish a ${what} deposit`, 15 * 60e3), depositTx: p.txHash || null }); done++; }
-      catch (e) { miss(e); }
+      run.say(status, self ? `The relay is proving a ${what} deposit for ${your()} to send, about a minute…` : `Settling a ${what} deposit into a private note…`);
+      const built = t.buildWrap({ walletPriv: priv, amountWei: (p.value * p.scale).toString(), ticker: p.ticker, index: p.index });
+      try {
+        await t.submitWrapSettle(self
+          ? { built, waitOpts: run.wait(`Prove a ${what} deposit`, 15 * 60e3), selfSettle: settleFrom(t, { label: `Finish a ${what} deposit`, say: (v) => run.say(status, v) }) }
+          : { built, waitOpts: run.wait(`Finish a ${what} deposit`, 15 * 60e3, { deps: [kDep(p)] }), depositTx: p.txHash || null });
+        done++;
+      } catch (e) { miss(e); }
     }
   } catch (e) { miss(e); }
   await scanPrivate(true).catch(() => {});                          // a read that fails is not a Finish that failed
@@ -2342,7 +2439,7 @@ function renderV1(el) {
     <div class="status" role="status" id="v1-status"></div>`);
   wireSub(el, 'v1', (m) => { V1.mode = m; keep($('#sheet-eth'), render.eth); });
   const re = $('#v1-rescan'); if (re) re.onclick = () => busy(re, async () => { try { await scanPrivate(true); } catch (e) { sayErr($('#v1-status'), e); } rerender('eth'); });
-  const fin = $('#v1-finish'); if (fin) fin.onclick = () => busy(fin, (run) => finishDeposits(run, 'eth', $('#v1-status')));
+  wireFinish(document, 'eth', 'v1-finish', 'v1-status');
   for (const [id, kind, done] of [['v1-claim', 'claim', 'Claimed'], ['v1-back', 'refund', 'Taken back']]) {
     const b = $('#' + id);
     if (b) b.onclick = () => busy(b, async (run) => { try { await settleLocks(run, kind, $('#v1-status')); if (!run.away) toast(done); rerender('eth'); } catch (e) { run.fail($('#v1-status'), e); } });
@@ -2408,7 +2505,7 @@ function v1Wrap(el, status) {
       landed = true;
       // The deposit is in escrow from here on; if this step fails, Finish rebuilds the same note at the same index.
       say(status, html`Deposited ${txLink(hash)}. The relay is proving your note, about a minute…`);
-      await t.submitWrapSettle({ built: w, waitOpts: run.wait(null, 15 * 60e3), depositTx: hash });
+      await t.submitWrapSettle({ built: w, waitOpts: run.wait(null, 15 * 60e3, { deps: [kDep(w)] }), depositTx: hash });
       await scanPrivate(true).catch(() => {});
       rerender('eth');
     } catch (e) {
@@ -2603,7 +2700,7 @@ function v1Out(el, status) {
       const t = await getUx(), priv = walletPriv(), recipient = recipientOf(raw);
       const note = await noteFor(run, t, priv, x.units, (n) => BigInt(n.value) >= x.units, status);
       run.say(status, 'The relay is proving your withdrawal…');
-      await t.sendUnwrap({ note, walletPriv: priv, recipient, amount: x.units, waitOpts: run.wait(null, 15 * 60e3) });
+      await t.sendUnwrap({ note, walletPriv: priv, recipient, amount: x.units, waitOpts: run.wait(null, 15 * 60e3, { exit: { to: recipient, units: String(x.units), note: kNote(note), from: 'eth', sheet: 'eth' } }) });
       await scanPrivate(true).catch(() => {});
       rerender('eth');
     } catch (e) { run.fail(status, e); }
@@ -2611,7 +2708,9 @@ function v1Out(el, status) {
 }
 
 // ── private ETH · on this device (TacitEvmPool, Groth16 proved in the browser) ──────────────────────────
-const DEV = { chain: DEVICE_CHAINS.find((c) => c.chainId === store.get('tacit-lite-device-chain')) || DEVICE_CHAINS[1], mode: 'deposit', dest: 'addr', W: null, bal: null, key: null, quote: null, err: null };
+// `self`: sends and withdrawals go out from the paying account instead of the keeper, which pays the gas and takes no
+// relay fee (chosen after a keeper could not take one; see keeperTrouble). It lasts until the chain changes.
+const DEV = { chain: DEVICE_CHAINS.find((c) => c.chainId === store.get('tacit-lite-device-chain')) || DEVICE_CHAINS[1], mode: 'deposit', dest: 'addr', W: null, bal: null, key: null, quote: null, err: null, self: false };
 const getDeviceMods = lazy(async () => {
   const [zkm, wm, pm, pos] = await Promise.all([
     import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=7e89465f'), import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
@@ -2694,7 +2793,7 @@ const payFrom = (chainId, label) => ({ address: S.address, send: ({ to, data, va
 const keeperTx = (h, chainId, label) => actTx(h, { chainId, label, via: 'keeper' });
 // Pool ETH into the Tacit pool with no public stop: router.withdrawToV1 pays the withdrawal straight into a V1 wrap of
 // this key's next note, relayed. The V1 relay then settles it; if that fails, the Tacit pool's Finish rebuilds the same note.
-async function moveToV1(run, W, amount, step) {
+async function moveToV1(run, W, amount, step, via = null) {
   if (amount % E10) throw new Error('The Tacit pool takes up to 8 decimals.');
   const t = await getUx(), priv = walletPriv();
   step('preparing your note in the Tacit pool, about half a minute');
@@ -2702,11 +2801,13 @@ async function moveToV1(run, W, amount, step) {
   const w = t.buildWrap({ walletPriv: priv, amountWei: amount, ticker: 'cETH', index });
   run.take(kDep(w));
   run.check();
-  const h = keeperTx(await W.toV1({ amount, commit: '0x' + strip(w.commit), onStep: step }), 1, `Move ${fmt(amount, 18, 6)} ETH into the Tacit pool`);
+  const label = `Move ${fmt(amount, 18, 6)} ETH into the Tacit pool`;
+  if (via) { await payingAccount(); W.connect(payFrom(1, label)); }
+  const sent = await W.toV1({ amount, commit: '0x' + strip(w.commit), via, onStep: step }), h = via ? sent : keeperTx(sent, 1, label);
   if (P.scan) P.scan.at = 0;                                     // the Tacit pool balance is read again on its next view
   step('the Tacit pool relay is proving your note');
   // toV1 returns once the move is mined, so from here the deposit waits in the Tacit pool for its Finish.
-  try { await t.submitWrapSettle({ built: w, waitOpts: run.wait(`Settle ${fmt(amount, 18, 6)} tETH moved in from this device`, 15 * 60e3) }); }
+  try { await t.submitWrapSettle({ built: w, waitOpts: run.wait(`Settle ${fmt(amount, 18, 6)} tETH moved in from this device`, 15 * 60e3, { deps: [kDep(w)] }) }); }
   catch (e) { throw waitRanOut(e) ? e : keptDeposit(e, true, ' on the Tacit pool tab'); }
   return h;
 }
@@ -2795,7 +2896,7 @@ function renderDevice(el) {
     <div id="d-form"></div>
     <div class="status" role="status" id="d-status"></div>`);
   const syncFailed = (e) => { DEV.err = e; rerender('eth'); sayErr($('#d-status'), e); };
-  wireSub(el, 'chain', (id) => { DEV.chain = DEVICE_CHAINS.find((x) => String(x.chainId) === id); store.set('tacit-lite-device-chain', DEV.chain.chainId); DEV.W = null; DEV.bal = null; DEV.quote = null; DEV.err = null; keep($('#sheet-eth'), render.eth); deviceSync(true).then(() => rerender('eth')).catch(syncFailed); });
+  wireSub(el, 'chain', (id) => { DEV.chain = DEVICE_CHAINS.find((x) => String(x.chainId) === id); store.set('tacit-lite-device-chain', DEV.chain.chainId); DEV.W = null; DEV.bal = null; DEV.quote = null; DEV.err = null; DEV.self = false; keep($('#sheet-eth'), render.eth); deviceSync(true).then(() => rerender('eth')).catch(syncFailed); });
   wireSub(el, 'dev', (m) => { DEV.mode = m; keep($('#sheet-eth'), render.eth); });
   if (!W || DEV.bal == null) deviceSync().then(() => rerender('eth')).catch(syncFailed);
   const re = $('#d-rescan'); if (re) re.onclick = () => busy(re, async () => { try { await deviceSync(true); DEV.err = null; rerender('eth'); } catch (e) { syncFailed(e); } });
@@ -2809,9 +2910,19 @@ function renderDevice(el) {
   const amountField = (id, label, extra = '') => html`
     <div class="lbl"><span>${label}</span>${extra}</div>
     <div class="amt"><input id="${id}" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="${label}"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>`;
+  // A send the keeper cannot take can go out from the paying account instead (DEV.self): proved here as before, then
+  // sent from there, which pays the gas, takes no relay fee, and shows as the sender.
+  const relayFeeNow = () => (DEV.self ? 0n : BigInt(DEV.quote?.fee || 0));
+  const selfNote = () => (DEV.self ? html`<p class="note">From ${your()}: no relay fee; it pays the gas, and its address shows as the sender. <button class="link" type="button" id="d-relay">Use the relay</button></p>` : '');
+  const wireRoute = () => $('#d-relay')?.addEventListener('click', () => { DEV.self = false; rerender('eth'); });
+  const failed = (e) => {
+    if (DEV.self || !keeperTrouble(e)) return sayErr(status, e);
+    RETRY['d-self'] = () => { DEV.self = true; rerender('eth'); say($('#d-status'), `Press it again: ${your()} sends it, with no relay fee.`); };
+    say(status, html`<span class="err">${errText(e)}</span> <button class="link" type="button" data-retry="d-self">Send it from ${your()} instead</button>`);
+  };
   // Everything a send or withdrawal can take: the private balance less the relay fee.
   const maxPriv = DEV.bal != null ? html`<button type="button" id="d-maxp">Private ${fmt(DEV.bal, 18, 4)} ETH</button>` : '';
-  const wireMax = () => $('#d-maxp')?.addEventListener('click', () => { const fe = BigInt(DEV.quote?.fee || 0), v = DEV.bal > fe ? DEV.bal - fe : 0n, amt = $('#d-amt'); amt.value = v ? plain(v, 18) : ''; amt.dispatchEvent(new Event('input')); });
+  const wireMax = () => { wireRoute(); $('#d-maxp')?.addEventListener('click', () => { const fe = relayFeeNow(), v = DEV.bal > fe ? DEV.bal - fe : 0n, amt = $('#d-amt'); amt.value = v ? plain(v, 18) : ''; amt.dispatchEvent(new Event('input')); }); };
   if (DEV.mode === 'deposit') {
     mount(f, html`${amountField('d-amt', 'Amount', html`<button type="button" id="d-max">${payName()} <span id="d-wb"><span class="sk" style="--w:5ch"></span></span> ETH</button>`)}
       <div class="lbl"><span>To</span><span>yourself, unless you name someone</span></div>
@@ -2875,7 +2986,7 @@ function renderDevice(el) {
       <p class="note" id="d-to-note"></p>
       ${amountField('d-amt', 'Amount', maxPriv)}
       <div class="rcpt" id="d-rcpt" hidden></div>
-      <button class="btn" type="button" id="d-go" disabled>Send privately</button>`);
+      <button class="btn" type="button" id="d-go" disabled>Send privately</button>${selfNote()}`);
     wireMax();
     const toEl = $('#d-to'), amt = $('#d-amt'), note = $('#d-to-note'), go = $('#d-go'), rc = $('#d-rcpt');
     const check = () => {
@@ -2892,7 +3003,7 @@ function renderDevice(el) {
       let bad = null;
       if (k === 'addr') { try { recipientOf(raw); } catch (x) { bad = x; } }
       if (k === 'uni') mount(rc, html`<div class="kv"><span>To</span><b>${rsv.r.label} → ${short(rsv.r.bp, 8)}</b></div>`);
-      const relayFee = k && DEV.quote?.fee ? BigInt(DEV.quote.fee) : 0n;
+      const relayFee = k ? relayFeeNow() : 0n;
       if (relayFee) rc.insertAdjacentHTML('beforeend', html`<div class="kv"><span>Relay fee, from your private balance</span><b>${fmt(relayFee, 18, 6)} ETH</b></div><div class="kv"><span>Arrives</span><b>${fmt(amount, 18, 6)} ETH</b></div>`.s);
       const over = DEV.bal != null && amount + relayFee > DEV.bal;
       go.disabled = !k || !!bad || over;
@@ -2915,12 +3026,13 @@ function renderDevice(el) {
           if (r.bp !== rsv.r?.bp) throw new Error('Where that address or name points changed. Check it and send again.');
           to = r.bp;
         }
-        const W2 = await deviceWallet();
-        const h = keeperTx(k === 'addr' ? await W2.withdraw({ to: recipientOf(to), amount, onStep: step }) : await W2.send({ to, amount, onStep: step }), c.chainId,
-          `Send ${fmt(amount, 18, 6)} ETH ${k === 'addr' ? 'out' : 'privately'} from this device${c.chainId === 1 ? '' : `, on ${c.name}`}`);
+        const W2 = await deviceWallet(), via = DEV.self ? 'self' : null, label = `Send ${fmt(amount, 18, 6)} ETH ${k === 'addr' ? 'out' : 'privately'} from this device${c.chainId === 1 ? '' : `, on ${c.name}`}`;
+        if (via) { await payingAccount(); W2.connect(payFrom(c.chainId, label)); }
+        const sent = k === 'addr' ? await W2.withdraw({ to: recipientOf(to), amount, via, onStep: step }) : await W2.send({ to, amount, via, onStep: step });
+        const h = via ? sent : keeperTx(sent, c.chainId, label);
         clearField(amt); rc.hidden = true;
         afterAction(html`<span class="ok">${k === 'addr' ? 'Sent to the address.' : 'Sent privately.'}</span> ${explorer(h)}`);
-      } catch (e) { sayErr(status, e); }
+      } catch (e) { failed(e); }
     });
   } else if (DEV.mode === 'out') {
     // From Ethereum, pool ETH also moves privately: into the Tacit pool as tETH, or to this key's balance on an L2.
@@ -2932,7 +3044,7 @@ function renderDevice(el) {
       <div class="rcpt" id="d-rcpt" hidden></div>
       <button class="btn" type="button" id="d-go" disabled>${dest === 'addr' ? 'Withdraw' : dest === 'v1' ? 'Move to the Tacit pool' : `Move to ${l2.name}`}</button>
       ${dest === 'addr' ? '' : html`<p class="note">${dest === 'v1' ? 'Arrives as tETH in the Tacit pool in the same transaction, with no address in between. The amount shows on Ethereum; which note paid does not.'
-        : `Arrives in your private balance on ${l2.name} within minutes. The amount shows on Ethereum; which note paid does not.`} The relay fee comes out of your private balance.</p>`}`);
+        : `Arrives in your private balance on ${l2.name} within minutes. The amount shows on Ethereum; which note paid does not.`}${DEV.self && dest === 'v1' ? '' : ' The relay fee comes out of your private balance.'}</p>`}${dest === 'addr' || dest === 'v1' ? selfNote() : ''}`);
     wireMax();
     wireSub(f, 'dest', (d) => { DEV.dest = d; keep($('#sheet-eth'), render.eth); });
     const toEl = $('#d-to'), amt = $('#d-amt'), go = $('#d-go'), rc = $('#d-rcpt');
@@ -2946,7 +3058,7 @@ function renderDevice(el) {
         const raw = toEl.value.trim();
         let bad = null;
         if (raw) { try { recipientOf(raw); } catch (x) { bad = x; } }
-        const relayFee = DEV.quote?.fee ? BigInt(DEV.quote.fee) : 0n;
+        const relayFee = relayFeeNow();
         if (relayFee) mount(rc, html`<div class="kv"><span>Relay fee, from your private balance</span><b>${fmt(relayFee, 18, 6)} ETH</b></div><div class="kv"><span>Arrives</span><b>${fmt(amount, 18, 6)} ETH</b></div>`);
         const over = DEV.bal != null && amount + relayFee > DEV.bal;
         go.disabled = !raw || !!bad || over;
@@ -2966,10 +3078,15 @@ function renderDevice(el) {
       try {
         const amount = parseUnits(amt.value);
         if (!amount) throw new Error('Enter an amount.');
-        const W2 = await deviceWallet();
+        const W2 = await deviceWallet(), via = DEV.self && (dest === 'addr' || dest === 'v1') ? 'self' : null;
         let h, done;
-        if (dest === 'addr') { h = keeperTx(await W2.withdraw({ to: recipientOf(toEl.value), amount, onStep: step }), c.chainId, `Withdraw ${fmt(amount, 18, 6)} ETH from this device${c.chainId === 1 ? '' : `, on ${c.name}`}`); done = 'Withdrawn.'; }
-        else if (dest === 'v1') { h = await moveToV1(run, W2, amount, step); done = 'Moved into the Tacit pool as tETH.'; }
+        if (dest === 'addr') {
+          const label = `Withdraw ${fmt(amount, 18, 6)} ETH from this device${c.chainId === 1 ? '' : `, on ${c.name}`}`;
+          if (via) { await payingAccount(); W2.connect(payFrom(c.chainId, label)); }
+          const sent = await W2.withdraw({ to: recipientOf(toEl.value), amount, via, onStep: step });
+          h = via ? sent : keeperTx(sent, c.chainId, label); done = 'Withdrawn.';
+        }
+        else if (dest === 'v1') { h = await moveToV1(run, W2, amount, step, via); done = 'Moved into the Tacit pool as tETH.'; }
         else {
           h = keeperTx(await W2.bridgeOut({ toChainId: l2.chainId, amount, l2Rpc: (await getDeviceMods()).jsonRpc(l2.rpc), onStep: step }), 1, `Move ${fmt(amount, 18, 6)} ETH to ${l2.name}`);
           devWalletOn(l2.chainId).then((w) => w.watchReceive()).catch(() => {});   // that chain's keeper sweeps the arrival in
@@ -2980,6 +3097,7 @@ function renderDevice(el) {
       } catch (e) {
         // A move that landed but has not settled has left this device: the field empties and the balance is read again.
         if (e?.said || waitRanOut(e)) { clearField(amt); rc.hidden = true; afterAction(html`<span class="err">${errText(e)}</span>`); }
+        else if (dest === 'addr' || dest === 'v1') failed(e);
         else sayErr(status, e);
       }
     });
@@ -3302,8 +3420,7 @@ function renderTacBal(el) {
     ${k && spendable('tac') ? html`<div class="callout"><span>${fmt(spendable('tac') * E10, 18, 2)} TAC is in private notes. Make it public TAC in ${your()} to sell or farm it here, all at once.</span><button class="btn ghost" type="button" id="tac-pub">Make public</button></div>` : ''}
     <div id="tac-send"></div>
     <div class="status" role="status" id="tac-bal-status"></div>`);
-  const fin = $('#tac-finish', el);
-  if (fin) fin.onclick = () => busy(fin, (run) => finishDeposits(run, 'tac', $('#tac-bal-status')));
+  wireFinish(el, 'tac', 'tac-finish', 'tac-bal-status');
   if (k) tacShield($('#tac-shield'), $('#tac-bal-status'), TACB.who === who ? TACB.acct : null, TACB.who === who ? TACB.erc - (TACB.acct || 0n) : null);
   tacSend($('#tac-send'), $('#tac-bal-status'));
   const pub = $('#tac-pub', el);
@@ -3322,7 +3439,7 @@ function renderTacBal(el) {
       for (const [i, n] of worth.entries()) {
         if (run.switched()) { run.fail(status, new Error('Another Tacit key was opened, so the rest stopped.')); break; }
         run.say(status, `The relay is moving your TAC${worth.length > 1 ? ` (${i + 1} of ${worth.length})` : ''}…`);
-        try { await t.unwrap({ note: n, walletPriv: priv, recipient: to, wait: true, waitOpts: run.wait(`Make ${fmt(BigInt(n.value), 8, 2)} TAC public`, 15 * 60e3) }); }
+        try { await t.unwrap({ note: n, walletPriv: priv, recipient: to, wait: true, waitOpts: run.wait(`Make ${fmt(BigInt(n.value), 8, 2)} TAC public`, 15 * 60e3, { exit: { to, units: String(n.value), note: kNote(n), from: 'tac', sheet: 'tac' } }) }); }
         catch (e) { if (!run.away) throw e; run.fail(status, e); }
       }
       if (!run.away) { toast('Private TAC made public'); say(status, html`<span class="ok">Public TAC in ${your()}.</span>`); }
@@ -3386,7 +3503,7 @@ function tacShield(el, status, acctBal, walletBal) {
       landed = true;
       // The deposit is in escrow from here on; if this step fails, Finish rebuilds the same note at the same index.
       say(status, html`Deposited ${txLink(w.txHash)}. The relay is proving your note…`);
-      await t.submitWrapSettle({ built: w, waitOpts: run.wait(null, 15 * 60e3), depositTx: w.txHash });
+      await t.submitWrapSettle({ built: w, waitOpts: run.wait(null, 15 * 60e3, { deps: [kDep(w)] }), depositTx: w.txHash });
       await Promise.allSettled([scanPrivate(true), loadTacHoldings()]);
       rerender('tac');
     } catch (e) {
@@ -4620,7 +4737,7 @@ render.borrow = () => {
   const st = LOCK.state, rec = st?.rec;
   // What the four steps add up to, before any of them: a first-time reader otherwise meets outputs and bonds cold.
   const intro = html`<p class="lede-s">Borrow dollars (cUSD) against your bitcoin. The BTC never leaves an address only your key can spend; an ETH bond, refundable, stands behind the lock.</p>`;
-  const wireFinish = () => { const fin = $('#bw-finish', el); if (fin) fin.onclick = () => busy(fin, (run) => finishDeposits(run, 'borrow', $('#bw-status'))); };
+  const wireBwFinish = () => wireFinish(el, 'borrow', 'bw-finish', 'bw-status');
   if (!st) {
     const blanks = [
       ['Lock BTC', 'Send BTC to a self-custody output only your key can spend, then lock it.'],
@@ -4631,7 +4748,7 @@ render.borrow = () => {
     mount(el, html`${intro}${depositCallout('borrow', 'bw-finish')}
       <ol class="steps">${blanks.map(([h, d], i) => html`<li class="step"><span class="n">${i + 1}</span><div><h3>${h}</h3><div class="d">${d}</div></div></li>`)}</ol>
       <div class="status" role="status" id="bw-status"><span class="sk ln" style="--w:40%"></span></div>`);
-    wireFinish();
+    wireBwFinish();
     loadBorrow().then(() => rerender('borrow')).catch((e) => sayRetry($('#bw-status'), e, 'borrow'));
     return;
   }
@@ -4734,7 +4851,7 @@ render.borrow = () => {
       await loadBorrow(true); rerender('borrow');
     } catch (e) { sayErr(status, e); }
   });
-  wireFinish();
+  wireBwFinish();
   // A bond goes back through the contract that holds it (the escrow helper, the earlier helper, or the engine), sent from
   // the account that posted it.
   $$('[data-bond-take]', el).forEach((btn) => btn.onclick = () => busy(btn, async () => {
@@ -4946,7 +5063,7 @@ render.borrow = () => {
       if (!note) throw new Error('Your cUSD is in an action still going through. Try again once it is done.');
       run.take(kNote(note));
       say(status, 'The relay is proving your withdrawal…');
-      const r = await t.unwrap({ note, walletPriv: priv, recipient: to, waitOpts: run.wait(`Withdraw ${fmt(BigInt(note.value), 8, 2)} cUSD as tacUSD`, 15 * 60e3) });
+      const r = await t.unwrap({ note, walletPriv: priv, recipient: to, waitOpts: run.wait(`Withdraw ${fmt(BigInt(note.value), 8, 2)} cUSD as tacUSD`, 15 * 60e3, { exit: { to, units: String(note.value), note: kNote(note), from: 'cusd', sheet: 'borrow' } }) });
       toast(`tacUSD sent to ${your()}`);
       await loadBorrow(true); rerender('borrow'); say($('#bw-status'), html`<span class="ok">Withdrawn.</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
     } catch (e) { sayErr(status, e); }
@@ -5050,18 +5167,18 @@ function assetSendForm(el, status, { prefix, sheet, statusId, sources, pick }) {
       }
       run.go({ label: x.out ? `Send ${show(x.units)} ${dtk} to ${short(raw, 6)} as ${a.out}` : `Send ${show(x.units)} ${dtk} privately to ${x.who.name || short(raw, 8)}`,
         status: out, clear: () => { clearField(to); clearField(amt); } });
-      const t = await getUx(), priv = walletPriv(), w = run.wait(null, 15 * 60e3);
+      const t = await getUx(), priv = walletPriv();
       let r;
       if (x.out) {
         const note = await noteFor(run, t, priv, x.units, (n) => BigInt(n.value) >= x.units, status, k);
         run.say(status, `The relay is proving your transfer, which arrives as ${a.out}…`);
-        r = await t.sendUnwrap({ note, walletPriv: priv, recipient: x.recipient, amount: x.units, waitOpts: w });
+        r = await t.sendUnwrap({ note, walletPriv: priv, recipient: x.recipient, amount: x.units, waitOpts: run.wait(null, 15 * 60e3, { exit: { to: x.recipient, units: String(x.units), note: kNote(note), from: k, sheet } }) });
       } else {
         const note = await noteFor(run, t, priv, x.units, (n) => BigInt(n.value) === x.units, status, k);          // a lock spends a note of its exact size
         const { makeStealthSendStore } = await import('/confidential-secret-store.js');
         let built = null;
         run.say(status, 'Locking it to a one-time address only they can open…');
-        r = await t.stealthSend({ walletPriv: priv, recipientPubHex: x.who.pubHex, notes: [note], amount: x.units, onBuilt: (b) => { built = b; }, waitOpts: w });
+        r = await t.stealthSend({ walletPriv: priv, recipientPubHex: x.who.pubHex, notes: [note], amount: x.units, onBuilt: (b) => { built = b; }, waitOpts: run.wait(null, 15 * 60e3) });
         if (built) {
           await makeStealthSendStore({ sha256 }).add(priv, {
             lockLeaf: built.lockLeaf, asset: built.asset, ticker: a.tk, dec: 8, amount: built.amount, deadline: built.deadline,

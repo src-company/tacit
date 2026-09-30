@@ -91,6 +91,7 @@ function errMsg(e) {
   let m = String(e?.message || e || 'Something went wrong.');
   if (/user (rejected|denied|cancel)|rejected by user|request rejected|4001/i.test(m)) return 'Cancelled in your wallet.';
   if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'Network request failed. Check your connection and try again.';
+  if (/short of gas|can.t take this one/i.test(m)) return 'The relay can’t take this one right now. Try again shortly.';
   m = m.split('\n')[0];
   return m.length > 240 ? m.slice(0, 237) + '…' : m;
 }
