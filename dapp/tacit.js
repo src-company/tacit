@@ -22472,7 +22472,12 @@ function _saveEthLaneSeenFlag() { const k = _ethLaneSeenKey(); if (k) try { loca
 async function _renderHoldingsUnifiedStrip(force = false) {
   const box = document.getElementById('holdings-unified-strip');
   if (!box) return;
-  const hadAssetsBefore = _ethLaneEverSeenAssets || _loadEthLaneSeenFlag();
+  // The eth-lane flag is new tonight, so it was never set for a wallet already mid-incident when this
+  // shipped — falling straight through to "hide silently" on its very first, still-failing read, which is
+  // exactly the case that needed fixing. The Bitcoin-side flag (set for months) is strong enough evidence on
+  // its own: any wallet that's ever shown Tacit holdings at all warrants "transient, retry" over silence for
+  // a sudden Ethereum-side zero, even before its own flag has had one successful read to set it.
+  const hadAssetsBefore = _ethLaneEverSeenAssets || _loadEthLaneSeenFlag() || _holdingsEverSeenAssets || _loadHoldingsSeenFlag();
   const showTransient = () => {
     box.style.display = '';
     box.innerHTML = `<div class="section" style="padding:12px 14px;">
