@@ -31,6 +31,7 @@ const SW_JS      = join(DAPP_DIR, 'sw.js');
 const VERIFY_HTML = join(DAPP_DIR, 'verify.html');   // self-contained verifier; its inline module is CSP-hash-pinned
 const WELD_HTML  = join(DAPP_DIR, 'weld', 'index.html');     // tacit weld: one file, its inline module CSP-hash-pinned
 const WELD_STATS_HTML = join(DAPP_DIR, 'weld', 'stats', 'index.html');   // weld stats: public reads only, its inline module CSP-hash-pinned
+const WELD_KEEPER_HTML = join(DAPP_DIR, 'weld', 'keeper', 'index.html'); // community ops: permissionless keeper actions (advanceTip etc.), its inline module CSP-hash-pinned
 const PAY_HTML = join(DAPP_DIR, 'pay', 'index.html');         // tacit pay: private ETH payments, one file, its inline module CSP-hash-pinned
 const OUT_DIR    = join(HERE, 'out');                        // build artifacts (gitignored)
 const BR_OUT     = join(OUT_DIR, 'tacit.js.br');             // brotli-q11 copy for the edge route
@@ -157,7 +158,7 @@ function updateCacheBust(htmlBytes, appJsBytes, prebootBytes) {
 const SATS_CB_FILES = ['sats/join-worker.js', 'sats/mix.js', 'sats/secret.js', 'sats/eth.js', 'sats/app.js', 'sats/index.html'];
 // dapp/weld/ and its stats page each keep their imports in their inline module, so their tokens are rewritten before
 // those modules' CSP hashes are taken (updatePinnedCsp below).
-const WELD_CB_FILES = ['weld/index.html', 'weld/stats/index.html'];
+const WELD_CB_FILES = ['weld/index.html', 'weld/stats/index.html', 'weld/keeper/index.html'];
 // dapp/pay/ is built the same way as weld: one page, every import in its inline module.
 const PAY_CB_FILES = ['pay/index.html'];
 // dapp/tac/ is the shielded-TAC page: app.js lazy-imports sats.js, so sats.js is hashed first and the page
@@ -222,6 +223,7 @@ const PINNED_PAGES = [
   { name: 'verify.html', file: VERIFY_HTML, re: /script-src '(unsafe-inline|sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src '${d}'` },
   { name: 'weld/index.html', file: WELD_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
   { name: 'weld/stats/index.html', file: WELD_STATS_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
+  { name: 'weld/keeper/index.html', file: WELD_KEEPER_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
   { name: 'pay/index.html', file: PAY_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
 ];
 function updatePinnedCsp(page) {

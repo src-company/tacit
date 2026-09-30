@@ -32,6 +32,7 @@ import { hmac } from '../node_modules/@noble/hashes/hmac.js';
 import { sha256 as nobleSha256 } from '../node_modules/@noble/hashes/sha2.js';
 import * as secp from '../node_modules/@noble/secp256k1/index.js';
 import { makeEvmTx } from '../dapp/evm-tx.js';
+import { makeHeaderRelayAdvance } from '../dapp/header-relay-advance.js';
 
 const _cat = (arrs) => { const t = arrs.reduce((s, a) => s + a.length, 0); const o = new Uint8Array(t); let p = 0; for (const a of arrs) { o.set(a, p); p += a.length; } return o; };
 secp.etc.hmacSha256Sync = (key, ...m) => hmac(nobleSha256, key, _cat(m));
@@ -72,6 +73,11 @@ async function rpc(method, params) {
   return r.result;
 }
 async function ethCall(data) { return rpc('eth_call', [{ to: HEADER_RELAY, data }, 'latest']); }
+
+// Real gas estimate, not a hardcoded formula — a flat guess previously here (300000 + 60000/header) undershot
+// the real ~172k/header marginal cost (measured on the header cron's own live sends) for any batch of 2 or
+// more, an out-of-gas revert on what's supposed to be the safe do-it-yourself path.
+const { estimateGas } = makeHeaderRelayAdvance({ rpcUrl: RPC, esploraUrl: ESPLORAS[0] });
 
 console.log('signer', address, RUN ? '(will broadcast)' : '(dry run — pass --run to broadcast)');
 
@@ -119,7 +125,7 @@ while (from <= target) {
 
   console.log(`  batch ${++batches}: ${headers.length} headers, ${calldata.length / 2 - 1} bytes calldata`);
   if (RUN) {
-    const gasLimit = 300000n + BigInt(headers.length) * 60000n;
+    const gasLimit = await estimateGas({ data: calldata, fromAddress: address });
     const tx = { chainId: 1n, nonce, maxPriorityFeePerGas: gasPrice, maxFeePerGas, gasLimit, to: HEADER_RELAY, value: 0n, data: calldata };
     const signed = evmTx.signEip1559(tx, privBytes);
     const res = await rpc('eth_sendRawTransaction', [signed.raw]);

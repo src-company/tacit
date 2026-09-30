@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-wxgQbEpsPRqyJymkw9lJbKLZmViT2XH9WAxO5/wtjsc=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-TXpKfVKFM5w9u9fF0ueL5rBf126lscHLCtUIj1yAiCQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -472,6 +472,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <nav aria-label="More">
       <a href="/">Full app</a>
       <a href="/weld/stats/">Stats</a>
+      <a href="/weld/keeper/">Community ops</a>
       <a href="/pay/">Pay privately</a>
       <a href="/tacit-v1.pdf">Whitepaper</a>
       <a href="https://github.com/src-company/tacit/blob/main/docs/BUILD-A-TACIT-DAPP.md" rel="noopener">Build on Tacit</a>
@@ -4397,7 +4398,7 @@ render.borrow = () => {
         <span class="n">${s3 ? '✓' : '3'}</span>
         <div>
           <h3>Mint cBTC</h3>
-          <div class="d">${s3 ? html`${fmt(BigInt(rec.vBtc), 8, 8)} cBTC, a private note.` : !s1 ? 'One to one against the lock, once Bitcoin confirms it.' : st.reflected ? 'Your lock is proven on Ethereum. Mint is free.' : confs < 24 ? `Bitcoin confirmations ${confs} of 24.` : `Confirmed. Waiting for the proof to reach block ${st.height}${attested ? ` (at ${attested} now)` : ''}.`}</div>
+          <div class="d">${s3 ? html`${fmt(BigInt(rec.vBtc), 8, 8)} cBTC, a private note.` : !s1 ? 'One to one against the lock, once Bitcoin confirms it.' : st.reflected ? 'Your lock is proven on Ethereum. Mint is free.' : confs < 24 ? `Bitcoin confirmations ${confs} of 24.` : html`Confirmed. Waiting for the proof to reach block ${st.height}${attested ? ` (at ${attested} now)` : ''}. <a href="/weld/keeper/#need=${st.height + 24}&why=lock">Speed this up →</a>`}</div>
           ${s2 && !s3 ? html`<button class="btn" type="button" id="bw-mint" ${st.reflected ? '' : 'disabled'}>Mint cBTC</button>` : ''}
         </div>
       </li>

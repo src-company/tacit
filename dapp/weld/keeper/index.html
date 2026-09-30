@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- One page, one inline module (its sha256 pinned in script-src by build/build.mjs). It reads the same public
+     data stats does, plus an injected wallet to sign advanceTip(bytes) — permissionless on chain
+     (contracts/src/lib/BitcoinLightRelay.sol:253) — so anyone can push the header relay forward and pay their
+     own gas, instead of waiting on Tacit's own cron. No Tacit key touches this page. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-iehd37lvFRx0RM1bAYuXHCu0dZI6gPh79beKjZSU2NM=' 'wasm-unsafe-eval'; connect-src https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="color-scheme" content="light dark">
+<title>Tacit community ops</title>
+<meta name="description" content="Advance Tacit's Bitcoin header relay yourself, from your own wallet: a permissionless, on-chain function anyone can call, so a stuck bridge or reflection never has to wait on Tacit's own operators.">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 400; font-display: swap; src: url('/fonts/ibm-plex-mono-400-latin.woff2') format('woff2'); }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 500; font-display: swap; src: url('/fonts/ibm-plex-mono-500-latin.woff2') format('woff2'); }
+@font-face { font-family: 'Instrument Serif'; font-weight: 400; font-display: swap; src: url('/fonts/instrument-serif-400-latin.woff2') format('woff2'); }
+@font-face { font-family: 'Instrument Serif'; font-weight: 400; font-style: italic; font-display: swap; src: url('/fonts/instrument-serif-400i-latin.woff2') format('woff2'); }
+
+:root {
+  --paper: #E8E0CC;
+  --card: #F2EBD4;
+  --field: #FAF6EA;
+  --ink: #1A1A1A;
+  --mute: #6B6557;
+  --hair: rgba(26,26,26,.12);
+  --hair-2: rgba(26,26,26,.28);
+  --orange: #f7931a;
+  --ok: #0a7d3a;
+  --err: #b8341d;
+  --lift: 0 22px 44px -28px rgba(26,26,26,.45);
+  --skel: rgba(26,26,26,.08);
+  --skel-hi: rgba(26,26,26,.02);
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --serif: 'Instrument Serif', Georgia, serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #15130E; --card: #1F1C15; --field: #191711; --ink: #EDE5CF; --mute: #A39B85;
+    --hair: rgba(237,229,207,.12); --hair-2: rgba(237,229,207,.28); --ok: #8fcf9a; --err: #f08a6c;
+    --lift: 0 22px 44px -28px rgba(0,0,0,.9); --skel: rgba(237,229,207,.07); --skel-hi: rgba(237,229,207,.15);
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+html, body { margin: 0; background: var(--paper); color: var(--ink); }
+body {
+  font: 14px/1.6 var(--mono); letter-spacing: -.01em; overflow-x: hidden;
+  background-image: radial-gradient(var(--hair) 1px, transparent 1px); background-size: 24px 24px;
+  padding: 0 max(16px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(16px, env(safe-area-inset-left));
+}
+a { color: inherit; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.num { font-variant-numeric: tabular-nums; }
+.shell { max-width: 720px; margin: 0 auto; padding-bottom: 56px; }
+
+.tk { width: 22px; height: 22px; display: block; flex: none; border-radius: 50%; }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 0; }
+.brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
+.brand .tk { width: 30px; height: 30px; }
+.brand b { font: italic 400 30px/1 var(--serif); letter-spacing: -.01em; }
+.brand i { font-style: normal; font-size: 12px; color: var(--mute); text-transform: uppercase; letter-spacing: .12em; }
+.top nav { display: flex; gap: 14px; font-size: 13px; color: var(--mute); }
+.top nav a:hover { color: var(--ink); }
+
+h1 { font: italic 400 34px/1.1 var(--serif); margin: 0 0 6px; }
+.lede { color: var(--mute); font-size: 13px; max-width: 56ch; margin: 0 0 8px; }
+.asof { font-size: 12px; color: var(--mute); margin: 0 0 26px; min-height: 1.6em; }
+
+section.grp { margin-top: 30px; }
+section.grp > h2 { margin-bottom: 12px; }
+h2 { font: italic 400 26px/1.1 var(--serif); margin: 0; display: flex; align-items: center; gap: 10px; }
+h2 .tk { width: 24px; height: 24px; }
+
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.card { background: var(--card); border: 1px solid var(--hair); border-radius: 14px; padding: 14px 16px 13px; min-width: 0; }
+.card .k { font-size: 12px; color: var(--mute); display: flex; align-items: center; gap: 7px; }
+.card .v { font: 400 26px/1.15 var(--serif); margin: 6px 0 4px; overflow-wrap: anywhere; }
+.card .v small { font: 12px var(--mono); color: var(--mute); margin-left: 4px; }
+.card .m { font-size: 12px; color: var(--mute); overflow-wrap: anywhere; }
+.card.wide { grid-column: span 2; }
+.card.attn { border-color: var(--orange); }
+
+.sk { display: inline-block; height: .9em; width: var(--w, 6ch); border-radius: 6px; vertical-align: -.08em;
+  background: linear-gradient(90deg, var(--skel) 0%, var(--skel-hi) 50%, var(--skel) 100%); background-size: 200% 100%; animation: sk 1.4s ease-in-out infinite; }
+@keyframes sk { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
+
+.panel { background: var(--card); border: 1px solid var(--hair); border-radius: 14px; padding: 16px 18px; margin-top: 12px; }
+.wchip { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--mute); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hair-2); flex: none; }
+.dot.on { background: var(--ok); }
+
+.stp { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; list-style: none; margin: 14px 0 0; padding: 0; font-size: 11.5px; color: var(--mute); }
+.stp li { display: inline-flex; align-items: center; gap: 6px; }
+.stp li + li::before { content: ''; width: 14px; height: 1px; margin: 0 8px; background: var(--hair-2); }
+.stp i { width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--hair-2); flex: none; }
+.stp .done, .stp .now { color: var(--ink); }
+.stp .done i { background: var(--ink); border-color: var(--ink); }
+.stp .now i { background: var(--orange); border-color: var(--orange); animation: pulse 1.6s ease-in-out infinite; }
+.stp .bad { color: var(--err); }
+.stp .bad i { background: var(--err); border-color: var(--err); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+.btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 52px; margin-top: 18px; padding: 10px 16px;
+  font: 500 14px var(--mono); color: var(--card); background: var(--ink); border: 1px solid var(--ink); cursor: pointer; transition: background .15s, color .15s; }
+.btn:hover:not(:disabled) { background: transparent; color: var(--ink); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn.ghost { color: var(--ink); background: transparent; border-color: var(--hair-2); }
+.btn.ghost:hover:not(:disabled) { border-color: var(--ink); }
+.btn[aria-busy="true"] { cursor: progress; }
+.btn[aria-busy="true"]::after { content: ''; width: 12px; height: 12px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.link { background: none; border: 0; padding: 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; font-size: 12.5px; }
+.link:hover { color: var(--ink); }
+
+.status { font-size: 12.5px; min-height: 20px; margin-top: 12px; overflow-wrap: anywhere; }
+.status:empty { display: none; }
+.status a { color: var(--ink); }
+.status .err { color: var(--err); }
+
+.callout { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; margin-top: 12px;
+  font-size: 12.5px; background: var(--field); border-left: 2px solid var(--orange); }
+.callout p { margin: 0; color: var(--mute); }
+.callout p b { color: var(--ink); font-weight: 500; }
+.callout a { color: var(--ink); }
+
+.tscroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table.batches { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 10px; }
+table.batches th, table.batches td { text-align: right; padding: 5px 0 5px 10px; border-bottom: 1px solid var(--hair); font-weight: 400; white-space: nowrap; }
+table.batches th:first-child, table.batches td:first-child { text-align: left; padding-left: 0; }
+table.batches th { color: var(--mute); font-size: 11px; }
+
+footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; margin-top: 44px; padding-top: 18px;
+  border-top: 1px solid var(--hair); font-size: 12px; color: var(--mute); }
+footer nav { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+footer a { color: var(--mute); }
+footer a:hover { color: var(--ink); }
+
+.toasts { position: fixed; inset: auto 16px max(16px, env(safe-area-inset-bottom)) 16px; width: auto; height: auto; margin: 0; padding: 0; border: 0; background: transparent; overflow: visible; display: grid; gap: 8px; justify-items: center; pointer-events: none; }
+.toasts:not(:popover-open) { display: none; }
+.toast { max-width: 520px; padding: 10px 16px; font-size: 12.5px; color: var(--card); background: var(--ink); pointer-events: auto; box-shadow: var(--lift); }
+.toast.bad { background: var(--err); color: var(--card); }
+
+@media (max-width: 560px) {
+  .cards { grid-template-columns: 1fr; }
+  .card.wide { grid-column: span 1; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="tk-tac" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#0a0a0a"/><circle cx="16" cy="16" r="13" fill="none" stroke="#f4efe6" stroke-width="2.5"/><path d="M17.5 7L13 22.5Q13 25 18 24" fill="none" stroke="#f7931a" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11L21 11" stroke="#f7931a" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    <symbol id="tk-btc" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#F7931A"/><path fill="#FFF" d="M23.189 14.02c.314-2.096-1.283-3.223-3.465-3.975l.708-2.84-1.728-.43-.69 2.765c-.454-.114-.92-.22-1.385-.326l.695-2.783L15.596 6l-.708 2.839c-.376-.086-.746-.17-1.104-.26l.002-.009-2.384-.595-.46 1.846s1.283.294 1.256.312c.7.175.826.638.805 1.006l-.806 3.235c.048.012.11.03.18.057l-.183-.045-1.13 4.532c-.086.212-.303.531-.793.41.018.025-1.256-.313-1.256-.313l-.858 1.978 2.25.561c.418.105.828.215 1.231.318l-.715 2.872 1.727.43.708-2.84c.472.127.93.245 1.378.357l-.706 2.828 1.728.43.715-2.866c2.948.558 5.164.333 6.097-2.333.752-2.146-.037-3.385-1.588-4.192 1.13-.26 1.98-1.003 2.207-2.538zm-3.95 5.538c-.533 2.147-4.148.986-5.32.695l.95-3.805c1.172.293 4.929.872 4.37 3.11zm.535-5.569c-.487 1.953-3.495.96-4.47.717l.86-3.45c.975.243 4.118.696 3.61 2.733z"/></symbol>
+    <symbol id="tk-eth" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#627EEA"/><g fill="#FFF"><path fill-opacity=".602" d="M16.498 4v8.87l7.497 3.35z"/><path d="M16.498 4L9 16.22l7.498-3.35z"/><path fill-opacity=".602" d="M16.498 21.968v6.027L24 17.616z"/><path d="M16.498 27.995v-6.028L9 17.616z"/><path fill-opacity=".2" d="M16.498 20.573l7.497-4.353-7.497-3.348z"/><path fill-opacity=".602" d="M9 16.22l7.498 4.353v-7.701z"/></g></symbol>
+  </defs>
+</svg>
+
+<div class="shell">
+  <header class="top">
+    <a class="brand" href="/weld/" aria-label="tacit weld"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><b>tacit</b><i>weld · ops</i></a>
+    <nav><a href="/weld/stats/">Stats</a><a href="/weld/">Weld</a></nav>
+  </header>
+
+  <h1>Community ops</h1>
+  <p class="lede">Tacit's Bitcoin↔Ethereum bridge runs on a header relay and a reflection that anyone can push forward — both are plain on-chain functions with no special permission, the same ones Tacit's own servers call. If something looks stuck, you can pay a little gas and move it yourself, from your own wallet.</p>
+  <p class="asof num" id="asof">Reading the relay…</p>
+
+  <section class="grp" id="g-wait">
+    <h2><svg class="tk" aria-hidden="true"><use href="#tk-btc"/></svg>What's waiting</h2>
+    <div class="cards" id="cards-wait"></div>
+  </section>
+
+  <section class="grp" id="g-advance">
+    <h2><svg class="tk" aria-hidden="true"><use href="#tk-eth"/></svg>Advance the header relay</h2>
+    <div class="panel">
+      <p class="lede" style="margin:0 0 4px">Submits real Bitcoin block headers to <code>BitcoinLightRelay.advanceTip</code> on Ethereum. The contract checks their proof of work itself — it isn't Tacit's call to accept or refuse them.</p>
+      <div class="wchip" id="wchip"><span class="dot" id="wdot"></span><span id="wtext">No wallet connected</span></div>
+      <div id="plan-box"></div>
+      <button class="btn" id="btn-advance" type="button">Connect a wallet</button>
+      <ol class="stp" id="strip" hidden></ol>
+      <div class="tscroll"><table class="batches" id="batch-table" hidden><thead><tr><th>Batch</th><th>Headers</th><th>Status</th></tr></thead><tbody id="batch-rows"></tbody></table></div>
+      <p class="status" id="status"></p>
+      <p class="callout" id="ancestry-callout" hidden>
+        <span><b>The reflection is far behind the relay</b> — more than 2,016 blocks. A plain advance won't help; it needs <code>advanceReflectionAncestry()</code> instead, a separate permissionless recovery call.</span>
+        <button class="btn ghost" id="btn-ancestry" type="button" style="margin-top:8px">Call advanceReflectionAncestry()</button>
+      </p>
+    </div>
+  </section>
+
+  <section class="grp" id="g-attest">
+    <h2><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>Attesting</h2>
+    <div class="callout">
+      <p>Once enough headers are in, folding Bitcoin's state into the pool needs one more thing: a real SP1 zero-knowledge proof over the batch, bought with <a href="https://etherscan.io/address/0x6BEF15D938d4E72056AC92Ea4bDD0D76B1C4ad29" target="_blank" rel="noopener">PROVE</a> credits on the Succinct network. <code>attestBitcoinStateProven</code> is permissionless too — anyone holding a valid proof can submit it — but generating one isn't something a browser page can safely do yet: it needs a funded prover account, and there's no way today to ask for one without a signature that looks identical to draining that account.</p>
+      <p>Tacit's own <code>tacit-reflection</code> cron does this every 5 minutes when there's a new batch ready. Anyone can also run it themselves, against the same public inputs, with their own funded key: see <a href="https://github.com/src-company/tacit/blob/main/worker-relay/src/reflection-folder.js" target="_blank" rel="noopener">reflection-folder.js</a>.</p>
+    </div>
+  </section>
+
+  <footer>
+    <span>tacit weld · mainnet</span>
+    <nav aria-label="Sources">
+      <a href="/weld/stats/">Stats</a>
+      <a href="https://etherscan.io/address/0x20A6ddc2C6E620c6248B5A34E85996516FDd19D0" rel="noopener">Bitcoin light relay</a>
+      <a href="https://etherscan.io/address/0x000000000Ed1eabD231Be41d93b719056F7febFC" rel="noopener">Pool contract</a>
+      <a href="https://github.com/src-company/tacit/blob/main/tools/advance-header-relay.mjs" rel="noopener">Command-line version</a>
+    </nav>
+  </footer>
+</div>
+
+<div id="toast-container" class="toasts" popover="manual"></div>
+
+<script type="module">
+import { secp, keccak_256, bytesToHex, hexToBytes } from '/vendor/tacit-deps.min.js';
+import { makeEvmWallet } from '/evm-wallet.js?cb=0b99ec4f';
+import { makeHeaderRelayAdvance } from '/header-relay-advance.js?cb=69a4a651';
+
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const int = (n) => Number(n).toLocaleString('en-US');
+const short = (a, n = 4) => a ? `${a.slice(0, n + 2)}…${a.slice(-n)}` : '';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const SK = (w) => `<span class="sk" style="--w:${w}"></span>`;
+
+// ── toasts (the same popover pattern weld uses) ─────────────────────────────────────────────────────────────
+const toasts = $('#toast-container');
+function raiseToasts() { const on = toasts.childElementCount > 0; try { if (toasts.matches(':popover-open')) toasts.hidePopover(); if (on) toasts.showPopover(); } catch {} }
+new MutationObserver(raiseToasts).observe(toasts, { childList: true });
+function toast(msg, bad = false, ms = bad ? 7000 : 4200) {
+  const el = document.createElement('div');
+  el.className = 'toast' + (bad ? ' bad' : '');
+  el.textContent = msg;
+  toasts.append(el);
+  setTimeout(() => el.remove(), ms);
+}
+const errText = (e) => {
+  const m = String(e?.message || e || 'Something went wrong');
+  if (e?.code === 4001 || /user (rejected|denied)/i.test(m)) return 'Cancelled in your wallet.';
+  if (/insufficient funds/i.test(m)) return 'Not enough ETH in that wallet for this and its gas.';
+  if (/failed to fetch|networkerror|load failed/i.test(m)) return 'Could not reach the network. Check your connection and try again.';
+  return m.replace(/^Error:\s*/, '').slice(0, 240);
+};
+
+// A single, minimal busy-button — no sheets or holds here, this page has exactly one action at a time.
+async function busy(btn, fn) {
+  if (btn.getAttribute('aria-busy') === 'true') return;
+  btn.setAttribute('aria-busy', 'true');
+  try { await fn(); } catch (e) { toast(errText(e), true); } finally { btn.removeAttribute('aria-busy'); }
+}
+
+// ── wallet: a bare injected-wallet connection, nothing Tacit-specific — anyone's wallet pays its own gas ──────
+const evm = makeEvmWallet({ secp, keccak256: keccak_256, bytesToHex, hexToBytes });
+const RPC = 'https://ethereum-rpc.publicnode.com';
+const S = { provider: null, address: null };
+
+async function rpc(method, params) {
+  const r = await fetch(RPC, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) }).then((r) => r.json());
+  if (r.error) throw new Error(r.error.message);
+  return r.result;
+}
+async function ensureChain() {
+  if (parseInt(await S.provider.request({ method: 'eth_chainId' }), 16) === 1) return;
+  try { await S.provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x1' }] }); }
+  catch (e) {
+    if (e?.code !== 4902 && !/unrecognized|not been added|unknown chain/i.test(e?.message || '')) throw e;
+    await S.provider.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x1', chainName: 'Ethereum', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: [RPC], blockExplorerUrls: ['https://etherscan.io'] }] });
+  }
+}
+async function connect() {
+  const { provider, address } = await evm.connect({});
+  S.provider = provider; S.address = '0x' + address;
+  paintWallet();
+  return S.address;
+}
+async function send({ to, data, gas }) {
+  if (!S.provider) await connect();
+  await ensureChain();
+  return S.provider.request({ method: 'eth_sendTransaction', params: [{ from: S.address, to, data, gas: '0x' + gas.toString(16) }] });
+}
+async function waitReceipt(hash) {
+  for (let i = 0; i < 60; i++) { const r = await rpc('eth_getTransactionReceipt', [hash]); if (r) return r; await sleep(3000); }
+  throw new Error('Timed out waiting for a confirmation — it may still land; check the address on Etherscan.');
+}
+function paintWallet() {
+  $('#wdot').classList.toggle('on', !!S.address);
+  $('#wtext').textContent = S.address ? `Connected: ${short(S.address, 6)}` : 'No wallet connected';
+  $('#btn-advance').textContent = S.address ? 'Advance the relay' : 'Connect a wallet';
+}
+
+// ── the module doing the actual planning/building/estimating (dapp/header-relay-advance.js) ────────────────
+const advance = makeHeaderRelayAdvance({});
+const POOL = '0x000000000Ed1eabD231Be41d93b719056F7febFC';
+const SEL_ADVANCE_ANCESTRY = '0xaa9e6609'; // advanceReflectionAncestry()
+const REFLECTION_MAX_LAG = 2016;
+
+// #need=<height>&why=bridge|lock — a deep link from a stuck row elsewhere in the dapp, preselecting the target.
+const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+const need = params.has('need') && Number.isFinite(Number(params.get('need'))) ? Number(params.get('need')) : null;
+const why = params.get('why');
+
+let lastPlan = null;
+
+function cardHtml({ k, v, m, wide, attn }) {
+  return `<div class="card${wide ? ' wide' : ''}${attn ? ' attn' : ''}"><div class="k">${esc(k)}</div><div class="v num">${v == null ? SK('7ch') : v}</div><div class="m">${m ?? (v == null ? SK('16ch') : '')}</div></div>`;
+}
+
+async function refresh() {
+  const st = await advance.status();
+  const behindTxt = st.behind <= 0 ? 'at the tip' : `${int(st.behind)} behind Bitcoin`;
+  $('#cards-wait').innerHTML = [
+    cardHtml({ k: 'Header relay', v: `${int(st.relayTip)}`, m: `block · ${behindTxt}` }),
+    cardHtml({ k: 'Bitcoin tip', v: `${int(st.btcTip)}`, m: 'block, from a public explorer' }),
+    cardHtml({
+      k: 'Proven (reflection)', v: st.attested == null ? '—' : int(st.attested), attn: st.reflectionLag != null && st.reflectionLag > REFLECTION_MAX_LAG,
+      m: st.reflectionLag == null ? 'reflection status unavailable' : st.reflectionLag <= 0 ? 'fully caught up to the relay' : `${int(st.reflectionLag)} block${st.reflectionLag === 1 ? '' : 's'} behind the relay's own tip`,
+    }),
+    cardHtml({ k: 'Bridge deposits waiting', v: st.burnDeposits == null ? '—' : int(st.burnDeposits), m: 'Bitcoin→Ethereum, pending a fold' }),
+  ].join('');
+  $('#asof').textContent = `As of ${new Date().toLocaleTimeString('en-GB')} · confirmations required: ${st.confirmations}`;
+  $('#ancestry-callout').hidden = !(st.reflectionLag != null && st.reflectionLag > REFLECTION_MAX_LAG);
+
+  lastPlan = advance.plan({ ...st, need });
+  paintPlan(st, lastPlan);
+  return st;
+}
+
+function paintPlan(st, pl) {
+  const box = $('#plan-box');
+  if (pl.action === 'idle') {
+    box.innerHTML = `<p class="status">${pl.useless ? (need != null ? 'Already matured under the current relay tip — nothing to advance.' : "The relay already leads what the reflection has consumed; advancing further won't speed anything up right now.") : 'The relay is already at the tip. Nothing to advance.'}</p>`;
+    $('#btn-advance').disabled = !!pl.useless || pl.pending === 0;
+  } else {
+    const target = need != null ? ` to reach ${why === 'bridge' ? 'your bridge deposit’s' : why === 'lock' ? 'your lock’s' : 'the requested'} height` : '';
+    box.innerHTML = `<p class="status">${int(pl.pending)} header${pl.pending === 1 ? '' : 's'} pending${target} (${int(pl.from)}–${int(pl.to)})${pl.useless ? ' — this pass won’t speed up the current fold, but it’s still safe to send.' : ''}</p>`;
+    $('#btn-advance').disabled = false;
+  }
+}
+
+function stripHtml(batches) {
+  return ['Connect', ...batches.map((b, i) => `Batch ${i + 1}`), 'Done'].map((label, i) => `<li id="stp-${i}"><i></i>${esc(label)}</li>`).join('');
+}
+function stripSet(i, cls) { const el = $(`#stp-${i}`); if (el) el.className = cls; }
+
+async function doAdvance() {
+  if (!S.address) { await connect(); }
+  const st = await advance.status();
+  await advance.checkCanonical(st);
+  const pl = advance.plan({ ...st, need });
+  if (pl.action !== 'advance') { toast('Nothing to advance right now.'); await refresh(); return; }
+  const batches = await advance.buildBatches(pl);
+
+  const strip = $('#strip'); strip.hidden = false; strip.innerHTML = stripHtml(batches);
+  stripSet(0, 'done');
+  $('#batch-table').hidden = false;
+  const rows = $('#batch-rows');
+  rows.innerHTML = batches.map((b, i) => `<tr id="brow-${i}"><td>${i + 1}</td><td>${b.count}</td><td>waiting</td></tr>`).join('');
+
+  let i = 0;
+  const result = await advance.runAdvance({
+    need, fromAddress: S.address, send, waitReceipt,
+    onProgress: (p) => {
+      const idx = batches.findIndex((b) => b.from === p.from && b.to === p.to);
+      const cell = $(`#brow-${idx} td:last-child`);
+      if (p.skipped) { cell.textContent = 'already landed'; stripSet(idx + 1, 'done'); return; }
+      if (p.sending && !p.txHash) { stripSet(idx + 1, 'now'); cell.textContent = 'sending…'; return; }
+      if (p.txHash) { cell.innerHTML = `<a href="https://etherscan.io/tx/${p.txHash}" target="_blank" rel="noopener">confirming ↗</a>`; }
+    },
+  });
+  result.sent.forEach((b) => {
+    const idx = batches.findIndex((x) => x.from === b.from && x.to === b.to);
+    stripSet(idx + 1, 'done');
+    const cell = $(`#brow-${idx} td:last-child`);
+    if (cell) cell.innerHTML = `<a href="https://etherscan.io/tx/${b.txHash}" target="_blank" rel="noopener">landed ↗</a>`;
+  });
+  stripSet(batches.length + 1, 'done');
+  $('#status').innerHTML = result.sent.length
+    ? `Advanced the relay to block ${int(result.to)}. The reflection cron checks every 5 minutes.`
+    : 'Nothing landed — see the batch rows above.';
+  toast(result.sent.length ? 'Header relay advanced' : 'Nothing to send');
+  await refresh();
+}
+
+$('#btn-advance').addEventListener('click', (e) => busy(e.currentTarget, doAdvance));
+$('#btn-ancestry').addEventListener('click', (e) => busy(e.currentTarget, async () => {
+  const txHash = await send({ to: POOL, data: SEL_ADVANCE_ANCESTRY, gas: 300000n });
+  $('#status').innerHTML = `Sent <a href="https://etherscan.io/tx/${txHash}" target="_blank" rel="noopener">${short(txHash, 8)} ↗</a> — waiting for confirmation…`;
+  await waitReceipt(txHash);
+  toast('advanceReflectionAncestry() landed');
+  await refresh();
+}));
+
+paintWallet();
+refresh().catch((e) => { $('#asof').textContent = 'Could not read the relay right now.'; toast(errText(e), true); });
+setInterval(() => refresh().catch(() => {}), 60000);
+</script>
+</body>
+</html>
