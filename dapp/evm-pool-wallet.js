@@ -654,6 +654,15 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       return transact({ ins, outs: [change > 0n ? { to: self, value: change } : null, null], extAmount: -a, recipient: to, q, onStep });
     },
 
+    // Watches receive boxes through `index`, e.g. a payment-request box a payment reached on another chain, so a payment
+    // to it here is found too. → true when `index` lay past what was watched: earlier events for it were never read,
+    // so the synced state should be rebuilt (rescan, or a fresh wallet) to find them.
+    watchThrough(index) {
+      const unread = index >= saved.nextRefund + REFUND_GAP;
+      if (index >= saved.nextRefund) { saved.nextRefund = index + 1; persist(); }
+      return unread;
+    },
+
     // A fresh receive box for a call intent's refund (anything returned is swept back into a note here), and asks
     // the relayer to watch it. → the box address.
     async refundBox() {

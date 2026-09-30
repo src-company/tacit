@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-AaQehGMMwr3SPvF+loKVldrLVBAnhghSxdxHZ10UuN4=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-IrMkMZpZrVdV4bgxMJ3iDGVtk5jp7NTJUm2A0YWnIuQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -231,6 +231,10 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .chainsum li:last-child { border-bottom: 0; }
 .chainsum .n { min-width: 9ch; color: var(--ink); }
 .chainsum .s { margin-left: auto; color: var(--mute); text-align: right; }
+.route { margin: 14px 0 0; font-size: 12.5px; color: var(--mute); }
+.route b { font-weight: 500; color: var(--ink); }
+.adv { margin-top: 12px; }
+.adv > summary { cursor: pointer; font-size: 12.5px; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; }
 .foot-a { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; margin-top: 14px; }
 
 .sk { display: inline-block; width: var(--w, 6ch); max-width: 100%; height: .9em; vertical-align: -.08em; border-radius: 2px;
@@ -304,11 +308,11 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 
   <section class="hero">
     <h1>Pay in ETH,<br><em>privately</em>.</h1>
-    <p>Shield ETH on Ethereum, Base and Robinhood Chain, pay anyone inside the pool, and take out any part. Amounts and recipients stay hidden on chain.</p>
+    <p>Shield ETH on Ethereum, Base and Robinhood Chain, pay anyone privately, and take out any part. Who you pay and how much stay hidden; deposits and withdrawals show on chain.</p>
     <ul class="facts">
       <li>Proved on your device</li>
       <li>Recovered from your key</li>
-      <li>Relayed, or sent yourself</li>
+      <li>No gas needed</li>
     </ul>
   </section>
 
@@ -322,22 +326,22 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
       <div class="status" role="status" aria-live="polite" id="status"></div>
     </section>
 
+    <section class="card" id="recover" aria-labelledby="recover-h">
+      <div class="card-h"><h2 id="recover-h">Activity</h2><span id="recover-at"></span></div>
+      <div id="recover-body"></div>
+    </section>
+
     <section class="card" id="device" aria-labelledby="device-h">
       <div class="card-h"><h2 id="device-h">Proved on this device</h2><span id="device-cores"></span></div>
       <div id="device-body"></div>
-    </section>
-
-    <section class="card" id="recover" aria-labelledby="recover-h">
-      <div class="card-h"><h2 id="recover-h">Recovered from your key</h2><span id="recover-at"></span></div>
-      <div id="recover-body"></div>
     </section>
   </main>
 
   <footer>
     <span>tacit pay · mainnet</span>
     <nav aria-label="More">
-      <a href="/weld/">Weld</a>
-      <a href="/">Full app</a>
+      <a href="/weld/">All of Tacit</a>
+      <a href="/">tacit.finance</a>
       <a href="https://github.com/src-company/tacit/blob/main/docs/EVM-POOL.md" rel="noopener">How the pool works</a>
       <a href="/ceremony/">Ceremony</a>
       <a href="/tacit-v1.pdf">Whitepaper</a>
@@ -390,6 +394,8 @@ const CHAIN_META = {
   8453: { chainName: 'Base', rpcUrls: ['https://mainnet.base.org'], blockExplorerUrls: ['https://basescan.org'] },
   4663: { chainName: 'Robinhood Chain', rpcUrls: ['https://rpc.mainnet.chain.robinhood.com'], blockExplorerUrls: ['https://robinhoodchain.blockscout.com'] },
 };
+// Each L2's canonical bridge on Ethereum (evm-pool-gateway L2_BRIDGES), to name a move in the history.
+const BRIDGES = { Base: '0x3154Cf16ccdb4C6d922629664174b904d80F2C35', 'Robinhood Chain': '0x1A07cc4BD17E0118BdB54D70990D2158AbAD7a2D' };
 // Gas a relayed withdraw-and-call through each L2's canonical bridge needs (the wallet's bridgeOut asks the same).
 const BRIDGE_GAS = { 8453: 1_300_000, 4663: 700_000 };
 const ARTIFACT_CACHE = 'tacit-evm-pool-artifacts-v1';                  // shared with weld and Secret Sats
@@ -513,7 +519,7 @@ const sayErr = (el, e) => say(el, html`<span class="err">${errText(e)}</span>`);
 // ── pool modules, loaded once, right after the page ──────────────────────────────────────────────────────
 const mods = lazy(async () => {
   const [zkm, wm, gw, pm, pos] = await Promise.all([
-    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=611e132b'), import('/evm-pool-gateway.js'),
+    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=b3166a8c'), import('/evm-pool-gateway.js'),
     import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
   ]);
   const PO = { 2: pos.poseidon2, 3: pos.poseidon3, 4: pos.poseidon4, 5: pos.poseidon5, 7: pos.poseidon7 };
@@ -597,7 +603,14 @@ const evm = makeEvmWallet({ secp, sha256, keccak256: keccak_256, bytesToHex, hex
 const ROUTES = readJson(ROUTE_PREF) || {};
 // The relay sends unless you chose your wallet, or the relay has no quote to give right now (down, or short of gas).
 const relayUp = () => !!chainKeeper(S.chain) && !CH[S.chain.chainId]?.quoteErr;
-const routeOf = (tab) => (ROUTES[tab] === 'wallet' || !relayUp() ? 'wallet' : 'relay');
+const routeOf = (tab) => (ROUTES[tab] === 'wallet' || !chainKeeper(S.chain) ? 'wallet' : 'relay');
+// How a spend goes out, read when it is pressed: the wallet only when chosen; a relay that cannot take it stops it here
+// rather than handing it to the wallet, whose address would then show on chain.
+const viaFor = (tab) => {
+  if (routeOf(tab) === 'wallet') return 'self';
+  if (!relayUp()) throw new Error('The relay is unavailable right now. Choose “send from my wallet instead” to send it yourself.');
+  return null;
+};
 const chainKeeper = (c) => c.keeper || null;
 
 // The wallet a returning visitor already has here or on weld: an Ethereum wallet or a passkey reopens in one step.
@@ -640,7 +653,7 @@ function forget() {
   S.key = null; S.keys = null; BOXQ.for = null;
   for (const k of Object.keys(DRAFT)) delete DRAFT[k];
   if (REQ.v) { DRAFT['f-to'] = REQ.v.bp; if (REQ.v.amount) DRAFT['f-amt'] = plain(REQ.v.amount); }
-  for (const st of Object.values(CH)) Object.assign(st, { W: null, for: null, bal: null, notes: [], quote: null, waiting: null, err: null, syncing: null, at: 0, hist: null, histing: null, histNext: null, histErr: null, last: null });
+  for (const st of Object.values(CH)) Object.assign(st, { W: null, for: null, bal: null, notes: [], quote: null, waiting: null, err: null, syncing: null, at: 0, hist: null, histing: null, histNext: null, histErr: null, last: null, waitBoxes: [], quoteErr: null, deferred: false });
 }
 function lock() { forget(); paintWallet(); renderApp(); paintRecover(); }
 
@@ -767,7 +780,24 @@ async function walletOn(c) {
   });
   st.W.connect(signerFor(c));
   st.for = S.key.pubHex;
+  const k = linkIndex();
+  if (k != null) st.W.watchThrough(k);
   return st.W;
+}
+// A link address can be paid on any chain, but each chain's wallet watches only a window past the last address used
+// there. Every wallet watches through the newest link address; one whose window did not reach it has not read that
+// address's past, so its state is rebuilt from the chain (the relay's index first) to find anything paid there.
+async function watchLinkBoxes() {
+  const k = linkIndex();
+  if (k == null) return;
+  for (const c of CHAINS) {
+    const st = CH[c.chainId];
+    if (!st.W || S.busyChain === c.chainId || !st.W.watchThrough(k)) continue;
+    try { localStorage.removeItem(stateKey(c)); } catch {}
+    Object.assign(st, { W: null, for: null });
+    await walletOn(c);
+    syncChain(c, true);
+  }
 }
 // Relay calls give up in time: a submit may wait on the chain, everything else answers fast.
 const timedFetch = (url, init = {}) => fetch(url, { ...init, signal: init.signal || AbortSignal.timeout?.(/\/relay$/.test(String(url)) ? 180e3 : 30e3) });
@@ -792,7 +822,7 @@ function syncChain(c, fresh = false) {
     const seen = readJson(BAL_SEEN) || {};
     seen[pub] = { ...(seen[pub] || {}), [c.chainId]: s.balance.toString() };
     writeJson(BAL_SEEN, seen);
-  }).catch((e) => { if (S.key?.pubHex === pub) st.err = e; }).finally(() => { if (st.syncing === p) st.syncing = null; paintChains(); paintBal(); if (!S.busy) { if (c === S.chain && ((FORM.needsW && CH[c.chainId].W) || (FORM.waitShown !== undefined && CH[c.chainId].waiting !== FORM.waitShown))) renderForm(); else FORM.check?.(); } paintRecover(); });
+  }).catch((e) => { if (S.key?.pubHex === pub) st.err = e; }).finally(() => { if (st.syncing === p) st.syncing = null; paintChains(); paintBal(); if (!S.busy) { if (formStale(c)) renderForm(); else FORM.check?.(); } paintRecover(); });
   return p;
 }
 function syncAll(fresh = false) {
@@ -876,7 +906,7 @@ function linkIndex() {
   if (!S.key || !CHAINS.every((c) => CH[c.chainId].hist || CH[c.chainId].histErr)) return null;
   let top = 0;
   for (const c of CHAINS) {
-    for (const r of CH[c.chainId].hist?.rows || []) if (r.box > top) top = r.box;
+    for (const r of CH[c.chainId].hist?.rows || []) { if (r.box > top) top = r.box; if (r.refund > top) top = r.refund; }
     for (const [i, v] of CH[c.chainId].waitBoxes || []) if (i > top && v > 0n) top = i;
   }
   return top + 1;
@@ -952,11 +982,21 @@ async function scanHistory(c, onStep) {
     const lg = rc?.logs?.find((l) => lc(l.address) === lc(POOL) && l.topics[0] === T_TRANSACT && BigInt(l.topics[1]) === x.t.nf[0] && BigInt(l.topics[2]) === x.t.nf[1]);
     if (lg) { const d = decodeTransact(lg); Object.assign(x.t, { recipient: d.recipient, ext: d.ext, fee: d.fee }); }
   });
+  // A withdrawal that ran calls (a bridge move, a swap) names its refund box in its calldata, public from then on, so
+  // that box is never handed out as a payment link's address; a canonical bridge in it makes the row a move.
+  const calls = [...byTx.values()].filter((x) => x.ins.length && (x.t.ext ?? 0n) < 0n);
+  await eachLimit(calls, 4, async (x) => {
+    const tx = await rpc('eth_getTransactionByHash', [x.t.tx]).catch(() => null);
+    if (!tx || lc(tx.to) !== lc(ROUTER)) return;
+    const input = lc(tx.input);
+    for (const [addr, b] of boxes) if (b.i > 0 && input.includes(strip(addr))) x.t.refund = Math.max(x.t.refund ?? 0, b.i);
+    x.t.dest = Object.entries(BRIDGES).find(([, a]) => input.includes(strip(lc(a))))?.[0];
+  });
   const sum = (a) => a.reduce((s, v) => s + v, 0n);
   for (const { t, ins, outs } of byTx.values()) {
     const used = sum(ins), kept = sum(outs), fee = t.fee ?? 0n, ext = t.ext ?? 0n;
     if (ins.length) {
-      if (ext < 0n) rows.push({ kind: 'out', v: -ext, to: t.recipient, fee, kept, tx: t.tx, block: t.block });
+      if (ext < 0n) rows.push({ kind: t.dest ? 'bridge' : 'out', v: -ext, to: t.recipient, dest: t.dest, fee, kept, refund: t.refund, tx: t.tx, block: t.block });
       else { const paid = used - kept - fee; rows.push(paid > 0n ? { kind: 'sent', v: paid, fee, kept, tx: t.tx, block: t.block } : { kind: 'self', v: kept, fee, tx: t.tx, block: t.block }); }
     } else if (kept > 0n) rows.push({ kind: ext > 0n ? 'dep' : 'in', v: kept, tx: t.tx, block: t.block });
   }
@@ -983,7 +1023,10 @@ function historyOf(c, fresh = false) {
     .finally(() => {
       if (st.histing === p) st.histing = null;
       paintRecover();
-      if (S.key?.pubHex === pub && linkIndex() != null) { watchLinks(); if (FORM.needsLink && !S.busy) renderForm(); }
+      if (S.key?.pubHex === pub && linkIndex() != null) {
+        watchLinks(); watchLinkBoxes();
+        if (!S.busy && (FORM.needsLink || (FORM.linkK != null && FORM.linkK !== linkIndex()))) renderForm();
+      }
     });
   paintRecover();
   return p;
@@ -991,7 +1034,7 @@ function historyOf(c, fresh = false) {
 const historyAll = () => Promise.all(CHAINS.map(historyOf));
 async function rebuild(btn) {
   await busyBtn(btn, async () => {
-    for (const c of CHAINS) { try { localStorage.removeItem(stateKey(c)); } catch {} Object.assign(CH[c.chainId], { W: null, for: null, bal: null, hist: null, err: null, at: 0 }); }
+    for (const c of CHAINS) { try { localStorage.removeItem(stateKey(c)); } catch {} Object.assign(CH[c.chainId], { W: null, for: null, bal: null, hist: null, histErr: null, err: null, at: 0 }); }
     paintChains(); paintBal(); paintRecover();
     await Promise.all(CHAINS.map((c) => Promise.all([syncChain(c, true), historyOf(c, true)])));
     toast('Rebuilt from your key.');
@@ -1027,7 +1070,7 @@ function switchChain(c, tab = null) {
 }
 function paintBal() {
   const c = S.chain, st = cur();
-  if (REQ.v && S.key && !REQ.v.paid && !REQ.v.state) paintReq();
+  if (REQ.v && S.key && !REQ.v.paid && !REQ.v.state && REQ.v.pf !== privFirstFor(REQ.v)) paintReq();
   if (!S.key) {
     mount($('#bal'), html`<span class="pair"><svg class="tk md" aria-hidden="true"><use href="#tk-eth"/></svg><svg class="tk md" aria-hidden="true"><use href="#tk-peth"/></svg></span>
       <div><div class="v t">Private ETH</div><div class="u">on ${c.full} · yours shows once a wallet is open</div></div>`);
@@ -1036,7 +1079,7 @@ function paintBal() {
   const v = st.bal != null ? eth(st.bal) : st.last != null ? html`<span class="stale">${eth(st.last)}</span>` : null;
   mount($('#bal'), html`<span class="pair"><svg class="tk md" aria-hidden="true"><use href="#tk-eth"/></svg><svg class="tk md" aria-hidden="true"><use href="#tk-peth"/></svg></span>
     <div><div class="v num">${v ?? (st.err ? html`<span class="err">—</span>` : html`<span class="sk" style="--w:8ch"></span>`)}</div><div class="u">ETH, private on ${c.full}</div></div>
-    <div class="side">${st.err ? html`<button class="link" type="button" id="bal-re">retry</button>` : st.bal != null ? html`${st.notes.length} note${st.notes.length === 1 ? '' : 's'}<br><button class="link" type="button" id="bal-re">refresh</button>` : 'reading…'}</div>`);
+    <div class="side">${st.err ? html`<button class="link" type="button" id="bal-re">retry</button>` : st.bal != null ? html`<button class="link" type="button" id="bal-re">refresh</button>` : 'reading…'}</div>`);
   const re = $('#bal-re');
   if (re && S.busyChain === c.chainId) re.disabled = true;
   if (re) re.onclick = () => { re.disabled = true; syncChain(c, true); };
@@ -1051,12 +1094,13 @@ function renderTabs() {
 function renderForm() {
   if (S.busy) return;
   const f = $('#form');
-  FORM.check = null; FORM.needsW = false; FORM.waitShown = undefined; FORM.needsLink = false;
+  FORM.check = null; FORM.needsW = false; FORM.waitShown = undefined; FORM.needsLink = false; FORM.relayShown = undefined; FORM.linkK = undefined;
   if (!S.key) {
     mount(f, html`<p class="gate-p">Open your Tacit wallet. One key holds your private ETH on all three chains, and nothing else needs backing up.</p>${signIn('g')}`);
     return wireSignIn(f, 'g');
   }
   ({ deposit: formDeposit, send: formSend, withdraw: formWithdraw, receive: formReceive })[S.tab](f);
+  if (S.tab === 'send' || S.tab === 'withdraw') FORM.relayShown = relayUp();
   for (const i of $$('input[id]', f)) {
     if (DRAFT[i.id] && !i.value) { i.value = DRAFT[i.id]; }
     i.addEventListener('input', () => { DRAFT[i.id] = i.value; FORM.check?.(); });
@@ -1064,23 +1108,25 @@ function renderForm() {
   }
   FORM.check?.();
 }
+// A drawn form whose picture of this chain is out of date: its wallet has arrived, what waits at the deposit
+// addresses changed, the relay came or went, or the link it shows was paid.
+const formStale = (c) => c === S.chain && ((FORM.needsW && CH[c.chainId].W) || (FORM.waitShown !== undefined && CH[c.chainId].waiting !== FORM.waitShown)
+  || (FORM.relayShown !== undefined && FORM.relayShown !== relayUp()) || (FORM.linkK !== undefined && FORM.linkK !== linkIndex()));
 const clearDraft = (...ids) => { for (const id of ids) { delete DRAFT[id]; const i = $('#' + id); if (i) i.value = ''; } FORM.check?.(); };
 const amountField = (id, label, extra = '') => html`
   <div class="lbl"><span>${label}</span>${extra}</div>
   <div class="amt"><input id="${id}" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="${label}"><span class="u">${ethIcon}ETH</span></div>`;
 const kvRow = (k, v, cls = '') => html`<div class="kv"><span>${k}</span><b class="num ${cls}">${v}</b></div>`;
 const txLink = (c, h) => html`<a href="${c.explorer}/tx/${h}" target="_blank" rel="noopener">${short(h, 6)} ↗</a>`;
-const routeSeg = (tab, fee) => html`<div class="lbl"><span>Sent by</span></div>
-  <div class="seg sub" role="radiogroup" aria-label="Sent by">
-    <button type="button" role="radio" data-route="relay" aria-selected="${routeOf(tab) === 'relay'}" ${relayUp() ? '' : 'disabled'}>The relay<small>${!relayUp() ? 'unavailable right now' : fee != null ? `fee ${fmt(fee, 18, 6)} ETH` : 'no gas needed'}</small></button>
-    <button type="button" role="radio" data-route="wallet" aria-selected="${routeOf(tab) === 'wallet'}">Your wallet<small>${S.wallet ? short(S.wallet) + ' pays gas' : 'pays gas, no fee'}</small></button>
-  </div>`;
+const routeSeg = (tab, fee) => html`<p class="route">${routeOf(tab) === 'wallet'
+  ? html`Sent from your wallet${S.wallet ? html` <span class="nw">${short(S.wallet)}</span>` : ''}: you pay the gas, no fee${chainKeeper(S.chain) ? html` · <button class="link" type="button" data-route="relay">use the relay</button>` : ''}`
+  : relayUp()
+    ? html`Sent by the relay, no gas needed${fee != null ? html` · fee <b class="num">${fmt(fee, 18, 6)} ETH</b>` : ''} · <button class="link" type="button" data-route="wallet">send from my wallet instead</button>`
+    : html`<span class="warn">The relay is unavailable right now.</span> <button class="link" type="button" data-route="wallet">Send from my wallet instead</button>`}</p>`;
 function wireRoute(f, tab) {
   $$('[data-route]', f).forEach((b) => b.onclick = () => { ROUTES[tab] = b.dataset.route; writeJson(ROUTE_PREF, ROUTES); renderForm(); });
 }
-const routeNote = (tab, what) => routeOf(tab) === 'relay'
-  ? `The relay sends the finished proof and pays the gas, so no account of yours appears on chain. It cannot change the ${what}: the proof binds them.`
-  : `Your wallet sends it and pays the gas, with no fee. Its address shows as the sender of a pool transaction; the ${what} stay hidden.`;
+const routeNote = (tab, relay, wallet) => (routeOf(tab) === 'relay' ? relay : wallet);
 
 // What a spend of `amount` costs through the relay: its fee, plus one fee per merge when two notes cannot cover it
 // (the wallet combines its two largest notes, repeatedly, until two do).
@@ -1162,18 +1208,21 @@ function formDeposit(f) {
   const c = S.chain, st = cur(), W = st.W;
   FORM.needsW = !W && S.depMode === 'addr';
   const seg = html`<div class="seg sub" role="tablist" aria-label="Deposit how">
-    <button type="button" role="tab" data-dep="wallet" aria-selected="${S.depMode === 'wallet'}">From a wallet<small>proved here · no fee</small></button>
-    <button type="button" role="tab" data-dep="addr" aria-selected="${S.depMode === 'addr'}">Deposit address<small>from anywhere · the relay</small></button>
+    <button type="button" role="tab" data-dep="wallet" aria-selected="${S.depMode === 'wallet'}">From my wallet<small>no fee</small></button>
+    <button type="button" role="tab" data-dep="addr" aria-selected="${S.depMode === 'addr'}">From an exchange<small>up to 0.25%</small></button>
   </div>`;
   if (S.depMode === 'addr') {
     FORM.waitShown = st.waiting;
     const min = st.quote?.receiveMin ? ((BigInt(st.quote.receiveMin) + 10n ** 12n - 1n) / 10n ** 12n) * 10n ** 12n : null;
     mount(f, html`${seg}
-      <div class="blk"><div class="lbl"><span>Your deposit address</span><span>same on all three chains</span></div>
+      <div class="blk"><div class="lbl"><span>Your deposit address</span><span>same on every chain</span></div>
         <div class="addr"><code>${W?.receiveBox || '…'}</code>${W ? html`<button class="link" type="button" data-copy="${W.receiveBox}">copy</button>` : ''}</div>
-        <p class="note">Send ETH here from any wallet or exchange on Ethereum, Base or Robinhood Chain. The relay moves it into your private balance on that chain within minutes, for at most 0.25%${min ? html`; on ${c.full}, send at least ${fmt(min, 18, 6)} ETH at a time` : ''}. Only ETH: a token sent here is lost.</p></div>
-      ${(st.waitBoxes || []).map(([i, v]) => html`<div class="callout"><span>${fmt(v, 18, 6)} ETH is waiting on ${c.full} at ${i ? 'a payment link’s address' : 'your deposit address'}.${min && v < min ? ' Below the relay’s minimum, so take it in yourself.' : ''}</span><button class="btn ghost sm" type="button" data-sweep="${i}">Take it in</button></div>`)}
-      ${st.waiting > 0n ? html`<p class="note">Taking it in yourself: proved here, sent from your wallet, no fee.</p>` : ''}
+        <p class="note">Send ETH here from an exchange or any wallet, on Ethereum, Base or Robinhood Chain. It moves into your private balance on that chain, usually within minutes, for at most 0.25%${min ? html`; on ${c.full}, send at least ${fmt(min, 18, 6)} ETH` : ''}. Only send ETH: tokens sent here are lost. Everything sent here is visibly sent to this one address; to be paid by others, share a link from Receive.</p></div>
+      ${(st.waitBoxes || []).map(([i, v]) => {
+        const self = (min && v < min) || !relayUp();
+        return html`<div class="callout"><span>${fmt(v, 18, 6)} ETH is ${self ? 'waiting' : 'on its way in'} at ${i ? 'a payment link’s address' : 'your deposit address'}${self ? (relayUp() ? ': below the relay’s minimum, so take it in yourself.' : ': the relay is unavailable, so take it in yourself.') : '. The relay collects it shortly.'}</span>${self ? html`<button class="btn ghost sm" type="button" data-sweep="${i}">Take it in</button>` : ''}</div>`;
+      })}
+      ${(st.waitBoxes || []).some(([, v]) => (min && v < min) || !relayUp()) ? html`<p class="note">Taking it in yourself costs no fee; your wallet pays the gas, and its address shows as the one collecting it.</p>` : ''}
       <p class="more"><button class="link" type="button" id="f-check">Check for arrivals now</button></p>`);
     $$('[data-copy]', f).forEach((b) => b.onclick = () => copy(b.dataset.copy, 'Deposit address copied'));
     $('#f-check').onclick = async () => { try { const W2 = await walletOn(c); await Promise.all([0, ...linkRange()].map((i) => W2.watchReceive(i).catch(() => {}))); await syncChain(c, true); say($('#status'), cur().waiting > 0n ? `${fmt(cur().waiting, 18, 6)} ETH is on its way in.` : 'Nothing waiting at the deposit address.'); } catch (e) { sayErr($('#status'), e); } };
@@ -1224,13 +1273,13 @@ async function validPool(raw) {
 function formSend(f) {
   const c = S.chain, tab = 'send';
   mount(f, html`
-    <div class="lbl"><span>To</span><span>a bp1… pool address</span></div>
+    <div class="lbl"><span>To</span><span>their pool address (bp1…)</span></div>
     <div class="amt text"><input id="f-to" placeholder="bp1…" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Recipient pool address"><button class="link" type="button" id="f-paste">paste</button></div>
     ${amountField('f-amt', 'Amount', html`<button type="button" id="f-max">Max</button>`)}
     ${routeSeg(tab, cur().quote?.fee ? BigInt(cur().quote.fee) : null)}
     <div class="rcpt" id="f-rcpt" hidden></div>
     <button class="btn" type="button" id="f-go" disabled>Send privately</button>
-    <p class="note">${routeNote(tab, 'amount and the recipient')}</p>`);
+    <p class="note">${routeNote(tab, 'Nothing on chain links this payment to you or to them, and the relay can’t change it.', 'Your wallet’s address shows as the sender of a pool transaction; the amount and the recipient stay hidden.')}</p>`);
   wireRoute(f, tab);
   const to = $('#f-to'), amt = $('#f-amt'), go = $('#f-go'), rc = $('#f-rcpt');
   let okTo = null, lastTo = '';
@@ -1244,7 +1293,7 @@ function formSend(f) {
     if (raw && okTo === false) return bad(/^0x/i.test(raw) ? 'That is an Ethereum address. Use Withdraw to pay it.' : /^tacit1/i.test(raw) ? 'That is a tacit1 address for the Tacit pool. This pool pays bp1… addresses.' : 'Not a bp1… pool address.');
     if (raw && lc(raw) === lc(S.key.bp)) return bad('That is your own pool address.');
     if (!raw || !a || okTo !== true) return;
-    if (fee == null) { mount(rc, html`<p class="note">Reading the relay’s fee…</p>`); rc.hidden = false; return; }
+    if (fee == null) { mount(rc, html`<p class="note">${relayUp() ? 'Reading the relay’s fee…' : 'The relay is unavailable right now: send it from your wallet instead, or try again shortly.'}</p>`); rc.hidden = false; return; }
     const plan = spendPlan(a, fee);
     if (bal != null && !plan) return bad('More than your private balance covers with the fee.');
     const change = bal != null && plan ? bal - plan.total : null;
@@ -1281,8 +1330,8 @@ function formWithdraw(f) {
     ${l2 ? '' : routeSeg(tab, cur().quote?.fee ? BigInt(cur().quote.fee) : null)}
     <div class="rcpt" id="f-rcpt" hidden></div>
     <button class="btn" type="button" id="f-go" disabled>${l2 ? `Move to ${l2.full}` : 'Withdraw'}</button>
-    <p class="note">${l2 ? `Moves ETH through ${l2.full}’s canonical bridge to your deposit address there, in one relayed transaction, and the relay there takes it into your private balance within minutes. The amount shows on Ethereum; which of your notes paid does not.`
-      : html`Take out any part: the rest stays private as change. ${routeNote(tab, 'notes that paid')}`}</p>`);
+    <p class="note">${l2 ? `Moves ETH through ${l2.full}’s canonical bridge to your deposit address there, and into your private balance on ${l2.full}, usually within minutes. The move, its amount and that address show on Ethereum; which of your notes paid does not.`
+      : html`Take out any part; the rest stays private. The address and the amount show on chain, ${routeNote(tab, 'but nothing links them to you, and the relay can’t change them.', 'and so does your wallet as the sender.')}`}</p>`);
   wireRoute(f, tab);
   $$('[data-dest]', f).forEach((b) => b.onclick = () => { S.dest = b.dataset.dest; renderForm(); if (S.dest !== 'addr') bridgeQuote(S.dest); });
   const to = $('#f-wto'), amt = $('#f-wamt'), go = $('#f-go'), rc = $('#f-rcpt');
@@ -1297,7 +1346,7 @@ function formWithdraw(f) {
     if (!l2 && raw && !/^0x[0-9a-fA-F]{40}$/.test(raw)) return /^0x[0-9a-fA-F]{0,39}$/.test(raw) ? undefined : bad(/^bp1/i.test(raw) ? 'That is a pool address. Use Send to pay it privately.' : 'Not an 0x address.');
     if (!l2 && raw && (BigInt(raw) === 0n || [lc(POOL), lc(ROUTER)].includes(lc(raw)))) return bad('That address cannot receive a withdrawal.');
     if (!a || (!l2 && !raw)) return;
-    if (fee == null) { mount(rc, html`<p class="note">Reading the relay’s fee…</p>`); rc.hidden = false; return; }
+    if (fee == null) { mount(rc, html`<p class="note">${relayUp() ? 'Reading the relay’s fee…' : 'The relay is unavailable right now: send it from your wallet instead, or try again shortly.'}</p>`); rc.hidden = false; return; }
     const plan = spendPlan(a + prepay(), fee);
     if (bal != null && !plan) return bad('More than your private balance covers with the fee.');
     const change = bal != null && plan ? bal - plan.total : null;
@@ -1321,7 +1370,7 @@ function formWithdraw(f) {
       setTimeout(() => syncChain(l2, true), 90_000);
       return;
     }
-    const via = routeOf(tab) === 'wallet' ? 'self' : null;
+    const via = viaFor(tab);
     if (via) await signerFor(c).ready();
     const h = await W.withdraw({ to: to.value.trim(), amount: a, via, onStep: step });
     clearDraft('f-wamt');
@@ -1361,21 +1410,19 @@ function formReceive(f) {
   const c = S.chain, W = cur().W, k = linkIndex(), box = k != null ? BOXQ.at[k] : null;
   FORM.needsW = !W;
   FORM.needsLink = !box;
+  FORM.linkK = k ?? undefined;
   if (k != null && !box) boxMap(k + 1).then(() => { if (FORM.needsLink && !S.busy && S.tab === 'receive') renderForm(); });
   mount(f, html`
-    <div class="blk"><div class="lbl"><span>Get paid</span><span>by anyone, from any wallet</span></div>
+    <div class="blk"><div class="lbl"><span>Get paid</span><span>anyone can pay, from any wallet</span></div>
       ${amountField('f-ramt', 'Amount (optional)')}
       <div class="lbl"><span>What it’s for (optional)</span></div>
       <div class="amt text"><input id="f-rfor" maxlength="60" placeholder="Dinner, rent, invoice 42…" autocomplete="off" aria-label="What it is for"></div>
       <div class="qrbox" id="f-qr">${box ? '' : html`<p class="note">Preparing your link: reading which one-time addresses have been paid…</p>`}</div>
       <div class="row2"><button class="btn" type="button" id="f-link" ${box ? '' : 'disabled'}>Copy payment link</button><button class="btn ghost" type="button" id="f-share" ${box ? '' : 'disabled'}>Share</button></div>
-      <p class="note">From a Tacit wallet the payment is private end to end. From any other wallet it lands at a one-time deposit address, and the relay moves it into your private balance on ${c.full} within minutes. Each link gets a fresh address once the last one is paid, so payments to your links are not linked to each other on chain. The link carries your pool address, that one-time address and what you type here, nothing else.</p></div>
+      <p class="note">Paid from a Tacit wallet, it is private end to end. Paid from any other wallet, it reaches your private balance on ${c.full}, usually within minutes, for at most 0.25%. Each paid link gets a fresh address, so your payments aren’t linked to each other.</p></div>
     <div class="blk"><div class="lbl"><span>Your pool address</span><span>same on every chain</span></div>
       <div class="addr"><code>${S.key.bp}</code><button class="link" type="button" data-copy="${S.key.bp}">copy</button></div>
-      <p class="note">For private payments from anyone using the pool. Nothing on chain links a payment to it, and the same address receives in the Bitcoin pool too.</p></div>
-    <div class="blk"><div class="lbl"><span>Standing deposit address</span><span>public ETH in</span></div>
-      <div class="addr"><code>${W?.receiveBox || '…'}</code>${W ? html`<button class="link" type="button" data-copy="${W.receiveBox}">copy</button>` : ''}</div>
-      <p class="note">For an exchange withdrawal or anything recurring. It joins your private balance within minutes, for at most 0.25%. Everything sent to it is visibly sent to the same address; payment links use one-time addresses instead.</p></div>`);
+      <p class="note">For private payments from other Tacit users. It never appears on chain, and it receives in the Bitcoin pool too. From an exchange, use Deposit.</p></div>`);
   $$('[data-copy]', f).forEach((b) => b.onclick = () => copy(b.dataset.copy));
   if (!box) return;
   const link = () => payLink({ bp: S.key.bp, n: box.npk, amount: parseUnits($('#f-ramt').value), chain: c, note: $('#f-rfor').value.trim() });
@@ -1389,13 +1436,14 @@ function formReceive(f) {
 
 // A payment request opened from a link: pay it from any wallet (to the payee's deposit address) or privately.
 const REQ = { v: null };
+const privFirstFor = (r) => !!(S.key && r.amount && cur().bal != null && cur().bal >= r.amount + BigInt(cur().quote?.fee || 0));
 function paintReq() {
   const el = $('#req'), r = REQ.v;
   el.hidden = !r;
   if (!r) return;
   const c = S.chain, own = S.key && lc(r.bp) === lc(S.key.bp);
   // A payer whose private balance here already covers it is offered the private way first.
-  const privFirst = !!(S.key && r.amount && cur().bal != null && cur().bal >= r.amount + BigInt(cur().quote?.fee || 0));
+  const privFirst = r.pf = privFirstFor(r), typed = $('#req-amt')?.value;
   mount(el, html`
     <div class="lbl"><span>Payment request</span><button class="link" type="button" id="req-x">dismiss</button></div>
     <div class="req-a num">${r.amount ? html`${fmt(r.amount, 18, 6)} <small>ETH</small>` : 'Any amount'}</div>
@@ -1407,12 +1455,14 @@ function paintReq() {
         reverted: html`<span class="err">That payment reverted. Nothing was sent.</span>`,
         moving: html`<span class="spin" aria-hidden="true"></span><span class="ok">Paid ${fmt(r.paid.a, 18, 6)} ETH.</span> Moving into their private balance`,
         in: html`<span class="ok">Paid ${fmt(r.paid.a, 18, 6)} ETH, now in their private balance.</span>`,
+        later: html`<span class="ok">Paid ${fmt(r.paid.a, 18, 6)} ETH.</span> It moves into their private balance once the relay collects it.`,
       }[r.state] || ''} ${txLink(r.paid.c, r.paid.h)}</p>
       ${r.err ? html`<p class="note err">${r.err}</p>` : ''}` : html`
       ${!r.amount && r.n ? html`<div class="amt act"><input id="req-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="Amount"><span class="u">${ethIcon}ETH</span></div>` : ''}
       ${r.state === 'confirm' ? '' : html`<div class="${r.n ? 'row2' : ''}">${privFirst ? html`<button class="btn" type="button" id="req-priv">Pay privately</button>` : ''}${r.n ? html`<button class="btn ${privFirst ? 'ghost' : ''}" type="button" id="req-wallet">Pay from a wallet</button>` : ''}${privFirst ? '' : html`<button class="btn ${r.n ? 'ghost' : ''}" type="button" id="req-priv">Pay privately</button>`}</div>`}
       <p class="note">${r.n ? 'From a wallet: your address and the amount show on chain as a payment to their deposit address, then it moves into their private balance. ' : ''}Privately, from your own private ETH: nothing on chain links you to them.</p>
       <div class="status" role="status" id="req-status">${r.state === 'confirm' ? 'Confirm in your wallet…' : r.err ? html`<span class="err">${r.err}</span>` : ''}</div>`}`);
+  if (typed && $('#req-amt')) $('#req-amt').value = typed;
   $('#req-x').onclick = () => { REQ.v = null; paintReq(); };
   $('#req-priv')?.addEventListener('click', () => {
     S.tab = 'send'; DRAFT['f-to'] = r.bp; if (r.amount) DRAFT['f-amt'] = plain(r.amount);
@@ -1456,6 +1506,7 @@ async function payFromWallet(btn) {
       // Moved in once a sweep empties the address, or the router counts one more sweep of it than after the payment.
       const swept = async () => BigInt(await rpc('eth_getBalance', [box, 'latest']).catch(() => '0x1')) === 0n || (n0 != null && (await receiveCount(c, box).catch(() => n0)) > n0);
       for (let i = 0; i < 120; i++) { if (await swept()) { r.state = 'in'; paintReq(); return; } await sleep(10_000); }
+      r.state = 'later'; paintReq();
     } catch (e) { r.err = errText(e); r.state = r.paid ? r.state : null; paintReq(); }
   });
 }
@@ -1582,7 +1633,7 @@ function paintDevice() {
     : PROVER.cached ? html`<b>saved on this device</b>` : html`<b>33 MB, fetched once, then saved</b>`;
   const last = PROVER.last != null ? (PROVER.last / 1000).toFixed(1) : null;
   mount($('#device-body'), html`
-    <p class="lede-s">Your key never leaves this tab. Each payment is proved here, checked here against the verification key, and only then handed to the relay or your wallet. The relay can send it, not change it.</p>
+    <p class="lede-s">Your key never leaves this tab. Every payment is proved here and checked before it is sent; the relay can deliver it but can’t change it.</p>
     ${last ? html`<div class="proof"><b class="num">${last} s</b><span class="mute">${PROVER.lastKind === 'sample' ? 'to prove a sample payment here, and verify it' : 'your last payment’s proof, verified here'}</span></div>` : ''}
     <div class="kv"><span>Proving key</span>${state}</div>
     ${PROVER.state === 'loading' ? html`<div class="meter"><i id="device-meter"></i></div>` : ''}
@@ -1614,14 +1665,14 @@ async function tryProof() {
 
 // ── the recovery card ────────────────────────────────────────────────────────────────────────────────────
 const KIND = {
-  in: ['Received privately', true], box: ['Came in at your deposit address', true], link: ['Came in at a one-time deposit address', true], dep: ['Deposited', true],
+  in: ['Received privately', true], box: ['Came in at your deposit address', true], link: ['Came in through a payment link', true], dep: ['Deposited', true], bridge: ['Moved', false],
   sent: ['Sent privately', false], out: ['Withdrew', false], self: ['Combined your notes', false],
 };
 function paintRecover() {
   const el = $('#recover-body');
   if (!S.key) {
     $('#recover-at').textContent = '';
-    mount(el, html`<p class="lede-s">Your key is the only backup. Your balance, what you received and what you sent all rebuild from it and the chain, on any device, with nothing saved anywhere else.</p>`);
+    mount(el, html`<p class="lede-s">Your payments, rebuilt from your key and the chain on any device. Your key is the only backup.</p>`);
     return;
   }
   const all = CHAINS.flatMap((c) => CH[c.chainId].hist?.rows || []).sort((a, b) => (b.time || 0) - (a.time || 0) || b.block - a.block);
@@ -1634,21 +1685,25 @@ function paintRecover() {
     if (!h) return html`<li><span class="n">${c.name}</span><span class="s">—</span></li>`;
     const match = st.bal != null && st.bal === h.balance;
     const n = h.rows.length;
-    return html`<li><span class="n">${c.name}</span><span class="num">${eth(h.balance)} ETH</span><span class="s">${h.notes} note${h.notes === 1 ? '' : 's'} · ${n} payment${n === 1 ? '' : 's'}${match ? html` · <span class="ok">matches</span>` : ''}</span></li>`;
+    return html`<li><span class="n">${c.name}</span><span class="num">${eth(h.balance)} ETH</span><span class="s">${n} payment${n === 1 ? '' : 's'}${match ? html` · <span class="ok">matches your balance</span>` : ''}</span></li>`;
   };
   mount(el, html`
-    <p class="lede-s">Your key is the only backup. Everything below was just rebuilt from it and the chain: the notes you hold, what you received, and what you sent, with its fee and the change you kept. This browser keeps only a view of it, never a spend key.</p>
+    <p class="lede-s">Rebuilt just now from your key and the chain: what you received, and what you sent with its fee and the change you kept. Your key is the only backup; this browser keeps only a view, never a spend key.</p>
     <ul class="chainsum">${CHAINS.map(line)}</ul>
-    <label class="chk"><input type="checkbox" id="rc-chain" ${S.chainOnly ? 'checked' : ''}>Read the chain alone, skipping the relay’s index (slower)</label>
-    <div class="foot-a"><button class="btn ghost sm" type="button" id="rc-go">Forget this device’s copy and rebuild</button>${all.length ? html`<button class="link" type="button" id="rc-csv">Download as CSV</button>` : ''}</div>
+    <details class="adv"${S.advOpen ? ' open' : ''}><summary>Rebuild from scratch</summary>
+      <label class="chk"><input type="checkbox" id="rc-chain" ${S.chainOnly ? 'checked' : ''}>Read the chain alone, skipping the relay’s index (slower)</label>
+      <div class="foot-a"><button class="btn ghost sm" type="button" id="rc-go">Forget this device’s copy and rebuild</button></div>
+    </details>
+    ${all.length ? html`<div class="foot-a"><span class="mute">Latest first</span><button class="link" type="button" id="rc-csv">Download as CSV</button></div>` : ''}
     ${all.length ? html`<ul class="rows">${all.slice(0, 50).map((r) => {
       const [label, isIn] = KIND[r.kind];
-      const bits = [r.chain.name, r.time ? ago(r.time) : null, r.fee ? `fee ${fmt(r.fee, 18, 6)}` : null, (r.kind === 'sent' || r.kind === 'out') && r.kept ? `kept ${eth(r.kept)}` : null].filter(Boolean).join(' · ');
-      return html`<li><div class="h"><b>${label}${r.kind === 'out' ? html` to <span class="nw">${short(r.to)}</span>` : ''}</b><span class="${isIn ? 'in' : ''}">${isIn ? '+' : r.kind === 'self' ? '' : '−'}${fmt(r.v, 18, 6)} ETH</span></div>
+      const bits = [r.chain.name, r.time ? ago(r.time) : null, r.fee ? `fee ${fmt(r.fee, 18, 6)}` : null, (r.kind === 'sent' || r.kind === 'out' || r.kind === 'bridge') && r.kept ? `kept ${eth(r.kept)}` : null].filter(Boolean).join(' · ');
+      return html`<li><div class="h"><b>${label}${r.kind === 'out' ? html` to <span class="nw">${short(r.to)}</span>` : r.kind === 'bridge' ? ` to ${r.dest}` : ''}</b><span class="${isIn ? 'in' : ''}">${isIn ? '+' : r.kind === 'self' ? '' : '−'}${fmt(r.v, 18, 6)} ETH</span></div>
         <div class="f">${bits} · ${txLink(r.chain, r.tx)}</div></li>`;
     })}</ul>
     <p class="note">Who received a private payment is known only to you and them: the chain holds the amount sealed to their key, and nothing that names them.</p>` : CHAINS.every((c) => CH[c.chainId].hist) ? html`<p class="note">No payments yet. Deposit to start.</p>` : ''}`);
   $('#rc-chain').onchange = (e) => { S.chainOnly = e.target.checked; };
+  el.querySelector('details.adv').ontoggle = (e) => { S.advOpen = e.target.open; };
   $('#rc-go').onclick = (e) => rebuild(e.currentTarget);
   $('#rc-csv')?.addEventListener('click', () => {
     const q = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
@@ -1674,7 +1729,7 @@ function renderWalletSheet() {
     <div class="who"><div class="a num">${short(k.bp, 14)}</div><div class="u">Your pool address · opened with ${viaText(k)}</div>
       <div class="row2"><button class="btn ghost" type="button" id="w-copy">Copy address</button><button class="btn ghost" type="button" id="w-lock">Lock</button></div></div>
     <div class="kv"><span>Pays gas when you send it yourself</span>${S.wallet ? html`<b>${short(S.wallet, 6)}</b>` : html`<button class="link" type="button" id="w-conn">Connect a wallet</button>`}</div>
-    <p class="note">The key stays in this tab. Payments to your pool address reach you here, on weld and on tacit.finance.</p>`);
+    <p class="note">Your wallet or passkey is the only way back to these funds: keep it safe. The key stays in this tab, and payments to your pool address reach you here, on weld and on tacit.finance.</p>`);
   $('#w-copy').onclick = () => copy(k.bp, 'Pool address copied');
   $('#w-lock').onclick = () => { lock(); renderWalletSheet(); };
   $('#w-conn')?.addEventListener('click', () => connectWallet().then(renderWalletSheet).catch((e) => toast(errText(e), true)));

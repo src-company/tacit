@@ -226,6 +226,8 @@ try {
     const otherBp = await p.textContent('.addr code');
     await p.click('#wallet'); await p.click('#w-lock'); await p.click('#sheet-wallet [data-close]');
     await openKey(p, key);
+    await p.waitForSelector('details.adv');
+    await p.evaluate(() => { const d = document.querySelector('details.adv'); d.open = true; d.dispatchEvent(new Event('toggle')); });
     await p.click('#rc-chain');
     await p.evaluate(() => document.querySelector('#wallet-label').click()); await p.click('#w-conn'); await p.click('#sheet-wallet [data-close]');
     await p.click('#tabs [data-tab="deposit"]');
@@ -249,6 +251,7 @@ try {
     ok(BigInt(await rpc('eth_getBalance', ['0x' + '33'.repeat(20), 'latest'])) >= 2n * 10n ** 15n, 'the address received 0.002 ETH');
     await p.waitForFunction(() => /0\.004/.test(document.querySelector('#bal .v').textContent), null, { timeout: 120e3 }).catch(() => {});
     ok(/^0\.004$/.test((await p.textContent('#bal .v')).trim()), `0.004 stays private: ${await p.textContent('#bal .v')}`);
+    await p.evaluate(() => { const d = document.querySelector('details.adv'); d.open = true; d.dispatchEvent(new Event('toggle')); });
     await p.click('#rc-go');
     await p.waitForFunction(() => document.querySelectorAll('.rows li').length >= 3 && !/rebuilding/.test(document.querySelector('#recover-at').textContent), null, { timeout: 900e3 })
       .catch(async (e) => { console.log('    ' + (await p.textContent('#recover-body')).replace(/\s+/g, ' ')); throw e; });
@@ -282,12 +285,12 @@ try {
     ok(/Taken in/.test(await p.textContent('#status')), `the payee takes it in: ${(await p.textContent('#status')).trim()}`);
     const tw = Date.now();
     const probe = setInterval(async () => { try { console.log(`    [${Math.round((Date.now() - tw) / 1000)} s] ${(await p.textContent('#recover-at'))} · ${(await p.$$eval('.chainsum li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()).join(' | ')))}`); } catch {} }, 60e3);
-    await p.waitForFunction(() => [...document.querySelectorAll('.rows li')].some((l) => /one-time deposit address/.test(l.textContent)), null, { timeout: 900e3 }).catch(() => {});
+    await p.waitForFunction(() => [...document.querySelectorAll('.rows li')].some((l) => /through a payment link/.test(l.textContent)), null, { timeout: 900e3 }).catch(() => {});
     clearInterval(probe);
     console.log(`    history showed it after ${Math.round((Date.now() - tw) / 1000)} s`);
     const got = await p.$$eval('.rows li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
     console.log('    ' + got.join('\n    '));
-    ok(got.some((r) => /^Came in at a one-time deposit address ?\+0\.003 ETH/.test(r)), 'the payee’s key finds the wallet payment');
+    ok(got.some((r) => /^Came in through a payment link ?\+0\.003 ETH/.test(r)), 'the payee’s key finds the wallet payment');
     // The next link names a fresh one-time address.
     const next = await getPaidLink(p, '', '');
     ok(new URL(next).hash.match(/n=([0-9a-f]+)/)[1] !== new URL(link).hash.match(/n=([0-9a-f]+)/)[1], 'after a link is paid, the next link uses a new address');
