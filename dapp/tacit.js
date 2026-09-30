@@ -75,6 +75,7 @@ import { bppRangeProve, bppRangeVerify } from './bulletproofs-plus.js';
 import { makeConfidentialPool } from './confidential-pool.js';
 import { makeConfidentialPoolUx, setExternalTacHolders } from './confidential-pool-ux.js';
 import { makeBurnDepositUx } from './burndep-ux.js';
+import { makeCrossoutUx } from './crossout-ux.js';
 import { renderConfidentialPoolTab } from './confidential-pool-tab.js';
 import { renderLanePanel } from './cross-chain-lane.js';
 import { renderCdpTab, announceCbtcBonds } from './confidential-defi-tab.js';
@@ -3687,7 +3688,7 @@ async function getUtxos(a, onProgress) {
   // its escrow. Filtering at this single point covers every caller. A genuine redemption builds its
   // transaction from the outpoint explicitly rather than through coin selection, so it is unaffected.
   const _filterRecent = (utxos) => Array.isArray(utxos)
-    ? utxos.filter(u => !_isRecentlySpent(u.txid, u.vout) && !_isProtectedOutpoint(u.txid, u.vout) && !_burndepReserved(u.txid, u.vout))
+    ? utxos.filter(u => !_isRecentlySpent(u.txid, u.vout) && !_isProtectedOutpoint(u.txid, u.vout) && !_burndepReserved(u.txid, u.vout) && !_crossoutReserved(u.txid, u.vout))
     : utxos;
   if (_heavyAddresses.has(a)) {
     // Heavy path: try the sniff-then-cache shortcut.
@@ -19824,6 +19825,26 @@ function _burndepUxSingleton() {
 // ready yet, matching every other best-effort filter in _filterRecent.
 function _burndepReserved(txid, vout) {
   try { return _burndepUxSingleton().isReserved(txid, vout); } catch { return false; }
+}
+// TAC-to-Bitcoin cross-out bridge (beta, capped at CROSSOUT_BETA_CAP_RAW) — the reverse leg of the burn-deposit
+// bridge above. Same per-network caching rationale as _burndepUxSingleton.
+let _crossoutUx = null, _crossoutUxNet = null;
+function _crossoutUxSingleton() {
+  const net = NET.name;
+  if (_crossoutUx && _crossoutUxNet === net) return _crossoutUx;
+  const poolUx = _poolUxSingleton();
+  _crossoutUxNet = net;
+  return (_crossoutUx = makeCrossoutUx({
+    network: net, hrp: NET.hrp, workerBase: WORKER_BASE, secp,
+    crossOut: poolUx.crossOut, tacAssetId: '0x' + CANONICAL_TAC_ASSET_ID_HEX,
+    chain: { getUtxos, pickSafeCommitSats, broadcastWithRetry, getFeeRate },
+    postHint,
+  }));
+}
+// Mirrors _burndepReserved for the Bitcoin-side funding UTXO a cross-out's mint-signed stage reserves — same
+// _filterRecent hook, same fail-open rationale.
+function _crossoutReserved(txid, vout) {
+  try { return _crossoutUxSingleton().isFundingReserved(txid, vout); } catch { return false; }
 }
 // A connected Ethereum wallet's public TAC counts toward the holder exit rate in every pool tab.
 setExternalTacHolders(() => (ethWallet?.state?.address ? ['0x' + String(ethWallet.state.address).replace(/^0x/, '')] : []));
@@ -46392,7 +46413,7 @@ function _activateTab(name) {
   if (name === 'mixer') { renderMixer(); startMixerAutoRefresh(); }
   else stopMixerAutoRefresh();
   stopPoolAutoRefresh(); // 'pool'/'farms' redirect in _canonicalTabName; nothing to render
-  if (name === 'confidential-pool') { try { renderConfidentialPoolTab(wallet); } catch (e) { console.error('confidential-pool tab', e); } }
+  if (name === 'confidential-pool') { try { renderConfidentialPoolTab(wallet, _crossoutUxSingleton()); } catch (e) { console.error('confidential-pool tab', e); } }
   if (name === 'cdp') { try { _renderCdpTab(); } catch (e) { console.error('cdp tab', e); } }
   if (name === 'otc') { try { renderOtcTab(wallet); } catch (e) { console.error('otc tab', e); } }
   if (name === 'csend') {

@@ -3,7 +3,7 @@
 // seed-only balance) and the wrap/exit BUILD paths live in confidential-pool-ux.js (tested). Kept OUT of
 // tacit.js (a thin hook calls this).
 
-import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
+import { secp, sha256, keccak_256, bytesToHex } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
 import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, formatSpecErr, notify, proveUpdater, evmAccountHint, shownTicker } from './confidential-deployments.js';
 import { formatUnits as fmtUnits } from './confidential-payout.js';
@@ -190,6 +190,108 @@ function wireExit(wallet, ux, notes) {
   }
 }
 
+// Cross-out (Ethereum -> Bitcoin) for confidential TAC notes: settle on Ethereum, wait for the reflection
+// worker's eth-state view to cover it, then mint on Bitcoin — see dapp/crossout-ux.js's own header for the
+// full state machine. The note picker follows the same convention dapp/burndep-ux.js's forward direction
+// uses: every note is listed, ineligible ones disabled with a reason. The in-flight list below it survives
+// reloads (crossoutUx journals to storage before each step, same as the forward bridge).
+const CROSSOUT_STAGE_LABEL = {
+  settled: 'Settled on Ethereum — waiting for the reflection worker to see it',
+  covered: 'Visible to the reflection worker — ready to sign the Bitcoin-side mint',
+  'mint-signed': 'Signed — ready to broadcast on Bitcoin',
+  'mint-submitted': 'Broadcast on Bitcoin — waiting for a confirmation',
+  minted: 'Minted on Bitcoin — the usual forward reflection pass will pick it up from here',
+};
+
+function crossoutRecordsHtml(records, network) {
+  if (!records.length) return '';
+  const mempoolBase = network === 'signet' ? 'https://mempool.space/signet/tx/' : 'https://mempool.space/tx/';
+  const rows = records.map((r) => {
+    const label = CROSSOUT_STAGE_LABEL[r.stage] || r.stage;
+    const revealLink = r.mint && r.mint.revealTxid
+      ? ` · <a href="${mempoolBase}${esc(r.mint.revealTxid)}" target="_blank" rel="noopener">Bitcoin tx</a>` : '';
+    const err = r.lastError ? `<div class="muted" style="font-size:10px;color:var(--red,#c33);">${esc(r.lastError.message)}</div>` : '';
+    const showContinue = r.stage !== 'minted';
+    return `<div class="list-row" style="flex-direction:column;align-items:flex-start;gap:2px;">`
+      + `<div style="display:flex;justify-content:space-between;width:100%;align-items:center;">`
+      + `<span style="font-size:11px;">${esc(label)}${revealLink}</span>`
+      + (showContinue ? `<button data-id="${esc(r.id)}" class="cpool-crossout-continue" style="padding:2px 8px;font-size:10px;flex:0 0 auto;">Continue</button>` : '')
+      + `</div>${err}</div>`;
+  }).join('');
+  return `<div style="margin-bottom:4px;"><b style="font-size:11px;">Bridges to Bitcoin</b></div>${rows}`;
+}
+
+function wireCrossout(wallet, ux, crossoutUx, notes) {
+  const listEl = el('cpool-crossout-list');
+  const statusEl = el('cpool-crossout-status');
+  const inflightEl = el('cpool-crossout-inflight');
+  if (!listEl) return;
+  if (!crossoutUx) { listEl.textContent = 'Not available in this build.'; return; }
+
+  const walletPub = bytesToHex(secp.getPublicKey(wallet.priv, true));
+  const refresh = () => { try { if (inflightEl) inflightEl.innerHTML = crossoutRecordsHtml(crossoutUx.list(walletPub), crossoutUx.network); } catch {} };
+
+  const tacAsset = ux.assetByTicker && ux.assetByTicker.cTAC && ux.assetByTicker.cTAC.assetId;
+  const tacNotes = tacAsset ? (notes || []).filter((n) => String(n.asset).toLowerCase() === String(tacAsset).toLowerCase()) : [];
+  const decOf = () => { const m = ux.assets.find((x) => x.assetId.toLowerCase() === String(tacAsset).toLowerCase()); return m ? (m.tacitDecimals ?? m.decimals) : 8; };
+
+  if (!tacNotes.length) { listEl.textContent = 'No cTAC notes to bridge yet.'; refresh(); return; }
+
+  const elig = crossoutUx.eligibleNotes(tacNotes);
+  const byLeaf = new Map(elig.map((n) => [String(n.leafIndex), n]));
+  listEl.innerHTML = elig.map((n) => {
+    const dec = decOf();
+    const reason = n.eligible ? '' : ` <span class="muted" style="font-size:10px;">(${esc(n.reason)})</span>`;
+    return `<div class="list-row">`
+      + `<span>${fmtUnits(n.value, dec)} cTAC${reason}</span>`
+      + `<button data-leaf="${n.leafIndex}" class="cpool-crossout-one" ${n.eligible ? '' : 'disabled'} style="padding:4px 10px;font-size:10px;flex:0 0 auto;">Bridge</button></div>`;
+  }).join('');
+
+  for (const btn of listEl.querySelectorAll('.cpool-crossout-one')) {
+    btn.onclick = async () => {
+      const note = byLeaf.get(btn.getAttribute('data-leaf'));
+      if (!note) return;
+      const amountStr = `${fmtUnits(note.value, decOf())} cTAC`;
+      if (!window.confirm(`Bridge ${amountStr} to Bitcoin?\n\nThis settles on Ethereum immediately and cannot be undone. It arrives at this wallet's own Bitcoin key once the reflection worker sees the settle and the Bitcoin-side mint confirms — usually not instant.`)) return;
+      listEl.querySelectorAll('.cpool-crossout-one').forEach((b) => { b.disabled = true; });
+      if (statusEl) statusEl.textContent = 'Settling on Ethereum…';
+      try {
+        const rec = await crossoutUx.start({ note, walletPriv: wallet.priv });
+        if (statusEl) statusEl.textContent = `Settled (${rec.settle.txHash}) — waiting for the reflection worker to see it before the Bitcoin-side mint can broadcast.`;
+        notify('Cross-out settled on Ethereum', 'ok');
+        // Best-effort: the eth-state coverage check almost never passes this soon, but a resumed session
+        // that already cleared it (rare) shouldn't need an extra manual click.
+        try { await crossoutUx.advance(walletPub, rec.id, { walletPriv: wallet.priv }); } catch {}
+        setTimeout(() => renderConfidentialPoolTab(wallet, crossoutUx), 1500);
+      } catch (e) {
+        const msg = formatSpecErr(e, 'Bridge');
+        if (statusEl) statusEl.textContent = msg; notify(msg, 'error');
+        listEl.querySelectorAll('.cpool-crossout-one').forEach((b) => { b.disabled = false; });
+      }
+    };
+  }
+
+  refresh();
+  if (inflightEl) {
+    for (const btn of inflightEl.querySelectorAll('.cpool-crossout-continue')) {
+      btn.onclick = async () => {
+        btn.disabled = true;
+        btn.textContent = 'Working…';
+        try {
+          await crossoutUx.advance(walletPub, btn.getAttribute('data-id'), { walletPriv: wallet.priv });
+          notify('Cross-out advanced', 'ok');
+        } catch (e) {
+          notify(formatSpecErr(e, 'Continue'), 'error');
+        } finally {
+          // Always re-renders (success or failure), which rebuilds this button from fresh record state --
+          // no manual re-enable/relabel needed here, unlike wireResumeWraps (which doesn't always re-render).
+          setTimeout(() => renderConfidentialPoolTab(wallet, crossoutUx), 800);
+        }
+      };
+    }
+  }
+}
+
 // The full key-only restore (notes, farm and borrow positions, stealth payments). ux.recover() reports its own
 // coverage, and a restore that skipped a settle it could not read is NOT a finished restore: someone rebuilding
 // from a seed who reads a partial set as complete concludes the rest is gone. The coverage line is rendered
@@ -292,6 +394,12 @@ function renderPoolPanel() {
   const btcBody =
     `<div class="muted" style="font-size:11px;">Value bridged from Bitcoin lands as the same shielded note — transfer, trade, or borrow against it on either side. Bitcoin-homed value is fast-final on Ethereum, then settles to Bitcoin over ~1 hr.</div>`;
 
+  const crossoutBody =
+    `<div id="cpool-crossout-list" class="muted" style="font-size:12px;">Unlock + wrap TAC to see your bridgeable notes.</div>`
+    + `<div id="cpool-crossout-status" class="muted field-status" style="margin-top:6px;"></div>`
+    + `<div id="cpool-crossout-inflight" style="margin-top:10px;"></div>`
+    + `<div class="muted" style="font-size:11px;margin-top:6px;">Beta, capped at 1,000 TAC per note. Bridges to this wallet's own Bitcoin key. The Ethereum side settles in seconds; the Bitcoin-side mint waits for the reflection worker to see that settle, which can take a while — this list keeps tracking it across reloads.</div>`;
+
   return renderLanePanel({
     intro,
     lanes: [
@@ -302,6 +410,7 @@ function renderPoolPanel() {
       ] },
       { key: 'btc', label: 'Bitcoin lane', actions: [
         { title: 'Bring value from Bitcoin', dir: 'over', body: btcBody },
+        { title: 'Bridge TAC → Bitcoin', dir: 'out', meta: 'beta — capped at 1,000 TAC', body: crossoutBody },
       ] },
     ],
     footer: `Holding legacy alpha tETH notes? <a href="#" id="cpool-legacy-bridge">Redeem or migrate them →</a>`,
@@ -310,7 +419,11 @@ function renderPoolPanel() {
 
 // Render the user's confidential account (derived Sepolia EVM address) + seed-only cETH balance into the
 // panel. Safe to call with a locked wallet (shows the unlock prompt). `wallet` is the tacit.js wallet object.
-export async function renderConfidentialPoolTab(wallet) {
+// `crossoutUx` (optional) is tacit.js's own makeCrossoutUx(...) instance — injected rather than built here
+// because its Bitcoin-side mint needs tacit.js's own getUtxos/pickSafeCommitSats/broadcastWithRetry/getFeeRate
+// (the same cross-flow coin-selection coordination burndep-ux.js's bridge relies on), which this otherwise
+// fully decoupled tab module has no access to. Its absence only hides the "Bridge to Bitcoin" action.
+export async function renderConfidentialPoolTab(wallet, crossoutUx = null) {
   const body = el('cpool-body');
   if (!body) return;
   if (!confidentialPoolReady()) { body.innerHTML = confidentialUnavailableHTML('The shielded pool'); return; }
@@ -362,6 +475,7 @@ export async function renderConfidentialPoolTab(wallet) {
         }).join('');
     }
     wireExit(wallet, ux, notes);
+    wireCrossout(wallet, ux, crossoutUx, notes);
     wireResumeWraps(wallet, ux, diag);
     renderFinality();
   } catch (e) {
