@@ -2,9 +2,10 @@
 //   live   read-only against mainnet: the page loads under its pinned CSP, a pasted key reads all three chains, the
 //          history rebuilt from the key alone matches each chain's balance, forms refuse what they should, a payment
 //          link fills Send, and a sample payment is proved and verified in the page's worker
+//   relay  (opt-in, spends funds) KEY pays KEY2 privately on mainnet through the relay; KEY2's key alone finds it
 //   fork   an anvil fork of Base: deposit from a wallet, send privately and withdraw part, all proved in the page and
 //          sent by the wallet (no relay), then the history rebuilt from chain logs names all three
-//   PLAYWRIGHT=<path to playwright-core> KEY=<64-hex Tacit key with history> node tools/pay-check.mjs [live,fork]   (SHOTS=<dir>)
+//   PLAYWRIGHT=<path to playwright-core> KEY=<64-hex Tacit key with history> [PAGE=<url>] node tools/pay-check.mjs [live,fork]   (SHOTS=<dir>)
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, statSync, mkdirSync } from 'node:fs';
@@ -31,7 +32,7 @@ const server = createServer((req, res) => {
   res.writeHead(200, { 'content-type': TYPES[extname(f)] || 'application/octet-stream', 'content-length': body.length });
   res.end(body);
 }).listen(WEB);
-const URL_ = `http://127.0.0.1:${WEB}/pay/`;
+const URL_ = process.env.PAGE || `http://127.0.0.1:${WEB}/pay/`;   // PAGE=https://tacit.finance/pay/ checks the deployed page
 
 async function page(browser, { viewport = { width: 1280, height: 900 }, colorScheme = 'light', init = null, route = null } = {}) {
   const ctx = await browser.newContext({ viewport, colorScheme });
@@ -108,6 +109,38 @@ try {
     ok(/s$/.test(await p.textContent('.proof b')), `sample proof: ${await p.textContent('.proof b')} (${Math.round((Date.now() - t0) / 1000)} s with key load)`);
     ok(!errors.length, `no page errors ${errors.join(' | ')}`);
     await shot(p, 'proved-desktop');
+    await ctx.close();
+  }
+
+  if (ONLY.has('relay')) {
+    // A real relayed private payment on mainnet: KEY pays KEY2 AMT ETH on CHAIN through the relay, then KEY2's key
+    // alone finds it. Spends real (tiny) funds; never part of the default run.
+    console.log('relay (mainnet, spends funds)');
+    const { ctx, p, errors } = await page(browser, { init: `localStorage.setItem('tacit-pay-chain-v1', JSON.stringify(${JSON.stringify(process.env.CHAIN || 'robinhood')}))` });
+    await p.goto(URL_);
+    await p.waitForSelector('#g-in');
+    await openKey(p, process.env.KEY2);
+    await p.click('#tabs [data-tab="receive"]');
+    const to = (await p.textContent('.addr code')).trim();
+    await p.click('#wallet'); await p.click('#w-lock'); await p.click('#sheet-wallet [data-close]');
+    await openKey(p, process.env.KEY);
+    await p.click('#tabs [data-tab="send"]');
+    await p.waitForFunction(() => !document.querySelector('#chains [aria-selected="true"] .sk'), null, { timeout: 180e3 });
+    await p.fill('#f-to', to); await p.fill('#f-amt', process.env.AMT || '0.00001');
+    await p.waitForFunction(() => !document.querySelector('#f-go').disabled, null, { timeout: 60e3 });
+    console.log('    ' + (await p.textContent('#f-rcpt')).replace(/\s+/g, ' ').trim());
+    const t0 = Date.now();
+    await p.click('#f-go');
+    await p.waitForFunction(() => /Sent/.test(document.querySelector('#status').textContent) || document.querySelector('#status .err'), null, { timeout: 900e3 });
+    ok(/Sent/.test(await p.textContent('#status')), `relayed private send (${Math.round((Date.now() - t0) / 1000)} s): ${(await p.textContent('#status')).trim()}`);
+    await p.click('#wallet'); await p.click('#w-lock'); await p.click('#sheet-wallet [data-close]');
+    await openKey(p, process.env.KEY2);
+    await p.waitForFunction(() => [...document.querySelectorAll('.rows li')].some((l) => /Received privately/.test(l.textContent)) && !/rebuilding/.test(document.querySelector('#recover-at').textContent), null, { timeout: 300e3 }).catch(() => {});
+    const rows = await p.$$eval('.rows li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
+    console.log('    ' + rows.join('\n    '));
+    ok(rows.some((r) => /^Received privately/.test(r) && /just now|min ago/.test(r)), 'the recipient’s key alone finds the payment');
+    await shot(p, 'relay-recipient');
+    ok(!errors.length, `no page errors ${errors.join(' | ')}`);
     await ctx.close();
   }
 

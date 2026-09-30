@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-fJnj1bd8tp/h76I9pvZDzoeM72KuBmnfY/ZtVdmleq8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-dJwwEcXWXZ49NcfRuiygyG3t7ViLdLw8asvObdqZ1Fw=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -139,6 +139,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .bal { display: flex; align-items: center; gap: 14px; padding: 14px 0; margin-bottom: 16px; border-top: 1px solid var(--hair); border-bottom: 1px solid var(--hair); }
 .bal .v { font: 500 30px/1.1 var(--mono); letter-spacing: -.02em; }
 .bal .u { color: var(--mute); font-size: 12.5px; }
+.bal .v.t { font: 400 28px/1.05 var(--serif); letter-spacing: -.01em; }
 .bal .side { margin-left: auto; text-align: right; font-size: 12px; color: var(--mute); }
 
 .lbl { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--mute); margin: 14px 0 6px; }
@@ -382,6 +383,7 @@ const CHAIN_META = {
 // Gas a relayed withdraw-and-call through each L2's canonical bridge needs (the wallet's bridgeOut asks the same).
 const BRIDGE_GAS = { 8453: 1_300_000, 4663: 700_000 };
 const ARTIFACT_CACHE = 'tacit-evm-pool-artifacts-v1';                  // shared with weld and Secret Sats
+const BAL_SEEN = 'tacit-pay-bal-v1';                                  // last balances read, per key and chain: shown muted until fresh
 const PAY_ID = 'tacit-pay-id-v1', CHAIN_PREF = 'tacit-pay-chain-v1', ROUTE_PREF = 'tacit-pay-route-v1';
 const POLL_MS = 30_000, POLL_OTHER_MS = 120_000, BOXES = 41;
 
@@ -575,10 +577,12 @@ async function prove(input) {
   return out;
 }
 const warm = () => { prover().catch(() => {}); };
+// A proving key already saved here loads in the background once a wallet opens, so the first payment starts proving at once.
+const warmIfSaved = () => { if (PROVER.cached) (globalThis.requestIdleCallback || setTimeout)(warm); };
 
 // ── key ──────────────────────────────────────────────────────────────────────────────────────────────────
 const S = { key: null, keys: null, wallet: null, provider: null, chain: chainOf(readJson(CHAIN_PREF)) || CHAINS[1], tab: 'deposit', depMode: 'wallet', dest: 'addr', busy: 0, chainOnly: false };
-const CH = Object.fromEntries(CHAINS.map((c) => [c.chainId, { W: null, for: null, bal: null, notes: [], quote: null, waiting: null, err: null, syncing: null, at: 0, hist: null, histing: null, histNext: null, histErr: null }]));
+const CH = Object.fromEntries(CHAINS.map((c) => [c.chainId, { W: null, for: null, bal: null, notes: [], quote: null, waiting: null, err: null, syncing: null, at: 0, hist: null, histing: null, histNext: null, histErr: null, last: null }]));
 const evm = makeEvmWallet({ secp, sha256, keccak256: keccak_256, bytesToHex, hexToBytes, prfBytesToScalar, netName: 'mainnet' });
 const ROUTES = readJson(ROUTE_PREF) || {};
 const routeOf = (tab) => (ROUTES[tab] === 'wallet' || !chainKeeper(S.chain) ? 'wallet' : 'relay');
@@ -610,6 +614,9 @@ async function setKey(k) {
   forget();
   S.key = { ...k, pubHex, bp: keys.address };
   S.keys = keys;
+  const seen = readJson(BAL_SEEN)?.[pubHex] || {};
+  for (const c of CHAINS) CH[c.chainId].last = seen[c.chainId] != null ? BigInt(seen[c.chainId]) : null;
+  warmIfSaved();
   const { priv, ...pub } = S.key;
   if (k.mode === 'key') writeJson(PAY_ID, null); else writeJson(PAY_ID, pub);
   paintWallet(); renderApp(); paintRecover();
@@ -619,7 +626,7 @@ async function setKey(k) {
 }
 function forget() {
   S.key = null; S.keys = null; BOXQ.for = null;
-  for (const st of Object.values(CH)) Object.assign(st, { W: null, for: null, bal: null, notes: [], quote: null, waiting: null, err: null, syncing: null, at: 0, hist: null, histing: null, histNext: null, histErr: null });
+  for (const st of Object.values(CH)) Object.assign(st, { W: null, for: null, bal: null, notes: [], quote: null, waiting: null, err: null, syncing: null, at: 0, hist: null, histing: null, histNext: null, histErr: null, last: null });
 }
 function lock() { forget(); paintWallet(); renderApp(); paintRecover(); }
 
@@ -760,6 +767,9 @@ function syncChain(c, fresh = false) {
     const [s, q, w] = await Promise.all([W.sync(), chainKeeper(c) ? W.quote().catch(() => null) : null, W.waiting().catch(() => null)]);
     if (st.W !== W || S.key?.pubHex !== pub) return;
     Object.assign(st, { bal: s.balance, notes: W.notes().map((n) => BigInt(n.v)), quote: q, waiting: w, err: null, at: Date.now() });
+    const seen = readJson(BAL_SEEN) || {};
+    seen[pub] = { ...(seen[pub] || {}), [c.chainId]: s.balance.toString() };
+    writeJson(BAL_SEEN, seen);
   }).catch((e) => { if (S.key?.pubHex === pub) st.err = e; }).finally(() => { if (st.syncing === p) st.syncing = null; paintChains(); paintBal(); if (!S.busy) { if (FORM.needsW && c === S.chain && CH[c.chainId].W) renderForm(); else FORM.check?.(); } paintRecover(); });
   return p;
 }
@@ -945,7 +955,7 @@ function paintWallet() {
 }
 function paintChains() {
   mount($('#chains'), html`${CHAINS.map((c) => {
-    const st = CH[c.chainId], v = !S.key ? '' : st.bal != null ? `${eth(st.bal)} ETH` : st.err ? '—' : html`<span class="sk" style="--w:7ch"></span>`;
+    const st = CH[c.chainId], v = !S.key ? '' : st.bal != null ? `${eth(st.bal)} ETH` : st.last != null ? html`<span class="stale">${eth(st.last)} ETH</span>` : st.err ? '—' : html`<span class="sk" style="--w:7ch"></span>`;
     return html`<button type="button" role="tab" data-chain="${c.chainId}" aria-selected="${c === S.chain}" ${S.busy ? 'disabled' : ''}>${c.name}${S.key ? html`<small>${v}</small>` : ''}</button>`;
   })}`);
   $$('#chains [data-chain]').forEach((b) => b.onclick = () => { if (!S.busy) switchChain(chainOf(b.dataset.chain)); });
@@ -963,10 +973,10 @@ function paintBal() {
   const c = S.chain, st = cur();
   if (!S.key) {
     mount($('#bal'), html`<span class="pair"><svg class="tk md" aria-hidden="true"><use href="#tk-eth"/></svg><svg class="tk md" aria-hidden="true"><use href="#tk-peth"/></svg></span>
-      <div><div class="v num">0 <small class="u">ETH</small></div><div class="u">private on ${c.full}</div></div>`);
+      <div><div class="v t">Private ETH</div><div class="u">on ${c.full} · yours shows once a wallet is open</div></div>`);
     return;
   }
-  const v = st.bal != null ? eth(st.bal) : null;
+  const v = st.bal != null ? eth(st.bal) : st.last != null ? html`<span class="stale">${eth(st.last)}</span>` : null;
   mount($('#bal'), html`<span class="pair"><svg class="tk md" aria-hidden="true"><use href="#tk-eth"/></svg><svg class="tk md" aria-hidden="true"><use href="#tk-peth"/></svg></span>
     <div><div class="v num">${v ?? (st.err ? html`<span class="err">—</span>` : html`<span class="sk" style="--w:8ch"></span>`)}</div><div class="u">ETH, private on ${c.full}</div></div>
     <div class="side">${st.err ? html`<button class="link" type="button" id="bal-re">retry</button>` : st.bal != null ? html`${st.notes.length} note${st.notes.length === 1 ? '' : 's'}<br><button class="link" type="button" id="bal-re">refresh</button>` : 'reading…'}</div>`);
@@ -1275,10 +1285,10 @@ function paintMeter() {
 }
 function paintDevice() {
   const p = PIN.v, cores = navigator.hardwareConcurrency;
-  $('#device-cores').textContent = cores ? `${cores} cores here` : '';
+  $('#device-cores').textContent = cores ? `${cores} cores` : '';
   const state = PROVER.state === 'ready' ? html`<b class="ok">ready</b>`
     : PROVER.state === 'loading' ? html`<b>loading <span id="device-pct" class="num">0%</span></b>`
-    : PROVER.cached ? html`<b>on this device, checked when used</b>` : html`<b>about 33 MB, fetched once</b>`;
+    : PROVER.cached ? html`<b>saved on this device</b>` : html`<b>33 MB, fetched once, then saved</b>`;
   const last = PROVER.last != null ? (PROVER.last / 1000).toFixed(1) : null;
   mount($('#device-body'), html`
     <p class="lede-s">Your key never leaves this tab. Each payment is proved here, checked here against the verification key, and only then handed to the relay or your wallet. The relay can send it, not change it.</p>
@@ -1412,6 +1422,7 @@ pin().then(async (p) => {
   PIN.v = p;
   try { const cache = await caches.open(ARTIFACT_CACHE); PROVER.cached = !!(await cache.match(`/evm-pool/${p.zkey}?sha256=${p.zkey_sha256}`)); } catch {}
   paintDevice();
+  if (S.key) warmIfSaved();
 }).catch(() => {});
 </script>
 </body>
