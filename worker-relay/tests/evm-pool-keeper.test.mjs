@@ -9,7 +9,7 @@ import { keccak_256 } from '../../dapp/vendor/tacit-deps.min.js';
 import { poolAsset } from '../../dapp/evm-pool-zk.js';
 import { encodeAbiParameters, keccak256 as viemKeccak, encodeFunctionData, decodeFunctionData, toHex } from 'viem';
 import { depositIntent, receiveRho, receiveKeys, callIntent, callIntentJson, callEscrowAddress, v1ZapShieldedNoteCall } from '../../dapp/evm-pool-gateway.js';
-import { ROUTER_ABI } from '../src/lib/evm-pool-keeper-chain.js';
+import { ROUTER_ABI, frontFees } from '../src/lib/evm-pool-keeper-chain.js';
 import { loadKeeperConfig, checkKeeperSigner, parseTokenMap, RELAY_EOA } from '../src/lib/evm-pool-keeper-config.js';
 import { openKeeperStore } from '../src/lib/evm-pool-keeper-store.js';
 import { makeLeafSync, LeafSyncError } from '../src/lib/evm-pool-keeper-leaves.js';
@@ -912,6 +912,40 @@ await test('HTTP relay sends withdrawAndCall and withdrawToV1 through the router
     r = await post({ ...tw2, wrap });
     assert.equal(r.status, 400);
     assert.match((await r.json()).error, /wrap intent's box/);
+  } finally { server.close(); }
+});
+
+await test('frontFees: full headroom when the balance covers it, less when it does not, refused below this block', () => {
+  const g = 1_000_000n, base = 10n, prio = 1n;
+  let f = frontFees({ base, prio, balance: 100_000_000n, gas: g });
+  assert.deepEqual([f.ok, f.headroom, f.maxFeePerGas, f.maxPriorityFeePerGas], [true, true, 21n, 1n], 'twice the base fee plus the tip');
+  f = frontFees({ base, prio, balance: 15_000_000n, gas: g });
+  assert.deepEqual([f.ok, f.headroom, f.maxFeePerGas], [true, false, 15n], 'headroom comes down to what the balance fronts');
+  f = frontFees({ base, prio, balance: 11_000_000n, gas: g });
+  assert.deepEqual([f.ok, f.maxFeePerGas], [true, 11n], 'exactly this block still sends');
+  f = frontFees({ base, prio, balance: 10_999_999n, gas: g });
+  assert.deepEqual([f.ok, f.need], [false, 11_000_000n], 'below this block it cannot send at all');
+});
+
+await test('a keeper that cannot front a send says so on /quote and /relay (503) instead of taking the job', async () => {
+  const cfg = mkCfg({ ratePerMin: 100 });
+  const store = openKeeperStore(':memory:');
+  const chain = mockChain();
+  let room = { ok: false };
+  chain.canFront = async () => room;
+  const handler = createIntakeHandler({ store, chain, zk, assetField, cfg, now: () => T0, log: () => {} });
+  const server = createServer(handler);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}/evm-pool/keeper`;
+  try {
+    let r = await fetch(`${base}/quote`);
+    assert.equal(r.status, 503);
+    assert.match((await r.json()).error, /short of gas/);
+    r = await fetch(base + '/relay', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(relayTx()) });
+    assert.equal(r.status, 503);
+    assert.equal(chain.sent.length, 0, 'nothing was sent');
+    room = { ok: true };
+    assert.equal((await fetch(`${base}/quote`)).status, 200);
   } finally { server.close(); }
 });
 

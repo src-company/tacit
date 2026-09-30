@@ -368,6 +368,13 @@ export function createIntakeHandler({
   };
   const busyKeys = (keys, t) => keys.some((k) => (inflight.get(k) ?? 0) > t);
 
+  // A keeper that cannot front a send says so up front, so a wallet sends it itself instead of proving for a relay
+  // that would fail. Its own fees refill it once it is running.
+  async function mustFront(gas) {
+    const room = chain.canFront ? await chain.canFront(gas) : { ok: true };
+    if (!room.ok) throw new IntakeError(503, 'this relay is short of gas right now; send it from your own wallet, or try again later');
+  }
+
   // The fee for `gas` (default relayGas; a withdrawal that also runs calls asks for more), within the gas cap.
   async function quote(gasParam) {
     let gas = cfg.relayGas;
@@ -378,6 +385,7 @@ export function createIntakeHandler({
       if (gas > cfg.gasCap) throw bad(`gas above the ${cfg.gasCap} cap`);
     }
     const price = await gasPrice();
+    await mustFront((gas * 13n) / 10n);
     const q = quoteFee({ token: chain.asset, gas, gasPrice: price, cfg });
     // What collecting a receive box costs now, and the smallest balance whose 0.25% cap pays for it.
     const sweep = quoteFee({ token: chain.asset, gas: cfg.sweepGas, gasPrice: price, cfg, floor: !cfg.rates.has(chain.asset.toLowerCase()) });
@@ -416,6 +424,7 @@ export function createIntakeHandler({
     const price = await gasPrice();
     const cov = coverCheck({ reward: fee, token: chain.asset, gas: est, gasPrice: price, cfg });
     if (!cov.ok) throw Object.assign(bad(`fee too low: ${cov.reason}`), { needFee: quoteFee({ token: chain.asset, gas: est, gasPrice: price, cfg }).toString() });
+    await mustFront(cov.gas);
     if (cfg.dryRun) return { dryRun: true, gas: est.toString() };
     const send = async ({ simulate }) => {
       const hash = await chain.send(functionName, sendArgs, { gas: cov.gas, simulate });
@@ -465,6 +474,7 @@ export function createIntakeHandler({
     const price = await gasPrice();
     const cov = coverCheck({ reward: fee, token: chain.asset, gas: est, gasPrice: price, cfg });
     if (!cov.ok) throw Object.assign(bad(`fee too low: ${cov.reason}`), { needFee: quoteFee({ token: chain.asset, gas: est, gasPrice: price, cfg }).toString() });
+    await mustFront(cov.gas);
     if (cfg.dryRun) return { dryRun: true, gas: est.toString() };
     if (busyKeys(keys, Date.now())) throw Object.assign(new IntakeError(409, 'this spend is already being relayed'), { stale: true });
     const hold = Date.now() + cfg.receiptWaitSecs * 1000;

@@ -96,6 +96,18 @@ export function revertName(e) {
   return null;
 }
 
+// What a send of `gas` can offer per gas when the keeper must front it: a node refuses a transaction whose
+// gas × maxFeePerGas is more than the account holds, and the fee only comes back once it runs. The headroom (twice
+// the base fee, surviving several blocks of rises) comes down to what the balance affords, never below what this
+// block needs, so a thinly funded keeper keeps sending while the base fee holds; below that it cannot send at all.
+// → { ok, maxFeePerGas, maxPriorityFeePerGas, balance, need (at this block), headroom (full headroom affordable) }
+export function frontFees({ base, prio, balance, gas }) {
+  const full = base * 2n + prio, floor = base + prio, g = BigInt(gas || 0);
+  const afford = g > 0n ? balance / g : full;
+  const maxFeePerGas = afford < full ? afford : full;
+  return { ok: afford >= floor, maxFeePerGas, maxPriorityFeePerGas: prio, balance, need: g * floor, headroom: afford >= full };
+}
+
 export async function makeKeeperChain({ cfg, account, log = () => {} }) {
   const pub = createPublicClient({ transport: fallback(cfg.rpcUrls.map((u) => http(u))) });
   const chainId = await pub.getChainId();
@@ -124,11 +136,15 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
     return Math.max(pending, sentNonce + 1);
   };
   // Fees that survive several blocks of base-fee rises, with at least the configured tip (a private builder skips a
-  // transaction that pays it nothing).
-  const fees = async () => {
-    const [block, tip] = await Promise.all([pub.getBlock(), pub.estimateMaxPriorityFeePerGas().catch(() => 0n)]);
-    const prio = tip > cfg.minPriorityFee ? tip : cfg.minPriorityFee;
-    return { maxFeePerGas: (block.baseFeePerGas ?? 0n) * 2n + prio, maxPriorityFeePerGas: prio };
+  // transaction that pays it nothing), within what the keeper can front for `gas` (see frontFees).
+  const prices = async () => {
+    const [block, tip, balance] = await Promise.all([pub.getBlock(), pub.estimateMaxPriorityFeePerGas().catch(() => 0n), pub.getBalance({ address: account.address })]);
+    return { base: block.baseFeePerGas ?? 0n, prio: tip > cfg.minPriorityFee ? tip : cfg.minPriorityFee, balance };
+  };
+  const fees = async (gas) => {
+    const f = frontFees({ ...(await prices()), gas });
+    if (!f.ok) throw Object.assign(new Error(`keeper ${account.address} holds ${f.balance} wei, under the ${f.need} wei a ${gas}-gas send needs at the current base fee`), { shortOfGas: true });
+    return { maxFeePerGas: f.maxFeePerGas, maxPriorityFeePerGas: f.maxPriorityFeePerGas };
   };
   const b32 = (x) => `0x${BigInt(x).toString(16).padStart(64, '0')}`;
 
@@ -177,6 +193,8 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
     receiveBoxOf: async (npk, feeBps) => getAddress(await read(cfg.router, ROUTER_ABI, 'receiveBoxOf', [npk, feeBps])),
     receiveCount: async (box) => BigInt(await read(cfg.router, ROUTER_ABI, 'receiveCount', [box])),
     estimate: (functionName, args) => pub.estimateContractGas({ ...target(functionName), args, account }),
+    // Whether the keeper can front a send of `gas` now: { ok, balance, need, headroom } (frontFees).
+    canFront: async (gas) => frontFees({ ...(await prices()), gas }),
 
     // Private endpoints first; the read RPC last when public sends are allowed. Returns the tx hash.
     // Re-simulated inside the queue, right before signing, so state that moved since the caller's estimate
@@ -189,7 +207,7 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
         try {
           const wallet = createWalletClient({ account, chain: viemChain, transport: http(url) });
           return await withNonceRetry(functionName, async () => {
-            const [nonce, fee] = await Promise.all([nextNonce(), fees()]);
+            const [nonce, fee] = await Promise.all([nextNonce(), fees(gas)]);
             const hash = await wallet.writeContract({ ...target(functionName), args, gas, nonce, ...fee });
             sentNonce = nonce;
             sentAt = Date.now();
