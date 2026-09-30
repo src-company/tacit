@@ -504,5 +504,6 @@ export function makeBurnDepositUx(deps) {
   return {
     BURNDEP_BETA_CAP_RAW, eligibleNotes, isReserved, preflight, start, advance, resumeAll, recoverFromTxid, list, abandon,
     slipstreamStatus: broadcaster.slipstreamStatus,
+    checkTxidStatus,
   };
 }

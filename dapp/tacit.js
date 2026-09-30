@@ -22769,6 +22769,12 @@ function _renderHoldingsBurndepBridges(listEl) {
     // Live MARA queue position for a burn sitting past ordinary explorers' reach (preMinedBurn, above) — fetched
     // async below, into this placeholder, since MARA's own status call has no business blocking the render.
     const maraHtml = preMinedBurn && rec.burn?.txid ? `<div class="muted" data-burndep-mara="${i}" style="margin-top:2px;">checking MARA status…</div>` : '';
+    // Same idea for the OTHER wait with no visible mechanism: once mined, a burn still needs the reflection to
+    // attest past its own block before it can fold, same shape of wait as the pre-burn admission check, and
+    // just as opaque without this — "waiting for the reflection to fold it…" alone gives no sense of how close
+    // that actually is. Fetched async below into this placeholder.
+    const foldWaiting = rec.stage === 'burn-mined' || rec.stage === 'registered';
+    const foldHtml = foldWaiting && rec.burn?.txid ? `<div class="muted" data-burndep-fold="${i}" style="margin-top:2px;">checking reflection progress…</div>` : '';
     return `
       <div data-burndep-row="${i}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;${i ? 'border-top:1px solid var(--ink-faint);' : ''}">
         <div style="font-size:11px;line-height:1.5;">
@@ -22776,6 +22782,7 @@ function _renderHoldingsBurndepBridges(listEl) {
           <div class="muted">${shorten(rec.id.split(':')[0], 6)}:${rec.id.split(':')[1]}${watchLink}</div>
           ${errorHtml}
           ${maraHtml}
+          ${foldHtml}
         </div>
         <button data-burndep-act="${needsKey ? 'sign' : 'poll'}" data-burndep-id="${escapeHtml(rec.id)}" style="font-size:11px;padding:5px 10px;white-space:nowrap;">${actLabel}</button>
       </div>`;
@@ -22807,6 +22814,22 @@ function _renderHoldingsBurndepBridges(listEl) {
     }).catch((e) => {
       const el = section.querySelector(`[data-burndep-mara="${i}"]`);
       if (el && el.isConnected) el.textContent = `MARA status unavailable: ${e?.message || e}`;
+    });
+  });
+  // Same best-effort, read-only shape for the reflection's own fold progress — the worker's own `detail`
+  // string already spells out the block-height gap in plain language, so it's shown as-is rather than
+  // reassembled from the raw numbers here (stays correct if the server's own wording ever changes).
+  records.forEach((rec, i) => {
+    const foldWaiting = rec.stage === 'burn-mined' || rec.stage === 'registered';
+    if (!foldWaiting || !rec.burn?.txid) return;
+    ux.checkTxidStatus(rec.burn.txid).then((s) => {
+      const el = section.querySelector(`[data-burndep-fold="${i}"]`);
+      if (!el || !el.isConnected) return;
+      if (s?.status === 'folded') { el.textContent = 'Reflection has folded this burn — refresh to mint.'; return; }
+      el.textContent = s?.detail || (s?.status ? `Reflection status: ${s.status}` : 'reflection status unknown');
+    }).catch((e) => {
+      const el = section.querySelector(`[data-burndep-fold="${i}"]`);
+      if (el && el.isConnected) el.textContent = `Reflection status unavailable: ${e?.message || e}`;
     });
   });
   section.querySelectorAll('[data-burndep-act]').forEach((btn) => {
@@ -60531,12 +60554,32 @@ async function renderHoldings() {
       const shieldLink = (h.assetIdHex === CANONICAL_TAC_ASSET_ID_HEX && NET.name === 'mainnet')
         ? `<div style="margin-top:8px;"><a href="/tac/" style="display:inline-flex;align-items:center;gap:6px;font-size:11px;text-decoration:none;border:1px solid var(--ink-soft,var(--ink-mid));padding:5px 10px;color:var(--ink);" title="Shield TAC in the Bitcoin-native pool: hidden amounts, unlinked payments">Shield this privately →</a></div>`
         : '';
+      // A note mid-bridge (burndep-ux.js) is already spent from this card's own balance the instant it starts
+      // (its Bitcoin UTXO now pays the burn-home, not this wallet) — applyOptimisticDebit reflects that the
+      // moment the bridge starts, but its "settling" pill is a one-off overlay that the next full re-render
+      // (auto-refresh, manual rescan) silently drops, even though the bridge itself can still be days from
+      // finishing. Recomputed fresh on every render instead, from the same journal _renderHoldingsBurndepBridges
+      // reads, so this note tracks the bridge's real lifetime rather than one optimistic guess right after the
+      // click. rec.source.assetId is 0x-prefixed (_burndepUxSingleton's own tacAssetId wiring); h.assetIdHex is
+      // bare — stripped and lowercased on both sides so a real TAC bridge is never missed over a leading '0x'.
+      let pendingBridgeHTML = '';
+      try {
+        const bux = _burndepUxSingleton();
+        const wantAid = h.assetIdHex.replace(/^0x/i, '').toLowerCase();
+        const pendingTotal = bux.list(bytesToHex(wallet.pub))
+          .filter((r) => r.stage !== 'minted' && String(r.source.assetId).replace(/^0x/i, '').toLowerCase() === wantAid)
+          .reduce((s, r) => s + BigInt(r.source.amount), 0n);
+        if (pendingTotal > 0n) {
+          pendingBridgeHTML = `<div class="muted" style="font-size:10px;margin-top:2px;">+ ${escapeHtml(fmtAssetAmount(pendingTotal, h.decimals))} ${escapeHtml(h.ticker)} bridging to Ethereum — already spent from this balance, see Bridges to Ethereum below</div>`;
+        }
+      } catch { /* burndep module unavailable (no WORKER_BASE, wallet locked) — the note is a nicety, not correctness */ }
       card.innerHTML = `
         <div class="head" style="display:flex;align-items:center;gap:12px;">
           <span data-region="avatar" style="display:contents;">${avatarHTML(null, h.assetIdHex, h.ticker)}</span>
           <div style="flex:1;min-width:0;">
             <div class="ticker"><span data-region="display-name">${escapeHtml(displayName)}</span>${petchBadgeHTML}<span data-region="ticker-sub">${tickerSubHTML(displayName, h.ticker)}</span><span class="id-tag" data-act="copy-aid" data-aid="${h.assetIdHex}" title="Copy asset ID">${escapeHtml(shorten(h.assetIdHex, 4))}</span></div>
             <div class="balance">${fmtAssetAmount(h.balance, h.decimals)}<span class="unit">${h.unknownAsset ? 'unknown asset' : 'confidential'}</span><span data-region="verified-tag"></span><span data-region="market-value-sats"></span><span data-region="market-pnl"></span></div>
+            ${pendingBridgeHTML}
           </div>
         </div>
         <div class="meta">
