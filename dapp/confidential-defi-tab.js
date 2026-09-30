@@ -707,12 +707,13 @@ export async function renderCdpTab(wallet, helpers = {}) {
   if (!body) return;
   if (!confidentialPoolReady()) { body.innerHTML = confidentialUnavailableHTML('Borrowing (CDP)'); return; }
   const ux = getUx();
-  const conceptHtml = `<div class="note-concept"><b>cUSD &amp; cBTC.</b>
+  const conceptHtml = `<div class="note-concept"><b>Two steps: get cBTC, then borrow cUSD against it.</b>
+      <b>cBTC</b> is minted 1:1 from a Bitcoin lock only your key can spend; tacBTC is its ERC-20 form. Minting
+      needs an ETH bond too — about 1.5× the lock's value, staked as wstETH and refundable — which deters
+      spending the lock outside a valid exit; it does not back the peg.
       <b>cUSD</b> is the <span class="btc-word">bitcoin-backed dollar</span>: lock cBTC as collateral and mint a
       cUSD note. A position's amounts are public so it can be priced, but its owner is not linked to it.
-      <b>cBTC</b> is minted 1:1 from an SP1-reflected Bitcoin lock; tacBTC is its ERC-20 form. A slashable
-      wstETH escrow (1.5× the lock today) deters spending the lock; it does not back the peg. Both are ordinary
-      shielded notes that transfer, trade and exit like anything else in the pool.</div>`;
+      Both are ordinary shielded notes that transfer, trade and exit like anything else in the pool.</div>`;
   if (!wallet || !wallet.priv) {
     // Same wallet as the Bitcoin lane — no separate "connect an Ethereum
     // wallet" step. Keeps the concept blurb visible even locked, so the tab
@@ -730,26 +731,14 @@ export async function renderCdpTab(wallet, helpers = {}) {
     <div id="cdp-status" class="muted">Scanning the pool for collateral…</div>
 
     <div class="divider">
-      <div style="font-weight:600;margin-bottom:8px;">Mint cUSD <span class="muted" style="font-weight:400;font-size:11px;">· the bitcoin-backed dollar · borrow against your collateral</span></div>
-      <div id="cdp-collat-list" class="muted" style="font-size:12px;margin-bottom:8px;">—</div>
-      <div class="field-row">
-        <input id="cdp-debt-amount" type="number" min="0" step="any" placeholder="cUSD to borrow, e.g. 100.5">
-        <button id="cdp-open-btn" class="primary">Open</button>
-      </div>
-      <div id="cdp-ratio-readout" class="muted field-status"></div>
-      <label class="muted" style="display:flex;gap:6px;align-items:flex-start;font-size:11px;margin-top:6px;cursor:pointer;"><input id="cdp-self-settle" type="checkbox" style="margin:1px 0 0;"> Earn points: send the loan from this wallet's Ethereum account, which pays its gas and is linked to it. Relayed, it earns none.</label>
-      <div id="cdp-open-status" class="muted field-status"></div>
-    </div>
-
-    <div class="divider">
-      <div style="font-weight:600;margin-bottom:2px;">Get cBTC <span class="muted" style="font-weight:400;font-size:11px;">· lock BTC → 1:1 cBTC, redeemable, no custodian</span></div>
-      <div class="muted" style="font-size:12px;margin-bottom:10px;">Your Bitcoin, your key. The lock stays self-custody; cBTC is a bearer note conservation-backed 1:1 by it. Three stages:</div>
+      <div style="font-weight:600;margin-bottom:2px;">① Get cBTC <span class="muted" style="font-weight:400;font-size:11px;">· lock BTC → 1:1 cBTC, redeemable, no custodian</span></div>
+      <div class="muted" style="font-size:12px;margin-bottom:10px;">Your Bitcoin stays in a lock only your key can spend. Needs two things: the BTC to lock, and — before it can mint — ETH for a bond (about 1.5× the lock's value, staked as wstETH). The bond is refundable and just deters spending the lock outside a valid exit; it doesn't back cBTC's value. Three steps:</div>
       <ol class="cbtc-flow" style="list-style:none;padding:0;margin:0 0 10px;font-size:12.5px;">
-        <li style="display:flex;gap:.55em;margin-bottom:7px;"><span class="cbtc-step-n">①</span><span><b>Lock</b> — construct + broadcast a self-custody Bitcoin lock (blinding is key-derived, so the note can never strand).</span></li>
-        <li style="display:flex;gap:.55em;margin-bottom:7px;"><span class="cbtc-step-n">②</span><span><b>Track</b> — reflection records the lock once it's buried past finality (~6 confs). No action.</span></li>
-        <li style="display:flex;gap:.55em;"><span class="cbtc-step-n">③</span><span><b>Mint</b> — prove <code>OP_CBTC_MINT</code> against the reflected lock → a bearer cBTC note lands in your wallet (gasless). Optionally externalize it to <b>tacBTC</b> (ERC-20) via the factory.</span></li>
+        <li style="display:flex;gap:.55em;margin-bottom:7px;"><span class="cbtc-step-n">①</span><span><b>Lock</b> — broadcast a self-custody Bitcoin lock for the amount you want as cBTC.</span></li>
+        <li style="display:flex;gap:.55em;margin-bottom:7px;"><span class="cbtc-step-n">②</span><span><b>Bond</b> — once the lock is ~6 confirmations deep, post the ETH bond from this wallet's Tacit account.</span></li>
+        <li style="display:flex;gap:.55em;"><span class="cbtc-step-n">③</span><span><b>Mint</b> — a cBTC note lands in your wallet, gasless. Optionally externalize it to <b>tacBTC</b> (ERC-20) via the factory.</span></li>
       </ol>
-      <div style="font-weight:600;margin:6px 0 6px;font-size:12.5px;">① Lock BTC</div>
+      <div style="font-weight:600;margin:6px 0 6px;font-size:12.5px;">Lock BTC</div>
       <div class="field-row">
         <input id="cdp-cbtc-sats" type="number" min="0" step="1" placeholder="Sats to lock → cBTC 1:1">
         <button id="cdp-cbtc-lock-btn" class="primary">Lock BTC</button>
@@ -758,6 +747,18 @@ export async function renderCdpTab(wallet, helpers = {}) {
       <div id="cdp-cbtc-reserved" class="muted" style="font-size:11.5px;margin-top:4px;"></div>
       <div id="cdp-cbtc-bonds"></div>
       <div id="cdp-cbtc-status" class="muted field-status" style="margin-top:6px;"></div>
+    </div>
+
+    <div class="divider">
+      <div style="font-weight:600;margin-bottom:8px;">② Mint cUSD <span class="muted" style="font-weight:400;font-size:11px;">· the bitcoin-backed dollar · borrow against your cBTC</span></div>
+      <div id="cdp-collat-list" class="muted" style="font-size:12px;margin-bottom:8px;">—</div>
+      <div class="field-row">
+        <input id="cdp-debt-amount" type="number" min="0" step="any" placeholder="cUSD to borrow, e.g. 100.5">
+        <button id="cdp-open-btn" class="primary">Open</button>
+      </div>
+      <div id="cdp-ratio-readout" class="muted field-status"></div>
+      <label class="muted" style="display:flex;gap:6px;align-items:flex-start;font-size:11px;margin-top:6px;cursor:pointer;"><input id="cdp-self-settle" type="checkbox" style="margin:1px 0 0;"> Earn points: send the loan from this wallet's Ethereum account, which pays its gas and is linked to it. Relayed, it earns none.</label>
+      <div id="cdp-open-status" class="muted field-status"></div>
     </div>
 
     <div id="cdp-positions" class="divider"></div>

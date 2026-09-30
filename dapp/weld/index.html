@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-hkp7fTT/AsNs/AhTHm8O4hUB6B1KFhJbGcbcdXSqNF4=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-m5dBgZmD2VybXAlcYQYt4pXKcaeOf5zqnQAI2nH+yq0=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -460,7 +460,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <a class="tile" href="#borrow" data-open="borrow" aria-haspopup="dialog">
       <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-cbtc"/></svg><svg class="tk" aria-hidden="true"><use href="#tk-cusd"/></svg></span>
       <h2>Borrow on Bitcoin</h2>
-      <p>Lock BTC in your own output, mint cBTC one to one, and borrow cUSD against it.</p>
+      <p>Lock BTC in your own output, post an ETH bond, mint cBTC one to one, and borrow cUSD against it.</p>
       <span class="tile-foot"><span class="dot" data-dot="borrow"></span><span data-foot="borrow">No custodian, no bridge signers</span><span class="go" aria-hidden="true">→</span></span>
     </a>
   </main>
@@ -1540,7 +1540,7 @@ function setKey(k) {
 // tacit.js opens the passphrase-locked and Bitcoin-signed keys exactly as tacit.finance does. It loads only for
 // those paths, as a library: it reads the shared network once at import, so this page pins mainnet for its visit,
 // and any call that rewrites the app's linked-wallet records is run with them put back afterwards.
-const TACIT_URL = '/tacit.js?cb=c3643d6d';
+const TACIT_URL = '/tacit.js?cb=69839b87';
 const SHARED_NET = 'tacit-network-v1', PREV_NET = 'tacit-lite-prev-net-v1';
 const SHARED_WALLET_KEYS = ['tacit-eth-identity', 'tacit-btc-identity', 'tacit-active-mode-v1', 'tacit-ext-mode-v1', 'tacit-ext-state-v1',
   ...['mainnet', 'signet'].flatMap((n) => [`tacit-eth-identity:${n}`, `tacit-btc-identity:${n}`])];
@@ -4074,9 +4074,15 @@ render.borrow = () => {
   const st = LOCK.state, rec = st?.rec;
   const wireFinish = () => { const fin = $('#bw-finish', el); if (fin) fin.onclick = () => busy(fin, (run) => finishDeposits(run, 'borrow', $('#bw-status'))); };
   if (!st) {
+    const blanks = [
+      ['Lock BTC', 'Send BTC to a self-custody output only your key can spend, then lock it.'],
+      ['Post the ETH bond', 'An ETH bond worth at least 1.5× the BTC, staked as wstETH and refundable. Posted in one transaction.'],
+      ['Mint cBTC', 'One to one against the lock, free, once Bitcoin confirms it and the bond is posted.'],
+      ['Borrow cUSD', 'Borrow against the cBTC up to the pool’s floor. Repay anytime to reclaim it.'],
+    ];
     mount(el, html`${depositCallout('borrow', 'bw-finish')}
-      <ol class="steps">${['Lock BTC', 'Post the ETH bond', 'Mint cBTC', 'Borrow cUSD'].map((h, i) => html`<li class="step"><span class="n">${i + 1}</span><div><h3>${h}</h3><div class="d"><span class="sk ln" style="--w:92%"></span><span class="sk ln" style="--w:55%"></span></div></div></li>`)}</ol>
-      <div class="status" role="status" id="bw-status"></div>`);
+      <ol class="steps">${blanks.map(([h, d], i) => html`<li class="step"><span class="n">${i + 1}</span><div><h3>${h}</h3><div class="d">${d}</div></div></li>`)}</ol>
+      <div class="status" role="status" id="bw-status"><span class="sk ln" style="--w:40%"></span></div>`);
     wireFinish();
     loadBorrow().then(() => rerender('borrow')).catch((e) => sayRetry($('#bw-status'), e, 'borrow'));
     return;

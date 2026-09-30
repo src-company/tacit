@@ -39989,8 +39989,8 @@ async function renderMixer() {
         // beacon hex tooltip — keep the visible label short, surface the
         // exact 32-byte value via title so users can copy / verify.
         target.push(`<div class="row" style="border:1px solid var(--ink-faint);padding:10px;border-radius:6px;margin-bottom:8px;">
-          <div><strong title="${escapeHtml('asset_id: ' + aidHex)}" style="cursor:help;">${escapeHtml(ticker)}</strong> · denom ${escapeHtml(denomDisp)} · anonymity-set <strong style="color:${_asColor};">${_as}</strong> <span class="muted">${_asTier}</span> (${stats ? stats.totalLeaves : 0} deposits − ${stats ? stats.spentNullifiers : 0} withdraws)</div>
-          <div class="muted" style="font-size:11px;margin-top:4px;">vk CID: ${escapeHtml(vkCidStr)} · init height ${info.initHeight} · asset_id: <code title="${escapeHtml(aidHex)}" style="cursor:help;">${escapeHtml(aidHex.slice(0, 16) + '…')}</code></div>
+          <div><strong title="${escapeHtml('asset_id: ' + aidHex)}" style="cursor:help;">${escapeHtml(ticker)}</strong> · fixed amount ${escapeHtml(denomDisp)} · privacy set <strong style="color:${_asColor};" title="how many other deposits yours would hide among if you withdrew now">${_as}</strong> <span class="muted">${_asTier}</span> (${stats ? stats.totalLeaves : 0} deposited − ${stats ? stats.spentNullifiers : 0} withdrawn)</div>
+          <div class="muted" style="font-size:11px;margin-top:4px;" title="Identifies the trusted-setup ceremony this pool's proofs are checked against.">verifying key: ${escapeHtml(vkCidStr)} · listed at block ${info.initHeight} · asset: <code title="${escapeHtml(aidHex)}" style="cursor:help;">${escapeHtml(aidHex.slice(0, 16) + '…')}</code></div>
         </div>`);
       }
       let html = canonicalRows.join('');
