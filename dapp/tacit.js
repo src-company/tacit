@@ -22753,6 +22753,24 @@ const _BURNDEP_STAGE_LABEL = {
   'burn-mined': 'registering with the reflection…', registered: 'waiting for the reflection to fold it…',
   folded: 'ready to mint',
 };
+// What the button itself says while advance() is in flight FOR that stage — distinct from the row's resting
+// label above, and from PHASE_TEXT (below, in the click handler), which further refines 'folded' as its own
+// onProgress events arrive. A bare "…" for every stage is what made a real 10-60s mint read as hung.
+const _BURNDEP_BUSY_LABEL = {
+  traced: 'Checking & signing…', 'burn-mined': 'Registering…', registered: 'Checking…', folded: 'Building…',
+};
+// Known failure shapes seen in production, translated to text a holder can act on. Falls through to the raw
+// message for anything else — never hides a genuinely new error, only smooths the ones already understood.
+function _burndepFriendlyError(e) {
+  const m = String((e && e.message) || e || '');
+  if (/cannot read propert(y|ies) of undefined/i.test(m)) return 'Something unexpected went wrong reading this bridge’s own record. Try again — if it repeats, use "Recover a bridge from its transaction id" below with this burn’s txid.';
+  if (/memory cap, and was stopped/i.test(m)) return 'The relay is under heavier load than usual right now. This clears up on its own — wait a minute and try again.';
+  if (/failed to fetch|networkerror|load failed/i.test(m)) return 'Could not reach the network. Check your connection and try again.';
+  if (/rate.?limit|too many requests|\b429\b/i.test(m)) return 'That service is busy right now. Try again in a moment.';
+  if (/timed? ?out|timeout/i.test(m)) return 'That took too long to answer. Try again.';
+  if (/another tab/i.test(m)) return 'This bridge is being advanced in another open tab right now. Wait for it to finish there, or close that tab and retry here.';
+  return m;
+}
 function _renderHoldingsBurndepBridges(listEl) {
   if (!wallet || !wallet.pub || !WORKER_BASE) return;
   let ux, records;
@@ -22791,7 +22809,7 @@ function _renderHoldingsBurndepBridges(listEl) {
     // A stage label alone can't distinguish "waiting normally" from "stuck on a repeating error" — this is the
     // only place a background-poller failure (never seen by anyone unless they look here) becomes visible.
     const errorHtml = failing
-      ? `<div style="color:var(--red-warn);margin-top:2px;">⚠ ${escapeHtml(rec.lastError.message)}${rec.errorCount > 1 ? ` (×${rec.errorCount})` : ''}</div>`
+      ? `<div style="color:var(--red-warn);margin-top:2px;">⚠ ${escapeHtml(_burndepFriendlyError(rec.lastError))}${rec.errorCount > 1 ? ` (×${rec.errorCount})` : ''}</div>`
       : '';
     // Live MARA queue position for a burn sitting past ordinary explorers' reach (preMinedBurn, above) — fetched
     // async below, into this placeholder, since MARA's own status call has no business blocking the render.
@@ -22885,10 +22903,17 @@ function _renderHoldingsBurndepBridges(listEl) {
       const isSign = btn.dataset.burndepAct === 'sign';
       btn.disabled = true;
       const orig = btn.textContent;
-      btn.textContent = '…';
+      btn.textContent = _BURNDEP_BUSY_LABEL[beforeStage] || '…';
+      // A mint fetches a multi-MB snapshot and waits on real network proving — tens of seconds is normal, and a
+      // static "…" the whole time reads as hung. ux.advance's onProgress fires as each phase actually happens.
+      const PHASE_TEXT = { 'fetching-snapshot': 'Building…', submitted: 'Submitted…', proving: 'Proving…', pending: 'Queued…', settled: 'Settling…' };
+      const onProgress = (p) => {
+        if (!btn.isConnected) return;
+        btn.textContent = PHASE_TEXT[p.phase] || PHASE_TEXT[p.status] || (p.status ? p.status[0].toUpperCase() + p.status.slice(1) + '…' : '…');
+      };
       try {
         if (isSign) await ensurePrivkey();
-        const after = await ux.advance(bytesToHex(wallet.pub), id, { walletPriv: wallet.priv });
+        const after = await ux.advance(bytesToHex(wallet.pub), id, { walletPriv: wallet.priv, onProgress });
         // Always confirm the outcome via toast — independent of this card's own DOM, so a background refresh
         // rebuilding the row mid-click (the auto-poller, or any other renderHoldings() call landing in the same
         // window) can never leave the click looking like it silently did nothing, which is exactly what made
@@ -22903,9 +22928,10 @@ function _renderHoldingsBurndepBridges(listEl) {
         }
         renderHoldings();
       } catch (e) {
-        toast(`Bridge action failed: ${e?.message || e}`, 'error', 8000);
+        const friendly = _burndepFriendlyError(e);
+        toast(`Bridge action failed: ${friendly}`, 'error', 8000);
         const statusEl = section.querySelector('[data-burndep-status]');
-        if (statusEl && statusEl.isConnected) { statusEl.style.display = 'block'; statusEl.textContent = e?.message || String(e); }
+        if (statusEl && statusEl.isConnected) { statusEl.style.display = 'block'; statusEl.textContent = friendly; }
         btn.disabled = false; btn.textContent = orig;
       }
     });

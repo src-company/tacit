@@ -131,6 +131,12 @@ function makeWorld() {
       const r = args.recovery;
       if (!r || (!r.seedDerived && r.ownerPub == null)) throw new Error("bridge-mint: pass recovery { ownerPub, secret } or { seedDerived: true } so the minted note stays recoverable");
       bridgeMintCalls.push(args);
+      // Mirrors confidential-relay.js's real shape: onJob once the job is accepted, onUpdate as its status
+      // moves — the only way a caller finds out this call isn't hung during the tens of seconds a real mint
+      // spends fetching a multi-MB snapshot and waiting on network proving.
+      const w = args.waitOpts || {};
+      if (w.onJob) w.onJob('job1', 'bridgemint');
+      if (w.onUpdate) { w.onUpdate({ status: 'pending' }); w.onUpdate({ status: 'proving' }); w.onUpdate({ status: 'settled' }); }
       return { jobId: 'job1', txHash: '0x' + 'cd'.repeat(32) };
     },
   };
@@ -281,9 +287,13 @@ let rec;
   ok(rec.stage === 'folded', 'advance() moves to folded once the reflection folds the burn');
 
   await assert.rejects(() => ux.advance(rec.walletPub, rec.id), /needs the wallet key/, 'minting without walletPriv is refused');
-  rec = await ux.advance(rec.walletPub, rec.id, { walletPriv: WALLET_PRIV });
+  const progressed = [];
+  rec = await ux.advance(rec.walletPub, rec.id, { walletPriv: WALLET_PRIV, onProgress: (p) => progressed.push(p) });
   ok(rec.stage === 'minted', 'advance() with the key mints and reaches the terminal stage');
   ok(world.bridgeMintCalls.length === 1, 'bridgeMint.bridgeMint was called exactly once');
+  ok(progressed.some((p) => p.phase === 'fetching-snapshot'), 'onProgress fires before the mint is built, not just at the end');
+  ok(progressed.some((p) => p.phase === 'submitted' && p.jobId === 'job1'), "onProgress relays the relay's own onJob (jobId)");
+  ok(['pending', 'proving', 'settled'].every((s) => progressed.some((p) => p.phase === 'status' && p.status === s)), "onProgress relays every real status the relay's onUpdate reports, not just the final one");
 
   const mintArgs = world.bridgeMintCalls[0];
   ok(mintArgs.recovery && mintArgs.recovery.seedDerived === true, "bridgeMint is called with recovery: { seedDerived: true } — dest.blinding came from deriveBridgeMintBlinding, not a memo-sealed secret");

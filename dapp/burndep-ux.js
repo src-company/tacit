@@ -307,14 +307,17 @@ export function makeBurnDepositUx(deps) {
   // conflict, anything else that can never succeed on its own) showing the same "in progress" stage label
   // forever with no sign anything is wrong. A caller still sees the thrown error immediately either way; this
   // is for whoever looks at the record later, possibly a different tab, after the throw is long gone.
-  async function advance(walletPub, id, { walletPriv = null } = {}) {
+  // onProgress({ phase, ... }): best-effort, fire-and-forget UI feedback for a step that can take real time
+  // (today only the mint, which fetches a multi-MB snapshot and waits on real network proving — everything
+  // else here is a broadcast or a single small request, over before a progress indicator would even paint).
+  async function advance(walletPub, id, { walletPriv = null, onProgress = null } = {}) {
     const rec = getRecord(walletPub, id);
     if (!rec) throw new Error(`burndep-ux: no bridge record for ${id}`);
     if (!tryAcquireLease(id)) throw new Error('burndep-ux: this bridge is being advanced in another tab right now');
     try {
       const fn = STAGE_ADVANCE[rec.stage];
       if (!fn) return rec; // terminal ('minted') or unknown — nothing to do
-      const result = await fn(rec, { walletPriv });
+      const result = await fn(rec, { walletPriv, onProgress });
       return rec.lastError ? putRecord({ ...result, lastError: null, errorCount: 0 }) : result;
     } catch (e) {
       putRecord({ ...rec, lastError: { message: String((e && e.message) || e), at: now() }, errorCount: (rec.errorCount || 0) + 1 });
@@ -403,12 +406,15 @@ export function makeBurnDepositUx(deps) {
       if (st.status !== 'folded') return rec;
       return putRecord({ ...rec, stage: 'folded', foldedAt: now() });
     },
-    folded: async (rec, { walletPriv }) => {
+    folded: async (rec, { walletPriv, onProgress }) => {
       if (!walletPriv) throw new Error('burndep-ux: this stage needs the wallet key');
+      const say = (phase, extra) => { try { onProgress && onProgress({ phase, ...extra }); } catch { /* best-effort */ } };
       // A record saved before dest was always written (recoverFromTxid's old gap, or any other path that
       // reaches here without it) has no dest yet — derive and persist it now rather than throwing on
       // rec.dest.index, since it's fully determined by the wallet key and doesn't need rebuilding from chain.
       const dest = rec.dest || deriveDest(walletPriv, rec.burnHome, rec.burnHome.txid, rec.source.amount);
+      say('fetching-snapshot'); // bridgeMint's own fetchReflectionSnapshot() is the multi-MB reflection dump — no
+      // hook inside that call itself, so this fires for the whole build+submit span up to the relay's own onJob.
       const minted = await bridgeMint.bridgeMint({
         network, sourceClass: 0,
         spentTxid: withHex(revHex(rec.burnHome.txid)), spentVout: 0,
@@ -419,6 +425,10 @@ export function makeBurnDepositUx(deps) {
         // own from the seed — the { ownerPub, secret } memo-sealing path is for a blinding it has no other way
         // to find, which isn't the case here.
         recovery: { seedDerived: true },
+        waitOpts: {
+          onJob: (jobId) => say('submitted', { jobId }),
+          onUpdate: (st) => say('status', { status: st.status }),
+        },
       });
       return putRecord({ ...rec, dest, stage: 'minted', mintedAt: now(), mintedJobId: minted.jobId || null, mintedTxHash: minted.txHash || null });
     },
