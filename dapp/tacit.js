@@ -15688,6 +15688,54 @@ function removeStealthCredit(txidHex, vout) {
   _scheduleStealthCreditsFlush();
 }
 
+// Permanent record of which (txid, vout) stealth receives have already logged a "Received" Activity row —
+// deliberately separate from the stealth-credits store above, which legitimately deletes an entry the moment
+// its UTXO is spent (recordOpening's rehydration liveness check). Without this, a spent note's own receive
+// transaction is still a real, discoverable, valid stealth payment: the next auto-scan re-finds it, sees no
+// live credit (because it was just removed as spent), and re-logs the same receive as if it were brand new —
+// repeating forever, once per re-scan. This store is never cleaned up on spend, so a note logs exactly once,
+// no matter how many times it's later rediscovered after being spent.
+function _stealthActivityLoggedKey() {
+  if (!wallet.pub) return null;
+  let pubHex; try { pubHex = bytesToHex(wallet.pub); } catch { return null; }
+  return `tacit-stealth-activity-logged-v1:${NET.name}:${pubHex}`;
+}
+let _stealthActivityLoggedCache = null;
+let _stealthActivityLoggedCacheKey = null;
+function loadStealthActivityLogged() {
+  const k = _stealthActivityLoggedKey();
+  if (_stealthActivityLoggedCache && _stealthActivityLoggedCacheKey === k) return _stealthActivityLoggedCache;
+  if (_stealthActivityLoggedCache && _stealthActivityLoggedCacheKey && _stealthActivityLoggedCacheKey !== k) {
+    try { localStorage.setItem(_stealthActivityLoggedCacheKey, JSON.stringify(_stealthActivityLoggedCache)); } catch {}
+  }
+  if (!k) { _stealthActivityLoggedCache = null; _stealthActivityLoggedCacheKey = null; return {}; }
+  try { _stealthActivityLoggedCache = JSON.parse(localStorage.getItem(k) || '{}') || {}; }
+  catch { _stealthActivityLoggedCache = {}; }
+  _stealthActivityLoggedCacheKey = k;
+  return _stealthActivityLoggedCache;
+}
+function _writeStealthActivityLoggedNow() {
+  if (!_stealthActivityLoggedCacheKey || !_stealthActivityLoggedCache) return;
+  try { localStorage.setItem(_stealthActivityLoggedCacheKey, JSON.stringify(_stealthActivityLoggedCache)); } catch {}
+}
+let _stealthActivityLoggedFlushTimer = null;
+function _scheduleStealthActivityLoggedFlush() {
+  if (_stealthActivityLoggedFlushTimer) clearTimeout(_stealthActivityLoggedFlushTimer);
+  _stealthActivityLoggedFlushTimer = setTimeout(() => {
+    _stealthActivityLoggedFlushTimer = null;
+    _writeStealthActivityLoggedNow();
+  }, 100);
+}
+function isStealthActivityLogged(txidHex, vout) {
+  return !!loadStealthActivityLogged()[`${txidHex}:${vout}`];
+}
+function markStealthActivityLogged(txidHex, vout) {
+  const o = loadStealthActivityLogged();
+  o[`${txidHex}:${vout}`] = true;
+  _stealthActivityLoggedCache = o;
+  _scheduleStealthActivityLoggedFlush();
+}
+
 // Encrypt-to-self key derivation for the buyer-opening cache. ECDH(priv,
 // pub) when priv*G = pub gives priv²·G — a value only the wallet holder
 // can derive. SHA256 of the x-coord becomes a 32-byte AES-GCM key.
@@ -22718,12 +22766,16 @@ function _renderHoldingsBurndepBridges(listEl) {
     const errorHtml = failing
       ? `<div style="color:var(--red-warn);margin-top:2px;">⚠ ${escapeHtml(rec.lastError.message)}${rec.errorCount > 1 ? ` (×${rec.errorCount})` : ''}</div>`
       : '';
+    // Live MARA queue position for a burn sitting past ordinary explorers' reach (preMinedBurn, above) — fetched
+    // async below, into this placeholder, since MARA's own status call has no business blocking the render.
+    const maraHtml = preMinedBurn && rec.burn?.txid ? `<div class="muted" data-burndep-mara="${i}" style="margin-top:2px;">checking MARA status…</div>` : '';
     return `
       <div data-burndep-row="${i}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;${i ? 'border-top:1px solid var(--ink-faint);' : ''}">
         <div style="font-size:11px;line-height:1.5;">
           <div><strong>${escapeHtml(amtStr)} ${escapeHtml(ticker)}</strong> — ${escapeHtml(label)}</div>
           <div class="muted">${shorten(rec.id.split(':')[0], 6)}:${rec.id.split(':')[1]}${watchLink}</div>
           ${errorHtml}
+          ${maraHtml}
         </div>
         <button data-burndep-act="${needsKey ? 'sign' : 'poll'}" data-burndep-id="${escapeHtml(rec.id)}" style="font-size:11px;padding:5px 10px;white-space:nowrap;">${actLabel}</button>
       </div>`;
@@ -22734,28 +22786,57 @@ function _renderHoldingsBurndepBridges(listEl) {
     <div class="muted" data-burndep-status style="display:none;font-size:11px;margin-top:8px;"></div>
   `;
   listEl.prepend(section);
+  // Best-effort, read-only: ask MARA directly for this burn's own queue position/fee standing. A stale target
+  // (this exact section got replaced by a later render before the fetch lands) is checked via isConnected and
+  // just skipped — never written to a detached node, and never worth cancelling the fetch over, since a newer
+  // render already kicked off its own fresh one for the same row.
+  records.forEach((rec, i) => {
+    const preMinedBurn = rec.stage === 'burn-signed' || rec.stage === 'burn-submitted';
+    if (!preMinedBurn || !rec.burn?.txid) return;
+    ux.slipstreamStatus(rec.burn.txid).then((s) => {
+      const el = section.querySelector(`[data-burndep-mara="${i}"]`);
+      if (!el || !el.isConnected) return;
+      const tx = s && s.transaction;
+      const rate = Number(s?.functional_rate);
+      const market = Number(s?.market_rate);
+      const rateStr = Number.isFinite(rate) ? `${rate.toFixed(2)} sat/vB` : null;
+      const marketStr = Number.isFinite(market) ? ` (market ${market.toFixed(2)})` : '';
+      const odds = s?.last_7d_odds != null ? ` · ~${s.last_7d_odds}% odds in 7d` : '';
+      const queued = s?.is_next_block ? 'next MARA block' : tx?.position ? `queue position ${JSON.stringify(tx.position)}` : 'queued';
+      el.innerHTML = `MARA: ${rateStr ? `${escapeHtml(rateStr)}${escapeHtml(marketStr)}` : 'status unknown'}${escapeHtml(odds)} · ${escapeHtml(queued)}`;
+    }).catch((e) => {
+      const el = section.querySelector(`[data-burndep-mara="${i}"]`);
+      if (el && el.isConnected) el.textContent = `MARA status unavailable: ${e?.message || e}`;
+    });
+  });
   section.querySelectorAll('[data-burndep-act]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.burndepId;
-      const statusEl = section.querySelector('[data-burndep-status]');
+      const beforeStage = records.find((r) => r.id === id)?.stage;
+      const isSign = btn.dataset.burndepAct === 'sign';
       btn.disabled = true;
       const orig = btn.textContent;
       btn.textContent = '…';
       try {
-        if (btn.dataset.burndepAct === 'sign') await ensurePrivkey();
+        if (isSign) await ensurePrivkey();
         const after = await ux.advance(bytesToHex(wallet.pub), id, { walletPriv: wallet.priv });
-        // The row disappears the instant this hits 'minted' (records filter it out as terminal) — this toast
-        // is the ONLY confirmation the user ever gets that the bridge actually finished, since nothing else
-        // announces it (no activity-log entry either — that one's deliberately move-only, see ACTIVITY_VERBS).
+        // Always confirm the outcome via toast — independent of this card's own DOM, so a background refresh
+        // rebuilding the row mid-click (the auto-poller, or any other renderHoldings() call landing in the same
+        // window) can never leave the click looking like it silently did nothing, which is exactly what made
+        // an actually-successful admission+submit read as "I clicked Burn and nothing happened" earlier.
         if (after.stage === 'minted') {
           const meta = getAssetMeta(after.source.assetId) || {};
           const decimals = Number.isInteger(meta.decimals) ? meta.decimals : 8;
           const amtStr = fmtAssetAmount(BigInt(after.source.amount), decimals);
           toast(`${amtStr} ${meta.ticker || 'TAC'} minted — now in your private Ethereum balance.`, 'success', 8000);
+        } else if (isSign || after.stage !== beforeStage) {
+          toast(_BURNDEP_STAGE_LABEL[after.stage] || after.stage, 'success');
         }
         renderHoldings();
       } catch (e) {
-        if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = e?.message || String(e); }
+        toast(`Bridge action failed: ${e?.message || e}`, 'error', 8000);
+        const statusEl = section.querySelector('[data-burndep-status]');
+        if (statusEl && statusEl.isConnected) { statusEl.style.display = 'block'; statusEl.textContent = e?.message || String(e); }
         btn.disabled = false; btn.textContent = orig;
       }
     });
@@ -28672,10 +28753,12 @@ async function discoverStealthFromTxid(txidHex, { merge = true } = {}) {
   // (The holdings cache itself is rebuilt from scratch on every scanHoldings;
   // the persistent opening + the explicit stealth-utxo list survive.)
   for (const d of discovered) {
-    // Dedupe at the credit store: if we've already recorded this (txid, vout),
-    // skip the Activity stamp so repeated rescans (or scanAssetForStealth-
-    // Receipts re-walking history) don't pile up duplicate entries.
-    const alreadySeen = !!getStealthCredit(d.txid, d.vout);
+    // Dedupe the Activity stamp permanently, independent of the credit store: a credit is legitimately
+    // deleted the moment its UTXO is spent (removeStealthCredit, via the rehydration liveness check), but
+    // the underlying receive transaction is still a real, discoverable payment — a rescan after the note is
+    // spent would otherwise find "no live credit" and log the same receive again, repeating on every later
+    // rescan. isStealthActivityLogged never clears on spend, so this fires exactly once per (txid, vout).
+    const alreadySeen = isStealthActivityLogged(d.txid, d.vout);
     recordOpening(d.txid, d.vout, d.assetIdHex, d.amount, d.blinding);
     recordStealthCredit({
       txidHex: d.txid, vout: d.vout, assetIdHex: d.assetIdHex,
@@ -28732,6 +28815,7 @@ async function discoverStealthFromTxid(txidHex, { merge = true } = {}) {
         assetId: d.assetIdHex, txid: d.txid,
         extra: { shielded: true, vout: d.vout },
       });
+      markStealthActivityLogged(d.txid, d.vout);
     }
   }
   // Merge into the live cache if present. scanHoldings rebuilds via
@@ -77795,6 +77879,7 @@ export {
   discoverStealthFromTxid, scanAssetForStealthReceipts,
   recordStealthCredit, getStealthCredit, loadStealthCredits, removeStealthCredit,
   markStealthTxidSeen, isStealthTxidSeen,
+  markStealthActivityLogged, isStealthActivityLogged,
   // primitives — exported so console-driven debug
   // sessions can step through each math layer (classify → aggregate → ECDH
   // → derive b → commit) when discoverStealthFromTxid returns no match on

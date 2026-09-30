@@ -145,5 +145,50 @@ test('seen-txids: Bob\'s seen markers do not leak into Alice on wallet switch', 
   assert(!dapp.isStealthTxidSeen(ASSET, TXID), 'Bob MUST NOT see Alice\'s seen marker');
 });
 
+// ============================================================================
+// Stealth-activity-logged marker (same wallet-isolation shape; plus the one
+// invariant this store exists for — see dapp/tacit.js's own comment on
+// markStealthActivityLogged/discoverStealthFromTxid). A stealth credit is
+// legitimately deleted the moment its UTXO is spent (removeStealthCredit, via
+// the rehydration liveness check) — but the underlying receive transaction
+// stays real and re-discoverable. Without a marker that survives that
+// deletion, every later rescan of an already-spent note re-logs the same
+// "Received" Activity row, once per rescan, forever. This is the exact bug
+// reported live: a stealth-received note that had since been bridged kept
+// re-appearing as a fresh "Received … SHIELDED" entry on every retry/rescan.
+// ============================================================================
+
+test('activity-logged: survives the credit being removed (the actual spend-then-rediscover bug)', () => {
+  globalThis.localStorage.clear();
+  asAlice();
+
+  assert(!dapp.isStealthActivityLogged(TXID, VOUT), 'not logged yet, before any credit exists');
+
+  dapp.recordStealthCredit({
+    txidHex: TXID, vout: VOUT, assetIdHex: ASSET,
+    amount: 250n, amountBlinding: 1n, stealthBlinding: 2n,
+  });
+  dapp.markStealthActivityLogged(TXID, VOUT); // what discoverStealthFromTxid does right after its one recordActivity call
+  assert(dapp.isStealthActivityLogged(TXID, VOUT), 'logged once the credit is recorded and the marker set');
+
+  // Simulate the note being spent: the rehydration liveness check calls exactly this on the next scan.
+  dapp.removeStealthCredit(TXID, VOUT);
+  assert(dapp.getStealthCredit(TXID, VOUT) === null, 'sanity: the credit really is gone, as spend-cleanup intends');
+  assert(dapp.isStealthActivityLogged(TXID, VOUT),
+    'STILL logged after the credit is removed — this is the fix: a later rediscovery of the same, now-spent, ' +
+    'receive transaction must not re-announce it as new');
+});
+
+test('activity-logged: Bob\'s marker does not leak into Alice on wallet switch', () => {
+  globalThis.localStorage.clear();
+
+  asAlice();
+  dapp.markStealthActivityLogged(TXID, VOUT);
+  assert(dapp.isStealthActivityLogged(TXID, VOUT), 'Alice sees her own marker');
+
+  asBob();
+  assert(!dapp.isStealthActivityLogged(TXID, VOUT), 'Bob MUST NOT see Alice\'s activity-logged marker');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
