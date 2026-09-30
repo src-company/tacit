@@ -3131,7 +3131,10 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // leaf), shielded transfer ~600k (membership + 2 output leaves).
   const SETTLE_GAS = { unwrap: 450000n, sendunwrap: 680000n, transfer: 620000n, lp: 780000n, lpremove: 720000n, route: 600000n, swap: 600000n };
   // Succinct network prove fee per op, as wei. Measured from a live fulfillment for a shielded transfer:
-  // 0.3892 PROVE x ~$0.19 = ~$0.074, ~0.00004 ETH at ~$1900/ETH. Re-derive if PROVE or ETH moves materially.
+  // 0.3892 PROVE x ~$0.19 = ~$0.074, ~0.00004 ETH at ~$1900/ETH — and ETH has moved well above that since,
+  // so this now overstates the cost in ETH and the fee over-recovers by a few percent. Re-derive it from a
+  // live fulfillment rather than scaling this one: the figure depends on the PROVE price as much as on ETH,
+  // and correcting only the leg you happen to know makes it less accurate, not more.
   const PROVE_COST_WEI = 40000000000000n;
   // Fee ladder. The relay fee is public, so a continuously-varying fee fingerprints the payer; snapping to a
   // coarse ladder collapses many ops onto the same value. This MIRRORS the guest's fee_is_quantized exactly

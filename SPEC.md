@@ -189,7 +189,7 @@ Hermez `pot18` powers of tau, with keys derived deterministically from those par
 
 | Circuit | Proves | Verified by |
 |---|---|---|
-| Bitcoin shielded pool (`btc-pool-halo2`, the relation of `btc-pool/spend.circom`) | One `T_BTC_SHIELD` or `T_BTC_SPEND` (§3.10), proved on the user's device. Live on mainnet, experimental; TAC only at launch. | Natively by pool indexers and relayers, Halo2-KZG against the key pinned by `vk_hash` (BLAKE2b-512 of `vk.bin`) in [`dapp/btc-pool/pin.json`](./dapp/btc-pool/pin.json) |
+| Bitcoin shielded pool (`btc-pool-halo2`, the relation of `btc-pool/spend.circom`) | One `T_BTC_SHIELD` or `T_BTC_SPEND` (§3.10), proved on the user's device. Live on mainnet, experimental; one key serves every asset. | Natively by pool indexers and relayers, Halo2-KZG against the key pinned by `vk_hash` (BLAKE2b-512 of `vk.bin`) in [`dapp/btc-pool/pin.json`](./dapp/btc-pool/pin.json) |
 
 Artifacts are content-addressed. [`docs/CEREMONY.md`](./docs/CEREMONY.md) lists every zkey, verifying key,
 r1cs and witness generator with its CID and hash, including the finalized `amm_swap_batch` zkey
@@ -401,8 +401,10 @@ if it folds into the pool, `cxfer-core` and the reflection guest.
 
 ### 3.10 Bitcoin-native shielded pool (live on mainnet, experimental)
 
-`0x6C`/`0x6D` are enabled on mainnet, flagged experimental. TAC is the only asset the dapp offers into
-the pool at launch. The reference implementation also runs on signet. The design is
+`0x6C`/`0x6D` are enabled on mainnet, flagged experimental. The pool is asset-generic: the asset is a
+public field of the envelope and one public input to the proof, so a single verifying key serves all of
+them and a note of one asset cannot be spent under another. The dapp offers TAC, and cBTC for whatever
+has been bridged to Bitcoin. The reference implementation also runs on signet. The design is
 [`DESIGN-btc-shielded-pool.md`](./contracts/sp1/confidential/DESIGN-btc-shielded-pool.md), and its
 security and privacy analysis is
 [`DESIGN-btc-shielded-pool-security.md`](./contracts/sp1/confidential/DESIGN-btc-shielded-pool-security.md).

@@ -60549,8 +60549,8 @@ async function renderHoldings() {
       const tacitscanLink = (safeAidForScan && NET.name === 'mainnet')
         ? ` <a href="https://www.tacitscan.io/assets/${escapeHtml(safeAidForScan)}" target="_blank" rel="noopener noreferrer" style="color:var(--ink-mid);text-decoration:underline;font-size:11px;" title="View this asset on tacitscan (independent block explorer)">tacitscan ↗</a>`
         : '';
-      // TAC is the only asset the Bitcoin-native shielded pool takes at launch (SPEC §3.10), so its card is
-      // the one place to point at /tac. Mainnet only — the pool is not deployed anywhere else.
+      // /tac is the TAC-specific surface, so only TAC's card points at it; the pool itself takes other
+      // assets, and the sats page is where those are chosen. Mainnet only — the pool is nowhere else.
       const shieldLink = (h.assetIdHex === CANONICAL_TAC_ASSET_ID_HEX && NET.name === 'mainnet')
         ? `<div style="margin-top:8px;"><a href="/tac/" style="display:inline-flex;align-items:center;gap:6px;font-size:11px;text-decoration:none;border:1px solid var(--ink-soft,var(--ink-mid));padding:5px 10px;color:var(--ink);" title="Shield TAC in the Bitcoin-native pool: hidden amounts, unlinked payments">Shield this privately →</a></div>`
         : '';

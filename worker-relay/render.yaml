@@ -464,7 +464,7 @@ services:
 
   # Mainnet counterpart of tacit-btc-pool, above: same replay, keyless, public, flagged experimental.
   # The replay itself is asset-blind and indexes every asset it sees; which assets are offered is a dapp
-  # decision (MAINNET_POOL_ASSETS in dapp/sats/secret.js), TAC alone at launch.
+  # decision (MAINNET_POOL_ASSETS in dapp/sats/secret.js): TAC and cBTC today.
   - type: web
     name: tacit-btc-pool-mainnet
     runtime: docker

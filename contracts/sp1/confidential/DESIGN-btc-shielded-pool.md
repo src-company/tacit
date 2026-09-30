@@ -1,6 +1,6 @@
 # Bitcoin-native shielded pool: private payments on Bitcoin, no second chain
 
-Status: LIVE on mainnet, flagged experimental (SPEC §3.10) — TAC only at launch. The reference
+Status: LIVE on mainnet, flagged experimental (SPEC §3.10) — TAC live, cBTC offered alongside it. The reference
 implementation also runs on signet. Companion analysis: `DESIGN-btc-shielded-pool-security.md`.
 
 A shielded pool over Tacit's Bitcoin assets. Alice pays Bob: the amount, the note that funded the
