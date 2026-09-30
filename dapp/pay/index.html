@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-VwwDGHH9zckE4RupO+eEM2XxMutZ1oDaQMpVDkwt9XU=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-8/6v2YbX/ndJdQFeU9tek59Fhmmxmi5yxOmW4208td8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -239,6 +239,17 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .pv-fair .pv-h i { background: var(--orange); }
 .pv-weak .pv-h i { background: var(--err); }
 .pv .note { margin-top: 4px; }
+.card-h h2 .tk { display: inline-block; vertical-align: -3px; margin-right: 10px; width: 24px; height: 24px; }
+.perks { list-style: none; margin: 0 0 4px; padding: 0; display: grid; gap: 6px; font-size: 12.5px; }
+.perks li { display: flex; gap: 10px; }
+.perks li::before { content: ''; flex: none; width: 6px; height: 6px; margin-top: 7px; border-radius: 50%; background: var(--orange); }
+.perks b { font-weight: 500; }
+.earn { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 14px 0 4px; }
+.earn div { padding: 10px 12px; background: var(--field); border: 1px solid var(--hair); }
+.earn b { display: block; font: 500 18px/1.2 var(--mono); letter-spacing: -.02em; }
+.earn span { font-size: 11.5px; color: var(--mute); }
+.pts-line { display: flex; align-items: center; gap: 8px; }
+.pts-line .tk { width: 16px; height: 16px; }
 .route { margin: 14px 0 0; font-size: 12.5px; color: var(--mute); }
 .route b { font-weight: 500; color: var(--ink); }
 .adv { margin-top: 12px; }
@@ -332,6 +343,11 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
       <div class="seg sub" role="tablist" aria-label="Action" id="tabs"></div>
       <div id="form"></div>
       <div class="status" role="status" aria-live="polite" id="status"></div>
+    </section>
+
+    <section class="card" id="points" aria-labelledby="points-h">
+      <div class="card-h"><h2 id="points-h"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC points</h2><span id="points-at"></span></div>
+      <div id="points-body"></div>
     </section>
 
     <section class="card" id="recover" aria-labelledby="recover-h">
@@ -657,7 +673,7 @@ async function setKey(k) {
   warmIfSaved();
   const { priv, ...pub } = S.key;
   if (k.mode === 'key') writeJson(PAY_ID, null); else writeJson(PAY_ID, pub);
-  paintWallet(); renderApp(); paintRecover();
+  paintWallet(); renderApp(); paintRecover(); readPoints(true);
   toast(`Opened ${short(keys.address, 8)}`);
   syncAll(true);
   historyAll();
@@ -755,14 +771,14 @@ async function connectWallet() {
   const a = '0x' + address;
   if (S.key?.mode === 'eth' && lc(S.key.address) !== a) lock();
   S.provider = provider; S.wallet = a;
-  paintWallet(); renderForm();
+  paintWallet(); renderForm(); readPoints(true);
   return a;
 }
 window.addEventListener('tacit:evm-accounts', (e) => {
   const a = (e.detail?.accounts || [])[0];
   S.wallet = a ? lc(a) : null;
   if (S.key?.mode === 'eth' && lc(S.key.address) !== S.wallet) { lock(); toast('Your wallet switched accounts, so the key it opened was locked.'); }
-  paintWallet(); renderForm();
+  paintWallet(); renderForm(); readPoints(true);
 });
 async function ensureChain(id) {
   const want = '0x' + id.toString(16);
@@ -1202,6 +1218,8 @@ const privacyView = (c, amount, to, via) => {
     ${p.round && p.round < amount ? html`<p class="note"><button class="link" type="button" id="pv-round" data-v="${p.round}">Take out ${fmt(p.round, 18, 6)} ETH instead</button></p>` : ''}
     <p class="note mute">${p.crowd}</p></div>`;
 };
+// What a deposit of `a` wei earns the paying wallet, at the least: 1,000 points per ETH before the early bonus and boosts.
+const pointsRow = (a) => html`<div class="kv"><span class="pts-line"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC points</span><b class="num">at least ${ptsFmt(Number(a) / 1e15)}${PTS.v?.pp ? ' · ×1.2 Privacy Pools' : ''}</b></div>`;
 const clearDraft = (...ids) => { for (const id of ids) { delete DRAFT[id]; const i = $('#' + id); if (i) i.value = ''; } FORM.check?.(); };
 const amountField = (id, label, extra = '') => html`
   <div class="lbl"><span>${label}</span>${extra}</div>
@@ -1291,7 +1309,7 @@ async function act(btn, fn) {
   }
   const st = CH[c.chainId], again = st.deferred;
   st.deferred = false;
-  if (ok) syncChain(c, true).then(() => historyOf(c, true));
+  if (ok) { syncChain(c, true).then(() => historyOf(c, true)); setTimeout(() => readPoints(true), 90_000); }
   else if (again) syncChain(c, true);
 }
 const done = (c, h, text) => { say($('#status'), html`<span class="ok">${text}</span> ${txLink(c, h)}`); toast(text); };
@@ -1348,8 +1366,8 @@ function formDeposit(f) {
       if (raw && !dto) { go.disabled = true; return /\.(g?wei|eth)$/i.test(raw) ? say_(html`<p class="note">Looking up ${raw.toLowerCase()}…</p>`) : undefined; }
       if (raw && dto.error) { go.disabled = true; return say_(html`<p class="note err">${dto.error}</p>`); }
       if (a && wb != null && a > wb) { say_(html`<p class="note err">More than your wallet holds on ${c.full}.</p>`); go.disabled = true; }
-      else if (a && dto?.bp) say_(html`${kvRow('To', `${dto.label ? `${dto.label} → ` : ''}${short(dto.bp, 8)}`)}${kvRow('Into their private balance', `${fmt(a, 18, 6)} ETH`)}${kvRow('Fee', 'none · your wallet pays the gas')}`);
-      else if (a) say_(html`${kvRow('Into your private balance', `${fmt(a, 18, 6)} ETH`)}${kvRow('Fee', 'none · your wallet pays the gas')}`);
+      else if (a && dto?.bp) say_(html`${kvRow('To', `${dto.label ? `${dto.label} → ` : ''}${short(dto.bp, 8)}`)}${kvRow('Into their private balance', `${fmt(a, 18, 6)} ETH`)}${kvRow('Fee', 'none · your wallet pays the gas')}${pointsRow(a)}`);
+      else if (a) say_(html`${kvRow('Into your private balance', `${fmt(a, 18, 6)} ETH`)}${kvRow('Fee', 'none · your wallet pays the gas')}${pointsRow(a)}`);
       go.textContent = !S.wallet ? 'Connect a wallet' : dto?.bp ? 'Deposit to them privately' : 'Deposit privately';
     };
     go.onclick = () => {
@@ -1655,7 +1673,7 @@ function paintReq() {
       ${r.err ? html`<p class="note err">${r.err}</p>` : ''}` : html`
       ${!r.amount ? html`<div class="amt act"><input id="req-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="Amount"><span class="u">${ethIcon}ETH</span></div>` : ''}
       ${r.state === 'confirm' || r.state === 'proving' ? '' : html`<div class="row2">${privFirst ? html`<button class="btn" type="button" id="req-priv">Pay privately</button>` : ''}<button class="btn ${privFirst ? 'ghost' : ''}" type="button" id="req-wallet">Pay from a wallet</button>${privFirst ? '' : html`<button class="btn ghost" type="button" id="req-priv">Pay privately</button>`}</div>`}
-      <p class="note">${r.n ? 'From a wallet: your address and the amount show on chain as a payment to their deposit address, then it moves into their private balance.' : 'From a wallet: proved on this device (a one-time download), then sent from your wallet straight into their private balance. Your address and the amount show on chain; who you paid does not.'} Privately, from your own private ETH: nothing on chain links you to them.</p>
+      <p class="note">${r.n ? 'From a wallet: your address and the amount show on chain as a payment to their deposit address, then it moves into their private balance.' : 'From a wallet: proved on this device (a one-time download), then sent from your wallet straight into their private balance. Your address and the amount show on chain; who you paid does not.'} Paying from a wallet earns you TAC points. Privately, from your own private ETH: nothing on chain links you to them.</p>
       <div class="status" role="status" id="req-status">${r.state === 'confirm' ? 'Confirm in your wallet…' : r.state === 'proving' ? html`<span class="spin" aria-hidden="true"></span>${r.step || 'Getting ready'}` : r.err ? html`<span class="err">${r.err}</span>` : ''}</div>`}`);
   if (typed && $('#req-amt')) $('#req-amt').value = typed;
   $('#req-x').onclick = () => { REQ.v = null; paintReq(); };
@@ -1838,6 +1856,58 @@ function qrSvg(text) {
   return new Raw(`<svg class="qr" viewBox="0 0 ${W} ${W}" role="img" aria-label="QR code of the payment link" shape-rendering="crispEdges"><rect width="${W}" height="${W}" fill="#fff"/><path d="${d}" fill="#111"/></svg>`);
 }
 
+// ── TAC points: public ETH deposited into the pool earns them for the wallet that deposits (or that pays a link or
+// deposit address), 1,111 TAC a day split by points; tacit-points is the source (api.tacit.finance) ───────────────
+const API = 'https://api.tacit.finance', DISTRIBUTOR = '0x000000C918e44A3a443937fA7594eA4f7C95D6b9';
+const PTS = { who: null, at: 0, v: null, reading: null };
+const TAC_WEI = 10n ** 18n;
+function readPoints(force = false) {
+  const who = S.wallet ? lc(S.wallet) : null;
+  if (!who) { Object.assign(PTS, { who: null, v: null }); return Promise.resolve(); }
+  if (!force && PTS.who === who && (PTS.reading || Date.now() - PTS.at < 60e3)) return PTS.reading || Promise.resolve();
+  PTS.who = who;
+  const get = (path) => fetch(`${API}/${path}/${who}`, { signal: AbortSignal.timeout?.(20e3) }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  PTS.reading = (async () => {
+    const [p, c] = await Promise.all([get('points'), get('claim')]);
+    // Claimable comes from the distributor itself (owed(account, cumulative)), not the service's copy of it.
+    let owed = 0n;
+    if (c?.proof && c.cumulativeAmount) {
+      const data = '0x787eef2e' + strip(who).padStart(64, '0') + BigInt(c.cumulativeAmount).toString(16).padStart(64, '0');
+      owed = BigInt(await (await rpcOn(CHAINS[0]))('eth_call', [{ to: DISTRIBUTOR, data }, 'latest']).catch(() => '0x0') || '0x0');
+    }
+    const t = p?.today, share = t && Number(t.totalPoints) > 0 ? Number(t.points) / Number(t.totalPoints) : 0;
+    const pool = (p?.deposits || []).filter((d) => d.activity === 'evmpooldeposit');
+    if (PTS.who !== who) return;
+    PTS.v = {
+      points: Number(p?.points || 0), pool: pool.reduce((a, d) => a + Number(d.points || 0), 0), share,
+      today: t ? BigInt(t.dayBudgetWei) * BigInt(Math.round(share * 1e9)) / 10n ** 9n : 0n, owed, pp: pool.some((d) => d.pp_boosted),
+    };
+    PTS.at = Date.now();
+  })().finally(() => { PTS.reading = null; paintPoints(); });
+  return PTS.reading;
+}
+const ptsFmt = (n) => Math.round(Number(n) || 0).toLocaleString('en-US');
+function paintPoints() {
+  const v = PTS.who && PTS.who === lc(S.wallet || '') ? PTS.v : null;
+  mount($('#points-body'), html`
+    <p class="lede-s">Deposit ETH into the pool and earn TAC. Each day, 1,111 TAC is shared by points.</p>
+    <ul class="perks">
+      <li><span><b>1,000+ points per ETH</b> deposited on Ethereum, Base or Robinhood Chain, more while the pool is young.</span></li>
+      <li><span><b>×1.2</b> if your wallet has received ETH from <a href="https://privacypools.com" target="_blank" rel="noopener">Privacy Pools</a>.</span></li>
+      <li><span>Paying a link or a deposit address from your wallet counts too, and holding TAC adds a boost.</span></li>
+    </ul>
+    ${S.wallet ? (v ? html`<div class="earn">
+        <div><b class="num">${ptsFmt(v.points)}</b><span>your points${v.pool && v.pool < v.points ? ` · ${ptsFmt(v.pool)} from the pool` : ''}</span></div>
+        <div><b class="num">${fmt(v.today, 18, 2)}</b><span>TAC today${v.share ? ` · ${v.share * 100 < 0.1 ? 'under 0.1' : (v.share * 100).toFixed(1)}%` : ''}</span></div>
+        <div><b class="num">${fmt(v.owed, 18, 2)}</b><span>TAC to claim</span></div>
+      </div>
+      ${v.pp ? html`<p class="note ok">Your Privacy Pools boost is on.</p>` : ''}`
+      : html`<p class="note"><span class="sk" style="--w:14ch"></span></p>`)
+    : html`<p class="note">Connect the wallet you deposit from to see its points.</p>`}
+    <div class="foot-a"><a class="link" href="/weld/#points">${v?.owed > 0n ? 'Claim your TAC on weld ↗' : 'Track and claim on weld ↗'}</a>${S.wallet ? '' : html`<button class="link" type="button" id="pts-conn">Connect a wallet</button>`}</div>`);
+  $('#pts-conn')?.addEventListener('click', () => connectWallet().then(() => readPoints(true)).catch((e) => toast(errText(e), true)));
+}
+
 // ── the device card ──────────────────────────────────────────────────────────────────────────────────────
 function paintMeter() {
   const m = $('#device-meter');
@@ -1987,7 +2057,7 @@ window.addEventListener('hashchange', () => { applyHash(); renderApp(); if (REQ.
 
 // ── boot ─────────────────────────────────────────────────────────────────────────────────────────────────
 applyHash();
-paintWallet(); renderApp(); paintDevice(); paintRecover();
+paintWallet(); renderApp(); paintDevice(); paintRecover(); paintPoints();
 if (REQ.v) requestAnimationFrame(() => $('#req').scrollIntoView({ block: 'start' }));
 mods().catch(() => {});
 pin().then(async (p) => {
