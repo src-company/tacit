@@ -116,3 +116,54 @@ test('the coins the live relayer holds still get a quote', async () => {
   assert.ok(q.quoteId, 'no quote issued');
   assert.equal(q.bind.vout, 0);
 });
+
+// ── cost-linked fees ────────────────────────────────────────────────────────
+// The fee is a note in the carrier, so its value is hidden and may track cost without leaking anything.
+// What moves is the cost: the fee rate runs to 50 sat/vB while a flat fee never changed.
+import { parseFeeUnitsPerSat, parseFees } from '../worker-relay/src/lib/btc-pool-relayer.js';
+
+function feeRelayer({ rate, unitsPerSat, min = 10n, vb = 2000 }) {
+  return createRelayer({
+    network: 'signet',
+    btcKey: new Uint8Array(32).fill(0x11),
+    poolSeed: new Uint8Array(32).fill(0x22),
+    fees: { [ASSET.slice(2)]: min },
+    ...(unitsPerSat ? { feeUnitsPerSat: { [ASSET.slice(2)]: unitsPerSat } } : {}),
+    soloCarrierVb: vb,
+    pool: { tip: () => 100, rootAt: () => ROOT, isSpent: () => false, chainTip: () => 100 },
+    verifier: { enabled: false, verify: async () => true },
+    chain: {
+      utxos: async () => [40000, 40000].map((v, i) => ({ txid: String(i + 4).repeat(64).slice(0, 64), vout: 0, value: v, status: { confirmed: true } })),
+      feeRate: async () => rate,
+      broadcast: async () => { throw new Error('offline'); },
+      txStatus: async () => null,
+    },
+  });
+}
+
+test('an asset with no price keeps its flat fee however gas moves', async () => {
+  const cheap = await feeRelayer({ rate: 1 }).quote({ asset: ASSET });
+  const dear = await feeRelayer({ rate: 50 }).quote({ asset: ASSET });
+  assert.equal(cheap.fee, '10');
+  assert.equal(dear.fee, '10', 'a flat fee must not start moving on its own');
+});
+
+test('a priced asset tracks the carrier cost, and never dips under its floor', async () => {
+  // 1 unit per sat (a BTC-denominated asset): the fee IS the sats the carrier will cost, plus margin.
+  const at1 = await feeRelayer({ rate: 1, unitsPerSat: 1n, vb: 2000 }).quote({ asset: ASSET });
+  const at50 = await feeRelayer({ rate: 50, unitsPerSat: 1n, vb: 2000 }).quote({ asset: ASSET });
+  assert.equal(at1.fee, String(Math.ceil(2000 * 1 * 1.35)));
+  assert.equal(at50.fee, String(Math.ceil(2000 * 50 * 1.35)));
+  assert.ok(BigInt(at50.fee) > BigInt(at1.fee) * 40n, 'a 50x cost must move the fee');
+  // Below the floor the floor wins.
+  const tiny = await feeRelayer({ rate: 1, unitsPerSat: 1n, vb: 1, min: 999999n }).quote({ asset: ASSET });
+  assert.equal(tiny.fee, '999999');
+});
+
+test('the price field is optional, per asset', () => {
+  const both = 'aa'.repeat(32) + ':15,' + 'bb'.repeat(32) + ':20:558659';
+  assert.equal(parseFees(both).size, 2, 'both assets still have a fee');
+  const rates = parseFeeUnitsPerSat(both);
+  assert.equal(rates.size, 1, 'only the asset that gave a price has one');
+  assert.equal(rates.get('bb'.repeat(32)), 558659n);
+});

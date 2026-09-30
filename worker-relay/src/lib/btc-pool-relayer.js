@@ -279,6 +279,15 @@ export function createRelayer({
   // What the coins left after the bind must add up to before a quote is given. The carrier's real cost is
   // only known once a batch is built; this is the floor under which it certainly cannot be paid for.
   minCarrierSats = 3000,
+  // Per-asset price, in the asset's smallest units per satoshi, for assets that opt into cost-linked fees
+  // (the third field of BTC_POOL_RELAYER_FEES). Static on purpose: the Bitcoin-lane books are thin, and a
+  // fee quoted off one could be moved by whoever wanted a free carrier. It is the asset's price that is
+  // held still here, not its cost — see quotedFee.
+  feeUnitsPerSat = null,
+  feeMarginPct = 135,
+  // What a carrier costs, in vbytes, before one has been built to measure. Conservative; the first
+  // single-payload carrier replaces it with the real number.
+  soloCarrierVb = 2000,
   maxQuotes = 1024, maxQuotesPerClient = 8, quoteTtlMs = 600_000, retainMs = 24 * 3600_000,
   rateLimit = null, now = () => Date.now(), log = () => {}, aggregator = null, aggMin = 2,
 } = {}) {
@@ -293,6 +302,7 @@ export function createRelayer({
   const changeSpk = prims.p2wpkhScript(prims.wallet.pub);
   const envKey = prims.wallet.xonly();
   const feeTable = new Map([...(fees instanceof Map ? fees : Object.entries(fees || {}))].map(([a, f]) => [strip(a), BigInt(f)]));
+  const rateTable = new Map([...(feeUnitsPerSat instanceof Map ? feeUnitsPerSat : Object.entries(feeUnitsPerSat || {}))].map(([a, r]) => [strip(a), BigInt(r)]));
   const verifySlot = makeSemaphore(Math.max(1, maxVerify));
 
   const quotes = new Map();   // quoteId → { asset, fee, spk, client, used, expiresAt, batchId, bind }
@@ -370,6 +380,29 @@ export function createRelayer({
     if (f == null) throw bad('asset not relayed');
     return f;
   };
+
+  // The vbytes of the last carrier that held exactly one payload — the relayer measuring its own costs
+  // rather than being told them. Proof size is fixed by the circuit, so this barely moves once set.
+  let observedSoloVb = null;
+
+  // What to charge now. The configured figure is a floor; where an asset gives a price, the fee tracks what
+  // the carrier will actually cost. Cost is the thing that moves — the fee rate runs from 1 sat/vB to the
+  // maxFeeRate cap, a fiftyfold swing against revenue that never changed — while the asset's price against
+  // sats barely stirs by comparison. So the sats are measured and the price is a constant.
+  //
+  // Priced as though the payload rides alone, because on a quiet relayer it usually does and that is the
+  // case that loses money. A carrier that ends up shared then runs at a profit, which pays for the ones
+  // that do not. Unlike the EVM pool's fee this one is a note in the carrier, so its value is hidden and
+  // letting it vary tells an observer nothing; there it is public in pv.fees and deliberately static.
+  async function quotedFee(asset) {
+    const floor = feeFor(asset);
+    const perSat = rateTable.get(strip(asset));
+    if (!perSat) return floor;
+    const vb = observedSoloVb ?? soloCarrierVb;
+    const sats = Math.ceil((vb * (await currentRate()) * feeMarginPct) / 100);
+    const units = BigInt(Math.max(0, sats)) * perSat;
+    return units > floor ? units : floor;
+  }
   // Next-block reference: the chain tip when known, else the replayed tip.
   const chainRef = () => {
     const t = pool.tip(), c = pool.chainTip ? pool.chainTip() : null;
@@ -410,7 +443,13 @@ export function createRelayer({
     const b = batch && !batch.closed && !batch.draining ? batch : null;
     return {
       network, address: wallet.addressString, fundAddress,
+      // The floor for every relayed asset. For one that is cost-linked the quote can be higher than this,
+      // so `feeRateSatsPerVb` and `carrierVb` are published too: enough for a caller to work out what a
+      // quote will say, and to see why it moved, without asking.
       fees: Object.fromEntries([...feeTable].map(([a, f]) => ['0x' + a, f.toString()])),
+      feeUnitsPerSat: rateTable.size ? Object.fromEntries([...rateTable].map(([a, r]) => ['0x' + a, r.toString()])) : null,
+      carrierVb: observedSoloVb ?? soloCarrierVb,
+      feeMarginPct,
       exitSats, minAnchor: minAnchor(), anchorPolicy: 'tip - 6, rounded down to a multiple of 6',
       batch: b ? { id: b.id, closesAt: b.closesAt, bind: bindOut(b.bind), exitVout: freeVout(b), slotsLeft: maxSlots - b.slots.filter(Boolean).length } : null,
       verifierEnabled: !!verifier?.enabled, pending: heldCount(),
@@ -426,7 +465,7 @@ export function createRelayer({
   // provisional, the slot is bound at submit.
   async function quote({ asset, exitScriptPubKey } = {}, client = null) {
     if (!/^(0x)?[0-9a-fA-F]{64}$/.test(String(asset || ''))) throw bad('asset must be 32 bytes hex');
-    const fee = feeFor(asset);
+    const fee = await quotedFee(asset);
     let spk = null;
     if (exitScriptPubKey != null) {
       try { spk = hexToBytes(strip(exitScriptPubKey)); } catch { throw bad('exitScriptPubKey must be hex'); }
@@ -672,6 +711,10 @@ export function createRelayer({
       commitFee = feeAt(picked.length);
     }
     if (!picked.length || total < commitNeed + commitFee) throw new RelayError(503, `relayer funding short: need ${commitNeed + commitFee} sats`);
+    // Measure what a lone carrier costs, so the next quote is priced off this network's real numbers
+    // rather than a constant someone has to remember to update. Only a single-payload carrier is
+    // comparable to what quotedFee prices, so only that one is recorded.
+    if (envs.length === 1) observedSoloVb = revealVb + commitVb(picked.length);
     const change = total - commitNeed - commitFee;
     const commitTx = {
       version: 2, locktime: 0,
@@ -1073,6 +1116,24 @@ export function createRelayer({
 }
 
 // ── env ──
+// The optional third field of BTC_POOL_RELAYER_FEES: the asset's smallest units per satoshi, which turns
+// a measured carrier cost into a fee in that asset. Absent for an asset ⇒ its configured fee is flat, the
+// behaviour before this existed. cBTC needs 1: at eight decimals one unit already is one satoshi.
+export function parseFeeUnitsPerSat(s) {
+  const m = new Map();
+  if (!s) return m;
+  const t = String(s).trim();
+  if (t.startsWith('{')) return m; // object form carries a fee only
+  for (const x of t.split(',').map((y) => y.trim()).filter(Boolean)) {
+    const [a, , r] = x.split(':');
+    if (r == null || String(r).trim() === '') continue;
+    if (!/^\d+$/.test(String(r).trim())) throw new Error(`BTC_POOL_RELAYER_FEES: bad units-per-sat for ${a}`);
+    const v = BigInt(String(r).trim());
+    if (v > 0n) m.set(strip(String(a).trim()), v);
+  }
+  return m;
+}
+
 export function parseFees(s) {
   if (!s) return new Map();
   const t = String(s).trim();
@@ -1180,6 +1241,8 @@ export function startBtcPoolRelayerFromEnv({ ix, store = null, verifier, network
     btcKey: hexToBytes(strip(kHex)),
     poolSeed: hexToBytes(strip(sHex)),
     fees: parseFees(env.BTC_POOL_RELAYER_FEES),
+    feeUnitsPerSat: parseFeeUnitsPerSat(env.BTC_POOL_RELAYER_FEES),
+    feeMarginPct: num('BTC_POOL_RELAYER_FEE_MARGIN_PCT', 135),
     pool: poolViewFromIndexer(ix),
     verifier,
     // Our own node is also the only broadcast path that does not go through esplora, so it is wired up
