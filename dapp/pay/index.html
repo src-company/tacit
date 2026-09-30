@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-GzLgU8niFcrywG1nCsXEFFro7dgSZYk48ElXiHV10Vw=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-clINr0oVOo173xrjOH/dFUw9vzh9sr8Yl/UNUxVv+zM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -513,7 +513,7 @@ const sayErr = (el, e) => say(el, html`<span class="err">${errText(e)}</span>`);
 // ── pool modules, loaded once, right after the page ──────────────────────────────────────────────────────
 const mods = lazy(async () => {
   const [zkm, wm, gw, pm, pos] = await Promise.all([
-    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=14825eb2'), import('/evm-pool-gateway.js'),
+    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=611e132b'), import('/evm-pool-gateway.js'),
     import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
   ]);
   const PO = { 2: pos.poseidon2, 3: pos.poseidon3, 4: pos.poseidon4, 5: pos.poseidon5, 7: pos.poseidon7 };
@@ -624,7 +624,6 @@ async function setKey(k) {
   forget();
   S.key = { ...k, pubHex, bp: keys.address };
   S.keys = keys;
-  S.npk0 = m.receiveKeys(m.zk, keys.zkWallet, 0).npk;
   const seen = readJson(BAL_SEEN)?.[pubHex] || {};
   for (const c of CHAINS) CH[c.chainId].last = seen[c.chainId] != null ? BigInt(seen[c.chainId]) : null;
   warmIfSaved();
@@ -780,9 +779,13 @@ function syncChain(c, fresh = false) {
   const prev = st.syncing || Promise.resolve(), pub = S.key.pubHex;
   const p = st.syncing = prev.catch(() => {}).then(async () => {
     const W = await walletOn(c);
-    const [s, q, w] = await Promise.all([W.sync(), chainKeeper(c) ? W.quote().catch(() => null) : null, W.waiting().catch(() => null)]);
+    const boxes = [0, ...linkRange()];
+    const [s, q, waits] = await Promise.all([W.sync(), chainKeeper(c) ? W.quote().catch(() => null) : null,
+      Promise.all(boxes.map((i) => W.waiting(i).then((v) => [i, v], () => [i, null])))]);
+    const waitBoxes = waits.filter(([, v]) => v != null && v > 0n), w = waitBoxes.reduce((a, [, v]) => a + v, 0n);
     if (st.W !== W || S.key?.pubHex !== pub) return;
-    Object.assign(st, { bal: s.balance, notes: W.notes().map((n) => BigInt(n.v)), quote: q, waiting: w, err: null, at: Date.now() });
+    if (st.bal != null && st.bal !== s.balance) historyOf(c, true);             // something arrived or left: read it into the history
+    Object.assign(st, { bal: s.balance, notes: W.notes().map((n) => BigInt(n.v)), quote: q, waiting: w, waitBoxes, err: null, at: Date.now() });
     const seen = readJson(BAL_SEEN) || {};
     seen[pub] = { ...(seen[pub] || {}), [c.chainId]: s.balance.toString() };
     writeJson(BAL_SEEN, seen);
@@ -851,12 +854,40 @@ async function logs(rpc, address, topics, from, to, onStep) {
   return out;
 }
 // This key's receive boxes: the deposit address (0) and the refund boxes after it.
-const BOXQ = { for: null, map: null };
+const BOXQ = { for: null, map: null, at: [] };
 async function boxMap(count = BOXES) {
-  if (BOXQ.for !== S.key.pubHex) Object.assign(BOXQ, { for: S.key.pubHex, map: new Map() });
+  if (BOXQ.for !== S.key.pubHex) Object.assign(BOXQ, { for: S.key.pubHex, map: new Map(), at: [] });
   const m = await mods(), map = BOXQ.map;
-  for (let i = map.size; i < count; i++) { const k = m.receiveKeys(m.zk, S.keys.zkWallet, i); map.set(lc(m.receiveBoxAddress(k.npk, m.RECEIVE_FEE_BPS, ROUTER)), { i, ...k }); }
+  for (let i = map.size; i < count; i++) {
+    const k = m.receiveKeys(m.zk, S.keys.zkWallet, i), address = m.receiveBoxAddress(k.npk, m.RECEIVE_FEE_BPS, ROUTER), e = { i, address, ...k };
+    map.set(lc(address), e); BOXQ.at[i] = e;
+  }
   return map;
+}
+// The one-time deposit address the next payment link uses: one past the highest one that has taken a payment on any
+// chain (an address is the same on all three), counting ETH still waiting at one. A link gets a fresh address once
+// the last has been paid, so paid links are not linked to each other on chain, and no run of unused addresses opens
+// up: rebuilt from the key, every one lies within the wallet's lookahead of the one before. null until every chain's
+// history is read.
+function linkIndex() {
+  if (!S.key || !CHAINS.every((c) => CH[c.chainId].hist || CH[c.chainId].histErr)) return null;
+  let top = 0;
+  for (const c of CHAINS) {
+    for (const r of CH[c.chainId].hist?.rows || []) if (r.box > top) top = r.box;
+    for (const [i, v] of CH[c.chainId].waitBoxes || []) if (i > top && v > 0n) top = i;
+  }
+  return top + 1;
+}
+// The one-time addresses worth watching: the current link's and up to nineteen before it.
+const linkRange = () => { const k = linkIndex(); return k == null ? [] : Array.from({ length: Math.min(20, k) }, (_, j) => k - j); };
+const WATCHED = new Set();
+function watchLinks() {
+  for (const i of linkRange()) for (const c of CHAINS) {
+    const id = `${S.key.pubHex}:${c.chainId}:${i}`;
+    if (WATCHED.has(id) || !chainKeeper(c)) continue;
+    WATCHED.add(id);
+    walletOn(c).then((W) => W.watchReceive(i)).catch(() => WATCHED.delete(id));
+  }
 }
 async function scanHistory(c, onStep) {
   const m = await mods(), keys = S.keys, rpc = await rpcOn(c), boxes = await boxMap();
@@ -906,7 +937,7 @@ async function scanHistory(c, onStep) {
     const b = boxes.get(lc(r.box)), leaf = leafAt.get(r.index);
     if (!b || leaf == null || m.zk.leafOf(asset, r.value, b.npk, r.rho) !== leaf) continue;
     mine.set(m.zk.nullifier(b.nk, leaf, r.index).toString(), { v: r.value, index: r.index });
-    rows.push({ kind: b.i ? 'refund' : 'box', v: r.value, fee: r.fee, tx: r.tx, block: r.block, box: b.i });
+    rows.push({ kind: b.i ? 'link' : 'box', v: r.value, fee: r.fee, tx: r.tx, block: r.block, box: b.i });
   }
   const top = Math.max(-1, ...rows.map((r) => r.box ?? -1));
   if (top >= boxes.size - 20) { await boxMap(top + BOXES); return scanHistory(c, onStep); }
@@ -946,7 +977,11 @@ function historyOf(c, fresh = false) {
   const p = st.histing = scanHistory(c, (f) => { st.histProg = f; paintRecover(); })
     .then((h) => { if (S.key?.pubHex === pub) { st.hist = h; st.histErr = null; } })
     .catch((e) => { if (S.key?.pubHex === pub) st.histErr = e; })
-    .finally(() => { if (st.histing === p) st.histing = null; paintRecover(); });
+    .finally(() => {
+      if (st.histing === p) st.histing = null;
+      paintRecover();
+      if (S.key?.pubHex === pub && linkIndex() != null) { watchLinks(); if (FORM.needsLink && !S.busy) renderForm(); }
+    });
   paintRecover();
   return p;
 }
@@ -1013,7 +1048,7 @@ function renderTabs() {
 function renderForm() {
   if (S.busy) return;
   const f = $('#form');
-  FORM.check = null; FORM.needsW = false; FORM.waitShown = undefined;
+  FORM.check = null; FORM.needsW = false; FORM.waitShown = undefined; FORM.needsLink = false;
   if (!S.key) {
     mount(f, html`<p class="gate-p">Open your Tacit wallet. One key holds your private ETH on all three chains, and nothing else needs backing up.</p>${signIn('g')}`);
     return wireSignIn(f, 'g');
@@ -1134,13 +1169,17 @@ function formDeposit(f) {
       <div class="blk"><div class="lbl"><span>Your deposit address</span><span>same on all three chains</span></div>
         <div class="addr"><code>${W?.receiveBox || '…'}</code>${W ? html`<button class="link" type="button" data-copy="${W.receiveBox}">copy</button>` : ''}</div>
         <p class="note">Send ETH here from any wallet or exchange on Ethereum, Base or Robinhood Chain. The relay moves it into your private balance on that chain within minutes, for at most 0.25%${min ? html`; on ${c.full}, send at least ${fmt(min, 18, 6)} ETH at a time` : ''}. Only ETH: a token sent here is lost.</p></div>
-      ${st.waiting > 0n ? html`<div class="callout"><span>${fmt(st.waiting, 18, 6)} ETH is waiting on ${c.full}.${min && st.waiting < min ? ' Below the relay’s minimum, so take it in yourself.' : ''}</span><button class="btn ghost sm" type="button" id="f-sweep">Take it in</button></div>
-        <p class="note">Taking it in yourself: proved here, sent from your wallet, no fee.</p>` : ''}
+      ${(st.waitBoxes || []).map(([i, v]) => html`<div class="callout"><span>${fmt(v, 18, 6)} ETH is waiting on ${c.full} at ${i ? 'a payment link’s address' : 'your deposit address'}.${min && v < min ? ' Below the relay’s minimum, so take it in yourself.' : ''}</span><button class="btn ghost sm" type="button" data-sweep="${i}">Take it in</button></div>`)}
+      ${st.waiting > 0n ? html`<p class="note">Taking it in yourself: proved here, sent from your wallet, no fee.</p>` : ''}
       <p class="more"><button class="link" type="button" id="f-check">Check for arrivals now</button></p>`);
     $$('[data-copy]', f).forEach((b) => b.onclick = () => copy(b.dataset.copy, 'Deposit address copied'));
-    $('#f-check').onclick = async () => { try { const W2 = await walletOn(c); await W2.watchReceive(); await syncChain(c, true); say($('#status'), cur().waiting > 0n ? `${fmt(cur().waiting, 18, 6)} ETH is on its way in.` : 'Nothing waiting at the deposit address.'); } catch (e) { sayErr($('#status'), e); } };
-    const sw = $('#f-sweep');
-    if (sw) sw.onclick = () => act(sw, async (step) => { const W2 = await walletOn(c); await signerFor(c).ready(); const h = await W2.sweep({ onStep: step }); done(c, h, 'Taken in.'); });
+    $('#f-check').onclick = async () => { try { const W2 = await walletOn(c); await Promise.all([0, ...linkRange()].map((i) => W2.watchReceive(i).catch(() => {}))); await syncChain(c, true); say($('#status'), cur().waiting > 0n ? `${fmt(cur().waiting, 18, 6)} ETH is on its way in.` : 'Nothing waiting at the deposit address.'); } catch (e) { sayErr($('#status'), e); } };
+    $$('[data-sweep]', f).forEach((sw) => sw.onclick = () => act(sw, async (step) => {
+      const W2 = await walletOn(c);
+      await signerFor(c).ready();
+      const h = await W2.sweep({ index: Number(sw.dataset.sweep), onStep: step });
+      done(c, h, 'Taken in.');
+    }));
   } else {
     mount(f, html`${seg}
       ${amountField('f-damt', 'Amount', S.wallet ? html`<button type="button" id="f-max">Wallet <span id="f-wb" class="num"><span class="sk" style="--w:5ch"></span></span> ETH</button>` : html`<button type="button" id="f-conn">Connect a wallet</button>`)}
@@ -1316,24 +1355,27 @@ function payLink({ bp, n, amount, chain, note }) {
   return `${location.origin}/pay/#${q.toString()}`;
 }
 function formReceive(f) {
-  const c = S.chain, W = cur().W;
+  const c = S.chain, W = cur().W, k = linkIndex(), box = k != null ? BOXQ.at[k] : null;
   FORM.needsW = !W;
+  FORM.needsLink = !box;
+  if (k != null && !box) boxMap(k + 1).then(() => { if (FORM.needsLink && !S.busy && S.tab === 'receive') renderForm(); });
   mount(f, html`
     <div class="blk"><div class="lbl"><span>Get paid</span><span>by anyone, from any wallet</span></div>
       ${amountField('f-ramt', 'Amount (optional)')}
       <div class="lbl"><span>What it’s for (optional)</span></div>
       <div class="amt text"><input id="f-rfor" maxlength="60" placeholder="Dinner, rent, invoice 42…" autocomplete="off" aria-label="What it is for"></div>
-      <div class="qrbox" id="f-qr"></div>
-      <div class="row2"><button class="btn" type="button" id="f-link">Copy payment link</button><button class="btn ghost" type="button" id="f-share">Share</button></div>
-      <p class="note">From a Tacit wallet the payment is private end to end. From any other wallet it lands at your deposit address, and the relay moves it into your private balance on ${c.full} within minutes. The link carries your two addresses and what you type here, nothing else.</p></div>
+      <div class="qrbox" id="f-qr">${box ? '' : html`<p class="note">Preparing your link: reading which one-time addresses have been paid…</p>`}</div>
+      <div class="row2"><button class="btn" type="button" id="f-link" ${box ? '' : 'disabled'}>Copy payment link</button><button class="btn ghost" type="button" id="f-share" ${box ? '' : 'disabled'}>Share</button></div>
+      <p class="note">From a Tacit wallet the payment is private end to end. From any other wallet it lands at a one-time deposit address, and the relay moves it into your private balance on ${c.full} within minutes. Each link gets a fresh address once the last one is paid, so payments to your links are not linked to each other on chain. The link carries your pool address, that one-time address and what you type here, nothing else.</p></div>
     <div class="blk"><div class="lbl"><span>Your pool address</span><span>same on every chain</span></div>
       <div class="addr"><code>${S.key.bp}</code><button class="link" type="button" data-copy="${S.key.bp}">copy</button></div>
       <p class="note">For private payments from anyone using the pool. Nothing on chain links a payment to it, and the same address receives in the Bitcoin pool too.</p></div>
-    <div class="blk"><div class="lbl"><span>Deposit address</span><span>public ETH in</span></div>
+    <div class="blk"><div class="lbl"><span>Standing deposit address</span><span>public ETH in</span></div>
       <div class="addr"><code>${W?.receiveBox || '…'}</code>${W ? html`<button class="link" type="button" data-copy="${W.receiveBox}">copy</button>` : ''}</div>
-      <p class="note">For ETH from an exchange or any wallet. It joins your private balance within minutes, for at most 0.25%.</p></div>`);
+      <p class="note">For an exchange withdrawal or anything recurring. It joins your private balance within minutes, for at most 0.25%. Everything sent to it is visibly sent to the same address; payment links use one-time addresses instead.</p></div>`);
   $$('[data-copy]', f).forEach((b) => b.onclick = () => copy(b.dataset.copy));
-  const link = () => payLink({ bp: S.key.bp, n: S.npk0, amount: parseUnits($('#f-ramt').value), chain: c, note: $('#f-rfor').value.trim() });
+  if (!box) return;
+  const link = () => payLink({ bp: S.key.bp, n: box.npk, amount: parseUnits($('#f-ramt').value), chain: c, note: $('#f-rfor').value.trim() });
   let last = '';
   FORM.check = () => { const l = link(); if (l === last) return; last = l; mount($('#f-qr'), qrSvg(l)); };
   $('#f-link').onclick = () => copy(link(), 'Payment link copied');
@@ -1569,7 +1611,7 @@ async function tryProof() {
 
 // ── the recovery card ────────────────────────────────────────────────────────────────────────────────────
 const KIND = {
-  in: ['Received privately', true], box: ['Came in at your deposit address', true], refund: ['Refund taken back in', true], dep: ['Deposited', true],
+  in: ['Received privately', true], box: ['Came in at your deposit address', true], link: ['Came in at a one-time deposit address', true], dep: ['Deposited', true],
   sent: ['Sent privately', false], out: ['Withdrew', false], self: ['Combined your notes', false],
 };
 function paintRecover() {

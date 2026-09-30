@@ -633,10 +633,13 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       try { return await sync(); } finally { feed = f; }
     },
     quote: () => keeperGet('/quote'),
-    // ETH at the receive box not yet swept into a note. → wei
-    waiting: async () => BigInt(await chain.rpc('eth_getBalance', [box, 'latest'])),
-    // Asks the relayer to watch this wallet's receive box (and look now).
-    watchReceive: () => keeperPost('/receive', { chainId: chain.chainId, npk: receiveKeys(zk, keys.zkWallet, RECEIVE_INDEX).npk.toString(), feeBps: RECEIVE_FEE_BPS }),
+    // The receive box at `index` (0 is the private ETH address; later ones are one-time addresses, e.g. per payment
+    // request, found again from the seed within the same gap as refund boxes). → address
+    receiveBoxAt: (index = RECEIVE_INDEX) => boxOf(index),
+    // ETH at a receive box not yet swept into a note. → wei
+    waiting: async (index = RECEIVE_INDEX) => BigInt(await chain.rpc('eth_getBalance', [boxOf(index), 'latest'])),
+    // Asks the relayer to watch a receive box (and look now).
+    watchReceive: (index = RECEIVE_INDEX) => keeperPost('/receive', { chainId: chain.chainId, npk: receiveKeys(zk, keys.zkWallet, index).npk.toString(), feeBps: RECEIVE_FEE_BPS }),
 
     // Pays `amount` wei out of the pool to `to` (0x…). → tx hash.
     async withdraw({ to, amount, via = null, onStep = () => {} }) {
@@ -702,9 +705,10 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       return h;
     },
 
-    // Sweeps the private ETH address into a note here, submitted by the signer: no fee, any amount. → tx hash.
-    async sweep({ onStep = () => {} } = {}) {
-      const npk = receiveKeys(zk, keys.zkWallet, RECEIVE_INDEX).npk;
+    // Sweeps a receive box (the private ETH address by default) into a note here, submitted by the signer: no fee,
+    // any amount. → tx hash.
+    async sweep({ index = RECEIVE_INDEX, onStep = () => {} } = {}) {
+      const npk = receiveKeys(zk, keys.zkWallet, index).npk, box = boxOf(index);
       for (let round = 0; round < 4; round++) {
         await sync();
         const [bal, n] = await Promise.all([

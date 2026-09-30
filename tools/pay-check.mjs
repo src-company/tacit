@@ -67,6 +67,7 @@ async function readQr(p) {
 }
 const getPaidLink = async (p, amount, note) => {
   await p.click('#tabs [data-tab="receive"]');
+  await p.waitForSelector('#f-link:not([disabled])', { timeout: 900e3 });
   await p.fill('#f-ramt', amount); await p.fill('#f-rfor', note); await sleep(300);
   await p.click('#f-link');
   return p.evaluate(() => navigator.clipboard.readText());
@@ -274,18 +275,22 @@ try {
     await p.click('#req-x');
     await openKey(p, other);
     await p.click('#tabs [data-tab="deposit"]'); await p.click('[data-dep="addr"]');
-    await p.waitForSelector('#f-sweep', { timeout: 300e3 });
-    await p.click('#f-sweep');
+    await p.waitForSelector('[data-sweep]', { timeout: 300e3 });
+    ok(/payment link’s address/.test(await p.textContent('#form')), 'the payment went to the link’s one-time address, not the standing one');
+    await p.click('[data-sweep]');
     await p.waitForFunction(() => /Taken in/.test(document.querySelector('#status').textContent) || document.querySelector('#status .err'), null, { timeout: 600e3 });
     ok(/Taken in/.test(await p.textContent('#status')), `the payee takes it in: ${(await p.textContent('#status')).trim()}`);
     const tw = Date.now();
     const probe = setInterval(async () => { try { console.log(`    [${Math.round((Date.now() - tw) / 1000)} s] ${(await p.textContent('#recover-at'))} · ${(await p.$$eval('.chainsum li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()).join(' | ')))}`); } catch {} }, 60e3);
-    await p.waitForFunction(() => [...document.querySelectorAll('.rows li')].some((l) => /deposit address/.test(l.textContent)), null, { timeout: 900e3 }).catch(() => {});
+    await p.waitForFunction(() => [...document.querySelectorAll('.rows li')].some((l) => /one-time deposit address/.test(l.textContent)), null, { timeout: 900e3 }).catch(() => {});
     clearInterval(probe);
     console.log(`    history showed it after ${Math.round((Date.now() - tw) / 1000)} s`);
     const got = await p.$$eval('.rows li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
     console.log('    ' + got.join('\n    '));
-    ok(got.some((r) => /^Came in at your deposit address ?\+0\.003 ETH/.test(r)), 'the payee’s key finds the wallet payment');
+    ok(got.some((r) => /^Came in at a one-time deposit address ?\+0\.003 ETH/.test(r)), 'the payee’s key finds the wallet payment');
+    // The next link names a fresh one-time address.
+    const next = await getPaidLink(p, '', '');
+    ok(new URL(next).hash.match(/n=([0-9a-f]+)/)[1] !== new URL(link).hash.match(/n=([0-9a-f]+)/)[1], 'after a link is paid, the next link uses a new address');
     await shot(p, 'fork-after');
     ok(!errors.length, `no page errors ${errors.join(' | ')}`);
     await ctx.close();
