@@ -491,6 +491,44 @@ export function makeBurnDepositUx(deps) {
     return putRecord(rec);
   }
 
+  // ---- cancel: reclaim a stuck burn-home directly, bypassing burn/mint entirely. Usable from any stage where
+  // a confirmed burn-home UTXO is known to exist and has not yet been spent by the real burn-envelope reveal.
+  // That is narrower than "migrate-confirmed through anything short of folded/minted": burn-mined (and
+  // everything after it — registered, folded, minted) is reached ONLY once rec.burn.txid — the transaction
+  // that spends the burn-home as its very first input — is ITSELF confirmed (see STAGE_ADVANCE['burn-submitted']),
+  // so by the time a record reaches burn-mined the burn-home is already spent and there is nothing left to
+  // cancel. migrate-signed/migrate-sent are excluded the other direction: the burn-home isn't a confirmed
+  // UTXO yet, so reconstructBurnHome has no real on-chain script to verify against.
+  const CANCEL_TOO_EARLY_STAGES = new Set(['migrate-signed', 'migrate-sent']);
+  const CANCELABLE_STAGES = new Set(['migrate-confirmed', 'traced', 'burn-signed', 'burn-submitted']);
+  // rec: a record from list()/getRecord (any stage). destination: { script } — the exact scriptPubKey to pay,
+  // supplied by the caller (e.g. the wallet's own current address) — never guessed here. Returns the same
+  // { hex, txid, fee, feeRate, vsize } buildCancelTx does; nothing broadcast, nothing journalled — a cancel
+  // isn't a step in the state machine's own forward progression, so the caller decides what to do with the
+  // result (broadcast it, then abandon() the record once it confirms).
+  async function buildCancel({ rec, walletPriv, destination, feeRate = null } = {}) {
+    if (!walletPriv) throw new Error('burndep-ux: buildCancel needs the wallet key');
+    if (!rec || !rec.stage) throw new Error('burndep-ux: rec required');
+    if (!CANCELABLE_STAGES.has(rec.stage)) {
+      if (CANCEL_TOO_EARLY_STAGES.has(rec.stage)) {
+        throw new Error(`burndep-ux: cannot cancel yet — no confirmed burn-home exists at stage '${rec.stage}'`);
+      }
+      throw new Error(`burndep-ux: cannot cancel at stage '${rec.stage}' — the burn-home is already spent, or the bridge is already terminal`);
+    }
+    const P = freshPrims(walletPriv);
+    // Same reconstruction path STAGE_ADVANCE.traced already uses: re-derive the burn-home's own signing key
+    // from the wallet + source outpoint (never journalled) and verify it against the real on-chain output
+    // before building anything that spends it.
+    const burnHomeOnChain = await fetchChainJson(`/tx/${stripHex(rec.burnHome.txid)}`);
+    const chainSpk = burnHomeOnChain.vout[0].scriptpubkey;
+    const burnHome = reveal.reconstructBurnHome({
+      prims: P, walletPriv, source: { txid: rec.source.txid, vout: rec.source.vout },
+      amount: rec.source.amount, burnHomeTxid: rec.burnHome.txid, chainSpk,
+    });
+    const fundingUtxo = await pickFundingUtxo(P.wallet.address());
+    return reveal.buildCancelTx({ prims: P, burnHome, destination, fundingUtxo, feeRate });
+  }
+
   async function resumeAll(walletPub, { walletPriv = null } = {}) {
     const out = [];
     for (const rec of loadAll(walletPub)) {
@@ -503,6 +541,7 @@ export function makeBurnDepositUx(deps) {
 
   return {
     BURNDEP_BETA_CAP_RAW, eligibleNotes, isReserved, preflight, start, advance, resumeAll, recoverFromTxid, list, abandon,
+    buildCancel,
     slipstreamStatus: broadcaster.slipstreamStatus,
     checkTxidStatus,
   };
