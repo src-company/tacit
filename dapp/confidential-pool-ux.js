@@ -3135,7 +3135,43 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // so this now overstates the cost in ETH and the fee over-recovers by a few percent. Re-derive it from a
   // live fulfillment rather than scaling this one: the figure depends on the PROVE price as much as on ETH,
   // and correcting only the leg you happen to know makes it less accurate, not more.
-  const PROVE_COST_WEI = 40000000000000n;
+  // What a proof costs, in ETH. The PROVE a proof burns is a physical constant — 0.3892, measured from a
+  // live fulfillment — but its price is not, and a figure baked in ETH goes stale the moment either PROVE
+  // or ETH moves. Both had: the constant below was derived at ~$1900/ETH and now overstates the cost by
+  // about a fifth, which is not what scaling by ETH alone would have predicted, because PROVE moved too.
+  //
+  // So ask the same quoter the relay actually buys PROVE through. The relay's own fee gate already prices
+  // every job off this oracle; carrying a constant here only mattered because it sets what the user's op
+  // pays, and an op that underpays the gate is refused. Probe with a batch-sized amount so the quote
+  // carries the price impact a real top-up would meet, then scale to one proof.
+  const PROVE_COST_WEI = 40000000000000n;          // the measured fallback, used when the quote is unavailable
+  const PROVE_TOKEN = '0x6BEF15D938d4E72056AC92Ea4bDD0D76B1C4ad29';
+  const ZQUOTER = '0x000000bd2DB80567c23E353ca95a251c573cBf9B';
+  const PROVE_PROBE_WEI = 100000000000000000000n;  // 100 PROVE (18dp), as the relay probes
+  const PROVE_PER_OP_BPS = 3892n;                  // 0.3892 PROVE per proof, in bps of one PROVE
+  let _proveCost = { at: 0, v: null };
+
+  async function proveCostWei() {
+    if (Date.now() - _proveCost.at < 300000 && _proveCost.v) return _proveCost.v;
+    try {
+      const w = (x) => BigInt(x).toString(16).padStart(64, '0');
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
+      // buildBestSwap(to, exactOut=false, tokenIn=PROVE, tokenOut=ETH(0), amount, slippageBps, deadline).
+      // `best` is a static tuple, so best.amountOut is simply word 3 of the return.
+      const data = '0xe7798987' + w(ZQUOTER) + w(0) + w(PROVE_TOKEN) + w(0) + w(PROVE_PROBE_WEI) + w(50) + w(deadline);
+      const r = await rpc('eth_call', [{ to: ZQUOTER, data }, 'latest']);
+      if (!r || r.length < 2 + 256) return _proveCost.v || PROVE_COST_WEI;
+      const ethOut = BigInt('0x' + r.slice(2).slice(192, 256));
+      if (ethOut <= 0n) return _proveCost.v || PROVE_COST_WEI;
+      const perOp = (ethOut * PROVE_PER_OP_BPS) / 10000n / (PROVE_PROBE_WEI / (10n ** 18n));
+      // Banded around the measured value: PROVE is a minority of per-op cost, and a broken or pushed
+      // quote should never be able to swing the fee far in either direction.
+      const lo = PROVE_COST_WEI / 10n, hi = PROVE_COST_WEI * 10n;
+      const v = perOp < lo ? lo : perOp > hi ? hi : perOp;
+      _proveCost = { at: Date.now(), v };
+      return v;
+    } catch { return _proveCost.v || PROVE_COST_WEI; }
+  }
   // Fee ladder. The relay fee is public, so a continuously-varying fee fingerprints the payer; snapping to a
   // coarse ladder collapses many ops onto the same value. This MIRRORS the guest's fee_is_quantized exactly
   // (at most two significant digits) — the guest asserts it on every fee-bearing op, so a fee off the ladder
@@ -3173,7 +3209,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     const DRIFT_HEADROOM_WEI = 300000000n; // 0.3 gwei
     const margin = gwei * 135n / 100n;
     const quoteGwei = margin > gwei + DRIFT_HEADROOM_WEI ? margin : gwei + DRIFT_HEADROOM_WEI;
-    const costWei = (SETTLE_GAS[opKind] || 500000n) * quoteGwei + PROVE_COST_WEI * 135n / 100n;
+    const costWei = (SETTLE_GAS[opKind] || 500000n) * quoteGwei + (await proveCostWei()) * 135n / 100n;
     let floor;
     if (pol.usd === 'eth') {
       floor = _ladderFee(costWei / _unitScaleOf(ticker));
