@@ -81,7 +81,8 @@ publicAmount = extAmount − fee mod p
 ```
 
 Keys and stealth derivation are the Bitcoin shielded pool's (`dapp/btc-pool-zk.js`): one wallet seed serves both,
-and one Secret Sats address (`bp1…`) receives in both pools.
+and one Secret Sats address (`bp1…`) receives in both pools. A `tacit1…` address can carry the same 97 bytes as its
+pool lane (flag `0x04`), so one address receives here too; see *Tacit address format* in `BUILD-A-TACIT-DAPP.md`.
 
 Each output note carries a 65-byte memo in `memo0` / `memo1` so its recipient can find it
 (`dapp/evm-pool-wallet.js` `sealNote` / `openNote`):

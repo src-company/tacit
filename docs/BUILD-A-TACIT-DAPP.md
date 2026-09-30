@@ -303,7 +303,13 @@ To pay a plain 0x address an exact amount out of a larger note, with the rest ke
   `resolveName(name)` returns `{ name, address, key, source, node }`, where `key` is the Ethereum-side key to pass as `recipientPubHex`;
   `primaryName(address)`, `planPublish` and `publish` cover the receiver's side. Behaviour to keep:
   - Lookups read Ethereum mainnet only, whatever network the page is on, and are never cached; look the name up at send time and pin the key for that send.
-  - The record must decode strictly: bech32m prefix `tacit`, a 101-byte payload (`[0x00][flags][spend][scan][Ethereum-side key]`, 33 bytes each after the two header bytes), the Ethereum-side flag (`0x02`) set, and a valid secp256k1 point in the last 33 bytes. Otherwise the send is refused with the reason.
+  - The record must decode strictly: bech32m prefix `tacit`, version `0x00`, the Ethereum-side flag (`0x02`) set, and a valid secp256k1 point in the Ethereum-side key. The payload is 101 bytes, or 198 when the pool lane is set (see *Tacit address format* below). Otherwise the send is refused with the reason.
+- **Tacit address format.** `tacit1…` is bech32m over `[0x00][flags][lanes, in flag-bit order]`:
+  - `0x01` Bitcoin: spend key ‖ silent-payment scan key (33 + 33, required).
+  - `0x02` Ethereum side: the key a Tacit-pool private send pays (33).
+  - `0x04` pool: view key (33, secp256k1) ‖ A ‖ N (32 + 32, BabyJub), the 97 bytes a `bp1…` address carries; a payment in the EVM pool or the Bitcoin shielded pool pays these (`bp1` = bech32m(`bp`, the 97 bytes)).
+  - Bits `0x08` and up are reserved for later lanes, each of a length its own definition fixes. They follow the known lanes, so a reader reads the lanes it knows and ignores the rest; with no unknown bit set the length is exact.
+  - Addresses without the pool lane (flags `0x03`, 174 characters) stay valid everywhere; one with it (flags `0x07`) is 329 characters. `dapp/tacit-address.js` (`encodeTacitAddress({ …, poolKeys })`, `decodeTacitAddress` → `lanes.pool.poolAddress`, `poolKeysOf`, `poolAddressOf`) is the reference; `tests/tacit-address-pool.mjs` pins vectors, including a record published on mainnet.
   - A missing or invalid record, or a name whose resolver answers with an off-chain lookup (no CCIP-read), is refused; a bare 0x account address is never accepted as a private-send recipient.
   - Show the sender `name → tacit1…` before anything is signed, so a changed record is visible.
   - `.eth` resolvers are read directly on the name's own node, or through a parent's wildcard resolver; the record can only be written from here when the resolver sits on the name's own node.

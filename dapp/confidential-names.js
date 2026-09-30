@@ -8,13 +8,14 @@
 //               wildcard resolver; a resolver that answers with an off-chain lookup is refused (no CCIP-read)
 //
 // The record value is the tacit1… address, trimmed and otherwise untouched. A decoded address must be the
-// unified layout [0x00][flags][spend 33][scan 33][Ethereum lane 33] with the Ethereum-lane bit set; the
-// Ethereum-lane key is what a private send pays. Resolutions are never cached: each call reads the chain.
+// unified layout [0x00][flags][spend 33][scan 33][Ethereum lane 33] with the Ethereum-lane bit set, and may carry
+// the pool lane (flag 0x04, 97 bytes) after it; the Ethereum-lane key is what a private send pays, and the pool
+// lane is what a shielded-pool payment pays. Resolutions are never cached: each call reads the chain.
 //
 // Everything on the wire goes through `call({ to, data, from? })` (an eth_call that throws CallRevert on a
 // revert) and, for writes, `send({ from, to, data })` supplied by the caller's wallet.
 
-import { decodeBech32m } from './tacit-address.js';
+import { decodeBech32m, poolAddressOf } from './tacit-address.js';
 
 export const RECORD_KEY = 'finance.tacit';
 export const WNS = '0x0000000000696760E15f265e828DB644A0c242EB';
@@ -312,9 +313,11 @@ export function makeConfidentialNames({ call, send = null, secp, keccak256 }) {
     }
     if (d.hrp !== 'tacit') throw new NameError('bad-address', `Not a Tacit mainnet address (prefix "${d.hrp}").`);
     const p = d.payloadBytes;
-    if (p.length !== 101) throw new NameError('bad-address', `Tacit address payload is ${p.length} bytes, expected 101.`);
     if (p[0] !== 0) throw new NameError('bad-address', `Unsupported Tacit address version ${p[0]}.`);
     if (!(p[1] & 0x02)) throw new NameError('bad-address', 'This Tacit address does not carry an Ethereum lane.');
+    // 101 bytes, plus the pool lane's 97 when flagged (0x04); later lanes (0x08 and up) follow and are not read here.
+    const want = 101 + (p[1] & 0x04 ? 97 : 0), unknown = p[1] & ~0x07;
+    if (unknown ? p.length < want : p.length !== want) throw new NameError('bad-address', `Tacit address payload is ${p.length} bytes, expected ${want}.`);
     const keyHex = hexOf(p.slice(68, 101));
     try { secp.ProjectivePoint.fromHex(keyHex); } catch {
       throw new NameError('bad-address', 'The Ethereum-lane key in this Tacit address is not a valid point.');
@@ -325,6 +328,8 @@ export function makeConfidentialNames({ call, send = null, secp, keccak256 }) {
       spendKey: '0x' + hexOf(p.slice(2, 35)),
       scanKey: '0x' + hexOf(p.slice(35, 68)),
       key: '0x' + keyHex,
+      // The pool lane, when the address carries one: the bp1… address a shielded-pool payment pays.
+      ...(p[1] & 0x04 ? { pool: poolAddressOf(p.slice(101, 198)) } : {}),
     };
   }
 
@@ -339,7 +344,7 @@ export function makeConfidentialNames({ call, send = null, secp, keccak256 }) {
     try { d = decodeTacitAddress(record); } catch (e) {
       throw new NameError('bad-record', `${c.name} has a "${RECORD_KEY}" record that is not a usable Tacit address: ${e.message}`, { name: c.name, source: c.source });
     }
-    return { name: c.name, address: d.address, key: d.key, source: c.source, node: namehash(c.name) };
+    return { name: c.name, address: d.address, key: d.key, ...(d.pool ? { pool: d.pool } : {}), source: c.source, node: namehash(c.name) };
   }
 
   // ── primary name ──

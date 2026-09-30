@@ -7,6 +7,15 @@
 //   - EVM owner pubkey   → confidential-pool note transfer (== compressed wallet
 //                          pubkey; carried explicitly so it survives any future
 //                          divergence from the BTC spend key)
+//   - Pool keys          → the shielded pools proved on the device (the EVM pool on
+//                          Ethereum, Base and Robinhood Chain, and the Bitcoin pool):
+//                          view key V (33, secp) ‖ A ‖ N (32 each, BabyJub), the same
+//                          97 bytes a bp1… address carries
+//
+// Payload: [version 0x00][flags][lanes in flag-bit order]. Lanes: 0x01 Bitcoin (spend ‖ scan, 66 bytes, required),
+// 0x02 Ethereum-side key (33), 0x04 pool keys (97). Bits 0x08 and up are reserved for later lanes, each of a length
+// its own definition fixes; they follow the known lanes, so a reader that does not know one reads the lanes it
+// knows and ignores the rest. With no unknown bit set the length is exact.
 //
 // All three derive deterministically from one wallet root — no new key material.
 // Sharing the address links the holder's OWN two lanes to whoever receives it
@@ -115,6 +124,10 @@ export const TACIT_HRP_BY_NETWORK = { mainnet: 'tacit', signet: 'tactt', regtest
 export const TACIT_ADDR_VERSION = 0x00;
 export const TACIT_LANE_BTC = 0x01;
 export const TACIT_LANE_EVM = 0x02;
+export const TACIT_LANE_POOL = 0x04;
+const TACIT_LANES_KNOWN = TACIT_LANE_BTC | TACIT_LANE_EVM | TACIT_LANE_POOL;
+// The pool lane is a bp1… address's payload; its prefix per network (btc-shielded-pool.js ADDRESS_HRP).
+export const POOL_HRP_BY_NETWORK = { mainnet: 'bp', signet: 'tbp' };
 
 function _concat(...arrs) {
   let len = 0; for (const a of arrs) len += a.length;
@@ -129,7 +142,8 @@ export function makeTacitAddress({ secp }) {
     secp.ProjectivePoint.fromHex(Array.from(u8, (x) => x.toString(16).padStart(2, '0')).join(''));
   };
 
-  function encodeTacitAddress({ network, btcSpendPub, btcScanPub, evmOwnerPub }) {
+  // poolKeys: the 97-byte pool payload (V ‖ A ‖ N), as a bp1… address carries it; see poolKeysOf.
+  function encodeTacitAddress({ network, btcSpendPub, btcScanPub, evmOwnerPub, poolKeys }) {
     const hrp = TACIT_HRP_BY_NETWORK[network];
     if (!hrp) throw new Error(`unknown network: ${network}`);
     assertPoint(btcSpendPub, 'btcSpendPub');
@@ -140,6 +154,12 @@ export function makeTacitAddress({ secp }) {
       assertPoint(evmOwnerPub, 'evmOwnerPub');
       flags |= TACIT_LANE_EVM;
       payload = _concat(payload, evmOwnerPub);
+    }
+    if (poolKeys) {
+      if (!(poolKeys instanceof Uint8Array) || poolKeys.length !== 97) throw new Error('poolKeys must be the 97-byte pool payload');
+      assertPoint(poolKeys.slice(0, 33), 'pool view key');
+      flags |= TACIT_LANE_POOL;
+      payload = _concat(payload, poolKeys);
     }
     return _encode(hrp, _concat(new Uint8Array([TACIT_ADDR_VERSION, flags]), payload));
   }
@@ -153,8 +173,9 @@ export function makeTacitAddress({ secp }) {
     const version = payloadBytes[0], flags = payloadBytes[1];
     if (version !== TACIT_ADDR_VERSION) throw new Error(`unsupported version ${version}`);
     if (!(flags & TACIT_LANE_BTC)) throw new Error('unified address must carry the Bitcoin lane');
-    const wantLen = 2 + 33 + 33 + ((flags & TACIT_LANE_EVM) ? 33 : 0);
-    if (payloadBytes.length !== wantLen) throw new Error(`payload length ${payloadBytes.length} != ${wantLen}`);
+    const wantLen = 2 + 33 + 33 + ((flags & TACIT_LANE_EVM) ? 33 : 0) + ((flags & TACIT_LANE_POOL) ? 97 : 0);
+    const unknown = flags & ~TACIT_LANES_KNOWN;
+    if (unknown ? payloadBytes.length < wantLen : payloadBytes.length !== wantLen) throw new Error(`payload length ${payloadBytes.length} != ${wantLen}`);
     const btcSpendPub = payloadBytes.slice(2, 35);
     const btcScanPub = payloadBytes.slice(35, 68);
     assertPoint(btcSpendPub, 'btcSpendPub');
@@ -165,8 +186,30 @@ export function makeTacitAddress({ secp }) {
       assertPoint(evmOwnerPub, 'evmOwnerPub');
       lanes.evm = { ownerPub: evmOwnerPub };
     }
+    if (flags & TACIT_LANE_POOL) {
+      const at = 68 + ((flags & TACIT_LANE_EVM) ? 33 : 0), keys = payloadBytes.slice(at, at + 97);
+      assertPoint(keys.slice(0, 33), 'pool view key');
+      lanes.pool = { keys, poolAddress: POOL_HRP_BY_NETWORK[network] ? _encode(POOL_HRP_BY_NETWORK[network], keys) : null };
+    }
     return { network, flags, lanes };
   }
 
   return { encodeTacitAddress, decodeTacitAddress };
+}
+
+// The bp1… (tbp1… on signet) address for a 97-byte pool payload.
+export function poolAddressOf(keys, network = 'mainnet') {
+  const hrp = POOL_HRP_BY_NETWORK[network];
+  if (!hrp) throw new Error(`no pool address prefix for ${network}`);
+  if (!(keys instanceof Uint8Array) || keys.length !== 97) throw new Error('pool keys must be 97 bytes');
+  return _encode(hrp, keys);
+}
+
+// The 97-byte pool payload of a bp1… (or tbp1…) address, for encodeTacitAddress's poolKeys. Checks the prefix and
+// the length; the keys themselves are checked by whatever pays them (btc-shielded-pool.js decodeAddress).
+export function poolKeysOf(poolAddress) {
+  const { hrp, payloadBytes } = _decode(String(poolAddress).trim());
+  if (!Object.values(POOL_HRP_BY_NETWORK).includes(hrp)) throw new Error(`HRP ${hrp} is not a pool address HRP`);
+  if (payloadBytes.length !== 97) throw new Error(`pool address payload is ${payloadBytes.length} bytes, expected 97`);
+  return payloadBytes;
 }
