@@ -19883,7 +19883,14 @@ async function scanHoldingsCrossChain(force = false) {
       return Object.values(byAsset || {})
         .filter((a) => BigInt(a.value || 0) > 0n)
         .map((a) => ({ assetId: a.asset, ticker: a.ticker, balance: BigInt(a.value), source: 'eth-confidential', lane: 'ethereum' }));
-    } catch { return []; }
+    } catch (e) {
+      // Silently swallowing this made a real, on-chain, balance-holding failure indistinguishable from "the
+      // user just doesn't have any private Ethereum notes" — logged here (never surfaced to the UI itself;
+      // this reader degrading is meant to be non-fatal to the rest of the scan) so a stuck note is diagnosable
+      // instead of just absent.
+      console.error('[scanHoldingsCrossChain] poolNotesReader (ux.balance) failed:', e);
+      return [];
+    }
   } : null;
   const reader = makeEvmLaneReader({
     ethCall: (to, data) => _ethRpcCall('eth_call', [{ to, data }, 'latest']),
