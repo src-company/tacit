@@ -16,7 +16,7 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatSpecErr, notify, decOf, shownTicker } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatSpecErr, notify, decOf, shownTicker, lockedWalletHTML, wireUnlockButton } from './confidential-deployments.js';
 import { formatUnits } from './confidential-payout.js';
 import { scanHealth, scanHealthHtml, inboundBadgeText, inboundSummaryHtml } from './confidential-scan-health.js';
 
@@ -43,23 +43,27 @@ async function planBestRoute(ux, fromAsset, toAsset, amountIn) {
   return best;
 }
 
-export async function renderSwapTab(wallet) {
+export async function renderSwapTab(wallet, helpers = {}) {
   const body = el('cswap-body');
   if (!body) return;
   if (!confidentialPoolReady()) { body.innerHTML = confidentialUnavailableHTML('Confidential swaps'); return; }
   const ux = getUx();
+  const conceptHtml = `<div class="note-concept"><b>Swap, shielded.</b> Trade one note for another against the
+      confidential AMM — your note balances stay private, but a swap settled on its own moves the pool's public
+      reserves by exactly your trade, so its input and output amounts are visible on-chain. It clears on the
+      <span class="eth-word">Ethereum</span> lane and settles gasless. Instant and note-to-note: you end up holding a <b>shielded note</b>, not real coins.
+      To trade for <span class="btc-word">real sats</span> on Bitcoin, use the <a href="#tab=market">order book</a>.</div>`;
   if (!wallet || !wallet.priv) {
-    body.innerHTML = '<div class="muted">Unlock a wallet to swap shielded notes.</div>';
+    // Same wallet as every other Ethereum-lane surface — keeps the concept blurb visible even locked, so
+    // the tab explains itself instead of dead-ending on a one-line "unlock a wallet" message.
+    body.innerHTML = conceptHtml + lockedWalletHTML('swap', 'cswap-unlock-btn');
+    wireUnlockButton('cswap-unlock-btn', helpers);
     return;
   }
   const assetOptions = (ux.assets || []).map((a) => `<option value="${a.assetId}">${esc(shownTicker(a.ticker))}</option>`).join('');
   body.innerHTML = `
     <div class="tab-form">
-    <div class="note-concept"><b>Swap, shielded.</b> Trade one note for another against the
-      confidential AMM — your note balances stay private, but a swap settled on its own moves the pool's public
-      reserves by exactly your trade, so its input and output amounts are visible on-chain. It clears on the
-      <span class="eth-word">Ethereum</span> lane and settles gasless. Instant and note-to-note: you end up holding a <b>shielded note</b>, not real coins.
-      To trade for <span class="btc-word">real sats</span> on Bitcoin, use the <a href="#tab=market">order book</a>.</div>
+    ${conceptHtml}
     <div id="cswap-notes" class="muted">Scanning your notes…</div>
     <div class="divider">
       <label class="field-label" for="cswap-from">From note</label>

@@ -46400,6 +46400,14 @@ function _renderCsendTab() {
   });
 }
 
+// Swap and OTC tabs — same locked-state "Unlock wallet" shape as _renderCsendTab above.
+function _renderSwapTab() {
+  renderSwapTab(wallet, { unlock: async () => { await ensurePrivkey(); _renderSwapTab(); }, isUnlockCancelled });
+}
+function _renderOtcTab() {
+  renderOtcTab(wallet, { unlock: async () => { await ensurePrivkey(); _renderOtcTab(); }, isUnlockCancelled });
+}
+
 // CDP (borrow) tab — same locked-state "Unlock wallet" shape as _renderCsendTab above.
 function _renderCdpTab() {
   renderCdpTab(wallet, {
@@ -46466,11 +46474,11 @@ function _activateTab(name) {
   stopPoolAutoRefresh(); // 'pool'/'farms' redirect in _canonicalTabName; nothing to render
   if (name === 'confidential-pool') { try { renderConfidentialPoolTab(wallet, _crossoutUxSingleton()); } catch (e) { console.error('confidential-pool tab', e); } }
   if (name === 'cdp') { try { _renderCdpTab(); } catch (e) { console.error('cdp tab', e); } }
-  if (name === 'otc') { try { renderOtcTab(wallet); } catch (e) { console.error('otc tab', e); } }
+  if (name === 'otc') { try { _renderOtcTab(); } catch (e) { console.error('otc tab', e); } }
   if (name === 'csend') {
     try { _renderCsendTab(); } catch (e) { console.error('csend tab', e); }
   }
-  if (name === 'cswap') { try { renderSwapTab(wallet); } catch (e) { console.error('cswap tab', e); } }
+  if (name === 'cswap') { try { _renderSwapTab(); } catch (e) { console.error('cswap tab', e); } }
   if (name === 'earn') { try { _renderEarnTab(); } catch (e) { console.error('earn tab', e); } }
   if (name === 'airdrop') { try { renderAirdropTab(wallet, { eth: ethNamesBridge }); } catch (e) { console.error('airdrop tab', e); } }
   if (name === 'points') { try { renderPointsTab(wallet, { eth: evmTradeLaneWallet }); } catch (e) { console.error('points tab', e); } }

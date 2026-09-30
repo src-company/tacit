@@ -107,7 +107,7 @@
      so iOS Safari's stale-modulepreload cache flushes on every change. -->
 <link rel="modulepreload" href="./vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="./prf-wallet.js">
-<link rel="modulepreload" href="./tacit.js?cb=9269ca3c">
+<link rel="modulepreload" href="./tacit.js?cb=42adf059">
 <link rel="modulepreload" href="./bulletproofs-plus.js">
 <link rel="modulepreload" href="./amm-bjj.js">
 <link rel="modulepreload" href="./amm-sigma.js">
@@ -10806,7 +10806,16 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
   <div class="section" style="max-width:560px;margin:0 auto;">
     <div class="section-header">Shielded Swap <span class="chain-badge eth" style="vertical-align:middle;"><span class="dot"></span>Ethereum</span></div>
     <div class="section-body" style="font-size:13px;" id="cswap-body">
-      <div class="muted">Unlock a wallet to swap shielded notes.</div>
+      <div class="note-concept"><b>Swap, shielded.</b> Trade one note for another against the
+        confidential AMM — your note balances stay private, but a swap settled on its own moves the pool's public
+        reserves by exactly your trade, so its input and output amounts are visible on-chain. It clears on the
+        <span class="eth-word">Ethereum</span> lane and settles gasless. Instant and note-to-note: you end up holding a <b>shielded note</b>, not real coins.
+        To trade for <span class="btc-word">real sats</span> on Bitcoin, use the <a href="#tab=market">order book</a>.</div>
+      <div class="tab-locked-empty">
+        <div class="tab-locked-empty-icon">🔒</div>
+        <div class="tab-locked-empty-title">Unlock your wallet to swap</div>
+        <div class="tab-locked-empty-sub">Same wallet as the Bitcoin lane — one identity, both chains. Your keys stay in this browser.</div>
+      </div>
     </div>
   </div>
 </div>
@@ -10816,7 +10825,16 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
   <div class="section" style="max-width:640px;margin:0 auto;">
     <div class="section-header">Confidential OTC <span class="muted" style="font-size:11px;font-weight:400;">note-for-note · fixed terms · settles as a shielded note</span></div>
     <div class="section-body" style="font-size:13px;" id="otc-body">
-      <div class="muted">Unlock a wallet to settle a private over-the-counter swap.</div>
+      <div class="note-concept"><b>Trade note-for-note, privately.</b> A confidential OTC
+        swaps two shielded notes between a specific pair of counterparties atomically — no order book, no price curve,
+        fixed agreed terms. Same From→To shape as a Swap, but the price is what you both agree, not a pool.
+        Instant and note-to-note: you end up holding a <b>shielded note</b>, cleared on the <span class="eth-word">Ethereum</span>
+        lane. For <span class="btc-word">real sats</span>, use the <a href="#tab=market">order book</a>.</div>
+      <div class="tab-locked-empty">
+        <div class="tab-locked-empty-icon">🔒</div>
+        <div class="tab-locked-empty-title">Unlock your wallet to trade OTC</div>
+        <div class="tab-locked-empty-sub">Same wallet as the Bitcoin lane — one identity, both chains. Your keys stay in this browser.</div>
+      </div>
     </div>
   </div>
 </div>
@@ -10826,12 +10844,13 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
   <div class="section" style="max-width:640px;margin:0 auto;">
     <div class="section-header">cUSD &amp; cBTC <span class="muted" style="font-size:11px;font-weight:400;">the bitcoin-backed dollar &amp; conservation-backed BTC</span></div>
     <div class="section-body" style="font-size:13px;" id="cdp-body">
-      <div class="note-concept"><b>cUSD &amp; cBTC.</b>
+      <div class="note-concept"><b>Two steps: get cBTC, then borrow cUSD against it.</b>
+        <b>cBTC</b> is minted 1:1 from a Bitcoin lock only your key can spend; tacBTC is its ERC-20 form. Minting
+        needs an ETH bond too — about 1.5× the lock's value, staked as wstETH and refundable — which deters
+        spending the lock outside a valid exit; it does not back the peg.
         <b>cUSD</b> is the <span class="btc-word">bitcoin-backed dollar</span>: lock cBTC as collateral and mint a
         cUSD note. A position's amounts are public so it can be priced, but its owner is not linked to it.
-        <b>cBTC</b> is minted 1:1 from an SP1-reflected Bitcoin lock; tacBTC is its ERC-20 form. A slashable
-        wstETH escrow (1.5× the lock today) deters spending the lock; it does not back the peg. Both are ordinary
-        shielded notes that transfer, trade and exit like anything else in the pool.</div>
+        Both are ordinary shielded notes that transfer, trade and exit like anything else in the pool.</div>
       <div class="tab-locked-empty">
         <div class="tab-locked-empty-icon">🔒</div>
         <div class="tab-locked-empty-title">Unlock your wallet to borrow</div>
@@ -11862,7 +11881,7 @@ body[data-market-mode="asset"] .market-intro-note { display: none; }
   </div>
 </div>
 
-<script type="module" src="./tacit.js?cb=9269ca3c"></script>
+<script type="module" src="./tacit.js?cb=42adf059"></script>
 
 <!-- Service worker registration moved into tacit.js (the dapp's CSP forbids
      inline scripts; only 'self' module scripts are allowed). See sw.js for

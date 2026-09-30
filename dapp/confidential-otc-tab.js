@@ -17,7 +17,7 @@
 
 import { secp, sha256, keccak_256 } from './vendor/tacit-deps.min.js';
 import { makeConfidentialPoolUx } from './confidential-pool-ux.js';
-import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, copyToClipboard, evmAccountHint, decOf, shownTicker } from './confidential-deployments.js';
+import { confidentialPoolReady, confidentialUnavailableHTML, esc, formatErr, notify, copyToClipboard, evmAccountHint, decOf, shownTicker, lockedWalletHTML, wireUnlockButton } from './confidential-deployments.js';
 import { formatUnits, parseUnits } from './confidential-payout.js';
 import { makeConfidentialOtc } from './confidential-otc.js';
 import { randomScalar } from './bulletproofs-plus.js';
@@ -243,13 +243,21 @@ function wireComposer(wallet, ux, notes) {
   if (tkCopy) tkCopy.onclick = () => copyToClipboard((document.getElementById('otc-tk-out') || {}).value || '', tkCopy);
 }
 
-export async function renderOtcTab(wallet) {
+export async function renderOtcTab(wallet, helpers = {}) {
   const body = el('otc-body');
   if (!body) return;
   if (!confidentialPoolReady()) { body.innerHTML = confidentialUnavailableHTML('Confidential OTC'); return; }
   const ux = getUx();
+  const conceptHtml = `<div class="note-concept"><b>Trade note-for-note, privately.</b> A confidential OTC
+      swaps two shielded notes between a specific pair of counterparties atomically — no order book, no price curve,
+      fixed agreed terms. Same From→To shape as a Swap, but the price is what you both agree, not a pool.
+      Instant and note-to-note: you end up holding a <b>shielded note</b>, cleared on the <span class="eth-word">Ethereum</span>
+      lane. For <span class="btc-word">real sats</span>, use the <a href="#tab=market">order book</a>.</div>`;
   if (!wallet || !wallet.priv) {
-    body.innerHTML = '<div class="muted">Unlock a wallet to settle a private over-the-counter swap.</div>';
+    // Same wallet as every other Ethereum-lane surface — keeps the concept blurb visible even locked, so
+    // the tab explains itself instead of dead-ending on a one-line "unlock a wallet" message.
+    body.innerHTML = conceptHtml + lockedWalletHTML('trade OTC', 'otc-unlock-btn');
+    wireUnlockButton('otc-unlock-btn', helpers);
     return;
   }
   const acct = ux.account(wallet.priv);
@@ -257,11 +265,7 @@ export async function renderOtcTab(wallet) {
   const assetOptions = (ux.assets || []).map((a) => `<option value="${a.assetId}">${esc(shownTicker(a.ticker))}</option>`).join('');
   body.innerHTML = `
     <div class="tab-form">
-    <div class="note-concept"><b>Trade note-for-note, privately.</b> A confidential OTC
-      swaps two shielded notes between a specific pair of counterparties atomically — no order book, no price curve,
-      fixed agreed terms. Same From→To shape as a Swap, but the price is what you both agree, not a pool.
-      Instant and note-to-note: you end up holding a <b>shielded note</b>, cleared on the <span class="eth-word">Ethereum</span>
-      lane. For <span class="btc-word">real sats</span>, use the <a href="#tab=market">order book</a>.</div>
+    ${conceptHtml}
     <div>Account: <code class="addr" style="font-size:11px;">${acct.address}</code></div>
     ${evmAccountHint()}
     <div id="otc-notes" class="muted">Scanning your notes…</div>
