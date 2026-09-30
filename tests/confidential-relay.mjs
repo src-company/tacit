@@ -279,4 +279,46 @@ const swapOp = { reserveAPre: 1000, reserveBPre: 1000, intents: [{ amountIn: 100
   ok('onJob names a queued job to its caller before the job is announced, once, for settles and proofs');
 }
 
+// ───────────────── the memos a proof commits to ─────────────────
+// The same op asked for twice is proved once, with its first memos: prove() hands those back once the guard has
+// checked them, refuses memos that do not check out, and leaves the caller's own when the relay returns none.
+{
+  const q = makeConfidentialSettler({ storage: freshStore(), hash });
+  const BAD = '0x' + 'ee'.repeat(68), checked = [];
+  const guard = {
+    sealMemosForOutputs: ({ outputs }) => outputs.map(() => '0x' + 'cc'.repeat(68)),
+    assertOutputsRecoverable: ({ memos }) => { checked.push(memos[0]); if (memos[0] === BAD) throw new Error('recovery-guard: leaf 0 memo does not open to its leaf'); },
+  };
+  const relay = makeConfidentialRelay({ base: '', fetchImpl: mockFetch(q), guard });
+  const tick = () => new Promise((r) => setImmediate(r)), opts = { intervalMs: 0, sleep: tick };
+  const spec = { type: 'wrap', op: { asset: '0x01', value: '5', cx: '0x02', cy: '0x03', owner: '0x04' }, leaves: ['0x' + '11'.repeat(32)], outputs: [{ ownerPub: '0x02' + 'ab'.repeat(32) }] };
+  const first = ['0x' + 'aa'.repeat(68)], again = ['0x' + 'bb'.repeat(68)];
+  const a = relay.prove({ ...spec, memos: first }, opts);
+  let j; while (!(j = await q.nextJob({ mode: 'prove' }))) await tick();
+  await q.ackJob(j.jobId, { publicValues: '0x01', proof: '0x02' });
+  assert.deepStrictEqual((await a).memos, first, 'a fresh proof carries the memos this call sealed');
+  const b = await relay.prove({ ...spec, memos: again }, opts);
+  assert.strictEqual(b.jobId, j.jobId, 'the same op joins the proven job');
+  assert.deepStrictEqual(b.memos, first, 'the memos the proof commits to, not the second call\'s');
+  assert.ok(checked.includes(first[0]), 'checked by the guard before being handed back');
+
+  // memos that do not open are refused (queued past this client, which would not have sent them)
+  const q2 = makeConfidentialSettler({ storage: freshStore(), hash });
+  const r2 = makeConfidentialRelay({ base: '', fetchImpl: mockFetch(q2), guard });
+  const j2 = await q2.submitJob({ type: spec.type, op: spec.op, memos: [BAD], mode: 'prove' });
+  await q2.nextJob({ mode: 'prove' });
+  await q2.ackJob(j2.jobId, { publicValues: '0x01', proof: '0x02' });
+  await assert.rejects(r2.prove({ ...spec, memos: again }, opts), /recovery-guard/);
+
+  // an older relay that returns no memos leaves the caller's own
+  const r3 = makeConfidentialRelay({ base: '', guard, fetchImpl: async (url, init) => {
+    const res = await mockFetch(q)(url, init);
+    if (!String(url).includes('/confidential/status')) return res;
+    const body = JSON.parse(await res.text()); delete body.memos;
+    return { ...res, text: async () => JSON.stringify(body) };
+  } });
+  assert.deepStrictEqual((await r3.prove({ ...spec, memos: again }, opts)).memos, again);
+  ok('prove() hands back the memos its proof commits to, checked; refuses ones that do not open; keeps the caller\'s when none come back');
+}
+
 console.log(`\n${n} confidential-relay checks passed.`);

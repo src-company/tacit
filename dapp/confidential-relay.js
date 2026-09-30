@@ -218,11 +218,24 @@ export function makeConfidentialRelay({ base, fetchImpl, guard, checkEmittedMemo
   // Convenience: submit a prove-only job and block until the proof is ready. `onJob(jobId)` fires the moment
   // the job is queued (before the long prove wait) so a caller can persist a resumable record — a prove-timeout
   // then leaves the jobId recoverable instead of orphaning the in-flight proof.
+  // A proven result carries `memos`: the ones its proof commits to, which settle() must carry exactly (see
+  // provenMemos).
   async function prove(opSpec, waitOpts = {}) {
     const r = await submitOp({ ...opSpec, mode: 'prove' }, waitOpts);
-    if (r.status === 'proven' || r.status === 'settled') return { jobId: r.jobId, ...(await status(r.jobId)) };
-    return waitForProof(r.jobId, waitOpts);
+    const st = r.status === 'proven' || r.status === 'settled' ? { jobId: r.jobId, ...(await status(r.jobId)) } : await waitForProof(r.jobId, waitOpts);
+    return st.status === 'proven' ? { ...st, memos: provenMemos(st, opSpec, r.sealedMemos) } : st;
   }
 
-  return { submitOp, status, waitForSettle, settle, waitForProof, prove, verifyEmittedMemos };
+  // The same op sent again (a second press, a reload) is proved once, with the memos it was first sent with, and
+  // the relay hands those back with the proof. They are checked as a fresh seal is before anything is sent: each
+  // opens to its leaf under this wallet's key. A relay that returns none (an older one) leaves this call's own.
+  function provenMemos(st, { leaves = [], outputs = null } = {}, sealed = []) {
+    const m = Array.isArray(st.memos) ? st.memos : null;
+    if (!m || (m.length === sealed.length && m.every((x, i) => String(x).toLowerCase() === String(sealed[i]).toLowerCase()))) return sealed;
+    if (!guard || outputs == null) throw new Error('confidential-relay: the proof carries memos other than the ones sealed here, and there is nothing to check them against');
+    guard.assertOutputsRecoverable({ leaves, outputs, memos: m });
+    return m;
+  }
+
+  return { submitOp, status, waitForSettle, settle, waitForProof, prove, provenMemos, verifyEmittedMemos };
 }

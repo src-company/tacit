@@ -904,9 +904,20 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // object returned by buildWrap.
   // `depositTx`: the deposit's transaction, when known. A deposit sent through a tip forwarder carries the relay's tip,
   // which the relay reads from that receipt so the paid wrap is not held to its free-settle allowance.
-  async function submitWrapSettle({ built, waitOpts, depositTx = null } = {}) {
+  // `selfSettle({ publicValues, proof, memos })` → { txHash }: the relay only proves, and the caller sends settle() from
+  // the account it pays with (settleCalldata builds the call). A deposit's id commits to the note it becomes, so it is the
+  // same wrap whoever sends it, and a relayed settle of it still queued finds it done.
+  async function submitWrapSettle({ built, waitOpts, depositTx = null, selfSettle = null } = {}) {
     if (!built || !built.wrapOp) throw new Error('submitWrapSettle: pass the buildWrap() result');
-    const sub = await relay.submitOp({ type: 'wrap', op: built.wrapOp, leaves: [built.leaf], outputs: built.outputs, memos: built.memos, ephRand: built.ephRand, mode: 'settle', depositTx }, waitOpts);
+    const spec = { type: 'wrap', op: built.wrapOp, leaves: [built.leaf], outputs: built.outputs, memos: built.memos, ephRand: built.ephRand };
+    if (selfSettle) {
+      const proven = await relay.prove(spec, waitOpts);
+      if (proven.status === 'settled') return proven;
+      const memos = proven.memos || built.memos;
+      const sent = await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos });
+      return relay.verifyEmittedMemos({ jobId: proven.jobId, status: 'settled', ...sent }, [built.leaf], memos);
+    }
+    const sub = await relay.submitOp({ ...spec, mode: 'settle', depositTx }, waitOpts);
     const st = sub.status === 'settled' ? { jobId: sub.jobId, ...sub } : await relay.waitForSettle(sub.jobId, waitOpts);
     return relay.verifyEmittedMemos(st, [built.leaf], sub.sealedMemos);
   }
@@ -1481,7 +1492,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     let value, calldata;
     if (b.meta.native) {
       value = b.amountWei + ethFeeWei; // wrapAmount + fee; router skims (msg.value − wrapAmount) to feeRecipient
-      calldata = _router.wrapAndSettleETHCalldata({ wrapAmount: b.amountWei, commit: b.depositCommit, publicValues: proven.publicValues, proof: proven.proof, memos: b.memos, feeRecipient: skimTo });
+      calldata = _router.wrapAndSettleETHCalldata({ wrapAmount: b.amountWei, commit: b.depositCommit, publicValues: proven.publicValues, proof: proven.proof, memos: proven.memos || b.memos, feeRecipient: skimTo });
     } else {
       // `permit` lets the CALLER supply a signature from a wallet we don't hold the key for — that is what
       // makes an external-wallet ERC20 wrap possible at all, since the permit must be signed by whoever holds
@@ -1502,7 +1513,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       value = ethFeeWei; // ERC20 wrap: the token is pulled via permit; msg.value IS the ETH fee skim
       calldata = _router.wrapAndSettleWithPermitCalldata({
         token: b.meta.underlying, amount: b.amountWei, commit: b.depositCommit, deadline, v: sig.v, r: sig.r, s: sig.s,
-        publicValues: proven.publicValues, proof: proven.proof, memos: b.memos, feeRecipient: skimTo,
+        publicValues: proven.publicValues, proof: proven.proof, memos: proven.memos || b.memos, feeRecipient: skimTo,
       });
     }
     const nonce = BigInt(await rpc('eth_getTransactionCount', [acct.address, 'pending']));
@@ -3070,10 +3081,13 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     // check validated is never the one that actually ships (see submitOp's own `outputs`+`memos` branch).
     if (!selfRelay && !selfSettle) return relay.settle({ type, ...spec, memos: sealedMemos }, waitOpts);
     const proven = await relay.prove({ type, ...spec, memos: sealedMemos }, waitOpts);
+    if (proven.status === 'settled') return proven;
     // `selfSettle({ publicValues, proof, memos, pair })` → { txHash }: the caller sends settle() from whichever account
-    // it pays with (settleCalldata builds the call), as openCdp's does.
-    if (selfSettle) return proven.status === 'settled' ? proven : { jobId: proven.jobId, ...(await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos: sealedMemos, pair })) };
-    return submitSettle({ settlerPriv: walletPriv, publicValues: proven.publicValues, proof: proven.proof, memos: sealedMemos, pair });
+    // it pays with (settleCalldata builds the call), as openCdp's does. The memos are the ones the proof commits to (an
+    // older relay client returns none, and its proof is over these).
+    const memos = proven.memos || sealedMemos;
+    if (selfSettle) return { jobId: proven.jobId, ...(await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos, pair })) };
+    return submitSettle({ settlerPriv: walletPriv, publicValues: proven.publicValues, proof: proven.proof, memos, pair });
   }
 
   // ── gasless exit (0xbow-style relayed unwrap) ──
@@ -3403,7 +3417,16 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
 
   // Submit a gasless exit to the relay (no user tx) and, by default, block until it settles on-chain.
   // The box collects `fee`; the user receives `net`. Returns the build + { jobId, status, txHash }.
-  async function unwrap({ note, walletPriv, recipient, feeOpts, wait = true, waitOpts } = {}) {
+  // `selfSettle({ publicValues, proof, memos })` → { txHash }: an exit with no fee, the whole value to the recipient; the
+  // relay only proves it and the caller sends settle() from the account it pays with.
+  async function unwrap({ note, walletPriv, recipient, feeOpts, wait = true, waitOpts, selfSettle = null } = {}) {
+    if (selfSettle) {
+      const built = buildUnwrap({ note, walletPriv, recipient, selfSettle: true });
+      const proven = await relay.prove({ type: 'unwrap', op: built.op, memos: [] }, waitOpts);
+      if (proven.status === 'settled') return { ...built, jobId: proven.jobId, status: 'settled', txHash: proven.txHash || null };
+      const sent = await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos: [] });
+      return { ...built, jobId: proven.jobId, status: 'settled', txHash: sent && sent.txHash };
+    }
     const ticker = tickerOf(note.asset) || 'cETH';
     const minFee = (feeOpts && feeOpts.minFee != null) ? feeOpts.minFee : await gasAwareMinFee(ticker, 'unwrap');
     const built = buildUnwrap({ note, walletPriv, recipient, feeOpts: { ...feeOpts, minFee } });
@@ -3416,18 +3439,18 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // Fungible exit (OP_SEND_AND_UNWRAP): spend ONE note → pay an EXACT `amount` out to `recipient` (public) and
   // keep the remainder as a hidden change note back to self — one proof, relay-settled. `amount` is debited from
   // the note; the recipient receives amount − fee. Falls back to the whole-note unwrap when there's no change.
-  async function sendUnwrap({ note, walletPriv, recipient, amount, feeOpts, wait = true, waitOpts } = {}) {
+  // With `selfSettle` (as unwrap's), there is no fee: the recipient receives all of `amount`.
+  async function sendUnwrap({ note, walletPriv, recipient, amount, feeOpts, wait = true, waitOpts, selfSettle = null } = {}) {
     if (!note) throw new Error('sendUnwrap: note required');
     const ticker = tickerOf(note.asset) || 'cETH';
     amount = BigInt(amount);
     const noteValue = BigInt(note.value);
     if (amount > noteValue) throw new Error('sendUnwrap: amount exceeds the note (merge notes first)');
-    const minFee = (feeOpts && feeOpts.minFee != null) ? feeOpts.minFee : await gasAwareMinFee(ticker, 'sendunwrap');
-    const { fee } = quoteUnwrapFee(amount, ticker, { ...feeOpts, minFee });
+    const fee = selfSettle ? 0n : quoteUnwrapFee(amount, ticker, { ...feeOpts, minFee: (feeOpts && feeOpts.minFee != null) ? feeOpts.minFee : await gasAwareMinFee(ticker, 'sendunwrap') }).fee;
     const payout = amount - fee;
     if (payout <= 0n) throw new Error('sendUnwrap: amount too small for the relay fee');
     const change = noteValue - amount;
-    if (change === 0n) return unwrap({ note, walletPriv, recipient, feeOpts, wait, waitOpts }); // exact-size note → whole-note exit
+    if (change === 0n) return unwrap({ note, walletPriv, recipient, feeOpts, wait, waitOpts, selfSettle }); // exact-size note → whole-note exit
     const id = identity(walletPriv);
     const to = _evmAddr(recipient, 'sendUnwrap: recipient');
     const beHex = (n) => '0x' + BigInt(n).toString(16).padStart(64, '0');
@@ -3458,8 +3481,18 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       pokR: built.pokR, pokZv: built.pokZv, pokZr: built.pokZr, change: built.change,
       rangeProof: built.rangeProof, kernel: { R: built.kernelR, z: built.kernelZ },
     };
-    const sub = await relay.submitOp({ type: 'sendunwrap', op, leaves: [changeLeaf], outputs: changeOut, ephRand }, waitOpts);
     const out = { ...built, fee, payout, change, recipient: to, ticker };
+    if (selfSettle) {
+      const spec = { type: 'sendunwrap', op, leaves: [changeLeaf], outputs: changeOut };
+      const sealed = guard.sealMemosForOutputs({ outputs: changeOut, ephRand });
+      const proven = await relay.prove({ ...spec, memos: sealed }, waitOpts);
+      if (proven.status === 'settled') return { ...out, jobId: proven.jobId, status: 'settled', txHash: proven.txHash || null };
+      const memos = proven.memos || sealed;
+      const sent = await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos });
+      const checked = await relay.verifyEmittedMemos({ jobId: proven.jobId, status: 'settled', ...sent }, [changeLeaf], memos);
+      return { ...out, jobId: proven.jobId, status: 'settled', txHash: checked.txHash, ...(checked.memoCheck ? { memoCheck: checked.memoCheck } : {}) };
+    }
+    const sub = await relay.submitOp({ type: 'sendunwrap', op, leaves: [changeLeaf], outputs: changeOut, ephRand }, waitOpts);
     // The memo comparison is the only thing that catches a relay sealing something other than what was handed to
     // it, and the change note is the leaf it would substitute. Not waiting for the settle must not quietly skip
     // that: `verifyMemos()` runs the same check on demand, and until it has run the result says so instead of

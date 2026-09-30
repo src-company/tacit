@@ -938,6 +938,106 @@ test('relayed settle: a memo sealed afresh for the same note, as when one deposi
   assert.ok(!('depositTx' in subs[0]) && subs[1].depositTx === '0x' + 'ee'.repeat(32) && !('depositTx' in subs[1].op), 'depositTx rides beside the op');
 });
 
+// Finishing a deposit from the page's own account: the relay only proves, and the settle carries the memos its proof
+// commits to. The same deposit sent for a proof twice is proved once, with the first memos, so those are the ones sent,
+// once they are seen to open to the note under this wallet's key; memos that do not are refused before anything is sent.
+test('self-settled wrap: proved by the relay, sent by the caller with the memos the proof commits to', async () => {
+  const w32 = (n) => BigInt(n).toString(16).padStart(64, '0');
+  const encodeLeavesInserted = (leaves, memos) => {
+    const lv = [w32(leaves.length), ...leaves.map((l) => String(l).replace(/^0x/, '').padStart(64, '0'))].join('');
+    const bodies = memos.map((m) => { const h = String(m).replace(/^0x/, ''); const len = h.length / 2; return w32(len) + h.padEnd(Math.ceil(len / 32) * 64, '0'); });
+    let off = 32 * memos.length; const heads = [];
+    for (const b of bodies) { heads.push(w32(off)); off += b.length / 2; }
+    return '0x' + w32(64) + w32(64 + lv.length / 2) + lv + w32(memos.length) + heads.join('') + bodies.join('');
+  };
+  const subs = [], sent = [];
+  let proofMemos = null, first = null;
+  const ux = makeConfidentialPoolUx({ ...deps, fetchImpl: async (url, opts) => {
+    const body = opts && opts.body ? JSON.parse(opts.body) : null;
+    let obj;
+    if (String(url).includes('/confidential/submit')) { subs.push(body); obj = { jobId: 'p', status: 'pending' }; }
+    else if (String(url).includes('/confidential/status')) obj = { jobId: 'p', mode: 'prove', status: 'proven', publicValues: '0x01', proof: '0x02', memos: proofMemos };
+    else if (body && body.method === 'eth_getTransactionReceipt') {
+      obj = { result: { logs: [{ address: ux.cfg.pool, topics: [makeConfidentialEvmLogTopic(), '0x' + w32(9)], data: encodeLeavesInserted([first.leaf], sent.at(-1).memos) }] } };
+    } else obj = { result: '0x0' };
+    return { ok: true, status: 200, json: async () => obj, text: async () => JSON.stringify(obj) };
+  } });
+  const walletPriv = '0x' + '6c'.repeat(32), waitOpts = { intervalMs: 0, sleep: async () => {} };
+  const selfSettle = async (x) => { sent.push(x); return { txHash: '0x' + 'dd'.repeat(32) }; };
+  first = ux.buildWrap({ walletPriv, amountWei: '1000000000000000', ticker: 'cETH', index: 4 });
+  const again = ux.buildWrap({ walletPriv, amountWei: '1000000000000000', ticker: 'cETH', index: 4 });
+
+  proofMemos = first.memos;
+  const r = await ux.submitWrapSettle({ built: again, waitOpts, depositTx: '0x' + 'ee'.repeat(32), selfSettle });
+  assert.equal(subs[0].mode, 'prove', 'the relay is asked for a proof only');
+  assert.ok(!('depositTx' in subs[0]), 'nothing for the relay to be paid by');
+  assert.deepEqual(sent[0], { publicValues: '0x01', proof: '0x02', memos: first.memos }, 'the memos the proof commits to, not a fresh seal');
+  assert.equal(r.status, 'settled');
+  assert.equal(r.txHash, '0x' + 'dd'.repeat(32));
+  assert.equal(r.memoCheck.ok, true);
+
+  // Memos for another note (another index) are not this deposit's: refused, and nothing is sent.
+  proofMemos = ux.buildWrap({ walletPriv, amountWei: '1000000000000000', ticker: 'cETH', index: 5 }).memos;
+  await assert.rejects(ux.submitWrapSettle({ built: again, waitOpts, selfSettle }), /recovery-guard/);
+  assert.equal(sent.length, 1, 'nothing sent');
+
+  // A relay that returns no memos (an older one) leaves this call's own.
+  proofMemos = null;
+  await ux.submitWrapSettle({ built: again, waitOpts, selfSettle });
+  assert.deepEqual(sent[1].memos, again.memos);
+});
+
+// An exit sent from the page's own account has no relay fee: the recipient receives the whole amount, the relay only
+// proves it, and the change note's memo is checked like any other.
+test('self-settled exit: no fee, the whole amount to the recipient, proved only and sent by the caller', async () => {
+  const w32 = (n) => BigInt(n).toString(16).padStart(64, '0');
+  const encodeLeavesInserted = (leaves, memos) => {
+    const lv = [w32(leaves.length), ...leaves.map((l) => String(l).replace(/^0x/, '').padStart(64, '0'))].join('');
+    const bodies = memos.map((m) => { const h = String(m).replace(/^0x/, ''); const len = h.length / 2; return w32(len) + h.padEnd(Math.ceil(len / 32) * 64, '0'); });
+    let off = 32 * memos.length; const heads = [];
+    for (const b of bodies) { heads.push(w32(off)); off += b.length / 2; }
+    return '0x' + w32(64) + w32(64 + lv.length / 2) + lv + w32(memos.length) + heads.join('') + bodies.join('');
+  };
+  const state = { subs: [], sent: [] };
+  const ux = makeConfidentialPoolUx({ ...deps, fetchImpl: async (url, opts) => {
+    const body = opts && opts.body ? JSON.parse(opts.body) : null;
+    let obj;
+    if (String(url).includes('/confidential/submit')) { state.subs.push(body); obj = { jobId: 'x', status: 'pending' }; }
+    else if (String(url).includes('/confidential/status')) obj = { jobId: 'x', mode: 'prove', status: 'proven', publicValues: '0x03', proof: '0x04', memos: state.subs.at(-1).memos };
+    else if (body && body.method === 'eth_getTransactionReceipt') {
+      const { op } = state.subs.at(-1);
+      const leaf = ux.pool.leaf(op.asset, op.change[0].cx, op.change[0].cy, op.change[0].owner);
+      obj = { result: { logs: [{ address: ux.cfg.pool, topics: [makeConfidentialEvmLogTopic(), '0x' + w32(1)], data: encodeLeavesInserted([leaf], state.sent.at(-1).memos) }] } };
+    } else obj = { result: '0x0' };
+    return { ok: true, status: 200, json: async () => obj, text: async () => JSON.stringify(obj) };
+  } });
+  const walletPriv = '0x' + '5f'.repeat(32), recipient = '0x' + '12'.repeat(20), waitOpts = { intervalMs: 0, sleep: async () => {} };
+  const selfSettle = async (x) => { state.sent.push(x); return { txHash: '0x' + 'ab'.repeat(32) }; };
+  const { note } = transferFixture(ux, walletPriv);
+  const amount = BigInt(note.value) / 2n;
+  const r = await ux.sendUnwrap({ note, walletPriv, recipient, amount, waitOpts, selfSettle });
+  const sub = state.subs[0];
+  assert.equal(sub.mode, 'prove');
+  assert.equal(sub.type, 'sendunwrap');
+  assert.equal(sub.op.fee, '0');
+  assert.equal(BigInt(sub.op.payout), amount, 'the whole amount');
+  assert.equal(state.sent[0].memos.length, 1);
+  assert.equal(r.fee, 0n);
+  assert.equal(r.status, 'settled');
+  assert.equal(r.txHash, '0x' + 'ab'.repeat(32));
+  assert.equal(r.memoCheck.ok, true);
+
+  // The whole note: an unwrap, also with no fee and no memo.
+  const whole = await ux.sendUnwrap({ note, walletPriv, recipient, amount: BigInt(note.value), waitOpts, selfSettle });
+  const sub2 = state.subs[1];
+  assert.equal(sub2.type, 'unwrap');
+  assert.equal(sub2.mode, 'prove');
+  assert.equal(sub2.op.fee, '0');
+  assert.deepEqual(sub2.memos, []);
+  assert.equal(whole.net, BigInt(note.value));
+  assert.equal(whole.txHash, '0x' + 'ab'.repeat(32));
+});
+
 // A memo the relay replaced leaves the chain unable to open the note. The sealed memos are kept on the device under
 // the settle's tx hash, and the balance scan applies them, so the note stays in the balance there.
 test('relayed settle: a replaced memo is kept locally and the balance scan still recovers the note', async () => {

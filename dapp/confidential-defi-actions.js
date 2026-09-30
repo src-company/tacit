@@ -45,7 +45,7 @@ export function makeConfidentialDefiActions({ pool, cdp, farm, relay, id, chainB
   // selfSettle: optional async ({ publicValues, proof, memos }) → { txHash } that sends the pool's settle() itself.
   // The relay then only proves, and the borrower's own account is the settle's sender (which the points program
   // credits for the mint, and which links that account to this loan). The memos passed are the ones the proof
-  // commits to, sealed once here; settling any other sealing fails MemoLeafMismatch.
+  // commits to (relay.provenMemos checks them); settling any other sealing fails MemoLeafMismatch.
   async function openCdp({ controller, debtValue, rateSnapshot, fee = 0n, collateral, spendRoot, debtBlinding, positionOwner, debtNk, acknowledgeFeeShortfall = false, selfSettle = null, waitOpts }) {
     // nonce is pinned to 0, so the fresh per-position owner is the sole source of leaf uniqueness: reusing the
     // account owner here would link every position and risk two same-parameter positions colliding to one leaf
@@ -68,7 +68,8 @@ export function makeConfidentialDefiActions({ pool, cdp, farm, relay, id, chainB
     const job = await relay.submitOp({ ...spec, mode: 'prove' }, waitOpts);
     const proven = job.status === 'proven' || job.status === 'settled' ? await relay.status(job.jobId) : await relay.waitForProof(job.jobId, waitOpts);
     if (proven.status === 'settled') return { ...proven, jobId: job.jobId };
-    return { jobId: job.jobId, ...(await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos: job.sealedMemos })) };
+    const memos = typeof relay.provenMemos === 'function' ? relay.provenMemos(proven, spec, job.sealedMemos) : job.sealedMemos;
+    return { jobId: job.jobId, ...(await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos })) };
   }
 
   // CDP close — burn the debt notes + release the basket (first leg net of fee). Each released leg is a minted
