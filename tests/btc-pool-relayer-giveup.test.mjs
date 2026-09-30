@@ -81,3 +81,38 @@ test('a broadcast carrier is left alone — it has its own give-up', async () =>
   assert.equal(c.state, 'broadcast', 'broadcast carrier must not use the unbroadcast give-up');
   assert.equal(p.state, 'carried');
 });
+
+// A quote is the last moment a refusal is free: nothing has been proved yet, so the wallet just funds the
+// spend itself. Once a payload is handed across, the same refusal costs a proof.
+const ASSET = '0x' + 'cd'.repeat(32);
+
+function relayerWithCoins(coins) {
+  const clock = { t: 1_000_000 };
+  return createRelayer({
+    network: 'signet',
+    btcKey: new Uint8Array(32).fill(0x11),
+    poolSeed: new Uint8Array(32).fill(0x22),
+    fees: { [ASSET.slice(2)]: 10n },
+    pool: { tip: () => 100, rootAt: () => ROOT, isSpent: () => false, chainTip: () => 100 },
+    verifier: { enabled: false, verify: async () => true },
+    chain: {
+      utxos: async () => coins.map((v, i) => ({ txid: String(i).repeat(64).slice(0, 64), vout: 0, value: v, status: { confirmed: true } })),
+      feeRate: async () => 1,
+      broadcast: async () => { throw new Error('offline'); },
+      txStatus: async () => null,
+    },
+    now: () => clock.t,
+  });
+}
+
+test('a relayer that cannot fund a carrier refuses the quote instead of taking the job', async () => {
+  const r = relayerWithCoins([5000]);                      // one coin: it can bind, nothing left to fund
+  await assert.rejects(() => r.quote({ asset: ASSET }), /cannot fund a carrier/);
+});
+
+test('the coins the live relayer holds still get a quote', async () => {
+  const r = relayerWithCoins([13193, 1438]);               // binds the 1438, funds from the 13193
+  const q = await r.quote({ asset: ASSET });
+  assert.ok(q.quoteId, 'no quote issued');
+  assert.equal(q.bind.vout, 0);
+});

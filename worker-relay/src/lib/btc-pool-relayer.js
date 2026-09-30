@@ -276,6 +276,9 @@ export function createRelayer({
   // serve here: it is measured from broadcastAt, which a carrier that never broadcasts never sets. Set
   // below the client's own patience so it reads a reason and self-funds, rather than timing out blind.
   buildGiveUpMs = 4 * 60_000,
+  // What the coins left after the bind must add up to before a quote is given. The carrier's real cost is
+  // only known once a batch is built; this is the floor under which it certainly cannot be paid for.
+  minCarrierSats = 3000,
   maxQuotes = 1024, maxQuotesPerClient = 8, quoteTtlMs = 600_000, retainMs = 24 * 3600_000,
   rateLimit = null, now = () => Date.now(), log = () => {}, aggregator = null, aggMin = 2,
 } = {}) {
@@ -334,8 +337,17 @@ export function createRelayer({
         && (!u.scriptpubkey || strip(u.scriptpubkey) === spkHex))
       .sort((a, b) => a.value - b.value);
     if (!free.length) throw new RelayError(503, 'no confirmed relayer UTXO free to bind');
-    reservedUtxos.add(opKey(free[0]));
-    return { txid: free[0].txid, vout: free[0].vout, value: free[0].value };
+    // Binding a coin was the whole check, but a bound batch still has to be funded from the coins left
+    // over — and that was discovered inside buildCarrier, long after the payer had proved and handed the
+    // payload across. Refusing here costs them nothing: no proof has been made yet, and the wallet funds
+    // the spend itself the moment a quote does not come back.
+    const [bind, ...rest] = free;
+    const restSats = rest.reduce((a, u) => a + u.value, 0);
+    if (!rest.length || restSats < minCarrierSats) {
+      throw new RelayError(503, `relayer cannot fund a carrier: ${rest.length} coin(s) free after the bind, ${restSats} sats`);
+    }
+    reservedUtxos.add(opKey(bind));
+    return { txid: bind.txid, vout: bind.vout, value: bind.value };
   }
   async function openBatch() {
     if (batch && !batch.closed && !batch.draining) return batch;
@@ -1074,7 +1086,7 @@ export function parseFees(s) {
   return m;
 }
 
-export function makeEsploraRelayChain(bases, { fetchImpl = fetch, feeTarget = '3', timeoutMs = 20000 } = {}) {
+export function makeEsploraRelayChain(bases, { fetchImpl = fetch, feeTarget = '3', timeoutMs = 20000, fallbackBroadcast = null } = {}) {
   const list = (Array.isArray(bases) ? bases : String(bases).split(',')).map((b) => b.trim().replace(/\/$/, '')).filter(Boolean);
   async function req(path, init) {
     let last;
@@ -1084,15 +1096,27 @@ export function makeEsploraRelayChain(bases, { fetchImpl = fetch, feeTarget = '3
         const text = (await r.text()).trim();
         if (r.ok) return text;
         last = Object.assign(new Error(`${path} -> ${r.status} ${text.slice(0, 200)}`), { status: r.status });
-        if (init?.method === 'POST' && r.status === 400) throw last;
-      } catch (e) { last = e; if (e.status === 400 && init?.method === 'POST') break; }
+        // A 400 on a broadcast used to end the loop, on the reading that the transaction is simply invalid.
+        // Often it is instead the node's own policy talking — its minimum relay fee, a standardness rule,
+        // its mempool already full — and those differ between nodes, so one strict base was deciding the
+        // broadcast for all of them. Ask the rest; an invalid transaction just collects the same answer.
+      } catch (e) { last = e; }
     }
     throw last;
   }
   return {
     utxos: async (addr) => JSON.parse(await req(`/address/${addr}/utxo`)),
     feeRate: async () => { const f = JSON.parse(await req('/fee-estimates')); return Number(f[feeTarget] ?? f['6'] ?? 1); },
-    broadcast: (hex) => req('/tx', { method: 'POST', body: hex, headers: { 'Content-Type': 'text/plain' } }),
+    broadcast: async (hex) => {
+      try { return await req('/tx', { method: 'POST', body: hex, headers: { 'Content-Type': 'text/plain' } }); }
+      catch (e) {
+        if (!fallbackBroadcast) throw e;
+        // Every esplora refused. They share a view and frequently a policy, so another of them is not a
+        // second opinion — a node of our own is, and it is the only path here that does not end at esplora.
+        try { return await fallbackBroadcast(hex); }
+        catch (e2) { throw Object.assign(new Error(`${e.message}; own node: ${e2.message}`), { status: e.status }); }
+      }
+    },
     txStatus: async (txid) => { try { return JSON.parse(await req(`/tx/${txid}/status`)); } catch (e) { if (e.status === 404) return null; throw e; } },
     outspend: async (txid, vout) => JSON.parse(await req(`/tx/${txid}/outspend/${vout}`)),
   };
@@ -1134,10 +1158,12 @@ export function startBtcPoolRelayerFromEnv({ ix, store = null, verifier, network
   // Mempool source: esplora (default on signet), bitcoind (default on mainnet), or off.
   let source = env.BTC_POOL_RELAYER_MEMPOOL || (env.BTC_POOL_RELAYER_MEMPOOL_WATCH === '0' ? 'off' : network === 'mainnet' ? 'bitcoind' : 'esplora');
   let mempool = null;
+  let bitcoind = null;
+  const ownNode = () => makeBitcoindRpc({ url: env.BTC_POOL_BITCOIND_URL, user: env.BTC_POOL_BITCOIND_USER ?? null, pass: env.BTC_POOL_BITCOIND_PASS ?? null });
   if (source === 'bitcoind') {
     if (!env.BTC_POOL_BITCOIND_URL) throw new Error('BTC_POOL_RELAYER_MEMPOOL=bitcoind requires BTC_POOL_BITCOIND_URL');
-    const rpc = makeBitcoindRpc({ url: env.BTC_POOL_BITCOIND_URL, user: env.BTC_POOL_BITCOIND_USER ?? null, pass: env.BTC_POOL_BITCOIND_PASS ?? null });
-    mempool = makeBitcoindMempool({ rpc, maxFetchPerRefresh: num('BTC_POOL_RELAYER_MEMPOOL_FETCH', 5000), log });
+    bitcoind = ownNode();
+    mempool = makeBitcoindMempool({ rpc: bitcoind, maxFetchPerRefresh: num('BTC_POOL_RELAYER_MEMPOOL_FETCH', 5000), log });
   } else if (source === 'esplora') {
     mempool = makeMempoolWatch({ bases, maxTxids: num('BTC_POOL_RELAYER_MEMPOOL_MAX_TXIDS', 20_000), maxFetchPerRefresh: num('BTC_POOL_RELAYER_MEMPOOL_FETCH', 200), log });
   } else if (source !== 'off') throw new Error('BTC_POOL_RELAYER_MEMPOOL must be esplora, bitcoind or off');
@@ -1156,7 +1182,14 @@ export function startBtcPoolRelayerFromEnv({ ix, store = null, verifier, network
     fees: parseFees(env.BTC_POOL_RELAYER_FEES),
     pool: poolViewFromIndexer(ix),
     verifier,
-    chain: makeEsploraRelayChain(bases, { feeTarget: env.BTC_POOL_RELAYER_FEE_TARGET || '3' }),
+    // Our own node is also the only broadcast path that does not go through esplora, so it is wired up
+    // whenever its URL is set — not only when it happens to be the mempool source too.
+    chain: makeEsploraRelayChain(bases, {
+      feeTarget: env.BTC_POOL_RELAYER_FEE_TARGET || '3',
+      fallbackBroadcast: (bitcoind ||= env.BTC_POOL_BITCOIND_URL ? ownNode() : null)
+        ? (hex) => bitcoind('sendrawtransaction', [hex])
+        : null,
+    }),
     mempool,
     persist: store && store.relay ? store.relay : null,
     exitSats: num('BTC_POOL_RELAYER_EXIT_SATS', 546),
