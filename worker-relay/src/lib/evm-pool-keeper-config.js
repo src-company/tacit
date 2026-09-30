@@ -5,6 +5,7 @@
 // nonce is shared by several services, and a second signer on it would race them.
 
 import { getAddress, isAddress } from 'viem';
+import { privateSettleUrl } from './config.js';
 import { RECEIVE_FEE_BPS } from '../../../dapp/evm-pool-gateway.js';
 
 const ETH = '0x0000000000000000000000000000000000000000';
@@ -69,7 +70,9 @@ export function loadKeeperConfig(env = process.env) {
     router: getAddress(router),
     chainId,
     rpcUrls: [rpcUrl, ...list(str(env, 'EVM_POOL_RPC_URLS_FALLBACK'))].filter((u, i, a) => a.indexOf(u) === i),
-    sendRpcUrls: list(str(env, 'EVM_POOL_KEEPER_SEND_RPC_URLS', sendDefault)),
+    // Through the same normaliser the settle path uses: these carry a fee payable to whoever sends them,
+    // so an endpoint in its searcher-visible mode invites a copy landed first for that fee.
+    sendRpcUrls: list(str(env, 'EVM_POOL_KEEPER_SEND_RPC_URLS', sendDefault)).map(privateSettleUrl),
     allowPublicSend: str(env, 'EVM_POOL_KEEPER_ALLOW_PUBLIC', '1') !== '0',
     dryRun: str(env, 'EVM_POOL_KEEPER_DRY_RUN', '0') === '1',
 

@@ -10,6 +10,7 @@ import { createPublicClient, createWalletClient, fallback, http } from 'viem';
 import { mainnet } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 import { maxBuyFor, chooseBuy, cooldownLeft, VENUE_TACIT, VENUE_PRECISION } from './lib/buyback-plan.js';
+import { privateSettleUrl } from './lib/config.js';
 
 const log = (...a) => console.log(`[buyback ${new Date().toISOString()}]`, ...a);
 const env = process.env;
@@ -20,7 +21,11 @@ const MIN_BUY_WEI = BigInt(env.BUYBACK_MIN_BUY_WEI || '1000000000000000'); // 0.
 const DEADLINE_SECS = Number(env.BUYBACK_DEADLINE_SECS || 300);
 const DRY_RUN = env.BUYBACK_DRY_RUN === '1';
 const READ_RPCS = [env.RPC_URL, ...(env.RPC_URLS_FALLBACK || 'https://ethereum-rpc.publicnode.com').split(',')].filter(Boolean);
-const SEND_RPCS = (env.SETTLE_RPC_URLS || 'https://rpc.flashbots.net,https://rpc.mevblocker.io').split(',').filter(Boolean);
+// SETTLE_RPC_URLS is shared with the settle service, which runs every entry through privateSettleUrl; read
+// raw here it would use the same hosts in their searcher-visible mode, so a buyback could be front-run for
+// the price it is about to move. Same normalisation, same env.
+const SEND_RPCS = (env.SETTLE_RPC_URLS || 'https://rpc.flashbots.net,https://rpc.mevblocker.io')
+  .split(',').filter(Boolean).map(privateSettleUrl);
 
 const BUYBACK_ABI = [
   ...['AMM', 'PRECISION', 'KEEPER'].map((name) => ({ type: 'function', name, stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] })),

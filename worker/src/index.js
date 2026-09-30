@@ -2246,7 +2246,14 @@ async function handleReflectionAck(req, env, cors) {
   const jobId = String(body.jobId || '');
   const stash = await readReflectionStash(env, network, jobId);
   if (!stash) return jsonResponse({ ok: false, error: 'unknown or expired jobId — re-fetch /reflection/job' }, 409, cors);
-  const r = await applyReflectionAck(env, network, att, jobId, stash, Number(body.attestedTo) | 0, String(body.txHash || ''));
+  // The height comes from the stash, never the caller. It is the height the stashed snapshot actually
+  // covers, and writing a different one leaves cursor and snapshot describing different chains — after
+  // which every later batch chains from the wrong priorDigest. The body's value is only cross-checked.
+  const stashedTo = Number(stash.attestedTo) | 0;
+  if (!stashedTo) return jsonResponse({ ok: false, error: 'stash carries no attestedTo' }, 409, cors);
+  const claimed = Number(body.attestedTo) | 0;
+  if (claimed && claimed !== stashedTo) console.warn(`reflection ack ${jobId}: caller says attestedTo=${claimed}, stash says ${stashedTo} — using the stash`);
+  const r = await applyReflectionAck(env, network, att, jobId, stash, stashedTo, String(body.txHash || ''));
   return jsonResponse({ ok: true, ...r }, 200, cors);
 }
 

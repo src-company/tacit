@@ -30,6 +30,9 @@ const P2WPKH_IN_BASE = 41;
 const P2WPKH_IN_WIT = 1 + 1 + 72 + 1 + 33;
 const TERMINAL = new Set(['confirmed', 'dropped', 'rejected', 'replayed-elsewhere']);
 const CARRIER_DONE = new Set(['confirmed', 'dropped', 'empty', 'cancelled']);
+// States in which each transaction has actually been broadcast, so its txid is worth reporting.
+const REVEAL_OUT = new Set(['broadcast', 'confirmed']);
+const COMMIT_OUT = new Set(['committed', 'broadcast', 'confirmed', 'cancelling', 'cancelled']);
 
 const strip = (h) => String(h).replace(/^0x/i, '').toLowerCase();
 const toHex = (v) => (v == null ? null : typeof v === 'string' ? strip(v) : bytesToHex(v));
@@ -546,7 +549,12 @@ export function createRelayer({
     const p = payloads.get(String(id));
     if (!p) return null;
     return {
-      id: p.id, state: p.state, reason: p.reason || null, carrier: p.carrier?.revealTxid || null, commit: p.carrier?.commitTxid || null,
+      // Both txids exist as soon as the carrier is signed, but the client stops polling the moment it sees
+      // `carrier` and shows it as sent. Reporting one before it is broadcast hands back a txid that may
+      // never exist and, worse, stops the wallet funding the spend itself. Report what is on the wire.
+      id: p.id, state: p.state, reason: p.reason || null,
+      carrier: p.carrier && REVEAL_OUT.has(p.carrier.state) ? p.carrier.revealTxid || null : null,
+      commit: p.carrier && COMMIT_OUT.has(p.carrier.state) ? p.carrier.commitTxid || null : null,
       ...(p.foreignTxid ? { foreignTxid: p.foreignTxid, feeViaForeign: p.feeViaForeign ?? null } : {}),
     };
   }

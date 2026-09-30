@@ -1734,7 +1734,14 @@ test('verifier: pinned key loads; a mismatched pin disables it; garbage proofs f
   assert.equal(off.verify, null);
   assert.match(off.reason, /not the pinned/);
   assert.equal(logs.length, 1);
-  assert.equal(makeBtcPoolVerifier({ network: 'mainnet', env: {}, log: () => {} }).enabled, false, 'signet pin on mainnet');
+  // The pin names every network it is good for, and mainnet joined it when the mainnet pool went live —
+  // one universal SRS, no circuit-specific setup, so both networks verify against the same key. What must
+  // still be refused is a network the pin does not name.
+  const mn = makeBtcPoolVerifier({ network: 'mainnet', env: {}, log: () => {} });
+  assert.equal(mn.enabled, true, mn.reason);
+  assert.equal(mn.vkHash, PIN.vk_hash, 'mainnet must verify against the pinned key');
+  const foreign = makeBtcPoolVerifier({ network: 'regtest', env: {}, log: () => {} });
+  assert.equal(foreign.enabled, false, 'a pin that does not name the network must disable verification');
   const pubs = Array(12).fill('0');
   assert.equal(await v.verify({ proof: PROOF, publics: pubs }), false);
   assert.equal(await v.verify({ proof: new Uint8Array(HALO2_PROOF_LEN - 1), publics: pubs }), false);
