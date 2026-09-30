@@ -46,6 +46,11 @@ import { bppRangeProve, bigintToBytes32, pointToBytes, pedersenCommit } from './
 const HEX32 = /^0x[0-9a-fA-F]{64}$/;
 const DUST = 546;
 const MIN_RELAY_RATE = 1;
+// OP_DROP's dummy input when spending homeScriptS outside the burn-deposit reveal -- an empty push, the
+// minimal valid witness item. homeScriptS = OP_DROP <K1> OP_CHECKSIG needs exactly one stack item ABOVE the
+// signature for OP_DROP to remove before OP_CHECKSIG runs, regardless of whether anything meaningful rides in
+// that slot -- Bitcoin's OP_DROP only cares that a stack item is there, never its content.
+const EMPTY_ITEM = new Uint8Array(0);
 const lc = (x) => String(x || '').toLowerCase();
 const stripHex = (x) => String(x).replace(/^0x/, '');
 const reverseHex = (h) => stripHex(h).match(/../g).reverse().join('');
@@ -64,6 +69,9 @@ export function makeBurnDepositReveal({ pool, secp, prims: defaultPrims = null }
     'p2wpkhScript', 'feeFor', 'getFeeRate', 'getUtxos', 'signP2wpkhInput', 'signTaprootScriptPathInput',
     'serializeTx', 'txid', 'broadcast', 'broadcastWithRetry', 'estCommitVb', 'DUST', 'bytesToHex', 'hexToBytes', 'sha256'];
   const MIGRATE_NEED = ['encodeCXferBppPayload', 'computeKernelMsg', 'deriveChangeBlinding', 'deriveAmountKeystreamSelf', 'encryptAmount', 'signSchnorr', 'modN'];
+  // buildCancelTx alone needs tapSighash directly (not just BASE_NEED's signTaprootScriptPathInput, which
+  // hardcodes vin index 0 -- see buildCancelTx's own header comment for why that matters here specifically).
+  const CANCEL_NEED = ['tapSighash'];
   function primsOf(p, extra = []) {
     const x = p || defaultPrims;
     if (!x) throw new Error('burn-deposit-reveal: pass prims (makeBtcWallet(...).prims, extended per this module\'s header comment)');
@@ -382,7 +390,177 @@ export function makeBurnDepositReveal({ pool, secp, prims: defaultPrims = null }
     }
   }
 
-  return { deriveBurnHomeKey, planMigrationToBurnHome, buildMigrationTxs, reconstructBurnHome, planBurnDepositReveal, buildBurnDepositRevealTxs };
+  // ---- Phase 3: cancel — reclaim a stuck burn-home by moving its value into an ORDINARY note, via an
+  // ordinary cxfer. This is "un-migrate": the exact same T_CXFER_BPP shape buildMigrationTxs itself uses to
+  // move a note's value INTO a burn-home, run once more to move it back OUT, to a plain P2WPKH note this
+  // wallet already knows how to find and spend (the same "self" derivation buildMigrationTxs already uses for
+  // its own sats change: deriveChangeBlinding/deriveAmountKeystreamSelf, anchored to the note being spent).
+  //
+  // An earlier version of this reclaim spent the burn-home with a bare signature, no envelope at all. That
+  // was a real mistake, not a simplification: T_CXFER_BPP's own wire format has no asset_input_count field
+  // (unlike T_AXFER, which needs one precisely because CXFER doesn't — see encodeAxferPayload's own comment)
+  // — CXFER hard-assumes exactly one asset input, and it is ALWAYS the SEPARATE input at vin[1], never the
+  // envelope-carrying input at vin[0]. A bare payment carries no envelope at all, so classifyConfidentialTx
+  // (extractTaprootEnvelope → parseCxferEnvelopeFull) recognizes nothing, and the confidential value —
+  // already unlinked from its original note by the migrate step — has nowhere left to land. Only the burn-
+  // home's incidental ~546 sats of real Bitcoin value would come back; the confidential amount would not.
+  //
+  // The fix is this function: a REAL two-input cxfer, structured exactly like buildMigrationTxs's own reveal
+  // —
+  //   vin[0] = a FRESH envelope-commit output (built here, same commit+reveal shape as buildMigrationTxs's
+  //            own vin[0]) — carries the real T_CXFER_BPP envelope, standard 3-item script-path witness.
+  //   vin[1] = the burn-home itself, spent via its own K1/S/controlBlock. homeScriptS is OP_DROP <K1>
+  //            OP_CHECKSIG, which needs a witness item ABOVE the signature for OP_DROP to discard before
+  //            OP_CHECKSIG runs regardless of any envelope (proven in this module's own test file via a
+  //            from-scratch Script-stack simulation) — but unlike the burn-deposit reveal, that dummy item
+  //            carries no meaning here, since this transaction's real envelope already lives on vin[0].
+  //   vout[0] = the reclaimed note: plain P2WPKH(walletPub), value DUST, with the ORIGINAL confidential
+  //             amount now committed under a FRESH, self-derived blinding — an ordinary note this wallet's
+  //             own scanHoldings will find the same way it finds any other.
+  //
+  //   burnHome : the object reconstructBurnHome returns — { txid, vout, value(sats), amount, blinding, priv,
+  //              pub, xonly, scriptS, controlBlock, spk }.
+  //   walletPriv/walletPub : the SAME wallet the burn-home's own K1 was derived from. Self-reclaim only (no
+  //              destination parameter) — sending a stuck burn-home's value to someone else is a real, later
+  //              extension, not a gap in this one.
+  //   fundingUtxo : required, exactly like buildBurnDepositRevealTxs — the burn-home's own value is fixed at
+  //              DUST (546 sats), below this module's own fee floor once any spend is built at all.
+  async function buildCancelTx({ prims, burnHome, assetId, walletPriv, walletPub, fundingUtxo, feeRate = null } = {}) {
+    const P = primsOf(prims, [...MIGRATE_NEED, ...CANCEL_NEED]);
+    if (!burnHome || !burnHome.priv) throw new Error('burn-deposit-reveal: burnHome required (from reconstructBurnHome)');
+    // reconstructBurnHome's own return carries no assetId (it never needed one) -- the caller already knows
+    // which asset this bridge is for, so it is taken explicitly here rather than smuggled onto burnHome.
+    if (!HEX32.test(String(assetId)) || isZero(assetId)) throw new Error('burn-deposit-reveal: assetId must be a 32-byte asset id');
+    if (!(walletPriv instanceof Uint8Array) || walletPriv.length !== 32) throw new Error('burn-deposit-reveal: walletPriv must be Uint8Array(32)');
+    if (!fundingUtxo || !fundingUtxo.txid || fundingUtxo.value == null) {
+      throw new Error('burn-deposit-reveal: fundingUtxo { txid, vout, value } required — the burn-home\'s own value (fixed at DUST) cannot pay its own fee');
+    }
+    const rate = Number(feeRate != null ? feeRate : await P.getFeeRate('priority'));
+    if (!Number.isFinite(rate) || rate < MIN_RELAY_RATE) throw new Error(`burn-deposit-reveal: fee rate ${rate} sat/vB is below the minimum relay rate`);
+
+    const savedPriv = P.wallet.priv, savedPub = P.wallet.pub;
+    try {
+      P.wallet.priv = walletPriv; P.wallet.pub = walletPub || secp.getPublicKey(walletPriv, true);
+      const wpkhSpk = P.p2wpkhScript(P.wallet.pub);
+      const fundingXonly = P.wallet.pub.slice(1);
+
+      // Anchor: the burn-home's OWN outpoint — the asset input being spent, exactly mirroring
+      // buildMigrationTxs's own anchor (the SOURCE note's outpoint there; here, the burn-home fills that
+      // role, since it is the note now being spent). "Self" derivation (not the ECDH one buildAndBroadcastCXfer
+      // uses for a THIRD-PARTY recipient) since this always pays back into the SAME wallet.
+      const anchor = cat([reverseBytes(hexToBytesLocal(stripHex(burnHome.txid))), le32(burnHome.vout)]);
+      const outBlinding = P.deriveChangeBlinding(walletPriv, anchor, 0);
+      const ks = P.deriveAmountKeystreamSelf(walletPriv, anchor, 0);
+      const { proof: rangeProof, commitments } = bppRangeProve([burnHome.amount], [outBlinding]);
+      const commitmentBytes = commitments.map((pt) => pointToBytes(pt));
+      const excess = P.modN(outBlinding - burnHome.blinding);
+      const assetIdBytes = hexToBytesLocal(stripHex(assetId));
+      const kernelMsg = P.computeKernelMsg(assetIdBytes, [{ txid: burnHome.txid, vout: burnHome.vout }], commitmentBytes);
+      const kernelSig = P.signSchnorr(kernelMsg, bigintToBytes32(excess));
+      {
+        const inC = pedersenCommit(burnHome.amount, burnHome.blinding);
+        const check = inC.add(commitments[0].negate());
+        if (!verifySchnorr(kernelSig, kernelMsg, check.toRawBytes(true).slice(1))) throw new Error('burn-deposit-reveal: cancel kernel signature does not verify locally — refusing');
+      }
+      const payload = P.encodeCXferBppPayload({
+        assetId: assetIdBytes, kernelSig,
+        outputs: [{ commitment: commitmentBytes[0], encryptedAmount: P.encryptAmount(burnHome.amount, ks) }],
+        rangeproof: rangeProof,
+      });
+      if (payload[0] !== 0x22) throw new Error('burn-deposit-reveal: cancel payload must be T_CXFER_BPP (0x22)');
+
+      const envelopeScript = P.encodeEnvelopeScript(fundingXonly, payload);
+      const { Q_xonly: envQ, parity: envParity } = P.tweakedOutputKey(P.TAP_NUMS, P.tapLeafHash(envelopeScript));
+      const commitSpk = P.p2trScript(envQ);
+      const envCb = P.controlBlock(P.TAP_NUMS, envParity);
+
+      function buildReveal(commitTxid, commitValue, changeValue) {
+        const rt = {
+          version: 2, locktime: 0,
+          inputs: [
+            { txid: commitTxid, vout: 0, sequence: 0xfffffffd, witness: [] },
+            { txid: stripHex(burnHome.txid), vout: burnHome.vout, sequence: 0xfffffffd, witness: [] },
+          ],
+          outputs: [{ value: DUST, script: wpkhSpk }],
+        };
+        if (changeValue >= DUST) rt.outputs.push({ value: changeValue, script: wpkhSpk });
+        const prevouts = [{ value: commitValue, script: commitSpk }, { value: burnHome.value, script: burnHome.spk }];
+        // vin[0]: standard 3-item script-path witness — the envelope IS the real committed script here.
+        // signTaprootScriptPathInput is safe to use as-is for this one: every existing caller in this module
+        // already puts its Taproot-script-path input at vin[0], which is the one index this helper supports.
+        rt.inputs[0].witness = P.signTaprootScriptPathInput(rt, prevouts, envelopeScript, envCb);
+        // vin[1]: the burn-home, under K1. CXFER's own convention pins the envelope to vin[0] and the asset
+        // being spent to a SEPARATE input (see this function's own header comment) — meaning this input can
+        // never be vin[0], yet signTaprootScriptPathInput hardcodes tapSighash(tx, 0, ...) internally (see
+        // bitcoin-taproot-wallet.js's own source): every OTHER caller in this codebase happens to only ever
+        // sign a Taproot-script-path spend at vin[0], so that hardcoding was invisible until now. Signing
+        // here goes one level lower — tapLeafHash + tapSighash(tx, 1, ...) + signSchnorr directly, with the
+        // burn-home's own key passed explicitly rather than swapped into P.wallet — to get a signature that
+        // is actually valid for the input it will really occupy. This was the exact mistake an earlier
+        // attempt at this function made (reusing the wrapper unmodified at a non-zero index); this version's
+        // own test file independently re-derives and checks this sighash rather than trusting either.
+        // homeScriptS's leading OP_DROP still needs a witness item above the signature regardless of any
+        // envelope; the dummy carries no meaning here (this tx's real envelope is entirely on vin[0]), so it
+        // is empty, not envelope-shaped, unlike the burn-deposit reveal's own dummy.
+        const leaf1 = P.tapLeafHash(burnHome.scriptS);
+        const sh1 = P.tapSighash(rt, 1, prevouts, leaf1, 0x00);
+        const sig1 = P.signSchnorr(sh1, burnHome.priv);
+        rt.inputs[1].witness = [sig1, EMPTY_ITEM, burnHome.scriptS, burnHome.controlBlock];
+        return rt;
+      }
+      const revealVb = vsizeOf(P, buildReveal('00'.repeat(32), 4000, 3000)).vsize;
+      const revealFee = P.feeFor(revealVb, rate);
+      const commitVb = P.estCommitVb(1);
+      const commitFee = P.feeFor(commitVb, rate);
+      const commitValue = fundingUtxo.value - commitFee;
+      const changeValue = commitValue + burnHome.value - DUST - revealFee;
+      if (commitValue < DUST) throw new Error(`burn-deposit-reveal: funding UTXO too small (need > ${DUST + commitFee}, have ${fundingUtxo.value})`);
+      if (changeValue < 0) throw new Error(`burn-deposit-reveal: insufficient funds to cancel (short by ${-changeValue} sats)`);
+
+      const commitTx = {
+        version: 2, locktime: 0,
+        inputs: [{ txid: fundingUtxo.txid, vout: fundingUtxo.vout, sequence: 0xfffffffd, witness: [] }],
+        outputs: [{ value: commitValue, script: commitSpk }],
+      };
+      commitTx.inputs[0].witness = P.signP2wpkhInput(commitTx, 0, fundingUtxo.value);
+      const commitTxid = P.txid(commitTx);
+      const commitPrevouts = [{ value: fundingUtxo.value, script: fundingUtxo.scriptpubkey ? P.hexToBytes(fundingUtxo.scriptpubkey) : wpkhSpk }];
+      const commitStd = checkStandard(P, commitTx, commitPrevouts, 'cancel commit');
+
+      const revealTx = buildReveal(commitTxid, commitValue, changeValue);
+      const revealPrevouts = [{ value: commitValue, script: commitSpk }, { value: burnHome.value, script: burnHome.spk }];
+      const revealStd = checkStandard(P, revealTx, revealPrevouts, 'cancel reveal');
+
+      const commitHex = P.bytesToHex(P.serializeTx(commitTx));
+      const revealHex = P.bytesToHex(P.serializeTx(revealTx));
+
+      // The self-check that would have caught the mistake this function's own header comment describes:
+      // the built transaction must actually classify as a real T_CXFER_BPP cxfer carrying the right asset and
+      // commitment — not merely a validly-signed Bitcoin spend. A bare payment fails this immediately
+      // (classifyConfidentialTx returns null), which is exactly the failure mode being guarded against.
+      const cls = classifyConfidentialTx('0x' + revealHex);
+      if (!cls || cls.type !== 'cxfer' || cls.opcode !== 0x22) throw new Error('burn-deposit-reveal: cancel reveal does not classify as a T_CXFER_BPP cxfer');
+      if (lc(cls.assetId) !== lc(assetId)) throw new Error('burn-deposit-reveal: cancel reveal classifies under the wrong asset');
+      const clsCommit = lc((cls.commitments && cls.commitments[0]) || '');
+      if (clsCommit && clsCommit !== lc('0x' + P.bytesToHex(commitmentBytes[0]))) throw new Error('burn-deposit-reveal: cancel reveal commitment does not match');
+      if (revealTx.outputs[0].value !== DUST || P.bytesToHex(revealTx.outputs[0].script) !== P.bytesToHex(wpkhSpk)) throw new Error('burn-deposit-reveal: cancel reveal output 0 is not the reclaimed note');
+      const ins = extractInputs('0x' + revealHex);
+      const burnHomeTxidInternal = '0x' + reverseHex(stripHex(burnHome.txid));
+      if (!ins || ins.length !== 2 || lc(ins[1].prevTxid) !== lc(burnHomeTxidInternal) || ins[1].prevVout !== burnHome.vout) {
+        throw new Error('burn-deposit-reveal: self-check failed — the burn-home is not vin[1] of the built cancel');
+      }
+
+      return {
+        commitTx, revealTx, commitHex, revealHex, commitTxid, revealTxid: P.txid(revealTx),
+        commitFee: commitStd.fee, revealFee: revealStd.fee, feeRate: rate,
+        note: { txid: P.txid(revealTx), vout: 0, sats: DUST, amount: burnHome.amount, blinding: outBlinding, assetId },
+      };
+    } finally {
+      P.wallet.priv = savedPriv; P.wallet.pub = savedPub;
+    }
+  }
+
+  return { deriveBurnHomeKey, planMigrationToBurnHome, buildMigrationTxs, reconstructBurnHome, planBurnDepositReveal, buildBurnDepositRevealTxs, buildCancelTx };
 }
 
 // ---- small local byte helpers (kept dependency-free rather than importing a whole wallet module for these) ----
