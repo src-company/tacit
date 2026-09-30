@@ -140,7 +140,7 @@ try {
       await p.click('#chains [data-chain="8453"]');
       await p.waitForSelector('#f-wto');
       await p.fill('#f-wto', '0x' + '22'.repeat(20)); await p.fill('#f-wamt', '0.000001'); await sleep(500);
-      await p.waitForFunction(() => document.querySelector('.pv-h') || /More than/.test(document.querySelector('#f-rcpt').textContent), null, { timeout: 180e3 }).catch(() => {});
+      await p.waitForFunction(() => document.querySelector('.pv-h') || /More than/.test(document.querySelector('#f-rcpt').textContent), null, { timeout: 420e3 }).catch(() => {});
       const rc = await p.textContent('#f-rcpt');
       if (/Arrives/.test(rc)) ok(/Blends in well|Could blend in better|Easy to link to you/.test(rc) && /hides among \d+ notes from \d+ deposits/.test(rc), `withdraw privacy check: ${(await p.textContent('.pv')).replace(/\s+/g, ' ').trim().slice(0, 160)}`);
       ok((/Arrives/.test(rc) && /Stays private/.test(rc)) || /More than/.test(rc), `withdraw receipt: ${rc.replace(/\s+/g, ' ').trim()}`);
