@@ -32,23 +32,9 @@ function num(name, dflt) {
 
 // ── Mainnet addresses ──
 // These default to the live mainnet deployment; override via env for Sepolia rehearsal.
-// The mode of a known private endpoint that keeps a settle between the relay and the builders: Flashbots Protect
-// with only the hash hinted to searchers (it drops reverting transactions unless canRevert is set), and MEV
-// Blocker's fullprivacy route (no searchers, no reverts). Any other URL is used as given.
-export function privateSettleUrl(raw) {
-  let u;
-  try { u = new URL(raw); } catch { return raw; }
-  if (u.hostname === 'rpc.flashbots.net') {
-    u.searchParams.delete('hint');
-    u.searchParams.delete('canRevert');
-    u.searchParams.append('hint', 'hash');
-  } else if (u.hostname === 'mevblocker.io' || u.hostname.endsWith('.mevblocker.io')) {
-    u.hostname = 'rpc.mevblocker.io';
-    u.pathname = '/fullprivacy';
-    u.search = '';
-  }
-  return u.toString();
-}
+// Re-exported for the services that import it from here; it lives on its own so that importing it reads no environment.
+export { privateSettleUrl } from './private-settle-url.js';
+import { privateSettleUrl } from './private-settle-url.js';
 
 export const ADDR = {
   // ConfidentialPool — settle() + attestBitcoinStateProven() + knownReflectionDigest(). Per-deployment:

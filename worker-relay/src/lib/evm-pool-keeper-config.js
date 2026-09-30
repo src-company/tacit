@@ -5,7 +5,7 @@
 // nonce is shared by several services, and a second signer on it would race them.
 
 import { getAddress, isAddress } from 'viem';
-import { privateSettleUrl } from './config.js';
+import { privateSettleUrl } from './private-settle-url.js';
 import { RECEIVE_FEE_BPS } from '../../../dapp/evm-pool-gateway.js';
 
 const ETH = '0x0000000000000000000000000000000000000000';
