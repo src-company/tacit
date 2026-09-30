@@ -5,6 +5,9 @@
 //   relay  (opt-in, spends funds) KEY pays KEY2 privately on mainnet through the relay; KEY2's key alone finds it
 //   fork   an anvil fork of Base: deposit from a wallet, send privately and withdraw part, all proved in the page and
 //          sent by the wallet (no relay), then the history rebuilt from chain logs names all three
+//   hub    tacit.finance/pay read-only against mainnet with KEY: links made for the ETH page before it moved open on
+//          /pay/eth/; BTC and TAC balances read; each kind of address routes as it should, a tacit1 from before the pool
+//          lane included (a silent payment in BTC, a shielded transfer in TAC); the receive addresses
 //   anyone the same fork with a real keeper relaying: pay an 0x address now, or hold it until it blends in (after a
 //          deposit made for it when the balance is short); save a name for an address; pay by link, taken by a keyless
 //          recipient to their address and into another key's private balance, or taken back; the links found again
@@ -19,7 +22,7 @@ import { extname, join, normalize } from 'node:path';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'live,fork,anyone').split(','));
+const ONLY = new Set((process.argv[2] || 'live,hub,fork,anyone').split(','));
 const SHOTS = process.env.SHOTS || null;
 const WEB = 21000 + Math.floor(Math.random() * 2000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -36,7 +39,7 @@ const server = createServer((req, res) => {
   res.writeHead(200, { 'content-type': TYPES[extname(f)] || 'application/octet-stream', 'content-length': body.length });
   res.end(body);
 }).listen(WEB);
-const URL_ = process.env.PAGE || `http://127.0.0.1:${WEB}/pay/`;   // PAGE=https://tacit.finance/pay/ checks the deployed page
+const URL_ = process.env.PAGE || `http://127.0.0.1:${WEB}/pay/eth/`;   // PAGE=https://tacit.finance/pay/ checks the deployed page
 
 async function page(browser, { viewport = { width: 1280, height: 900 }, colorScheme = 'light', init = null, route = null } = {}) {
   const ctx = await browser.newContext({ viewport, colorScheme, permissions: ['clipboard-read', 'clipboard-write'] });
@@ -196,6 +199,64 @@ try {
     console.log('    ' + rows.join('\n    '));
     ok(rows.some((r) => /^Received privately/.test(r) && /just now|min ago/.test(r)), 'the recipient’s key alone finds the payment');
     await shot(p, 'relay-recipient');
+    ok(!errors.length, `no page errors ${errors.join(' | ')}`);
+    await ctx.close();
+  }
+
+  if (ONLY.has('hub')) {
+    // tacit.finance/pay: BTC and TAC, read-only against mainnet with KEY; sends are routed, never made.
+    console.log('hub (/pay: BTC and TAC, mainnet reads)');
+    const origin = new URL(URL_).origin, { ctx, p, errors } = await page(browser);
+    const text = async (sel) => (await p.textContent(sel)).replace(/\s+/g, ' ').trim();
+    const OLD = 'tacit1qqps9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczlduk6e0c7';
+    const UNI = 'tacit1qqrs9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczldupxsdkdfvdwck5vqnkn28cnyq3sxsrl7myfdwua48xq0zsc4dsrlsrlklwss3n6mv4vqkqkq8d5qrj6e6hgt34qmnmh4m8vayny376ryzlgcw47etgmm9cugrjtxwwkj6e267hm5qgc62yyyupg0j62zpafjgjz2hf';
+    const BP = 'bp1qf5rdn2trtk94rqya5637yeqyvp5qllkeztth8dfesrc5x9tvqluqlahm5yyv7km9tq9s9spmdqqukkw46zudgxu7aawem8fyey0kseqh6xr40k26x7ew8zqujenn45kk2kh47aqzxxj3pp8q2rukjss02vszf7eaa';
+    // Links the ETH page made before it moved keep working.
+    await p.goto(origin + '/pay/#gift=' + 'ab'.repeat(32) + '&chain=base');
+    await p.waitForURL(/\/pay\/eth\//, { timeout: 30e3 }).catch(() => {});
+    await p.waitForSelector('#gift:not([hidden])', { timeout: 30e3 }).catch(() => {});
+    ok(/\/pay\/eth\//.test(p.url()) && !!(await p.$('#gift:not([hidden])')), `an ETH link made for /pay/ opens on /pay/eth/: ${p.url()}`);
+    if (/^https:/.test(URL_)) {                                                   // a route on the host, not a file
+      await p.goto(origin + '/pay/wei/');
+      await p.waitForSelector('#chains', { timeout: 30e3 }).catch(() => {});
+      ok(!!(await p.$('#chains')), '/pay/wei/ serves the ETH page');
+    }
+    await p.goto(origin + '/pay/');
+    await p.waitForSelector('#g-in');
+    ok((await p.$eval('#modes [data-mode="btc"]', (a) => a.getAttribute('aria-current'))) === 'page', 'BTC is the default');
+    await openKey(p, process.env.KEY);
+    await p.waitForFunction(() => !document.querySelector('#bal .sk'), null, { timeout: 180e3 });
+    ok(/BTC/.test(await text('#bal')) && !/—/.test(await text('#bal .v')), `BTC balance read: ${await text('#bal')}`);
+    const route = async (to, re) => {
+      await p.fill('#f-amt', '0.00001'); await p.fill('#f-to', to);
+      await p.waitForFunction((s) => new RegExp(s).test(document.querySelector('#f-rcpt').textContent), re.source, { timeout: 60e3 }).catch(() => {});
+      return (await text('#f-rcpt'));
+    };
+    ok(/Silent payment/.test(await route(OLD, /Silent payment|err/)), 'BTC to a tacit1 from before the pool lane: a silent payment');
+    ok(/Silent payment/.test(await route(UNI, /Silent payment|err/)), 'BTC to a unified tacit1: a silent payment');
+    ok(/Plain payment/.test(await route('bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', /Plain payment|err/)), 'BTC to bc1: a plain payment');
+    ok(/Ethereum address/.test(await route('0x' + '11'.repeat(20), /Ethereum|err/)), 'BTC to an 0x address is refused');
+    ok(/pool address/.test(await route(BP, /pool address/)), 'BTC to a bp1 pool address is refused');
+    await p.click('#tabs [data-tab="receive"]');
+    await p.waitForFunction(() => [...document.querySelectorAll('.addr code')].every((c) => c.textContent !== '…'), null, { timeout: 120e3 }).catch(() => {});
+    const addrs = await p.$$eval('.addr code', (x) => x.map((c) => c.textContent));
+    ok(/^tacit1/.test(addrs[0]) && /^sp1/.test(addrs[1]) && /^bc1/.test(addrs[2]), `receive shows the Tacit, silent-payment and Bitcoin addresses: ${addrs.map((a) => a.slice(0, 8)).join(' ')}`);
+    await p.click('#modes [data-mode="tac"]');
+    await p.waitForFunction(() => /TAC, shielded/.test(document.querySelector('#bal').textContent) && !document.querySelector('#bal .sk'), null, { timeout: 180e3 });
+    ok(/TAC, shielded/.test(await text('#bal')) && !/—/.test(await text('#bal .v')), `shielded TAC read: ${await text('#bal')}`);
+    await p.click('#tabs [data-tab="send"]');
+    ok(/Inside the shielded pool/.test(await route(BP, /shielded pool|err/)), 'TAC to a bp1 pool address: inside the pool');
+    ok(/Inside the shielded pool/.test(await route(UNI, /shielded pool|err/)), 'TAC to a unified tacit1: inside the pool');
+    ok(/Shielded transfer from your Bitcoin address/.test(await route(OLD, /Shielded transfer|err/)), 'TAC to a tacit1 from before the pool lane: a shielded transfer');
+    ok(/Bitcoin address/.test(await route('bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', /Bitcoin address|err/)), 'TAC to bc1 is refused');
+    await p.click('#tabs [data-tab="receive"]');
+    await p.waitForFunction(() => /^bp1/.test(document.querySelector('.addr code')?.textContent || ''), null, { timeout: 60e3 }).catch(() => {});
+    ok(/^bp1/.test(await p.textContent('.addr code')), 'TAC receive shows the pool address');
+    await p.setViewportSize({ width: 390, height: 900 });
+    ok((await p.evaluate(() => document.documentElement.scrollWidth)) <= 390, 'no sideways scroll at 390px');
+    await p.click('#modes [data-mode="eth"]');
+    await p.waitForURL(/\/pay\/eth\//, { timeout: 30e3 }).catch(() => {});
+    ok(/\/pay\/eth\//.test(p.url()), 'the ETH chip opens /pay/eth/');
     ok(!errors.length, `no page errors ${errors.join(' | ')}`);
     await ctx.close();
   }

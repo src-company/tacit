@@ -32,7 +32,8 @@ const VERIFY_HTML = join(DAPP_DIR, 'verify.html');   // self-contained verifier;
 const WELD_HTML  = join(DAPP_DIR, 'weld', 'index.html');     // tacit weld: one file, its inline module CSP-hash-pinned
 const WELD_STATS_HTML = join(DAPP_DIR, 'weld', 'stats', 'index.html');   // weld stats: public reads only, its inline module CSP-hash-pinned
 const WELD_KEEPER_HTML = join(DAPP_DIR, 'weld', 'keeper', 'index.html'); // community ops: permissionless keeper actions (advanceTip etc.), its inline module CSP-hash-pinned
-const PAY_HTML = join(DAPP_DIR, 'pay', 'index.html');         // tacit pay: private ETH payments, one file, its inline module CSP-hash-pinned
+const PAY_HTML = join(DAPP_DIR, 'pay', 'index.html');         // tacit pay: BTC and TAC payments, one file, its inline module CSP-hash-pinned
+const PAY_ETH_HTML = join(DAPP_DIR, 'pay', 'eth', 'index.html');   // tacit pay's private ETH, likewise (served at /pay/eth/ and /pay/wei/)
 const OUT_DIR    = join(HERE, 'out');                        // build artifacts (gitignored)
 const BR_OUT     = join(OUT_DIR, 'tacit.js.br');             // brotli-q11 copy for the edge route
 
@@ -159,8 +160,8 @@ const SATS_CB_FILES = ['sats/join-worker.js', 'sats/mix.js', 'sats/secret.js', '
 // dapp/weld/ and its stats page each keep their imports in their inline module, so their tokens are rewritten before
 // those modules' CSP hashes are taken (updatePinnedCsp below).
 const WELD_CB_FILES = ['weld/index.html', 'weld/stats/index.html', 'weld/keeper/index.html'];
-// dapp/pay/ is built the same way as weld: one page, every import in its inline module.
-const PAY_CB_FILES = ['pay/index.html'];
+// dapp/pay/ and dapp/pay/eth/ are built the same way as weld: one page each, every import in its inline module.
+const PAY_CB_FILES = ['pay/index.html', 'pay/eth/index.html'];
 // dapp/tac/ is the shielded-TAC page: app.js lazy-imports sats.js, so sats.js is hashed first and the page
 // that loads app.js last, same importer-last order as the sats page above.
 const TAC_CB_FILES = ['tac/sats.js', 'tac/market.js', 'tac/claim.js', 'tac/app.js', 'tac/index.html'];
@@ -225,6 +226,7 @@ const PINNED_PAGES = [
   { name: 'weld/stats/index.html', file: WELD_STATS_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
   { name: 'weld/keeper/index.html', file: WELD_KEEPER_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
   { name: 'pay/index.html', file: PAY_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
+  { name: 'pay/eth/index.html', file: PAY_ETH_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
 ];
 function updatePinnedCsp(page) {
   const htmlText = readFileSync(page.file).toString('utf8');
