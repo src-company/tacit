@@ -106,6 +106,17 @@ await test('it refuses another account\'s signature, a high-s signature and malf
   assert.throws(() => kit.decodeTacitAddress(UNIFIED.slice(0, -1) + (UNIFIED.endsWith('f') ? 'q' : 'f')));
 });
 
+await test('decoding is strict: mainnet unless another network is named, never mixed case, with its version', () => {
+  const d = kit.decodeTacitAddress(UNIFIED);
+  assert.deepEqual([d.network, d.version, d.flags], ['mainnet', 0, 0x85]);
+  assert.equal(kit.decodeTacitAddress(UNIFIED.toUpperCase()).flags, 0x85, 'all uppercase is the same address');
+  const i = [...UNIFIED].findIndex((c, k) => k > 6 && /[a-z]/.test(c));
+  assert.throws(() => kit.decodeTacitAddress(UNIFIED.slice(0, i) + UNIFIED[i].toUpperCase() + UNIFIED.slice(i + 1)), /mixed case/);
+  const sig = kit.addressesFromKey(new Uint8Array(32).fill(7), { network: 'signet' }).address;
+  assert.throws(() => kit.decodeTacitAddress(sig), /a signet address, not mainnet/);
+  assert.equal(kit.decodeTacitAddress(sig, { network: 'signet' }).network, 'signet');
+});
+
 await test('the caller\'s key and signature are left as given (zeroing them is the caller\'s)', () => {
   const key = new Uint8Array(32).fill(7), { sig } = signIdentity(secp.utils.randomPrivateKey()), s0 = Uint8Array.from(sig);
   kit.addressesFromKey(key); kit.keyFromSignature(sig);

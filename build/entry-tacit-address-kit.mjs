@@ -9,15 +9,16 @@
 //   addressesFromKey(key)                      → { address, poolAddress, flags }: the tacit1… address with its pool
 //                                                lane (flags 0x85, 276 characters) and the bp1… pool address;
 //                                                { pool: false } gives the address without it (flags 0x03)
-//   decodeTacitAddress(address)                → { network, version, flags, lanes: { btc, evm?, pool? } }; throws
-//                                                on anything that is not a valid tacit1… address
+//   decodeTacitAddress(address, { network })   → { network, version, flags, lanes: { btc, evm?, pool? } }; throws
+//                                                on anything that is not a valid tacit1… address of that network
+//                                                (mainnet unless given), mixed case included
 //
 // The signature is the key: whoever holds either controls the identity's funds. Keep both in memory only, never send
 // or store them, and zero them (sig.fill(0), key.fill(0)) once the address is computed. Every other input and output
 // here is public.
 
 import { secp, sha256, keccak_256, hmac, concatBytes, hexToBytes } from '../dapp/vendor/tacit-deps.min.js';
-import { makeTacitAddress, TACIT_HRP_BY_NETWORK } from '../dapp/tacit-address.js';
+import { makeTacitAddress, TACIT_HRP_BY_NETWORK, TACIT_ADDR_VERSION } from '../dapp/tacit-address.js';
 import { bip352TaggedHash } from '../dapp/bip352.js';
 import { makeBtcShieldedPool } from '../dapp/btc-shielded-pool.js';
 import { identityMessage as messageFor } from '../dapp/identity-message.js';
@@ -76,4 +77,12 @@ export function addressesFromKey(key, { pool: withPool = true, network = 'mainne
   } finally { k.fill(0); seed?.fill(0); }
 }
 
-export function decodeTacitAddress(address) { return decode(String(address).trim().toLowerCase()); }
+// bech32 is all lowercase, or all uppercase as a whole; mixed case is refused, not folded. The version is the one the
+// codec accepts (it refuses any other).
+export function decodeTacitAddress(address, { network = 'mainnet' } = {}) {
+  const s = String(address).trim();
+  if (s !== s.toLowerCase() && s !== s.toUpperCase()) throw new Error('tacit-address-kit: a tacit1… address is never mixed case');
+  const d = decode(s.toLowerCase());
+  if (d.network !== network) throw new Error(`tacit-address-kit: a ${d.network} address, not ${network}`);
+  return { network: d.network, version: TACIT_ADDR_VERSION, flags: d.flags, lanes: d.lanes };
+}
