@@ -901,6 +901,43 @@ test('relayed settle: emitted memos are compared byte-for-byte with the sealed o
   await assert.rejects(run(true), (e) => /emitted memos differ/.test(e.message) && e.memoCheck.mismatched.length === 2 && Array.isArray(e.sealedMemos));
 });
 
+// The same deposit finished twice (Finish pressed while the first submit's job is still live): each build seals the
+// note's memo afresh, the relay keeps the first job and settles it with the first memo, and that memo opens to the same
+// note under this wallet's key, so the second finish reads as done, not as a lost note.
+test('relayed settle: a memo sealed afresh for the same note, as when one deposit is finished twice, is accepted', async () => {
+  const w32 = (n) => BigInt(n).toString(16).padStart(64, '0');
+  const encodeLeavesInserted = (leaves, memos) => {
+    const lv = [w32(leaves.length), ...leaves.map((l) => String(l).replace(/^0x/, '').padStart(64, '0'))].join('');
+    const bodies = memos.map((m) => { const h = String(m).replace(/^0x/, ''); const len = h.length / 2; return w32(len) + h.padEnd(Math.ceil(len / 32) * 64, '0'); });
+    let off = 32 * memos.length; const heads = [];
+    for (const b of bodies) { heads.push(w32(off)); off += b.length / 2; }
+    return '0x' + w32(64) + w32(64 + lv.length / 2) + lv + w32(memos.length) + heads.join('') + bodies.join('');
+  };
+  const subs = [];
+  let first = null;
+  const ux = makeConfidentialPoolUx({ ...deps, fetchImpl: async (url, opts) => {
+    const body = opts && opts.body ? JSON.parse(opts.body) : null;
+    let obj;
+    if (String(url).includes('/confidential/submit')) { subs.push(body); obj = { jobId: 'j', status: 'pending' }; }
+    else if (String(url).includes('/confidential/status')) obj = { jobId: 'j', status: 'settled', txHash: '0x' + 'cd'.repeat(32) };
+    else if (body && body.method === 'eth_getTransactionReceipt') {
+      obj = { result: { logs: [{ address: ux.cfg.pool, topics: [makeConfidentialEvmLogTopic(), '0x' + w32(9)], data: encodeLeavesInserted([first.leaf], subs[0].memos) }] } };
+    } else obj = { result: '0x0' };
+    return { ok: true, status: 200, json: async () => obj, text: async () => JSON.stringify(obj) };
+  } });
+  const walletPriv = '0x' + '6b'.repeat(32), waitOpts = { intervalMs: 0, sleep: async () => {} };
+  first = ux.buildWrap({ walletPriv, amountWei: '1000000000000000', ticker: 'cETH', index: 3 });
+  const again = ux.buildWrap({ walletPriv, amountWei: '1000000000000000', ticker: 'cETH', index: 3 });
+  assert.equal(first.leaf, again.leaf, 'the same deposit');
+  assert.notEqual(first.memos[0], again.memos[0], 'sealed afresh');
+  assert.equal((await ux.submitWrapSettle({ built: first, waitOpts })).memoCheck.ok, true);
+  const r = await ux.submitWrapSettle({ built: again, waitOpts, depositTx: '0x' + 'ee'.repeat(32) });
+  assert.equal(r.memoCheck.ok, true, 'the first memo opens to the same note under this wallet\'s key');
+  // The deposit's transaction reaches the relay only when given, beside the op and never inside it (the relay keys
+  // a job by its op).
+  assert.ok(!('depositTx' in subs[0]) && subs[1].depositTx === '0x' + 'ee'.repeat(32) && !('depositTx' in subs[1].op), 'depositTx rides beside the op');
+});
+
 // A memo the relay replaced leaves the chain unable to open the note. The sealed memos are kept on the device under
 // the settle's tx hash, and the balance scan applies them, so the note stays in the balance there.
 test('relayed settle: a replaced memo is kept locally and the balance scan still recovers the note', async () => {

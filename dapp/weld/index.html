@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-XnSn69S1UlYHAJ19AAe2LI0dawJG3p2HODawBNK9+MM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-LjyeMN0mPPgGCFjYqW+ekuNff0lDD1hc3+sEZ3pw4kI=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -245,6 +245,7 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 .btn.ghost { color: var(--ink); background: transparent; border-color: var(--hair-2); }
 .btn.ghost:hover:not(:disabled) { border-color: var(--ink); }
+a.btn { text-decoration: none; white-space: nowrap; }
 .btn[aria-busy="true"] { cursor: progress; }
 .btn[aria-busy="true"]::after { content: ''; width: 12px; height: 12px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -774,6 +775,7 @@ function revertText(e) {
   return m ? REVERTS[(m[1] || m[2]).toLowerCase()] : undefined;
 }
 const errText = (e) => {
+  if (e?.said) return e.message;                                   // already in words (keptDeposit)
   const m = String(e?.shortMessage || e?.message || e || 'Something went wrong');
   if (e?.code === 4001 || /user (rejected|denied)|rejected the request|denied transaction/i.test(m)) return 'Cancelled in your wallet.';
   const r = revertText(e);
@@ -785,10 +787,22 @@ const errText = (e) => {
   if (/settle timed out|status polling for job/i.test(m)) return `Still in the relay’s queue. It goes through on its own; follow it in Activity, and don’t send it again.`;
   if (/prove timed out/i.test(m)) return 'The relay is taking longer than usual to prove this, and this page stopped waiting for it. Try again in a few minutes.';
   if (/relay lost the job/i.test(m)) return 'The relay lost track of this request. Check Activity before sending it again.';
+  // The relay's daily allowance of settles that carry no fee in the op (a wrap's tip rides on its deposit, so a wrap
+  // counts): it opens again at midnight UTC, not in a moment.
+  if (/free relayed settles for today are used up/i.test(m)) return 'The relay’s free settles for today are used up. They open again at midnight UTC.';
   if (/failed to fetch|networkerror|load failed|all rpcs failed/i.test(m)) return 'Could not reach the network. Check your connection and try again.';
   if (/rate.?limit|too many requests|\b429\b|exceeded.*(?:request|quota)|upgrade.*(?:plan|tier)/i.test(m)) return 'That network is busy right now. Try again in a moment.';
   if (/timed? ?out|timeout/i.test(m)) return 'The network took too long to answer. Try again.';
   return m.replace(/^Error:\s*/, '').slice(0, 240);
+};
+// A reason without its "try again": said of a deposit already made, that would ask for the deposit a second time.
+const noRetry = (t) => String(t).split(/(?<=[.!?])\s+/).filter((s) => !/\btry(ing)? again\b/i.test(s)).join(' ');
+// A wrap that stopped once its deposit was sent: the deposit waits in the pool for Finish, and is never asked for again.
+// `where` names the tab with the Finish button when it is not the one in view. A job the relay failed gives its own reason.
+const keptDeposit = (e, landed, where = '') => {
+  const said = String(e?.message || '').match(/^(?:settle|prove) failed:\s*(.*)$/is), why = said ? failText({ status: 'failed', err: said[1] }) : errText(e);
+  return Object.assign(new Error(`${landed ? 'Your deposit is in the Tacit pool' : 'Your deposit was sent'}, but it is not private yet. `
+    + `${noRetry(why)} ${landed ? `Press Finish${where} to make it private` : `Once it lands, Finish${where} makes it private`}; there is no need to send it again.`.trim()), { said: true });
 };
 // A status line is state: it survives re-renders of its pane and clears when the sheet closes.
 const FLASH = {};
@@ -1056,7 +1070,7 @@ function runJob(run, jobId, step) {
   if (to && !run.away) { try { handoff(run); } catch (e) { console.error('hand-off', e); } }
   if (!to?.one) return;
   // The receipt: transactions this action sent come first as its steps, then each job as it is queued.
-  const op = actGet(run.op) || actPut(run.op, { kind: 'op', label: to.label, steps: [], status: 'pending' });
+  const op = actGet(run.op) || actPut(run.op, { kind: 'op', label: to.label, steps: [], status: 'pending', pub: run.pub });
   for (const t of run.txs.splice(0)) { const x = actGet(t.id); if (x) { x.in = run.op; op.steps.push({ id: t.id, main: false, step: t.step, doing: t.doing }); } }
   op.steps.push({ id, main, step: main ? null : step.step, doing: main ? null : step.doing });
   actSave(); paintAct();
@@ -1115,7 +1129,11 @@ function opSync(id) {
   let patch;
   if (main?.it && okStatus(main.it.status)) patch = { status: 'settled', hash: main.it.hash };
   else if (op.stop) patch = { status: 'failed', err: op.stop };
-  else if (bad) patch = { status: bad.it?.status || 'unknown', err: bad.main ? failText(bad.it || { status: 'unknown' }) : `${bad.step} did not go through: ${failText(bad.it || { status: 'unknown' })}` };
+  else if (bad) {
+    // A wrap whose settle failed after its deposit landed: the deposit waits for Finish, first, so it is never cut off.
+    const why = failText(bad.it || { status: 'unknown' }), kept = bad.main && steps.some((s) => s.step === 'Deposit' && okStatus(s.it?.status));
+    patch = { status: bad.it?.status || 'unknown', err: kept ? `Your deposit is safe in the pool: press Finish to make it private. ${noRetry(why)}`.trim() : bad.main ? why : `${bad.step} did not go through: ${why}` };
+  }
   else if (!live && !main && last?.it && ended(last.it)) patch = { status: 'failed', err: `The first part went through (${String(last.step).toLowerCase()}), but the rest did not start. What it made is in your balance: start it again.` };
   else patch = { status: steps.length > 1 || (last?.it && last.it.status !== 'pending') ? 'proving' : 'pending' };
   actPut(id, patch);
@@ -1138,7 +1156,7 @@ function actPut(id, patch) {
   let it = actGet(id);
   const prev = it ? it.status : null;
   if (!it) {
-    it = { at: Date.now(), ...patch, id };
+    it = { at: Date.now(), ...patch, pub: patch.pub ?? S.key?.pubHex ?? null, id };
     ACT.items.unshift(it);
     ACT.items.sort((a, b) => b.at - a.at);
     actTrim();
@@ -1169,7 +1187,7 @@ addEventListener('tacit:job', ({ detail: d }) => {
     const j = JOBS.get(d.jobId);
     SESS.add(id);
     if (!j) OWN.set(id, busySheet());
-    actPut(id, { kind: 'job', type: d.type || null, label: j?.label || JOB_LABEL[d.type] || 'Relayed action', in: j?.in || undefined,
+    actPut(id, { kind: 'job', type: d.type || null, label: j?.label || JOB_LABEL[d.type] || 'Relayed action', in: j?.in || undefined, pub: j ? j.run.pub : undefined,
       status: d.status, hash: d.txHash || null, err: d.error || null });
   } else actPut(id, { status: d.status, hash: d.txHash || undefined, err: d.error || undefined });
   followJob(id);
@@ -1385,9 +1403,12 @@ function actFoot(it) {
   }[it.status];
   return html`<div class="actr-f">${say_ ? say_() : ''}</div>${it.warn ? html`<div class="actr-f err">${it.warn}</div>` : ''}`;
 }
+// The list is this browser's, whichever key is open: an entry another key made says so, since what it points to
+// (a Finish, a balance) is that key's.
+const otherKey = (it) => !!(it.pub && S.key && it.pub !== S.key.pubHex);
 const actRow = (it) => html`<li class="actr" data-act="${it.id}">
   <div class="actr-h"><b>${it.label}</b>${ended(it) ? html`<span>${ago(it.end || it.up || it.at)}</span>` : html`<span class="num" data-since="${it.at}">${clock(Date.now() - it.at)}</span>`}</div>
-  <ol class="stp">${actSteps(it)}</ol>${actFoot(it)}</li>`;
+  <ol class="stp">${actSteps(it)}</ol>${actFoot(it)}${otherKey(it) ? html`<div class="actr-f">Made with another Tacit key. Open that key to act on it.</div>` : ''}</li>`;
 function renderAct() {
   const el = $('#act-body'), items = listed(), can = typeof Notification === 'function';
   const on = can && !!store.get(NOTIFY_KEY) && Notification.permission === 'granted';
@@ -1503,7 +1524,8 @@ function knownWallet() {
     const own = readJson(LITE_ID);
     if (own && isPub(own.pubHex) && (own.mode === 'local' ? savedPub() === own.pubHex : own.mode === 'ext' ? savedPub(own.address) === own.pubHex : true)) return own;
     const mode = localStorage.getItem('tacit-active-mode-v1');
-    if (mode === 'eth') { const r = readJson('tacit-eth-identity:mainnet'); if (r?.address && isPub(r.pubkey)) return { mode, pubHex: r.pubkey, address: r.address }; }
+    // tacit.finance keeps the Ethereum wallet's address as 40 hex characters, without 0x.
+    if (mode === 'eth') { const r = readJson('tacit-eth-identity:mainnet'); if (r?.address && isPub(r.pubkey)) return { mode, pubHex: r.pubkey, address: '0x' + String(r.address).replace(/^0x/i, '').toLowerCase() }; }
     if (mode === 'btc') { const r = readJson('tacit-btc-identity:mainnet'); if (r?.address && isPub(r.tacitPubkey)) return { mode, pubHex: r.tacitPubkey, address: r.address, btc: r }; }
     if (mode === 'ext') {
       const ext = readJson('tacit-ext-state-v1'), blob = ext?.address && readJson(`tacit-wallet-v1:mainnet:by:${ext.address.toLowerCase()}`);
@@ -1575,7 +1597,8 @@ const tPriv = () => { const h = bytesToHex(T.wallet.priv); T.wallet.priv.fill(0)
 const open = {
   async eth(k) {
     const id = await evm.deriveIdentity({ pick: pickWallet });
-    if (k?.address && '0x' + id.address !== k.address.toLowerCase()) throw new Error(`Switch your wallet to ${short(k.address)}, the account this Tacit wallet was opened with.`);
+    const bare = (a) => String(a || '').replace(/^0x/i, '').toLowerCase();
+    if (k?.address && bare(id.address) !== bare(k.address)) throw new Error(`Switch your wallet to ${short(k.address)}, the account this Tacit wallet was opened with.`);
     S.provider = id.provider; S.wallet = '0x' + id.address;
     setKey({ mode: 'eth', priv: id.priv, pubHex: k?.pubHex || id.pubHex, address: S.wallet });   // a known wallet must open its known key
   },
@@ -1607,6 +1630,8 @@ const open = {
       if (!av.satsConnect && !av.unisat) throw new Error('No Bitcoin wallet found in this browser. Install Xverse, Leather or UniSat.');
       const st = await T.extWallet.connectDefault();
       mainnetBtc(st.address);
+      // Continuing as a known wallet opens its own key, never a new one for whichever account is selected now.
+      if (k?.address && st.address !== k.address) { T.extWallet.state = null; throw new Error(`Switch your Bitcoin wallet to ${short(k.address, 6)}, the account this Tacit wallet was opened with.`); }
       const ext = { ...T.extWallet.state };
       // A wallet enrolled before, here or on tacit.finance, signs once and must open the key it opened then; a new one
       // signs twice, the second proving it signs the same way.
@@ -1815,6 +1840,16 @@ function paintWallet() {
 }
 $('#wallet').onclick = () => openSheet('wallet');
 const WAL = { mode: 'add', asset: 'eth', chain: 1 };
+// The Tacit account's ETH on Base and Robinhood Chain, read at most once a minute per account: the wallet sheet draws
+// itself again on every change inside it, and those chains' public RPCs limit how often they are asked.
+const L2BAL = { who: null, at: 0, p: null };
+function l2Balances(who) {
+  if (L2BAL.who !== who || Date.now() - L2BAL.at > 60e3) {
+    Object.assign(L2BAL, { who, at: Date.now() });
+    L2BAL.p = Promise.all(DEVICE_CHAINS.filter((c) => c.chainId !== 1).map((c) => rpc('eth_getBalance', [who, 'latest'], c.rpc).then((b) => [c, BigInt(b)], () => [c, 0n])));
+  }
+  return L2BAL.p;
+}
 render.wallet = () => {
   const el = $('#wallet-body');
   if (!S.key) {
@@ -1832,6 +1867,7 @@ render.wallet = () => {
       <button class="opt${pays === 'tacit' ? ' main' : ''}" type="button" role="radio" aria-checked="${pays === 'tacit'}" data-pay="tacit"><span class="opt-t">${eth}Tacit account${pays === 'tacit' ? html`<span class="tag">pays</span>` : ''}<span class="num w-bal" id="ac-abal"><span class="sk" style="--w:5ch"></span></span></span><span class="opt-m">${short(a.address, 8)} · this key's own, signs here with no popup</span></button>
       <button class="opt${pays === 'wallet' ? ' main' : ''}" type="button" role="radio" aria-checked="${pays === 'wallet'}" data-pay="wallet"><span class="opt-t">${eth}Wallet${pays === 'wallet' ? html`<span class="tag">pays</span>` : ''}<span class="num w-bal" id="ac-wbal">${S.wallet ? html`<span class="sk" style="--w:5ch"></span>` : ''}</span></span><span class="opt-m">${S.wallet ? short(S.wallet, 8) : 'Connect one to pay from it'}</span></button>
     </div>
+    <p class="note" id="ac-l2" hidden></p>
     ${segSub('wal', WAL.mode, [['add', 'Add ETH'], ['out', 'Send out']])}
     <div id="ac-form"></div>
     <div class="status" role="status" id="ac-status"></div>
@@ -1841,6 +1877,13 @@ render.wallet = () => {
   $('#w-lock').onclick = () => { S.key = null; syncAccount(); resetPrivate(); paintWallet(); refreshAll(); rerender('wallet'); };
   const bal = (id, who) => who && rpc('eth_getBalance', [who, 'latest']).then((b) => { const e = $('#' + id); if (e) e.textContent = `${fmt(BigInt(b), 18, 4)} ETH`; }, () => { const e = $('#' + id); if (e) e.textContent = '—'; });
   bal('ac-abal', a.address); bal('ac-wbal', S.wallet);
+  // The balance above is Ethereum's; ETH the Tacit account holds on Base or Robinhood Chain is said too, where it pays.
+  l2Balances(a.address)
+    .then((rows) => {
+      const e = $('#ac-l2'), has = rows.filter(([, b]) => b >= 10n ** 14n);   // dust below what shows is left out
+      if (!e?.isConnected || !has.length) return;
+      mount(e, html`Also ${has.map(([c, b]) => `${fmt(b, 18, 4)} ETH on ${c.name}`).join(' and ')}, which pays for the private pool there.`); e.hidden = false;
+    });
   $$('[data-pay]', el).forEach((b) => b.onclick = () => busy(b, async () => {
     try { if (b.dataset.pay === 'wallet' && !S.wallet) await connect(); setPayer(b.dataset.pay); } catch (e) { toast(errText(e), true); }
   }));
@@ -1851,7 +1894,7 @@ render.wallet = () => {
   if (WAL.mode === 'add') {
     mount(f, html`
       <div class="kv"><span>Address</span><b class="mono">${short(a.address, 10)}</b><button class="link" type="button" data-copy="${a.address}">copy</button></div>
-      <p class="note">Send ETH to it from any wallet or exchange, on Ethereum, Base or Robinhood Chain.${S.wallet ? ' Or add some from your wallet here; that links the two on chain.' : html` Or <button class="link" type="button" id="ac-connect">connect a wallet</button> to add from it.`}</p>
+      <p class="note">Send ETH to it from any wallet or exchange. On Ethereum it pays for everything here; on Base or Robinhood Chain, for the private pool there.${S.wallet ? ' Or add some from your wallet here; that links the two on chain.' : html` Or <button class="link" type="button" id="ac-connect">connect a wallet</button> to add from it.`}</p>
       ${S.wallet ? html`${amountField()}<button class="btn" type="button" id="ac-go">Add from wallet</button>` : ''}`);
     // Connecting only to fund it leaves the Tacit account paying.
     const cn = $('#ac-connect');
@@ -2032,7 +2075,7 @@ function wireSub(el, name, set) { $$(`[data-${name}]`, el).forEach((b) => b.oncl
 
 // ── Tacit V1 pool: shared module, loaded on first use ────────────────────────────────────────────────────
 const getUx = lazy(async () => {
-  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=1ca22b32'), import('/confidential-deployments.js')]);
+  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=3af26331'), import('/confidential-deployments.js')]);
   dep.setActiveNetwork('mainnet');
   setExternalTacHolders(() => (S.wallet ? [S.wallet] : []));      // public TAC in the connected wallet counts toward the exit-fee tier, as on tacit.finance
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
@@ -2054,14 +2097,30 @@ async function scanPrivate(force = false) {
     // Deposits still waiting for their settle, of every asset: pool-ux leaves out any another op already spent (a
     // wrap-and-send, a one-click swap or LP). One deposit is listed once, though two tickers may share its asset id.
     const pending = new Map((r.diag?.wrap?.pending || []).map((d) => [String(d.depositId || `${d.asset}:${d.index}`).toLowerCase(), d]));
+    // Private notes of assets this page has no sheet for (the farms' own are left to the farm sheet when painted). The
+    // ERC-20s tacit.finance wraps (USDC, USDT, wstETH) are named by their pool asset id, at 8 decimals at most.
+    const here = new Set(['cETH', 'cUSD', 'cTAC'].map((tk) => of(tk).id).concat(String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase()));
+    const ext = new Map((t.cfg.externalErc20 || []).map((e) => [erc20AssetId(t.cfg.chainId, e.address), { ticker: e.ticker, dec: Math.min(8, e.decimals) }]));
+    const others = Object.values(r.byAsset || {}).filter((g) => BigInt(g.value) > 0n && !here.has(String(g.asset).toLowerCase())).map((g) => {
+      const id = String(g.asset).toLowerCase(), m = g.ticker ? t.assetByTicker[g.ticker] : null, e = ext.get(id);
+      return { id, ticker: g.ticker || e?.ticker || null, value: BigInt(g.value), dec: m ? m.tacitDecimals ?? m.decimals ?? 8 : e?.dec ?? 8 };
+    });
     P.scan = { at: Date.now(), since, notes: r.notes, eth: of('cETH'), cusd: of('cUSD'), tac: of('cTAC'), cbtc: { id: String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase(), notes: r.notes.filter((n) => String(n.asset).toLowerCase() === String(t.pool.CBTC_ZK_ASSET_ID).toLowerCase()) },
-      pending: [...pending.values()].map((d) => depositOf(t, d)), partial: Object.keys(r.diag?.errors || {}).length > 0 };
+      pending: [...pending.values()].map((d) => depositOf(t, d)), others, partial: Object.keys(r.diag?.errors || {}).length > 0 };
     P.err = null;
     runsPrune();
     dashSoon();
     return P.scan;
   }).catch((e) => { if (S.key?.pubHex === pub) P.err = e; dashSoon(); throw e; }).finally(() => { if (P.scanning === p) P.scanning = null; });
   return p;
+}
+// The pool's asset id for an ERC-20 wrapped on an EVM chain: sha256('tacit-evm-token-v1' ‖ chain id ‖ token address).
+function erc20AssetId(chainId, token) {
+  const b = new Uint8Array(46);
+  b.set(new TextEncoder().encode('tacit-evm-token-v1'));
+  new DataView(b.buffer).setBigUint64(18, BigInt(chainId));
+  b.set(hexToBytes(strip(token).toLowerCase().padStart(40, '0')), 26);
+  return '0x' + bytesToHex(sha256(b));
 }
 // A deposit waiting for its settle, as the note it becomes: the ticker buildWrap re-derives it under (the entry whose
 // assetId is the deposit's own), the scale from note units back to the amount deposited, and the sheet that finishes it.
@@ -2102,11 +2161,11 @@ async function finishDeposits(run, sheet, status) {
       if (run.switched()) { miss(new Error('Another Tacit key was opened, so the rest stopped.')); break; }
       const what = `${fmt(p.value, p.dec, 6)} ${p.shown}`;
       run.say(status, `Settling a ${what} deposit into a private note…`);
-      try { await t.submitWrapSettle({ built: t.buildWrap({ walletPriv: priv, amountWei: (p.value * p.scale).toString(), ticker: p.ticker, index: p.index }), waitOpts: run.wait(`Finish a ${what} deposit`, 15 * 60e3) }); done++; }
+      try { await t.submitWrapSettle({ built: t.buildWrap({ walletPriv: priv, amountWei: (p.value * p.scale).toString(), ticker: p.ticker, index: p.index }), waitOpts: run.wait(`Finish a ${what} deposit`, 15 * 60e3), depositTx: p.txHash || null }); done++; }
       catch (e) { miss(e); }
     }
-    await scanPrivate(true);
   } catch (e) { miss(e); }
+  await scanPrivate(true).catch(() => {});                          // a read that fails is not a Finish that failed
   rerender(sheet);
   if (run.away) { if (err) toast(html`${run.to.label}: one did not start: ${errText(err)}`, true, 9000); return; }
   if (err) sayErr(status, done ? new Error(`${done} settled; another did not: ${errText(err)}`) : err);
@@ -2249,29 +2308,42 @@ function v1Wrap(el, status) {
       const over = bal != null && wei + tip > bal;
       go.disabled = over;
       if (over) warn(rc, lowEth());
+      // The relay's floor fee to send or unwrap a note later: a wrap of a few floors or less mostly pays for that.
+      const floor = BigInt(j.gasAwareFloorUnits || j.staticFloorUnits || 0) * E10;
+      if (!over && floor && wei < 3n * floor) rc.insertAdjacentHTML('beforeend', html`<p class="note">Sending or unwrapping a note this small later costs about ${fmt(floor, 18, 6)} ETH in relay fees.</p>`.s);
     } catch (e) { if (my === seq) quoteErr(rc, e); }
   });
   go.onclick = () => busy(go, async (run) => {
-    const x = q;                                                  // the quote shown when pressed, whatever is typed after
+    const x = q, via = payer();                                   // the quote and payer shown when pressed, whatever changes after
     if (!x) return;
     // Its receipt: the deposit, then the relay's settle of the note.
     run.go({ label: `Wrap ${fmt(x.wei, 18, 6)} ETH into tETH`, status: () => $('#v1-status'), clear: () => { clearField(input); } });
+    let hash = null, landed = false;
     try {
       const t = await getUx(), priv = walletPriv();
       say(status, 'Preparing your note, about half a minute…');
       const index = await t.nextWrapIndex({ walletPriv: priv, ticker: 'cETH' });
       const w = t.buildWrap({ walletPriv: priv, amountWei: x.wei, ticker: 'cETH', index });
       run.take(kDep(w));
-      const hash = runTx(run, await sendTx({ to: ADDR.wrapTip, data: SEL.wrapWithTip + strip(w.commit) + word(x.wei) + addrWord(x.to), value: x.wei + x.tip, label: `Deposit ${fmt(x.wei, 18, 6)} ETH to wrap` }), 'Deposit', 'Depositing');
+      run.check();
+      hash = runTx(run, await sendTx({ to: ADDR.wrapTip, data: SEL.wrapWithTip + strip(w.commit) + word(x.wei) + addrWord(x.to), value: x.wei + x.tip, via, label: `Deposit ${fmt(x.wei, 18, 6)} ETH to wrap` }), 'Deposit', 'Depositing');
       say(status, html`Deposit sent ${txLink(hash)}. Waiting for it to land…`);
       await waitTx(hash);
+      landed = true;
       // The deposit is in escrow from here on; if this step fails, Finish rebuilds the same note at the same index.
       say(status, html`Deposited ${txLink(hash)}. The relay is proving your note, about a minute…`);
-      await t.submitWrapSettle({ built: w, waitOpts: run.wait(null, 15 * 60e3) });
+      await t.submitWrapSettle({ built: w, waitOpts: run.wait(null, 15 * 60e3), depositTx: hash });
       await scanPrivate(true).catch(() => {});
       rerender('eth');
     } catch (e) {
-      run.fail(status, e);
+      // Once the deposit is sent, the form empties as a hand-off would empty it and the line points to Finish; a
+      // deposit that reverted made nothing, and may be tried again.
+      // Giving the sheet back can draw it afresh, so the line is found again, as a hand-off finds it.
+      if (hash && !run.away && !waitRanOut(e) && (landed || !/reverted/i.test(e?.message))) {
+        run.to.clear(); input.dispatchEvent(new Event('input')); run.release(true);
+        e = keptDeposit(e, landed);
+      }
+      run.fail(run.to.status?.() || status, e);
       scanPrivate(true).then(() => rerender('eth')).catch(() => {});
     }
   });
@@ -2541,10 +2613,13 @@ async function moveToV1(run, W, amount, step) {
   const index = await t.nextWrapIndex({ walletPriv: priv, ticker: 'cETH' });
   const w = t.buildWrap({ walletPriv: priv, amountWei: amount, ticker: 'cETH', index });
   run.take(kDep(w));
+  run.check();
   const h = keeperTx(await W.toV1({ amount, commit: '0x' + strip(w.commit), onStep: step }), 1, `Move ${fmt(amount, 18, 6)} ETH into the Tacit pool`);
   if (P.scan) P.scan.at = 0;                                     // the Tacit pool balance is read again on its next view
   step('the Tacit pool relay is proving your note');
-  await t.submitWrapSettle({ built: w, waitOpts: run.wait(`Settle ${fmt(amount, 18, 6)} tETH moved in from this device`, 15 * 60e3) });
+  // toV1 returns once the move is mined, so from here the deposit waits in the Tacit pool for its Finish.
+  try { await t.submitWrapSettle({ built: w, waitOpts: run.wait(`Settle ${fmt(amount, 18, 6)} tETH moved in from this device`, 15 * 60e3) }); }
+  catch (e) { throw waitRanOut(e) ? e : keptDeposit(e, true, ' on the Tacit pool tab'); }
   return h;
 }
 // A fresh sync (after an action) starts after any sync already running, so what it reads is newer than the action.
@@ -2727,7 +2802,11 @@ function renderDevice(el) {
         }
         clearField(amt); rc.hidden = true;
         afterAction(html`<span class="ok">${done}</span> ${explorer(h)}`);
-      } catch (e) { sayErr(status, e); }
+      } catch (e) {
+        // A move that landed but has not settled has left this device: the field empties and the balance is read again.
+        if (e?.said || waitRanOut(e)) { clearField(amt); rc.hidden = true; afterAction(html`<span class="err">${errText(e)}</span>`); }
+        else sayErr(status, e);
+      }
     });
   } else {
     const min = DEV.quote?.receiveMin ? BigInt(DEV.quote.receiveMin) : null;
@@ -3375,11 +3454,15 @@ function weiForm(f, status) {
   };
   onEdit([input], go, check);
   if (WEI.label) check();
-  go.onclick = () => busy(go, async () => {
+  go.onclick = () => busy(go, async (run) => {
     const x = q;
     if (!x) return;
     try {
-      const to = await payingAccount(), { label } = x;
+      // The account and key of the press, through the minute between the steps: the name goes to that account and
+      // publishes that key's Tacit address, and another key opened meanwhile stops it before its next step.
+      const tacit = S.key?.tacit, { label } = x;
+      if (!tacit) throw new Error('Open your Tacit wallet first.');
+      const to = await payingAccount(), via = payer();
       if (!x.mine) {
         const { secret, commitment } = weiCommit(label, to);
         // The latest block's time, which a wallet's gas estimate runs at; on a chain making no new blocks, the clock less a block.
@@ -3387,7 +3470,7 @@ function weiForm(f, status) {
         let at = wordAt(await ethCall(WNS, '839df945' + commitment), 0);
         if (!at || BigInt(await chainTime()) > at + 86400n) {                 // none yet, or older than the day a reveal accepts
           say(status, 'Step 1 of 2: reserving the name…');
-          await waitTx(await sendTx({ to: WNS, data: 'f14fcbc8' + commitment, label: `Reserve ${label}.wei` }));
+          run.check(); await waitTx(await sendTx({ to: WNS, data: 'f14fcbc8' + commitment, via, label: `Reserve ${label}.wei` }));
           for (let i = 0; !(at = wordAt(await ethCall(WNS, '839df945' + commitment), 0)) && i < 20; i++) await sleep(3000);   // a read behind the chain
           if (!at) throw new Error('The reservation landed but is not visible yet. Press Register again in a minute; it picks up from here.');
         }
@@ -3403,12 +3486,14 @@ function weiForm(f, status) {
         const calls = ['2cb9f974' + word(96) + secret + addrWord(to) + abiStr(label), 'cb019b84' + addrWord('0x' + '0'.repeat(40)) + word(0) + word(0) + addrWord(to)];
         let off = calls.length * 32, heads = '', tails = '';
         for (const c of calls) { heads += word(off); const t = word(c.length / 2) + c.padEnd(Math.ceil(c.length / 64) * 64, '0'); tails += t; off += t.length / 2; }
-        await waitTx(await sendTx({ to: ZROUTER, data: 'ac9650d8' + word(32) + word(calls.length) + heads + tails, value: price, label: `Register ${label}.wei` }));
+        run.check();
+        await waitTx(await sendTx({ to: ZROUTER, data: 'ac9650d8' + word(32) + word(calls.length) + heads + tails, value: price, via, label: `Register ${label}.wei` }));
         toast(`${label}.wei is yours`);
       }
       say(status, `Publishing your Tacit address on ${label}.wei…`);
       const key = 'finance.tacit', rec = abiStr(key);
-      await waitTx(await sendTx({ to: WNS, data: '3fb24782' + weiNode(label) + word(96) + word(96 + rec.length / 2) + rec + abiStr(S.key.tacit), label: `Publish your Tacit address on ${label}.wei` }));
+      run.check();
+      await waitTx(await sendTx({ to: WNS, data: '3fb24782' + weiNode(label) + word(96) + word(96 + rec.length / 2) + rec + abiStr(tacit), via, label: `Publish your Tacit address on ${label}.wei` }));
       say(status, html`<span class="ok">${label}.wei now pays you privately.</span>`);
       WEI.label = ''; loadPoints(true).then(() => rerender('pts')).catch(() => {});
     } catch (e) { sayErr(status, e); }
@@ -3418,7 +3503,7 @@ function weiForm(f, status) {
 // ── farms ────────────────────────────────────────────────────────────────────────────────────────────────
 // The public farm program is kept from the last visit and shown until the fresh read replaces it.
 const PROGRAM_KEY = 'tacit-lite-farm-program-v1', FARM_FOOT_KEY = 'tacit-lite-farm-foot-v1';
-const FARM = { precision: null, program: store.get(PROGRAM_KEY), open: 'precision', mode: null, positions: null, outPct: '100', outAs: 'both', fill: null, wtac: 0n };
+const FARM = { precision: null, program: store.get(PROGRAM_KEY), open: 'precision', mode: null, positions: null, outPct: '100', outAs: 'both', fill: null, wtac: null };
 const WTAC = '0x2018139a8fdd3666855be3315c7683b4d6ab7aef';        // WrappedTac: the private farms' reward token, 1:1 for TAC
 let precisionSeq = 0;
 async function loadPrecision() {
@@ -3469,7 +3554,7 @@ async function loadPositions() {
 const loadFarms = (force = false) => once(FARM, `${S.address}|${S.key?.pubHex}`, readFarms, force);   // forced after an action
 async function readFarms(current) {
   const [pr, pg] = await Promise.allSettled([loadPrecision(), loadProgram(), S.key ? loadPositions() : null, S.key ? scanPrivate() : null,
-    S.address ? ethCall(WTAC, SEL.balanceOf + addrWord(S.address)).then((r) => { FARM.wtac = wordAt(r, 0); }) : null]);
+    S.address ? ((who) => ethCall(WTAC, SEL.balanceOf + addrWord(who)).then((r) => { FARM.wtac = { who, v: wordAt(r, 0) }; }))(S.address) : null]);
   if (!current()) return;
   FARM.errs = { precision: pr.status === 'rejected' && !FARM.precision ? pr.reason : null, program: pg.status === 'rejected' && !FARM.program ? pg.reason : null };
   const x = FARM.precision, prog = FARM.program;
@@ -3545,12 +3630,14 @@ render.farm = () => {
 // What the private farms leave in this key's notes: harvested rewards (wTAC notes, and wTAC already unwrapped to the paying
 // account) and liquidity that is no longer bonded. All of it is found from the key and the chain, and turns back here into
 // TAC, or into the pool's two assets as private notes.
+// wTAC in the paying account, as read for that account: nothing while another account's read is all there is.
+const wtacHere = () => (FARM.wtac && S.address && FARM.wtac.who.toLowerCase() === S.address.toLowerCase() ? FARM.wtac.v : 0n);
 function renderFarmNotes(el) {
   const prog = FARM.program, notes = S.key ? freeNotes(P.scan?.notes) : null;
   const rid = String(prog?.rewardAsset || '').toLowerCase();
   const wtac = (notes || []).filter((n) => rid && String(n.asset).toLowerCase() === rid);
   const lps = (prog?.pools || []).map((p) => ({ p, notes: (notes || []).filter((n) => String(n.asset).toLowerCase() === String(p.lpAsset).toLowerCase()) })).filter((x) => x.notes.length);
-  const inNotes = wtac.reduce((a, n) => a + BigInt(n.value), 0n), inAccount = FARM.wtac || 0n;
+  const inNotes = wtac.reduce((a, n) => a + BigInt(n.value), 0n), inAccount = wtacHere();
   if (!inNotes && !inAccount && !lps.length) { mount(el, html``); return; }
   mount(el, html`
     <div class="blk">
@@ -3568,7 +3655,7 @@ function renderFarmNotes(el) {
   if (rd) rd.onclick = () => busy(rd, async (run) => {
     try {
       const t = await getUx(), priv = walletPriv(), to = await payingAccount(), mine = freeNotes(wtac);
-      if (!mine.length && !(FARM.wtac > 0n)) throw new Error('These rewards are already on their way to TAC. Follow them in Activity.');
+      if (!mine.length && !(wtacHere() > 0n)) throw new Error('These rewards are already on their way to TAC. Follow them in Activity.');
       run.take(...mine.map(kNote));
       for (const [i, n] of mine.entries()) {
         say(status, `The relay is unwrapping your rewards${mine.length > 1 ? ` (${i + 1} of ${mine.length})` : ''}…`);
@@ -3949,10 +4036,14 @@ function bondsBlock() {
     <p class="note">A bond comes back to the account that posted it before its lock is minted against, or once the lock is redeemed. Spending a lock's BTC any other way gives its bond to the insurance reserve.</p>
   </div>`;
 }
-// What a lock costs on top of the BTC it locks: its two transactions' fees at the next-block rate, and its dust output.
+// What a lock costs on top of the BTC it locks, reckoned as the lock builder reckons it and at its rate (the next-block
+// fee): the reveal's vout-0 dust, then the reveal and the commit fees, each at least 500 sats, the commit sized for two
+// inputs. A tenth more covers the rate moving before it is sent.
 async function lockPad() {
-  const j = await esplora('/fee-estimates').catch(() => null);
-  return BigInt(400 * Math.max(1, Math.ceil(j?.['2'] || j?.['3'] || j?.['6'] || 5)) + 600);
+  const f = await esplora('/v1/fees/recommended').catch(() => null);
+  const j = f?.fastestFee ? null : await esplora('/fee-estimates').catch(() => null);
+  const rate = Math.max(1, Math.ceil(f?.fastestFee || j?.['1'] || j?.['2'] || 5)), fee = (vb) => Math.max(500, vb * rate);
+  return BigInt(Math.ceil((546 + fee(200) + fee(11 + 2 * 68 + 43 + 31)) * 1.1));
 }
 // Reads for one key, and written only under that key and only by the newest read: nothing lands once the key has changed
 // or a newer read has begun. `fresh` (after an action) rescans the private notes rather than reusing a recent scan.
@@ -3997,8 +4088,12 @@ async function readBorrow(fresh, current) {
   const addr = lm.wallet.address();
   const [utxos, tip, refl, lr] = await sideP;
   // The state carries the record it was computed for, so a render never pairs a new record with old numbers.
-  const pending = (utxos || []).filter((u) => !u.status?.confirmed);
-  const st = { rec, addr, sats: utxos ? utxos.reduce((s, u) => s + BigInt(u.value), 0n) : null, pendingSats: pending.reduce((s, u) => s + BigInt(u.value), 0n), unconfirmed: pending.map((u) => `${u.txid}:${u.vout}`.toLowerCase()), tip, refl, needEth: 0n, payEth: 0n, needWst: 0n, have: 0n, usd: 0n,
+  // Only what a lock can spend counts: the lock builder leaves out outputs at or below 546 sats (they may carry Tacit
+  // notes, and every lock leaves one) and outputs held as live locks.
+  const held = new Set((await getLockMod().then((m) => m.listProtectedOutpoints()).catch(() => [])).map((k) => String(k).toLowerCase()));
+  const usable = utxos && utxos.filter((u) => u.value > 546 && !held.has(`${u.txid}:${u.vout}`.toLowerCase()));
+  const pending = (usable || []).filter((u) => !u.status?.confirmed);
+  const st = { rec, addr, sats: usable ? usable.reduce((s, u) => s + BigInt(u.value), 0n) : null, pendingSats: pending.reduce((s, u) => s + BigInt(u.value), 0n), unconfirmed: pending.map((u) => `${u.txid}:${u.vout}`.toLowerCase()), tip, refl, needEth: 0n, payEth: 0n, needWst: 0n, have: 0n, usd: 0n,
     ratio: lr?.[0] ? wordAt(lr[0], 0) : 15000n, liq: lr?.[1] ? wordAt(lr[1], 0) : 13000n };
   if (rec) {
     const op = outpointOf(t, rec);
@@ -4162,17 +4257,21 @@ render.borrow = () => {
   // The connected wallet sends the Tacit account what the bond still needs, with a little room for gas moving, and once
   // that lands the bond is posted from the Tacit account: one wallet prompt, and the bond stays with this key.
   const topup = $('#bw-topup');
-  if (topup) topup.onclick = () => busy(topup, async () => {
+  if (topup) topup.onclick = () => busy(topup, async (run) => {
     try {
-      const t = await getUx();
+      const t = await getUx(), acct = S.acct.address;
       if (!st.payEth) throw new Error('The bond size could not be read. Try again in a few minutes.');
-      const bal = BigInt(await rpc('eth_getBalance', [S.acct.address, 'latest'])), gap = ((st.payEth + BF.gas) * 105n) / 100n - bal;
+      const bal = BigInt(await rpc('eth_getBalance', [acct, 'latest'])), gap = ((st.payEth + BF.gas) * 105n) / 100n - bal;
       if (gap > 0n) {
+        // A wallet connected only to fund this leaves the Tacit account paying, as it was.
+        if (!S.wallet) { const was = payer(); await connect(); if (was === 'tacit' && payer() !== 'tacit') setPayer('tacit'); }
         say(status, `Confirm ${fmt(gap, 18, 5)} ETH to your Tacit account in your wallet…`);
-        const h = await sendTx({ to: S.acct.address, data: '0x', value: gap, via: 'wallet', label: `Add ${fmt(gap, 18, 6)} ETH to your Tacit account` });
+        run.check();
+        const h = await sendTx({ to: acct, data: '0x', value: gap, via: 'wallet', label: `Add ${fmt(gap, 18, 6)} ETH to your Tacit account` });
         say(status, html`Topping up your Tacit account… ${txLink(h)}`);
         await waitTx(h);
       }
+      run.check();                                                  // the bond is posted from the account just funded
       const hash = await sendTx({ to: ADDR.escrow, data: SEL.postEscrowWithETH + strip(outpointOf(t, rec)), value: st.payEth, via: 'tacit', label: `${st.have ? 'Top up' : 'Post'} the bond for ${fmt(BigInt(rec.vBtc), 8, 8)} BTC` });
       say(status, html`Posting the bond… ${txLink(hash)}`);
       await waitTx(hash);
@@ -4685,8 +4784,16 @@ function paintDash() {
     if (low.length) due.push([low.length === 1 ? bondText(low[0]) : `${low.length} bonds are short of what the engine asks for. Top them up, or they can go to the insurance reserve.`, 'bonds', 'Top up']);
     if (take.length) due.push([take.length === 1 ? bondText(take[0]) : `${take.length} bonds, ${fmt(take.reduce((s, n) => s + n.amt, 0n), 18, 5)} wstETH in all, can come back to you.`, 'bonds', 'Take back']);
     if (lost.length) due.push([lost.length === 1 ? bondText(lost[0]) : `${lost.length} locks were spent on Bitcoin before their cBTC was redeemed, so their bonds go to the insurance reserve.`, 'bonds', 'See']);
+    const farmIds = new Set([FARM.program?.rewardAsset, ...(FARM.program?.pools || []).map((p) => p.lpAsset)].filter(Boolean).map((a) => String(a).toLowerCase()));
+    const other = (P.scan?.others || []).filter((g) => !farmIds.has(g.id));
+    if (other.length) {
+      const named = other.filter((g) => g.ticker).map((g) => `${fmt(g.value, g.dec, 4)} ${shownAs(g.ticker)}`), more = other.length - named.length;
+      const what = [...named, ...(more ? [more === 1 ? 'another asset' : `${more} other assets`] : [])];
+      due.push([`This key also holds ${what.length > 1 ? `${what.slice(0, -1).join(', ')} and ${what.at(-1)}` : what[0]} privately, which this page has no sheet for. Spend ${other.length === 1 ? 'it' : 'them'} on tacit.finance.`, null, 'tacit.finance ↗', 'https://tacit.finance/']);
+    }
   }
-  const dueHtml = html`${due.map(([t, go, label]) => html`<div class="callout"><span>${t}</span><button class="btn ghost" type="button" data-dash-do="${go}">${label}</button></div>`)}`.s;
+  const dueHtml = html`${due.map(([t, go, label, href]) => html`<div class="callout"><span>${t}</span>${href ? html`<a class="btn ghost" href="${href}" target="_blank" rel="noopener">${label}</a>`
+    : html`<button class="btn ghost" type="button" data-dash-do="${go}">${label}</button>`}</div>`)}`.s;
   const gridHtml = html`${items.map(cell)}`.s, view = dueHtml + gridHtml;
   sec.hidden = false;
   $('#dash-since').textContent = changed && DASH.base?.at ? `Changes since ${new Date(DASH.base.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : '';

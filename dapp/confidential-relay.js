@@ -70,7 +70,8 @@ export function makeConfidentialRelay({ base, fetchImpl, guard, checkEmittedMemo
   // this call — there is nothing here for the guard to check.
   // `onJob(jobId, type)` (from the caller's waitOpts) fires the moment the relay accepts the job, before `tacit:job`
   // announces it, so a caller can tell its own jobs from any other the page sends meanwhile.
-  async function submitOp({ type, op, leaves = [], outputs = null, ephRand, memos = null, mode, feeAsset = null, lockMemos = null } = {}, waitOpts) {
+  // `depositTx` (a wrap): the deposit's transaction, whose tip the relay reads so a paid wrap is not counted as free work.
+  async function submitOp({ type, op, leaves = [], outputs = null, ephRand, memos = null, mode, feeAsset = null, lockMemos = null, depositTx = null } = {}, waitOpts) {
     const onJob = waitOpts && waitOpts.onJob;
     let sealedMemos;
     if (lockMemos != null) {
@@ -100,7 +101,7 @@ export function makeConfidentialRelay({ base, fetchImpl, guard, checkEmittedMemo
     const bigintSafe = (_, v) => typeof v === 'bigint' ? v.toString() : v;
     const res = await f(`${root}/confidential/submit`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ type, op, memos: sealedMemos, ...(mode ? { mode } : {}), ...(feeAsset ? { feeAsset } : {}) }, bigintSafe),
+      body: JSON.stringify({ type, op, memos: sealedMemos, ...(mode ? { mode } : {}), ...(feeAsset ? { feeAsset } : {}), ...(depositTx ? { depositTx } : {}) }, bigintSafe),
     });
     const body = await asJson(res);
     if (body && body.jobId) {

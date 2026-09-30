@@ -142,10 +142,15 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       ev.leaves.forEach((lf, i) => emitted.set(String(lf).toLowerCase(), String(ev.memos[i] ?? '0x').toLowerCase()));
     }
     const norm = (m) => '0x' + String(m ?? '').replace(/^0x/, '').toLowerCase();
+    // A memo with other bytes that opens to the same leaf under one of this wallet's own keys recovers the note just as
+    // well. That is what an op submitted twice looks like: the relay keeps the first submission's job and its memos, and
+    // each build seals afresh. A memo sealed to anyone else is held to the exact bytes.
+    const opensHere = (leaf, m) => [..._ownKeys.values()].some((priv) => !!memo.openMemo(priv, leaf, m));
     const mismatched = [];
     leaves.forEach((lf, i) => {
       const got = emitted.get(String(lf).toLowerCase());
-      if (got === undefined || got !== norm(memos[i])) mismatched.push({ index: i, leaf: lf, expected: norm(memos[i]), emitted: got ?? null });
+      if (got !== undefined && (got === norm(memos[i]) || opensHere(lf, got))) return;
+      mismatched.push({ index: i, leaf: lf, expected: norm(memos[i]), emitted: got ?? null });
     });
     return { ok: mismatched.length === 0, mismatched };
   }
@@ -558,9 +563,11 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       const w = R.walkWraps({ priv: id.priv, events, assets: _poolAssets, minIndex: (assetId) => _wrapIndexHint(id.pubHex, assetId) });
       diag.wrap.scanned = w.scanned;
       diag.wrap.truncated = w.scanned.filter((s) => s.stoppedAtMaxIndex).map((s) => s.assetId);
+      // Each deposit keeps the transaction that made it: a settle sent later names it, so the relay can read its tip.
+      const wrapTx = new Map((events || []).filter((e) => e && e.type === 'Wrap' && e.txHash).map((e) => [lc(e.depositId), e.txHash]));
       for (const n of w.found) {
         if (slot.has(lc(n.leaf))) { if (addDerived(n, 'wrap', { wrapIndex: n.index })) diag.wrap.found++; }
-        else if (!all.has(lc(n.leaf))) diag.wrap.unsettled.push({ index: n.index, asset: n.asset, value: n.value, depositId: n.depositId });
+        else if (!all.has(lc(n.leaf))) diag.wrap.unsettled.push({ index: n.index, asset: n.asset, value: n.value, depositId: n.depositId, txHash: wrapTx.get(lc(n.depositId)) || null });
       }
     } catch (e) { diag.errors.wrap = String(e && e.message || e); }
     diag.wrap.pending = await _stillWaiting(diag.wrap.unsettled);
@@ -895,9 +902,11 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // prover), which proves + calls settle(), consuming the on-chain deposit and emitting the note leaf. The
   // deposit tx (pool.wrap()) MUST already be mined — the guest checks the deposit is registered. Pass the
   // object returned by buildWrap.
-  async function submitWrapSettle({ built, waitOpts } = {}) {
+  // `depositTx`: the deposit's transaction, when known. A deposit sent through a tip forwarder carries the relay's tip,
+  // which the relay reads from that receipt so the paid wrap is not held to its free-settle allowance.
+  async function submitWrapSettle({ built, waitOpts, depositTx = null } = {}) {
     if (!built || !built.wrapOp) throw new Error('submitWrapSettle: pass the buildWrap() result');
-    const sub = await relay.submitOp({ type: 'wrap', op: built.wrapOp, leaves: [built.leaf], outputs: built.outputs, memos: built.memos, ephRand: built.ephRand, mode: 'settle' }, waitOpts);
+    const sub = await relay.submitOp({ type: 'wrap', op: built.wrapOp, leaves: [built.leaf], outputs: built.outputs, memos: built.memos, ephRand: built.ephRand, mode: 'settle', depositTx }, waitOpts);
     const st = sub.status === 'settled' ? { jobId: sub.jobId, ...sub } : await relay.waitForSettle(sub.jobId, waitOpts);
     return relay.verifyEmittedMemos(st, [built.leaf], sub.sealedMemos);
   }

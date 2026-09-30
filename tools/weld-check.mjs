@@ -11,6 +11,7 @@
 //   tacfarm  TAC alone zapped in with a permit; half withdrawn as ETH; LP held staked again; the rest withdrawn as TAC
 //   sell     TAC sold for ETH through zRouter in one transaction, the permit riding as its first leg
 //   v1       the identity signature unlocks the key; a tipped wrap lands and its settle is submitted
+//   v1refuse the relay refuses a wrap's settle after its deposit landed: the form empties and the line points to Finish
 //   devsend  the EVM pool's Send takes a bp1… pool address (a private send) or an 0x… address (a withdrawal to it)
 //   device   a deposit into the EVM pool, proved in the page's worker
 //   borrow   the Bitcoin deposit address renders; a bond for a lock record posts through the escrow helper
@@ -52,7 +53,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,devsend,device,borrow,bonds,mainbond,locks,repay,csend,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,activity,receipts,stats,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -82,6 +83,8 @@ const server = createServer((req, res) => {
 
 const RPC_HOSTS = ['ethereum-rpc.publicnode.com', 'eth.drpc.org', '1rpc.io', 'mainnet.gateway.tenderly.co', 'cloudflare-eth.com', 'rpc.flashbots.net'];
 const submits = [], relays = [];
+// Submits the relay refuses before taking them, as it does once the day's free settles are used up.
+let refuseSubmits = 0;
 
 // router.withdrawToV1(tx, intent), encoded as evm-pool-wallet.js encodes it for a self-sent move.
 const { calldata } = await import(new URL('../dapp/evm-pool-gateway.js', import.meta.url));
@@ -100,14 +103,27 @@ const json = (route, body) => route.fulfill({ status: 200, contentType: 'applica
 async function openPage({ account, key = null, host = '127.0.0.1', init = null, viewport = { width: 1280, height: 900 }, colorScheme = 'light' }) {
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport, colorScheme });
+  // A fork slow to fetch upstream state answers as an RPC that failed, which the page handles, instead of ending the run.
   for (const h of RPC_HOSTS) await ctx.route(`https://${h}/**`, async (route) => {
-    const r = await fetch(ANVIL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: route.request().postData() });
-    await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: await r.text() });
+    const t0 = Date.now(), what = () => { try { const b = JSON.parse(route.request().postData() || '{}'); return (Array.isArray(b) ? b : [b]).map((x) => x.method).join(','); } catch { return '?'; } };
+    try {
+      const r = await fetch(ANVIL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: route.request().postData() });
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: await r.text() });
+      if (Date.now() - t0 > 20000) console.log(`     slow fork call: ${what()} took ${Math.round((Date.now() - t0) / 1000)}s`);
+    } catch (e) {
+      console.log(`     fork call failed: ${what()} after ${Math.round((Date.now() - t0) / 1000)}s: ${e.message}`);
+      await route.fulfill({ status: 502, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ error: `the fork did not answer: ${e.message}` }) }).catch(() => {});
+    }
   });
   // On localhost the modules send relay calls to the page's own origin (confidential-deployments.js), so both that
   // path and the live host are covered: submits and job status are stubbed, reads pass through to the live API.
   const relay = async (route) => {
     const u = new URL(route.request().url());
+    if (u.pathname === '/confidential/submit' && refuseSubmits > 0) {
+      refuseSubmits--;
+      return route.fulfill({ status: 429, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify({ ok: false, error: 'free relayed settles for today are used up (300/300) — attach a fee above the floor, or prove-mode and settle it yourself', code: 'free_budget' }) });
+    }
     if (u.pathname === '/confidential/submit') { submits.push(JSON.parse(route.request().postData() || '{}')); return json(route, { jobId: 'stub-' + submits.length }); }
     if (u.pathname === '/confidential/status') return json(route, { status: 'failed', error: 'stubbed in the fork check' });
     // A live API that does not answer is the page's to report, as it would be for a user; the run goes on.
@@ -387,6 +403,31 @@ await step('v1', async () => {
   await page.click('#w-go');
   await until(page, () => /stubbed|failed|err/i.test(document.querySelector('#v1-status')?.innerHTML || ''), null, 1200000);   // two log walks on a cold fork
   ok(submits.slice(n0).some((s) => s.type === 'wrap'), `v1: the tipped deposit landed and its settle was submitted ${(await text(page, '#v1-status')).slice(0, 80)}`);
+  ok(/press Finish/i.test(await text(page, '#v1-status')), `v1: a settle that fails after its deposit landed points to Finish, not to another deposit (${(await text(page, '#v1-status')).slice(0, 110)})`);
+});
+
+// The relay refuses a wrap's settle outright once its deposit has landed (its free settles for the day are used up):
+// the form empties, and the line says why and that the deposit waits for Finish, rather than asking for it again.
+await step('v1refuse', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  try {
+    await r.page.goto(r.url + '#private');
+    await r.page.waitForSelector('#eth-v1 [data-in="eth"]', { timeout: 60000 });
+    await r.page.click('#eth-v1 [data-in="eth"]');
+    await r.page.waitForSelector('#w-amt', { timeout: 120000 });
+    refuseSubmits = 1;
+    await r.page.fill('#w-amt', '0.01');
+    await until(r.page, () => !document.querySelector('#w-go').disabled);
+    await r.page.click('#w-go');
+    // Where it is, once a minute, so a slow fork reads as slow rather than as a silent timeout.
+    const where = setInterval(() => text(r.page, '#v1-status').then((t) => console.log(`     v1refuse … ${t.slice(0, 100)}`), () => {}), 60000);
+    try { await until(r.page, () => /Press Finish|not private yet/.test(document.querySelector('#v1-status')?.textContent || ''), null, 1200000); } finally { clearInterval(where); }
+    const kept = await text(r.page, '#v1-status');
+    ok(/Your deposit is in the Tacit pool/.test(kept) && /free settles for today are used up/.test(kept) && /no need to send it again/.test(kept)
+      && await r.page.$eval('#w-amt', (i) => i.value === '') && await r.page.$eval('#w-go', (b) => b.disabled), `v1refuse: a settle the relay refuses after the deposit empties the form and points to Finish (${kept.slice(0, 130)})`);
+    ok(await until(r.page, () => !!document.querySelector('#v1-finish'), null, 600000).then(() => true, () => false), 'v1refuse: the deposit is then offered to Finish');
+    if (r.errors.length) { fails++; console.log('FAIL v1refuse page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { refuseSubmits = 0; await r.browser.close(); }
 });
 
 await step('devsend', async () => {
@@ -471,7 +512,10 @@ await step('bonds', async () => {
     await until(page, () => /spent on Bitcoin before its cBTC was redeemed/.test(document.querySelector('#dash-due')?.textContent || ''), null, 120000)
       .catch(async () => { throw new Error(`no forfeit notice on the dashboard (${(await due()).slice(0, 160)})`); });
     ok(/insurance reserve/.test(await due()), 'bonds: the dashboard says a bond was forfeit, and where it goes');
-    ok(/spent on Bitcoin before its cBTC was redeemed/.test(await text(page, '#toast-container')), 'bonds: the forfeit is announced once when it is first seen');
+    // Announced once, as a toast, when first read (which may have been just before the reload): recorded as told.
+    const told = await page.evaluate((op) => Object.keys(localStorage).filter((k) => k.startsWith('tacit-lite-bonds-seen-v1:'))
+      .some((k) => (JSON.parse(localStorage.getItem(k))?.ids || []).includes(`lost:0x${op}`)), OP);
+    ok(told, 'bonds: the forfeit is announced once when it is first seen');
     await page.click('[data-dash-do="bonds"]');
     await until(page, () => /forfeit/.test(document.querySelector('#bw-bonds')?.textContent || ''), null, 120000);
     ok(/was spent on Bitcoin before its cBTC was redeemed/.test(await text(page, '#bw-bonds .callout.bad')), 'bonds: the borrow sheet shows the forfeit bond with a notice');
@@ -1157,6 +1201,15 @@ await step('activity', async () => {
     served['j-wait'] = { type: 'transfer', status: 'settled', txHash: H('b8') };
     await until(r.page, () => /Done in/.test(document.querySelector('[data-act="job:j-wait"]')?.textContent || ''), null, 30000).catch(() => {});
     ok(/Done in/.test((await row('job:j-wait')).text), 'activity: and it reads done once the relay settles it');
+    // The list is this browser's: with another key open, an entry the first key made says so; one made with no key does not.
+    // A pasted key is not kept across the reloads above, so a key is locked first only if one is open.
+    await r.page.evaluate(() => { location.hash = ''; location.hash = '#wallet'; });
+    await r.page.waitForSelector('#w-lock, #wallet-body [data-in="paste"]');
+    if (await r.page.$('#w-lock')) { await r.page.click('#w-lock'); await until(r.page, () => !document.querySelector('#wallet-dot.on')); }
+    await pasteKey(r.page, 'bd82'.padEnd(64, '7'));
+    await openActivity(r.page);
+    ok(/Made with another Tacit key/.test((await row('job:j-mint')).text) && !/another Tacit key/.test((await row('job:j-old')).text),
+      `activity: an entry another key made says so (${(await row('job:j-mint')).text.slice(-60)})`);
     // At most twenty entries are kept, newest first.
     for (let i = 0; i < 22; i++) await fire({ jobId: `j-n${i}`, type: 'transfer', status: 'settled', txHash: H('ab') });
     await sleep(600);
