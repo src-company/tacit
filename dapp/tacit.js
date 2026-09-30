@@ -22759,8 +22759,13 @@ function _renderHoldingsBurndepBridges(listEl) {
   catch { return; }
   const existing = listEl.querySelector('.burndep-bridge-holdings');
   if (existing) existing.remove();
-  if (!records.length) return;
-  _startBurndepAutoRefresh();
+  // The journal this reads is a LOCAL CACHE only (localStorage) — losing it (a cleared browser, a private
+  // window closing, a fresh device) doesn't touch the actual bridge, which lives entirely on chain + in the
+  // worker's registration. Without this box, losing the cache made an in-flight bridge invisible with no path
+  // back except a hand-built console call — recoverFromTxid already existed and was tested, just never wired
+  // to anything. So this section renders even with zero records, rather than disappearing exactly when it's
+  // most needed.
+  if (records.length) _startBurndepAutoRefresh();
   const section = document.createElement('div');
   section.className = 'burndep-bridge-holdings';
   section.style.cssText = 'margin:12px 0;padding:12px 14px;border:1px solid var(--purple);border-radius:6px;background:rgba(139,92,246,0.04);';
@@ -22808,9 +22813,28 @@ function _renderHoldingsBurndepBridges(listEl) {
         <button data-burndep-act="${needsKey ? 'sign' : 'poll'}" data-burndep-id="${escapeHtml(rec.id)}" style="font-size:11px;padding:5px 10px;white-space:nowrap;">${actLabel}</button>
       </div>`;
   }).join('');
+  // Always present, regardless of whether any record is currently journalled — the whole point is to recover
+  // a bridge the local cache no longer knows about. Only the burn txid + the TAC amount are needed:
+  // recoverFromTxid re-derives everything else from chain data, and refuses (throws) rather than writing a
+  // wrong record if the amount given doesn't match what's really on chain (see burn-deposit-reveal.js's
+  // reconstructBurnHome — it checks the recomputed output against the real on-chain script).
+  // Collapsed in every case (including zero records) — a persistent, low-key link rather than an expanded
+  // form thrust on every wallet that has never touched a bridge, matching the equally low-key "legacy tETH"
+  // link style already used elsewhere in this panel.
+  const resumeBoxHtml = `
+    <details style="${records.length ? 'margin-top:10px;padding-top:8px;border-top:1px solid var(--ink-faint);' : ''}">
+      <summary class="muted" style="cursor:pointer;font-size:11px;">${records.length ? "Don't see a bridge you expect? " : ''}Recover a bridge from its transaction id →</summary>
+      <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+        <input type="text" data-burndep-resume-txid placeholder="Burn transaction id" style="flex:1;min-width:160px;font-size:11px;">
+        <input type="text" data-burndep-resume-amount placeholder="Amount (e.g. 250)" style="width:100px;font-size:11px;">
+        <button data-burndep-resume-btn style="font-size:11px;padding:5px 10px;white-space:nowrap;">Recover</button>
+      </div>
+      <div class="muted" data-burndep-resume-status style="font-size:11px;margin-top:4px;"></div>
+    </details>`;
   section.innerHTML = `
-    <div style="font-size:13px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px;">🌉 Bridges to Ethereum</div>
+    ${records.length ? '<div style="font-size:13px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px;">🌉 Bridges to Ethereum</div>' : ''}
     ${rowsHtml}
+    ${resumeBoxHtml}
     <div class="muted" data-burndep-status style="display:none;font-size:11px;margin-top:8px;"></div>
   `;
   listEl.prepend(section);
@@ -22885,6 +22909,33 @@ function _renderHoldingsBurndepBridges(listEl) {
       }
     });
   });
+  const resumeBtn = section.querySelector('[data-burndep-resume-btn]');
+  if (resumeBtn) {
+    resumeBtn.addEventListener('click', async () => {
+      const txidInput = section.querySelector('[data-burndep-resume-txid]');
+      const amountInput = section.querySelector('[data-burndep-resume-amount]');
+      const statusEl = section.querySelector('[data-burndep-resume-status]');
+      const txid = (txidInput?.value || '').trim().toLowerCase();
+      const amountStr = (amountInput?.value || '').trim();
+      if (!/^[0-9a-f]{64}$/.test(txid)) { if (statusEl) statusEl.textContent = 'Enter a valid 64-character burn transaction id.'; return; }
+      const amountTac = Number(amountStr);
+      if (!Number.isFinite(amountTac) || amountTac <= 0) { if (statusEl) statusEl.textContent = 'Enter the TAC amount this bridge carries.'; return; }
+      resumeBtn.disabled = true;
+      if (statusEl) statusEl.textContent = 'Checking the burn and rebuilding this bridge from chain data…';
+      try {
+        await ensurePrivkey();
+        const meta = getAssetMeta('0x' + CANONICAL_TAC_ASSET_ID_HEX) || {};
+        const decimals = Number.isInteger(meta.decimals) ? meta.decimals : 8;
+        const amountRaw = BigInt(Math.round(amountTac * 10 ** decimals));
+        await ux.recoverFromTxid(txid, wallet.priv, { amount: amountRaw });
+        toast('Bridge recovered from its transaction id', 'success');
+        renderHoldings();
+      } catch (e) {
+        if (statusEl) statusEl.textContent = `Could not recover: ${e?.message || e}`;
+        resumeBtn.disabled = false;
+      }
+    });
+  }
 }
 
 // Advances every burndep bridge for the current wallet that can move without the private key (polling
