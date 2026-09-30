@@ -35,7 +35,7 @@ const server = createServer((req, res) => {
 const URL_ = process.env.PAGE || `http://127.0.0.1:${WEB}/pay/`;   // PAGE=https://tacit.finance/pay/ checks the deployed page
 
 async function page(browser, { viewport = { width: 1280, height: 900 }, colorScheme = 'light', init = null, route = null } = {}) {
-  const ctx = await browser.newContext({ viewport, colorScheme });
+  const ctx = await browser.newContext({ viewport, colorScheme, permissions: ['clipboard-read', 'clipboard-write'] });
   if (init) await ctx.addInitScript(init);
   if (route) await route(ctx);
   const p = await ctx.newPage();
@@ -49,6 +49,27 @@ const openKey = async (p, key) => {
   await p.fill('#g-hex', key);
   await p.click('#g-in [data-in="key"]');
   await p.waitForSelector('#tabs:not([hidden])');
+};
+// The Receive tab's QR code, drawn to a canvas in the page, decoded here when jsQR is installed (JSQR=<its path>).
+let jsQR = null;
+try { jsQR = require(process.env.JSQR || 'jsqr'); } catch {}
+async function readQr(p) {
+  if (!jsQR) return null;
+  const { w, px } = await p.evaluate(async () => {
+    const svg = document.querySelector('#f-qr svg'), w = 600, img = new Image();
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(svg));
+    await img.decode();
+    const c = Object.assign(document.createElement('canvas'), { width: w, height: w }), g = c.getContext('2d');
+    g.imageSmoothingEnabled = false; g.drawImage(img, 0, 0, w, w);
+    return { w, px: [...g.getImageData(0, 0, w, w).data] };
+  });
+  return jsQR(Uint8ClampedArray.from(px), w, w)?.data ?? '';
+}
+const getPaidLink = async (p, amount, note) => {
+  await p.click('#tabs [data-tab="receive"]');
+  await p.fill('#f-ramt', amount); await p.fill('#f-rfor', note); await sleep(300);
+  await p.click('#f-link');
+  return p.evaluate(() => navigator.clipboard.readText());
 };
 const shot = async (p, name) => { if (!SHOTS) return; mkdirSync(SHOTS, { recursive: true }); await p.screenshot({ path: join(SHOTS, name + '.png'), fullPage: true }); };
 
@@ -98,9 +119,22 @@ try {
       await p.fill('#f-wto', '0x' + '22'.repeat(20)); await p.fill('#f-wamt', '0.000001'); await sleep(500);
       const rc = await p.textContent('#f-rcpt');
       ok((/Arrives/.test(rc) && /Stays private/.test(rc)) || /More than/.test(rc), `withdraw receipt: ${rc.replace(/\s+/g, ' ').trim()}`);
-      await p.click('#tabs [data-tab="receive"]');
+      const link = await getPaidLink(p, '0.01', 'coffee & cake');
+      ok(/#pay=bp1[a-z0-9]+&n=[0-9a-f]{64}&amount=0\.01&chain=base&for=coffee/.test(link), `payment link: ${link.slice(0, 60)}…${link.slice(-50)}`);
+      const q = await readQr(p);
+      ok(q === null || q === link, q === null ? 'QR present (install jsqr to decode it)' : 'the QR code decodes to the same link');
       ok(/^bp1/.test(await p.textContent('.addr code')), 'receive shows the pool address');
       await shot(p, 'key-desktop');
+      const r = await page(browser, { viewport: { width: 390, height: 844 } });
+      await r.p.goto(link.replace(/^https?:\/\/[^/]+/, new URL(URL_).origin));
+      await r.p.waitForSelector('#req:not([hidden])');
+      const card = (await r.p.textContent('#req')).replace(/\s+/g, ' ');
+      ok(/0\.01 ETH/.test(card) && /on Base/.test(card) && /coffee & cake/.test(card) && await r.p.$('#req-wallet') && await r.p.$('#req-priv'), `request card: ${card.slice(0, 120)}`);
+      await r.p.click('#req-priv');
+      ok((await r.p.inputValue('#g-hex').catch(() => '')) === '' && await r.p.$('#g-in'), 'pay privately without a wallet asks to open one');
+      await shot(r.p, 'request-phone');
+      ok(!r.errors.length, `request page: no page errors ${r.errors.join(' | ')}`);
+      await r.ctx.close();
     }
     // A sample payment, proved and verified in the worker (downloads the ceremony key from this server).
     const t0 = Date.now();
@@ -227,6 +261,25 @@ try {
     await p.waitForFunction(() => document.querySelectorAll('.rows li').length >= 1, null, { timeout: 900e3 });
     const theirs = await p.$$eval('.rows li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
     ok(theirs.some((r) => /^Received privately ?\+0\.004 ETH/.test(r)), `the recipient’s key finds it: ${theirs[0]}`);
+    // Get paid by someone with only an ordinary wallet: they pay the request link; the payee takes it in.
+    const link = await getPaidLink(p, '0.003', 'fork test');
+    await p.click('#wallet'); await p.click('#w-lock'); await p.click('#sheet-wallet [data-close]');
+    await p.goto(link.replace(/^https?:\/\/[^/]+/, new URL(URL_).origin));
+    await p.waitForSelector('#req-wallet');
+    await p.click('#req-wallet');
+    await p.waitForFunction(() => /Paid/.test(document.querySelector('#req-status').textContent) || document.querySelector('#req-status .err'), null, { timeout: 120e3 });
+    ok(/Paid 0\.003 ETH/.test(await p.textContent('#req-status')), `paid from a wallet, no Tacit key: ${(await p.textContent('#req-status')).trim()}`);
+    await p.click('#req-x');
+    await openKey(p, other);
+    await p.click('#tabs [data-tab="deposit"]'); await p.click('[data-dep="addr"]');
+    await p.waitForSelector('#f-sweep', { timeout: 300e3 });
+    await p.click('#f-sweep');
+    await p.waitForFunction(() => /Taken in/.test(document.querySelector('#status').textContent) || document.querySelector('#status .err'), null, { timeout: 600e3 });
+    ok(/Taken in/.test(await p.textContent('#status')), `the payee takes it in: ${(await p.textContent('#status')).trim()}`);
+    await p.waitForFunction(() => [...document.querySelectorAll('.rows li')].some((l) => /deposit address/.test(l.textContent)), null, { timeout: 600e3 }).catch(() => {});
+    const got = await p.$$eval('.rows li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
+    console.log('    ' + got.join('\n    '));
+    ok(got.some((r) => /^Came in at your deposit address ?\+0\.003 ETH/.test(r)), 'the payee’s key finds the wallet payment');
     await shot(p, 'fork-after');
     ok(!errors.length, `no page errors ${errors.join(' | ')}`);
     await ctx.close();

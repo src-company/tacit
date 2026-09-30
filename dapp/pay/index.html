@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-dJwwEcXWXZ49NcfRuiygyG3t7ViLdLw8asvObdqZ1Fw=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-snsmakVqiPKZGqm7bBB1KosxnP5V2h43lufYik2bvnE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -139,6 +139,15 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .bal { display: flex; align-items: center; gap: 14px; padding: 14px 0; margin-bottom: 16px; border-top: 1px solid var(--hair); border-bottom: 1px solid var(--hair); }
 .bal .v { font: 500 30px/1.1 var(--mono); letter-spacing: -.02em; }
 .bal .u { color: var(--mute); font-size: 12.5px; }
+.req { padding: 16px; margin: 0 0 18px; background: var(--field); border: 1px solid var(--ink); }
+.req .lbl { margin-top: 0; }
+.req-a { font: 400 44px/1 var(--serif); letter-spacing: -.02em; margin: 4px 0 6px; }
+.req-a small { font: 500 14px var(--mono); color: var(--mute); letter-spacing: 0; }
+.req-m { font-size: 12.5px; color: var(--mute); overflow-wrap: anywhere; }
+.req-m b { font-weight: 500; color: var(--ink); }
+.req .amt.act { margin-top: 12px; }
+.qrbox { display: flex; justify-content: center; margin: 16px 0 2px; }
+.qr { display: block; width: min(264px, 100%); height: auto; border: 1px solid var(--hair); }
 .bal .v.t { font: 400 28px/1.05 var(--serif); letter-spacing: -.01em; }
 .bal .side { margin-left: auto; text-align: right; font-size: 12px; color: var(--mute); }
 
@@ -187,7 +196,7 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .addr code { flex: 1; min-width: 0; font: 400 12.5px/1.5 var(--mono); overflow-wrap: anywhere; word-break: break-all; }
 .addr .link { flex: none; }
 .blk + .blk { margin-top: 18px; }
-.blk .lbl { margin-top: 0; }
+.blk > .lbl:first-child { margin-top: 0; }
 .callout { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; margin: 14px 0 0;
   font-size: 12.5px; background: var(--field); border-left: 2px solid var(--orange); }
 
@@ -305,6 +314,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 
   <main>
     <section class="card app" aria-label="Private ETH">
+      <div class="req" id="req" hidden></div>
       <div class="seg" role="tablist" aria-label="Chain" id="chains"></div>
       <div class="bal" id="bal"></div>
       <div class="seg sub" role="tablist" aria-label="Action" id="tabs"></div>
@@ -614,6 +624,7 @@ async function setKey(k) {
   forget();
   S.key = { ...k, pubHex, bp: keys.address };
   S.keys = keys;
+  S.npk0 = m.receiveKeys(m.zk, keys.zkWallet, 0).npk;
   const seen = readJson(BAL_SEEN)?.[pubHex] || {};
   for (const c of CHAINS) CH[c.chainId].last = seen[c.chainId] != null ? BigInt(seen[c.chainId]) : null;
   warmIfSaved();
@@ -770,7 +781,7 @@ function syncChain(c, fresh = false) {
     const seen = readJson(BAL_SEEN) || {};
     seen[pub] = { ...(seen[pub] || {}), [c.chainId]: s.balance.toString() };
     writeJson(BAL_SEEN, seen);
-  }).catch((e) => { if (S.key?.pubHex === pub) st.err = e; }).finally(() => { if (st.syncing === p) st.syncing = null; paintChains(); paintBal(); if (!S.busy) { if (FORM.needsW && c === S.chain && CH[c.chainId].W) renderForm(); else FORM.check?.(); } paintRecover(); });
+  }).catch((e) => { if (S.key?.pubHex === pub) st.err = e; }).finally(() => { if (st.syncing === p) st.syncing = null; paintChains(); paintBal(); if (!S.busy) { if (c === S.chain && ((FORM.needsW && CH[c.chainId].W) || (FORM.waitShown !== undefined && CH[c.chainId].waiting !== FORM.waitShown))) renderForm(); else FORM.check?.(); } paintRecover(); });
   return p;
 }
 function syncAll(fresh = false) {
@@ -984,7 +995,7 @@ function paintBal() {
   if (re) re.onclick = () => { re.disabled = true; syncChain(c, true); };
 }
 const TABS = [['deposit', 'Deposit'], ['send', 'Send'], ['withdraw', 'Withdraw'], ['receive', 'Receive']];
-function renderApp() { paintChains(); paintBal(); renderTabs(); renderForm(); }
+function renderApp() { paintReq(); paintChains(); paintBal(); renderTabs(); renderForm(); }
 function renderTabs() {
   mount($('#tabs'), html`${TABS.map(([k, l]) => html`<button type="button" role="tab" data-tab="${k}" aria-selected="${k === S.tab}" ${S.busy ? 'disabled' : ''}>${l}</button>`)}`);
   $$('#tabs [data-tab]').forEach((b) => b.onclick = () => { if (S.busy) return; S.tab = b.dataset.tab; say($('#status'), ''); renderTabs(); renderForm(); });
@@ -993,7 +1004,7 @@ function renderTabs() {
 function renderForm() {
   if (S.busy) return;
   const f = $('#form');
-  FORM.check = null; FORM.needsW = false;
+  FORM.check = null; FORM.needsW = false; FORM.waitShown = undefined;
   if (!S.key) {
     mount(f, html`<p class="gate-p">Open your Tacit wallet. One key holds your private ETH on all three chains, and nothing else needs backing up.</p>${signIn('g')}`);
     return wireSignIn(f, 'g');
@@ -1096,6 +1107,7 @@ function formDeposit(f) {
     <button type="button" role="tab" data-dep="addr" aria-selected="${S.depMode === 'addr'}">Deposit address<small>from anywhere · the relay</small></button>
   </div>`;
   if (S.depMode === 'addr') {
+    FORM.waitShown = st.waiting;
     const min = st.quote?.receiveMin ? ((BigInt(st.quote.receiveMin) + 10n ** 12n - 1n) / 10n ** 12n) * 10n ** 12n : null;
     mount(f, html`${seg}
       <div class="blk"><div class="lbl"><span>Your deposit address</span><span>same on all three chains</span></div>
@@ -1255,25 +1267,202 @@ async function bridgeQuote(dest) {
   try { const q = await keeperJson(CHAINS[0], `/quote?gas=${BRIDGE_GAS[dest]}`); BRIDGE_Q.fee[dest] = BigInt(q.fee); FORM.check?.(); } catch (e) { sayErr($('#status'), e); }
 }
 
+// ── getting paid: a link (and its QR code) anyone can pay, from a Tacit wallet or any other ─────────────────
+// #pay=<bp1…>&n=<deposit-address key, hex>&amount=&chain=&for=. The pool address takes a private payment; n names the
+// payee's deposit address (receiveBoxOf(n, 25)), so a payer with only an ordinary wallet can pay too.
+const npkHex = (v) => BigInt(v).toString(16).padStart(64, '0');
+function payLink({ bp, n, amount, chain, note }) {
+  const q = new URLSearchParams({ pay: bp });
+  if (n != null) q.set('n', npkHex(n));
+  if (amount) q.set('amount', plain(amount));
+  q.set('chain', chain.key);
+  if (note) q.set('for', note);
+  return `${location.origin}/pay/#${q.toString()}`;
+}
 function formReceive(f) {
   const c = S.chain, W = cur().W;
   FORM.needsW = !W;
   mount(f, html`
+    <div class="blk"><div class="lbl"><span>Get paid</span><span>by anyone, from any wallet</span></div>
+      ${amountField('f-ramt', 'Amount (optional)')}
+      <div class="lbl"><span>What it’s for (optional)</span></div>
+      <div class="amt text"><input id="f-rfor" maxlength="60" placeholder="Dinner, rent, invoice 42…" autocomplete="off" aria-label="What it is for"></div>
+      <div class="qrbox" id="f-qr"></div>
+      <div class="row2"><button class="btn" type="button" id="f-link">Copy payment link</button><button class="btn ghost" type="button" id="f-share">Share</button></div>
+      <p class="note">From a Tacit wallet the payment is private end to end. From any other wallet it lands at your deposit address, and the relay moves it into your private balance on ${c.full} within minutes. The link carries your two addresses and what you type here, nothing else.</p></div>
     <div class="blk"><div class="lbl"><span>Your pool address</span><span>same on every chain</span></div>
       <div class="addr"><code>${S.key.bp}</code><button class="link" type="button" data-copy="${S.key.bp}">copy</button></div>
       <p class="note">For private payments from anyone using the pool. Nothing on chain links a payment to it, and the same address receives in the Bitcoin pool too.</p></div>
-    <div class="blk">${amountField('f-ramt', 'Ask for an amount (optional)')}
-      <div class="row2"><button class="btn ghost" type="button" id="f-link">Copy payment link</button><button class="btn ghost" type="button" id="f-share">Share</button></div>
-      <p class="note">The link opens this page with Send filled in, on ${c.full}.</p></div>
     <div class="blk"><div class="lbl"><span>Deposit address</span><span>public ETH in</span></div>
       <div class="addr"><code>${W?.receiveBox || '…'}</code>${W ? html`<button class="link" type="button" data-copy="${W.receiveBox}">copy</button>` : ''}</div>
       <p class="note">For ETH from an exchange or any wallet. It joins your private balance within minutes, for at most 0.25%.</p></div>`);
   $$('[data-copy]', f).forEach((b) => b.onclick = () => copy(b.dataset.copy));
-  const link = () => { const a = parseUnits($('#f-ramt').value); return `${location.origin}/pay/#pay=${S.key.bp}${a ? `&amount=${plain(a)}` : ''}&chain=${c.key}`; };
+  const link = () => payLink({ bp: S.key.bp, n: S.npk0, amount: parseUnits($('#f-ramt').value), chain: c, note: $('#f-rfor').value.trim() });
+  let last = '';
+  FORM.check = () => { const l = link(); if (l === last) return; last = l; mount($('#f-qr'), qrSvg(l)); };
   $('#f-link').onclick = () => copy(link(), 'Payment link copied');
   const sh = $('#f-share');
   if (!navigator.share) { sh.hidden = true; $('#f-link').style.gridColumn = '1 / -1'; }
-  sh.onclick = () => navigator.share({ title: 'Pay me privately', text: `Pay me in ETH on ${c.full}, privately.`, url: link() }).catch(() => {});
+  sh.onclick = () => { const a = parseUnits($('#f-ramt').value); navigator.share({ title: 'Pay me', text: `Pay me${a ? ` ${fmt(a, 18, 6)} ETH` : ''} on ${c.full}. Private if you use Tacit.`, url: link() }).catch(() => {}); };
+}
+
+// A payment request opened from a link: pay it from any wallet (to the payee's deposit address) or privately.
+const REQ = { v: null };
+function paintReq() {
+  const el = $('#req'), r = REQ.v;
+  el.hidden = !r;
+  if (!r) return;
+  const c = S.chain, own = S.key && lc(r.bp) === lc(S.key.bp);
+  mount(el, html`
+    <div class="lbl"><span>Payment request</span><button class="link" type="button" id="req-x">dismiss</button></div>
+    <div class="req-a num">${r.amount ? html`${fmt(r.amount, 18, 6)} <small>ETH</small>` : 'Any amount'}</div>
+    <div class="req-m">to <b class="nw">${short(r.bp, 8)}</b> on ${c.full}${r.note ? html` · “${r.note}”` : ''}</div>
+    ${own ? html`<p class="note">This is your own request. Share its link or QR code from Receive.</p>` : html`
+      ${!r.amount && r.n ? html`<div class="amt act"><input id="req-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="Amount"><span class="u">${ethIcon}ETH</span></div>` : ''}
+      <div class="${r.n ? 'row2' : ''}">${r.n ? html`<button class="btn" type="button" id="req-wallet">Pay from a wallet</button>` : ''}<button class="btn ${r.n ? 'ghost' : ''}" type="button" id="req-priv">Pay privately</button></div>
+      <p class="note">${r.n ? 'From a wallet: your address and the amount show on chain as a payment to their deposit address, then it moves into their private balance. ' : ''}Privately, from your own private ETH: nothing on chain links you to them.</p>
+      <div class="status" role="status" id="req-status"></div>`}`);
+  $('#req-x').onclick = () => { REQ.v = null; paintReq(); };
+  $('#req-priv')?.addEventListener('click', () => {
+    S.tab = 'send'; DRAFT['f-to'] = r.bp; if (r.amount) DRAFT['f-amt'] = plain(r.amount);
+    renderApp();
+    if (!S.key) toast('Open your Tacit wallet below to pay privately.');
+    $('#form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  $('#req-wallet')?.addEventListener('click', (e) => payFromWallet(e.currentTarget));
+}
+async function payFromWallet(btn) {
+  const r = REQ.v, st = $('#req-status');
+  await busyBtn(btn, async () => {
+    try {
+      const c = S.chain, a = r.amount ?? parseUnits($('#req-amt')?.value);
+      if (!a) throw new Error('Enter an amount.');
+      const m = await mods(), npk = BigInt('0x' + r.n), box = m.receiveBoxAddress(npk, m.RECEIVE_FEE_BPS, ROUTER), rpc = await rpcOn(c);
+      const q = await keeperJson(c, '/quote').catch(() => null);
+      const min = q?.receiveMin ? ((BigInt(q.receiveMin) + 10n ** 12n - 1n) / 10n ** 12n) * 10n ** 12n : 0n;
+      if (a < min) throw new Error(`On ${c.full}, a payment from a wallet needs at least ${fmt(min, 18, 6)} ETH for the relay to move it in. Pay privately, or send more.`);
+      if (!S.wallet || !S.provider) await connectWallet();
+      await ensureChain(c.chainId);
+      fetch(`${chainKeeper(c)}/receive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chainId: c.chainId, npk: npk.toString(), feeBps: m.RECEIVE_FEE_BPS }) }).catch(() => {});
+      const before = BigInt(await rpc('eth_getBalance', [box, 'latest']));
+      say(st, 'Confirm in your wallet…');
+      const h = await S.provider.request({ method: 'eth_sendTransaction', params: [{ from: S.wallet, to: box, value: '0x' + a.toString(16) }] });
+      say(st, html`<span class="ok">Paid ${fmt(a, 18, 6)} ETH.</span> ${txLink(c, h)} <span class="mute">Moving into their private balance…</span>`);
+      toast(`Paid ${fmt(a, 18, 6)} ETH.`);
+      for (let i = 0; i < 80; i++) {
+        await sleep(15_000);
+        const now = BigInt(await rpc('eth_getBalance', [box, 'latest']).catch(() => '0x' + (before + a).toString(16)));
+        if (now < before + a) { say(st, html`<span class="ok">Paid ${fmt(a, 18, 6)} ETH, and it is now in their private balance.</span> ${txLink(c, h)}`); return; }
+      }
+    } catch (e) { sayErr(st, e); }
+  });
+}
+
+// QR code, byte mode, error correction level M (versions 1–40), after Project Nayuki's reference construction.
+// qrModules(text) → rows of booleans (true = dark), without the quiet zone.
+function qrModules(text) {
+  const ECC = [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28];
+  const BLOCKS = [-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49];
+  const raw = (v) => { let r = (16 * v + 128) * v + 64; if (v >= 2) { const n = Math.floor(v / 7) + 2; r -= (25 * n - 10) * n - 55; if (v >= 7) r -= 36; } return r; };
+  const dataCw = (v) => Math.floor(raw(v) / 8) - ECC[v] * BLOCKS[v];
+  const bytes = [...new TextEncoder().encode(text)];
+  let ver = 1;
+  while (4 + (ver <= 9 ? 8 : 16) + 8 * bytes.length > dataCw(ver) * 8) if (++ver > 40) throw new Error('too long for a QR code');
+  const bits = [];
+  const put = (v, n) => { for (let i = n - 1; i >= 0; i--) bits.push((v >>> i) & 1); };
+  put(4, 4); put(bytes.length, ver <= 9 ? 8 : 16); for (const b of bytes) put(b, 8);
+  const cap = dataCw(ver) * 8;
+  put(0, Math.min(4, cap - bits.length)); put(0, (8 - (bits.length % 8)) % 8);
+  for (let p = 0xec; bits.length < cap; p ^= 0xec ^ 0x11) put(p, 8);
+  const data = [];
+  for (let i = 0; i < bits.length; i += 8) data.push(bits.slice(i, i + 8).reduce((a, b) => (a << 1) | b, 0));
+
+  const mul = (x, y) => { let z = 0; for (let i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11d); z ^= ((y >>> i) & 1) * x; } return z; };
+  const div = Array(ECC[ver]).fill(0); div[div.length - 1] = 1;
+  for (let i = 0, root = 1; i < div.length; i++, root = mul(root, 2)) for (let j = 0; j < div.length; j++) { div[j] = mul(div[j], root); if (j + 1 < div.length) div[j] ^= div[j + 1]; }
+  const rem = (d) => { const r = div.map(() => 0); for (const b of d) { const f = b ^ r.shift(); r.push(0); div.forEach((c, i) => { r[i] ^= mul(c, f); }); } return r; };
+  const nb = BLOCKS[ver], rawCw = Math.floor(raw(ver) / 8), nShort = nb - (rawCw % nb), shortLen = Math.floor(rawCw / nb);
+  const blocks = [];
+  for (let i = 0, k = 0; i < nb; i++) {
+    const d = data.slice(k, k + shortLen - ECC[ver] + (i < nShort ? 0 : 1));
+    k += d.length;
+    const e = rem(d);
+    if (i < nShort) d.push(0);
+    blocks.push(d.concat(e));
+  }
+  const cw = [];
+  for (let i = 0; i < blocks[0].length; i++) blocks.forEach((b, j) => { if (i !== shortLen - ECC[ver] || j >= nShort) cw.push(b[i]); });
+
+  const size = ver * 4 + 17;
+  const m = Array.from({ length: size }, () => Array(size).fill(false));
+  const fn = Array.from({ length: size }, () => Array(size).fill(false));
+  const set = (x, y, d) => { m[y][x] = d; fn[y][x] = true; };
+  for (let i = 0; i < size; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+  for (const [cx, cy] of [[3, 3], [size - 4, 3], [3, size - 4]]) for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+    const x = cx + dx, y = cy + dy, d = Math.max(Math.abs(dx), Math.abs(dy));
+    if (x >= 0 && x < size && y >= 0 && y < size) set(x, y, d !== 2 && d !== 4);
+  }
+  if (ver > 1) {
+    const n = Math.floor(ver / 7) + 2, step = ver === 32 ? 26 : Math.ceil((ver * 4 + 4) / (n * 2 - 2)) * 2, pos = [6];
+    for (let p = size - 7; pos.length < n; p -= step) pos.splice(1, 0, p);
+    pos.forEach((x, i) => pos.forEach((y, j) => {
+      if ((i === 0 && j === 0) || (i === 0 && j === n - 1) || (i === n - 1 && j === 0)) return;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) set(x + dx, y + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+    }));
+  }
+  const format = (mask) => {
+    const d = mask;                                           // level M is 00
+    let r = d; for (let i = 0; i < 10; i++) r = (r << 1) ^ ((r >>> 9) * 0x537);
+    const b = ((d << 10) | r) ^ 0x5412, bit = (i) => ((b >>> i) & 1) === 1;
+    for (let i = 0; i <= 5; i++) set(8, i, bit(i));
+    set(8, 7, bit(6)); set(8, 8, bit(7)); set(7, 8, bit(8));
+    for (let i = 9; i < 15; i++) set(14 - i, 8, bit(i));
+    for (let i = 0; i < 8; i++) set(size - 1 - i, 8, bit(i));
+    for (let i = 8; i < 15; i++) set(8, size - 15 + i, bit(i));
+    set(8, size - 8, true);
+  };
+  format(0);
+  if (ver >= 7) {
+    let r = ver; for (let i = 0; i < 12; i++) r = (r << 1) ^ ((r >>> 11) * 0x1f25);
+    const b = (ver << 12) | r;
+    for (let i = 0; i < 18; i++) { const d = ((b >>> i) & 1) === 1, a = size - 11 + (i % 3), c = Math.floor(i / 3); set(a, c, d); set(c, a, d); }
+  }
+  let i = 0;
+  for (let right = size - 1; right >= 1; right -= 2) {
+    if (right === 6) right = 5;
+    for (let vert = 0; vert < size; vert++) for (let j = 0; j < 2; j++) {
+      const x = right - j, y = ((right + 1) & 2) === 0 ? size - 1 - vert : vert;
+      if (!fn[y][x] && i < cw.length * 8) { m[y][x] = ((cw[i >>> 3] >>> (7 - (i & 7))) & 1) === 1; i++; }
+    }
+  }
+  const MASK = [(x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, (x) => x % 3 === 0, (x, y) => (x + y) % 3 === 0,
+    (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0, (x, y) => ((x * y) % 2) + ((x * y) % 3) === 0,
+    (x, y) => (((x * y) % 2) + ((x * y) % 3)) % 2 === 0, (x, y) => (((x + y) % 2) + ((x * y) % 3)) % 2 === 0];
+  const flip = (k) => { for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!fn[y][x] && MASK[k](x, y)) m[y][x] = !m[y][x]; };
+  const penalty = () => {
+    let p = 0, dark = 0;
+    const lines = [];
+    for (let y = 0; y < size; y++) { lines.push(m[y].map((d) => (d ? 1 : 0)).join('')); lines.push(m.map((r) => (r[y] ? 1 : 0)).join('')); }
+    for (const l of lines) {
+      for (const run of l.match(/0{5,}|1{5,}/g) || []) p += run.length - 2;
+      p += 40 * ((l.match(/(?=00001011101)/g) || []).length + (l.match(/(?=10111010000)/g) || []).length);
+    }
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      if (m[y][x]) dark++;
+      if (x < size - 1 && y < size - 1 && m[y][x] === m[y][x + 1] && m[y][x] === m[y + 1][x] && m[y][x] === m[y + 1][x + 1]) p += 3;
+    }
+    return p + 10 * Math.floor(Math.abs(dark * 20 - size * size * 10) / (size * size));
+  };
+  let best = 0, low = Infinity;
+  for (let k = 0; k < 8; k++) { flip(k); format(k); const s = penalty(); if (s < low) { low = s; best = k; } flip(k); }
+  flip(best); format(best);
+  return m;
+}
+function qrSvg(text) {
+  const m = qrModules(text), n = m.length, Q = 4, W = n + 2 * Q;
+  let d = '';
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (m[y][x]) d += `M${x + Q} ${y + Q}h1v1h-1z`;
+  return new Raw(`<svg class="qr" viewBox="0 0 ${W} ${W}" role="img" aria-label="QR code of the payment link" shape-rendering="crispEdges"><rect width="${W}" height="${W}" fill="#fff"/><path d="${d}" fill="#111"/></svg>`);
 }
 
 // ── the device card ──────────────────────────────────────────────────────────────────────────────────────
@@ -1405,18 +1594,22 @@ function applyHash() {
   const q = new URLSearchParams(h.includes('=') ? h : '');
   const words = h.includes('=') ? [] : h.split(/[&,]/);
   const c = chainOf(q.get('chain') || words.find((w) => chainOf(w)) || '');
-  const tab = TABS.find(([k]) => words.includes(k))?.[0] || (q.get('pay') ? 'send' : q.get('tab'));
-  if (q.get('pay')) { DRAFT['f-to'] = q.get('pay').trim(); if (q.get('amount') && parseUnits(q.get('amount'))) DRAFT['f-amt'] = q.get('amount'); }
+  const bp = (q.get('pay') || '').trim(), n = (q.get('n') || '').trim().toLowerCase(), amount = parseUnits(q.get('amount') || '') || null;
+  const tab = TABS.find(([k]) => words.includes(k))?.[0] || q.get('tab');
   if (c) { S.chain = c; writeJson(CHAIN_PREF, c.chainId); }
-  if (tab && TABS.some(([k]) => k === tab)) S.tab = tab;
+  if (bp) {
+    REQ.v = { bp, n: /^[0-9a-f]{1,64}$/.test(n) ? n : null, amount, note: (q.get('for') || '').trim().slice(0, 60) };
+    DRAFT['f-to'] = bp; if (amount) DRAFT['f-amt'] = plain(amount);
+    S.tab = 'send';
+  } else if (tab && TABS.some(([k]) => k === tab)) S.tab = tab;
   try { history.replaceState(null, '', location.pathname); } catch {}
-  if (q.get('pay')) toast(`A payment request${q.get('amount') ? ` for ${q.get('amount')} ETH` : ''} on ${S.chain.full}. Open your wallet to pay it.`);
 }
-window.addEventListener('hashchange', () => { applyHash(); renderApp(); });
+window.addEventListener('hashchange', () => { applyHash(); renderApp(); if (REQ.v) $('#req').scrollIntoView({ block: 'start', behavior: 'smooth' }); });
 
 // ── boot ─────────────────────────────────────────────────────────────────────────────────────────────────
 applyHash();
 paintWallet(); renderApp(); paintDevice(); paintRecover();
+if (REQ.v) requestAnimationFrame(() => $('#req').scrollIntoView({ block: 'start' }));
 mods().catch(() => {});
 pin().then(async (p) => {
   PIN.v = p;
