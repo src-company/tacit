@@ -124,7 +124,15 @@ function makeWorld() {
 
   const bridgeMintCalls = [];
   const bridgeMint = {
-    bridgeMint: async (args) => { bridgeMintCalls.push(args); return { jobId: 'job1', txHash: '0x' + 'cd'.repeat(32) }; },
+    // Mirrors confidential-bridge-mint.js's own recovery check (lines 211-212) — a stub that accepts anything
+    // is exactly how the wrong { ownerPub, secret } shape here shipped unnoticed: nothing caught it short of a
+    // real mint against the live module.
+    bridgeMint: async (args) => {
+      const r = args.recovery;
+      if (!r || (!r.seedDerived && r.ownerPub == null)) throw new Error("bridge-mint: pass recovery { ownerPub, secret } or { seedDerived: true } so the minted note stays recoverable");
+      bridgeMintCalls.push(args);
+      return { jobId: 'job1', txHash: '0x' + 'cd'.repeat(32) };
+    },
   };
 
   return {
@@ -278,6 +286,7 @@ let rec;
   ok(world.bridgeMintCalls.length === 1, 'bridgeMint.bridgeMint was called exactly once');
 
   const mintArgs = world.bridgeMintCalls[0];
+  ok(mintArgs.recovery && mintArgs.recovery.seedDerived === true, "bridgeMint is called with recovery: { seedDerived: true } — dest.blinding came from deriveBridgeMintBlinding, not a memo-sealed secret");
   const expectedSpentTxid = withHex(revHex(rec.burnHome.txid));
   ok(mintArgs.spentTxid.toLowerCase() === expectedSpentTxid.toLowerCase() && mintArgs.spentVout === 0, 'bridgeMint is called with the burn-home outpoint in internal byte order');
   const expectedLeaf = pool.leaf(ASSET, rec.burnHome.cx, rec.burnHome.cy, pool.outpointKey(mintArgs.spentTxid, mintArgs.spentVout));

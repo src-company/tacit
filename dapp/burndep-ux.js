@@ -409,14 +409,16 @@ export function makeBurnDepositUx(deps) {
       // reaches here without it) has no dest yet — derive and persist it now rather than throwing on
       // rec.dest.index, since it's fully determined by the wallet key and doesn't need rebuilding from chain.
       const dest = rec.dest || deriveDest(walletPriv, rec.burnHome, rec.burnHome.txid, rec.source.amount);
-      const secret = pool.deriveNote(walletPriv, withHex(tacAssetId), dest.index).secret;
       const minted = await bridgeMint.bridgeMint({
         network, sourceClass: 0,
         spentTxid: withHex(revHex(rec.burnHome.txid)), spentVout: 0,
         asset: withHex(tacAssetId), chainBinding: withHex(chainBindingHex()),
         burned: { value: rec.source.amount, blinding: rec.burnHome.blinding, owner: '0x' + '00'.repeat(32) },
         dest: { value: dest.value, blinding: dest.blinding, owner: dest.owner },
-        recovery: { ownerPub: null, secret },
+        // dest.blinding came from deriveBridgeMintBlinding (below), which the recovery scan re-derives on its
+        // own from the seed — the { ownerPub, secret } memo-sealing path is for a blinding it has no other way
+        // to find, which isn't the case here.
+        recovery: { seedDerived: true },
       });
       return putRecord({ ...rec, dest, stage: 'minted', mintedAt: now(), mintedJobId: minted.jobId || null, mintedTxHash: minted.txHash || null });
     },
