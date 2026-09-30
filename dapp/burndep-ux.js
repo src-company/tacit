@@ -359,13 +359,11 @@ export function makeBurnDepositUx(deps) {
 
       const rates = await broadcaster.slipstreamRates();
       const feeRate = Math.max(Number(rates.effective_rate), Number(rates.submit_fee_rate), 1) * 1.1;
-      const { destIndex, owner } = pickDestOwner(walletPriv);
+      const dest = deriveDest(walletPriv, burnHome, rec.burnHome.txid, rec.source.amount);
       const target = withHex(chainBindingHex());
-      const nullifier = pool.nullifier(kit.burnDepositLeaf(withHex(tacAssetId), burnHome.cx, burnHome.cy, withHex(revHex(rec.burnHome.txid)), 0));
-      const destBlinding = mintRecovery.deriveBridgeMintBlinding({ privkey: walletPriv, nullifier });
-      const { cx: destCx, cy: destCy } = pool.commitXY(rec.source.amount, destBlinding);
-      const destLeaf = pool.leaf(withHex(tacAssetId), destCx, destCy, owner);
-      const envelope = { assetId: withHex(tacAssetId), nullifier, destLeaf, target };
+      const { cx: destCx, cy: destCy } = pool.commitXY(dest.value, dest.blinding);
+      const destLeaf = pool.leaf(withHex(tacAssetId), destCx, destCy, dest.owner);
+      const envelope = { assetId: withHex(tacAssetId), nullifier: dest.nullifier, destLeaf, target };
 
       const fundingUtxo = rec.burn && rec.burn.fundingUtxo ? rec.burn.fundingUtxo : await pickFundingUtxo(P.wallet.address());
       const built = await reveal.buildBurnDepositRevealTxs({ prims: P, burnHome, envelope, fundingUtxo, feeRate });
@@ -377,7 +375,7 @@ export function makeBurnDepositUx(deps) {
       return putRecord({
         ...rec, stage: 'burn-signed',
         burn: { hex: built.revealHex, txid: built.revealTxid, feeRate: built.feeRate, fee: built.fee, fundingUtxo },
-        envelope, dest: { index: destIndex, owner, blinding: destBlinding, value: rec.source.amount },
+        envelope, dest,
       });
     },
     'burn-signed': async (rec) => {
@@ -426,6 +424,17 @@ export function makeBurnDepositUx(deps) {
   function pickDestOwner(walletPriv) {
     const dn = pool.deriveNote(walletPriv, withHex(tacAssetId), 0);
     return { destIndex: 0, owner: pool.nkToOwner(dn.secret) };
+  }
+
+  // The mint-time destination note: fully re-derivable from the wallet key plus the burn-home's own commitment
+  // and txid, so any record that already knows those two things can compute it, not only one built by the
+  // 'traced' stage transition itself (recoverFromTxid rebuilds a record from chain data alone and needs this
+  // too, for any status that maps straight to 'folded' or later).
+  function deriveDest(walletPriv, { cx, cy }, burnHomeTxid, amount) {
+    const { destIndex, owner } = pickDestOwner(walletPriv);
+    const nullifier = pool.nullifier(kit.burnDepositLeaf(withHex(tacAssetId), cx, cy, withHex(revHex(burnHomeTxid)), 0));
+    const blinding = mintRecovery.deriveBridgeMintBlinding({ privkey: walletPriv, nullifier });
+    return { index: destIndex, owner, blinding, value: amount, nullifier };
   }
 
   async function checkTxidStatus(txid) {
@@ -487,6 +496,10 @@ export function makeBurnDepositUx(deps) {
       },
       bundle, hops: traced.hops,
       burn: { txid: stripHex(burnTxidDisplay), hex: null, fundingUtxo: null },
+      // A record recovered straight into 'registered' or 'folded' skips the 'traced' transition that normally
+      // computes this — without it, reaching 'folded' throws trying to read rec.dest.index. Same derivation,
+      // fully determined by the wallet key and the burn-home already reconstructed above.
+      dest: deriveDest(walletPriv, burnHome, burnHomeTxid, BigInt(amount)),
     };
     return putRecord(rec);
   }

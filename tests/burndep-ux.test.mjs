@@ -288,6 +288,36 @@ let rec;
   ok(mintArgs.dest.owner.toLowerCase() === rec.dest.owner.toLowerCase() && mintArgs.dest.value === rec.dest.value, 'bridgeMint is called with the exact destination the burn envelope committed to');
 
   await assert.rejects(() => ux.advance(rec.walletPub, 'no-such-id'), /no bridge record/, 'advancing an unknown record id is refused');
+
+  // ==== recoverFromTxid into an already-folded status: the exact crash a real user hit ("Cannot read
+  // properties of undefined (reading 'index')") when their local journal was rebuilt from the burn txid after
+  // the bridge had already folded elsewhere. recoverFromTxid never computed `dest`, and the folded->minted
+  // handler reads rec.dest.index unconditionally. dest is fully re-derivable from the wallet key alone, so a
+  // freshly recovered record must carry the exact same one the original flow computed. ====
+  {
+    // Layered over the same world: its /reflection/burndep/status stub only ever answers {status}, since
+    // nothing else in this file needs `note`/`assetId` — recoverFromTxid specifically needs both to identify
+    // which asset and which burn-home a bare txid belongs to.
+    const recoverFetch = async (url, opts) => {
+      const u = new URL(url);
+      if (u.pathname === '/reflection/burndep/status' && stripHex(u.searchParams.get('txid') || '') === stripHex(rec.burn.txid)) {
+        const base = await (await world.fetchImpl(url, opts)).json();
+        const withExtra = { ...base, note: { txid: withHex(rec.burnHome.txid), vout: 0 }, assetId: ASSET };
+        return { ok: true, status: 200, json: async () => withExtra, text: async () => JSON.stringify(withExtra) };
+      }
+      return world.fetchImpl(url, opts);
+    };
+    const ux2 = makeUx({ ...world, fetchImpl: recoverFetch }, makeMemStorage()); // a fresh browser: no journal, recovering purely from the txid
+
+    const recovered = await ux2.recoverFromTxid(rec.burn.txid, WALLET_PRIV, { amount: rec.source.amount });
+    ok(recovered.stage === 'folded', 'recoverFromTxid on an already-folded burn lands directly on the folded stage');
+    ok(!!recovered.dest, "the recovered record carries a dest — this is exactly the field a real user hit missing (Cannot read properties of undefined (reading 'index'))");
+    ok(recovered.dest.owner.toLowerCase() === rec.dest.owner.toLowerCase() && recovered.dest.blinding === rec.dest.blinding && recovered.dest.value === rec.dest.value,
+      'the recovered dest is byte-identical to what the original flow computed — fully re-derived from the wallet key, nothing guessed');
+
+    const mintedFromRecovery = await ux2.advance(recovered.walletPub, recovered.id, { walletPriv: WALLET_PRIV });
+    ok(mintedFromRecovery.stage === 'minted', 'a record recovered straight into folded mints successfully — this is the exact call that used to throw');
+  }
 }
 
 // ==== resume after a simulated crash: a fresh instance, same storage, never re-signs ====
