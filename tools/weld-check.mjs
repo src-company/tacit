@@ -25,6 +25,8 @@
 //            V1 through a keeper-relayed withdrawToV1 whose note settle is then submitted, and asks to bridge to Base
 //   pts      a listed address claims its points reward; a pasted key's Tacit account registers a .wei name through
 //            zRouter's commit and reveal and publishes its tacit1 address on it
+//   ptsview  the points sheet from a stubbed service: recent activity in time order across chains, each linked to its
+//            chain's explorer, the newest activity's holder boost, rank, claimed so far, today's share and countdown
 //   csend    the Borrow sheet's Send: private cUSD/cBTC (notes stubbed into the balance) go privately to a tacit1 address
 //            or out as tacUSD to an 0x… address, with fees shown first and an amount over the balance refused
 //   tacsend  the TAC sheet's own Send, private-only: a stubbed cTAC note goes privately to a tacit1 address, shown as
@@ -57,7 +59,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,shield,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,activity,receipts,stats,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,shield,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -311,6 +313,10 @@ await step('farm', async () => {
   await page.click('#pf-go');
   await page.waitForSelector('#pf-exit', { timeout: 60000 });
   ok((await stakedOf(A0)) > 0n, 'farm: zapETH staked');
+  const e0 = await text(page, '#pf-earned'); await sleep(3500); const e1 = await text(page, '#pf-earned');
+  const seen = []; for (let i = 0; i < 8; i++) { seen.push(parseFloat(await text(page, '#pf-earned'))); await sleep(500); }
+  ok(seen.every((v, i) => !i || v >= seen[i - 1]), `farm: and never counts down when a fresh read lands (${seen.join(' → ')})`);
+  ok(!!e0 && e0 !== e1 && parseFloat(e1) > parseFloat(e0), `farm: what the stake has earned counts up while the sheet is open (${e0} → ${e1})`);
   await rpc('evm_increaseTime', [60]); await rpc('evm_mine', []);
   await page.evaluate(() => { location.hash = ''; location.hash = '#farm'; });
   await until(page, () => { const b = document.querySelector('#pf-claim'); return b && !b.disabled; });
@@ -1170,6 +1176,32 @@ await step('pts', async () => {
   ok(owner.slice(-40) === acct.slice(2) && rec === tacit1(hex), `pts: ${label}.wei registers to the Tacit account through zRouter and carries its tacit1 (${await text(w.page, '#pts-status')})`);
   if (w.errors.length) { fails++; console.log('FAIL pts page errors: ' + w.errors.slice(0, 3).join(' | ')); }
   await w.browser.close();
+});
+// The points sheet from a stubbed service: activity across chains in time order (Base's larger block numbers do not put
+// an older Base deposit first), the holder boost of the newest, the rank, what was claimed, and today's countdown.
+await step('ptsview', async () => {
+  const r = await openPage({ account: A0 });
+  const t0 = Math.floor(Date.now() / 1000);
+  const dep = (h, chain, block, ago, activity, pts, boost) => ({ tx_hash: '0x' + h.repeat(64), block_number: block, block_time: t0 - ago, amount_wei: '100000000000000000', points: pts, activity, tac_boost: boost, chain_id: chain, pp_boosted: false });
+  await r.ctx.route(/api\.tacit\.finance\/points\/0x/, (route) => json(route, { address: A0.toLowerCase(), points: 1234.5, deposit_count: 3,
+    today: { points: 100, totalPoints: 1000, dayBudgetWei: '1111111111111111111111' },
+    deposits: [dep('b', 8453, 52000000, 7200, 'evmpooldeposit', 90, 1), dep('a', 1, 26090000, 60, 'wrap', 125, 1.5), dep('c', 1, 26080000, 90000, 'zswapeth', 100, 1)] }));
+  await r.ctx.route(/api\.tacit\.finance\/claim\/0x/, (route) => json(route, { cumulativeAmount: '0', claimedWei: '5000000000000000000', unclaimedWei: '0', proof: null }));
+  await r.ctx.route(/api\.tacit\.finance\/leaderboard/, (route) => json(route, [{ address: '0x' + '1'.repeat(40), points: 9e9 }, { address: A0.toLowerCase(), points: 1234.5 }]));
+  await r.page.goto(r.url + '#pts');
+  await r.page.click('#pts-connect');
+  await until(r.page, () => !!document.querySelector('#pts-body .ptl'), null, 60000);
+  await r.page.click('#pts-body .ptlog summary');
+  const v = await r.page.evaluate(() => ({ body: document.querySelector('#pts-body').textContent.replace(/\s+/g, ' '),
+    items: [...document.querySelectorAll('#pts-body .ptl li')].map((li) => li.textContent.replace(/\s+/g, ' ').trim()),
+    links: [...document.querySelectorAll('#pts-body .ptl a')].map((a) => a.href) }));
+  ok(/^Wrapped ETH/.test(v.items[0] || '') && /^Deposited ETH on Base/.test(v.items[1] || '') && /^Swapped ETH/.test(v.items[2] || ''), `ptsview: recent points in time order across chains (${v.items.join(' | ')})`);
+  ok(/Holder boost at last activity\s*1\.5×/.test(v.body), 'ptsview: the holder boost is the newest activity\'s');
+  ok(/rank\s*#2/.test(v.body) && /Claimed so far\s*5 TAC/.test(v.body) && /10% · about 111\.11 TAC/.test(v.body) && /closes in \d/.test(v.body), `ptsview: rank, claimed, today's share and the countdown (${v.body.slice(0, 400)})`);
+  ok(v.links.some((h) => h.startsWith('https://basescan.org/tx/0x' + 'b'.repeat(64))) && v.links.some((h) => h.startsWith('https://etherscan.io/tx/0x' + 'a'.repeat(64))), 'ptsview: each activity links to its own chain\'s explorer');
+  ok(!(await r.page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), 'ptsview: no sideways scroll');
+  if (r.errors.length) { fails++; console.log('FAIL ptsview page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  await r.browser.close();
 });
 // Relayed jobs reach the page as tacit:job events; here they are dispatched the way the relay client dispatches them, and
 // /confidential/status answers from `served`, so a reload can find settled a job that had failed. Notification records

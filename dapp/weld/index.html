@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-TXpKfVKFM5w9u9fF0ueL5rBf126lscHLCtUIj1yAiCQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-yE+HpXflhoLP5y0KRBs+zdWW+Ovpmcxvnuai6CA3ulI=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -329,6 +329,14 @@ a.btn { text-decoration: none; white-space: nowrap; }
 .links a { color: var(--ink); text-underline-offset: 3px; }
 .pt { border-bottom: 1px solid var(--hair); margin-bottom: 14px; padding-bottom: 6px; }
 .pt .bal { border: 0; margin: 0; padding: 6px 0; }
+.pt .side b { font: 500 15px/1.3 var(--mono); color: var(--ink); }
+.pt .note { margin: 4px 0 8px; }
+.ptlog { margin: 6px 0 8px; }
+.ptl { list-style: none; margin: 0; padding: 0; }
+.ptl li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 7px 0; border-top: 1px solid var(--hair); font-size: 12.5px; }
+.ptl-w { min-width: 0; }
+.ptl-m { display: block; color: var(--mute); font-size: 11.5px; margin-top: 2px; overflow-wrap: anywhere; }
+.ptl b { flex: none; font-weight: 500; }
 a.opt { color: inherit; text-decoration: none; }
 .kv.sep { border-top: 1px solid var(--hair); margin-top: 18px; padding-top: 12px; }
 .opt[aria-busy="true"] .opt-t::after { content: ''; width: 11px; height: 11px; margin-left: auto; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
@@ -3496,7 +3504,15 @@ function renderSell(el) {
 // that sent each transaction, so the connected wallet and the Tacit account are read, and claimed, on their own.
 const DISTRIBUTOR = '0x000000C918e44A3a443937fA7594eA4f7C95D6b9', ZROUTER = '0x000000000000FB114709235f1ccBFfb925F600e4';
 const WNS = '0x0000000000696760E15f265e828DB644A0c242EB', ZSWAP = 'https://zswap.wei.limo';
-const PTS = { at: 0, key: '', rows: null };
+const PTS = { at: 0, key: '', rows: null }, PTS_BOARD = 500;
+const PTS_END = Date.UTC(2026, 11, 22) / 1000;                    // the program's last day is Dec 21 (UTC)
+// The holder boost's tiers: the least public TAC an address held through the day before an activity, and its multiplier.
+const BOOST_TIERS = [[100n, 1.25], [1000n, 1.5], [10000n, 2]];
+// Each kind of activity the program scores: what it was, and what its amount is counted in (none where it is not an amount).
+const PT_ACTS = { wrap: ['Wrapped ETH into the Tacit pool', 'ETH'], evmpooldeposit: ['Deposited ETH', 'ETH'], zswapeth: ['Swapped ETH', 'ETH'],
+  weiname: ['Registered a .wei name', 'ETH'], cbtcmint: ['Posted a bond toward cBTC', 'wstETH'], cusdmint: ['Borrowed cUSD'], pmbet: ['Bet with ETH', 'ETH'], pmcreate: ['Opened a market'] };
+const ptChain = (id) => (Number(id || 1) === 1 ? { name: 'Ethereum', explorer: SCAN } : DEVICE_CHAINS.find((c) => c.chainId === Number(id)) || null);
+const dayLeft = () => { const s = 86400 - (now() % 86400), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h} h ${m} min` : `${Math.max(1, m)} min`; };
 const pointsWho = () => [...new Map([[S.acct?.address, 'Tacit account'], [S.wallet, 'Wallet']].filter(([a]) => a).map(([a, l]) => [a.toLowerCase(), l]))];
 const ptsFmt = (n) => Math.round(Number(n) || 0).toLocaleString('en-US');
 function loadPoints(force = false) {
@@ -3506,15 +3522,20 @@ function loadPoints(force = false) {
 }
 async function readPoints(current) {
   const who = pointsWho(), key = who.map(([a]) => a).join();
+  const board = fetch(`${API}/leaderboard?limit=${PTS_BOARD}`, { signal: within(20e3) }).then((r) => r.json()).then((b) => (Array.isArray(b) ? b : null)).catch(() => null);
   const rows = await Promise.all(who.map(async ([addr, label]) => {
     const get = (path) => fetch(`${API}/${path}/${addr}`, { signal: within(20e3) }).then((r) => r.json()).catch(() => null);
-    const [p, c] = await Promise.all([get('points'), get('claim')]);
+    const [p, c, held] = await Promise.all([get('points'), get('claim'), ethCall(ADDR.tac, SEL.balanceOf + addrWord(addr)).then((r) => wordAt(r, 0)).catch(() => null)]);
     // What is claimable comes from the distributor itself, not the service's copy of it.
     const owed = c?.proof && c.cumulativeAmount ? wordAt(await ethCall(DISTRIBUTOR, '787eef2e' + addrWord(addr) + word(BigInt(c.cumulativeAmount))).catch(() => '0x'), 0) : 0n;
     const t = p?.today, today = t && Number(t.totalPoints) > 0 ? BigInt(t.dayBudgetWei) * BigInt(Math.round(Number(t.points) * 1e6)) / BigInt(Math.round(Number(t.totalPoints) * 1e6)) : 0n;
+    // The service lists activity by block number, which does not order Base or Robinhood blocks against Ethereum's; time does.
+    const recent = [...(p?.deposits || [])].sort((a, b) => Number(b.block_time) - Number(a.block_time));
     return { addr, label, points: Number(p?.points || 0), todayPts: Number(t?.points || 0), today, share: t && Number(t.totalPoints) > 0 ? Number(t.points) / Number(t.totalPoints) : 0,
-      owed, claim: c?.proof ? c : null, boost: Number((p?.deposits || [])[0]?.tac_boost || 1), read: !!p };
+      owed, claim: c?.proof ? c : null, claimed: big(c?.claimedWei) || 0n, held, recent, boost: Number(recent[0]?.tac_boost || 1), read: !!p };
   }));
+  const lb = await board;
+  for (const r of rows) { const i = lb ? lb.findIndex((e) => String(e.address).toLowerCase() === r.addr) : -1; r.rank = i >= 0 ? i + 1 : lb && lb.length >= PTS_BOARD ? 0 : null; }
   if (key !== pointsWho().map(([a]) => a).join() || !current()) return;
   Object.assign(PTS, { at: Date.now(), key, rows });
   paintPointsFoot();
@@ -3545,14 +3566,33 @@ render.pts = () => {
   if (!S.wallet && !S.key) { mount(el, gate('Points belong to the address that sent each transaction. Connect it to see yours, or open your Tacit wallet.', 'Connect wallet', 'pts-connect')); return wireConnect('pts-connect', () => rerender('pts')); }
   const rows = PTS.key === pointsWho().map(([a]) => a).join() ? PTS.rows : null;
   if (!rows) loadPoints().then(() => rerender('pts')).catch(() => {});
+  const on = now() < PTS_END;
+  // The next holder tier this address could reach from what it holds now; it counts once held through a day.
+  const nextTier = (r) => {
+    const n = r.held == null ? null : BOOST_TIERS.find(([min]) => r.held < min * 10n ** 18n);
+    return !n ? '' : html`<p class="note">${r.held > 0n ? `${fmt(r.held, 18, 2)} public TAC here. ` : ''}Hold ${n[0].toLocaleString('en-US')} public TAC here through a day and what it does next earns ${n[1]}×. <button class="link" type="button" data-earn="buy">Buy TAC</button></p>`;
+  };
+  const history = (r) => {
+    const list = r.recent.slice(0, 8);
+    if (!list.length) return '';
+    return html`<details class="lockmore ptlog"><summary>Recent points</summary><ul class="ptl">${list.map((d) => {
+      const [what, unit] = PT_ACTS[d.activity] || ['Activity'], c = ptChain(d.chain_id), amt = unit && big(d.amount_wei);
+      return html`<li><span class="ptl-w">${what}${c && c.name !== 'Ethereum' ? ` on ${c.name}` : ''}<span class="ptl-m">${amt ? `${fmt(amt, 18, 4)} ${unit} · ` : ''}${ago(Number(d.block_time) * 1000)}${d.tac_boost > 1 ? ` · ${d.tac_boost}× holder` : ''}${c && d.tx_hash ? html` · ${txLink(d.tx_hash, c.explorer)}` : ''}</span></span><b class="num">+${ptsFmt(d.points)}</b></li>`;
+    })}</ul></details>`;
+  };
   mount(el, html`
-    <p class="lede-s">Every day through Dec 21 (UTC), 1,111 TAC is split by that day’s points. Claim any time.</p>
+    <p class="lede-s">Every day through Dec 21 (UTC), 1,111 TAC is split by that day’s points.${on ? ` Today’s split closes in ${dayLeft()}; its TAC is yours to claim once the day is settled.` : ' Claim any time.'}</p>
     ${rows ? rows.map((r, i) => html`
       <div class="pt">
         <div class="bal"><div><div class="v num">${ptsFmt(r.points)}</div><div class="u">points · ${r.label} ${short(r.addr)}</div></div>
-          <div class="side">${r.read ? html`today ${ptsFmt(r.todayPts)}<br>about ${fmt(r.today, 18, 2)} TAC` : html`<span class="err">unavailable</span><br><button class="link" type="button" data-retry="points">Try again</button>`}</div></div>
-        ${r.boost > 1 ? html`<div class="kv"><span>Holder boost</span><b>${r.boost}×</b></div>` : ''}
+          <div class="side">${!r.read ? html`<span class="err">unavailable</span><br><button class="link" type="button" data-retry="points">Try again</button>`
+            : r.rank ? html`rank<br><b class="num">#${r.rank.toLocaleString('en-US')}</b>` : r.rank === 0 && r.points > 0 ? html`outside the<br>top ${PTS_BOARD}` : r.points ? '' : 'none yet'}</div></div>
+        ${r.read && on ? html`<div class="kv"><span>Today</span><b>${r.todayPts > 0 ? `${ptsFmt(r.todayPts)} points · ${sharePct(r.share)} · about ${fmt(r.today, 18, 2)} TAC` : 'nothing yet'}</b></div>` : ''}
+        ${r.boost > 1 ? html`<div class="kv"><span>Holder boost at last activity</span><b>${r.boost}×</b></div>` : ''}
+        ${r.claimed > 0n ? html`<div class="kv"><span>Claimed so far</span><b>${fmt(r.claimed, 18, 2)} TAC</b></div>` : ''}
+        ${r.read && on ? nextTier(r) : ''}
         ${r.owed > 0n ? html`<button class="btn" type="button" data-claim="${i}">Claim ${fmt(r.owed, 18, 2)} TAC</button>` : ''}
+        ${history(r)}
       </div>`) : pointsWho().map(([, label]) => html`
       <div class="pt"><div class="bal"><div><div class="v"><span class="sk" style="--w:5ch"></span></div><div class="u">points · ${label}</div></div>
         <div class="side"><span class="sk" style="--w:8ch"></span><br><span class="sk" style="--w:11ch"></span></div></div></div>`)}
@@ -3760,6 +3800,12 @@ const shieldedApr = (p) => {
   if (String(r.assetA).toLowerCase() !== CETH_ID || !Number(r.lpTotalShares)) return null;
   return aprOf(Number(p.tacPerDayForPool), 2 * Number(r.reserveA) / 1e8 * Number(p.totalShares) / Number(r.lpTotalShares));
 };
+// Shares of a private pool as the two assets they are worth now. Pool notes all carry 8 decimals, and every farmed pool pairs tETH.
+const lpWorth = (p, shares) => {
+  const r = p?.reserves || {}, total = big(r.lpTotalShares), n = big(shares), other = String(p?.pair || '').split('/').find((k) => k !== 'cETH') || '';
+  if (!total || n == null || String(r.assetA).toLowerCase() !== CETH_ID) return null;
+  return `${fmt(n * BigInt(r.reserveA) / total, 8, 5)} tETH + ${fmt(n * BigInt(r.reserveB) / total, 8, /BTC/.test(other) ? 6 : 2)} ${shownAs(other)}`;
+};
 const aprShort = (a) => (a == null ? '' : a >= 1000 ? '1,000%+ APR' : `${Math.round(a)}% APR`);
 const aprLong = (a) => (a >= 100000 ? 'over 100,000%' : `about ${Math.round(a).toLocaleString('en-US')}%`);
 const aprRow = (a) => (a == null ? '' : html`<div class="kv"><span>APR now</span><b>${aprLong(a)}</b></div>
@@ -3768,6 +3814,7 @@ render.farm = () => {
   const x = FARM.precision, prog = FARM.program, list = $('#farm-list');
   const mine = (pid) => (FARM.positions || []).filter((p) => Number(p.pid) === pid);
   const live = !!prog?.epoch?.active;                              // shielded farms stream only while a reward period runs
+  if (!FARM.touched && FARM.open === 'precision' && x && !(x.staked > 0n) && FARM.positions?.length && !KEPT['pf-amt'] && !KEPT['pf-tac']) FARM.open = 'pid' + FARM.positions[0].pid;
   const rows = [html`
     <li class="farm${FARM.open === 'precision' ? ' open' : ''}" data-farm="precision">
       <button type="button" aria-controls="farm-precision" aria-expanded="${FARM.open === 'precision'}">
@@ -3795,7 +3842,7 @@ render.farm = () => {
   $$('.farm > button', list).forEach((b) => b.onclick = () => {
     if (running('farm')) return;
     const key = b.parentElement.dataset.farm;
-    FARM.open = FARM.open === key ? null : key;
+    FARM.open = FARM.open === key ? null : key; FARM.touched = true;
     keep($('#sheet-farm'), render.farm);
   });
   if (FARM.open === 'precision') renderPrecision($('#farm-precision'));
@@ -3821,8 +3868,8 @@ function renderFarmNotes(el) {
       ${inNotes ? html`<div class="kv"><span>Harvested rewards</span><b>${fmt(inNotes, 8, 2)} wTAC</b></div>` : ''}
       ${inAccount ? html`<div class="kv"><span>wTAC in ${your()}</span><b>${fmt(inAccount, 18, 2)}</b></div>` : ''}
       ${inNotes || inAccount ? html`<button class="btn ghost" type="button" id="fn-redeem">Turn into TAC</button>` : ''}
-      ${lps.map(({ p, notes: ns }) => html`<div class="kv"><span>${pairName(p.pair)} liquidity, not bonded</span><b>${ns.reduce((a, n) => a + BigInt(n.value), 0n).toLocaleString('en-US')} shares</b></div>
-        <button class="btn ghost" type="button" data-lprm="${p.pid}">Take it out as ${pairName(p.pair)}</button>`)}
+      ${lps.map(({ p, notes: ns }) => { const n = ns.reduce((a, x) => a + BigInt(x.value), 0n); return html`<div class="kv"><span>${pairName(p.pair)} liquidity, not bonded</span><b>${lpWorth(p, n) || `${n.toLocaleString('en-US')} shares`}</b></div>
+        <button class="btn ghost" type="button" data-lprm="${p.pid}">Take it out as ${pairName(p.pair)}</button>`; })}
       <p class="note">wTAC is the farms' reward token, one for one with TAC: it becomes TAC in ${your()}. Liquidity that is not bonded earns nothing; taking it out returns both assets as private notes.</p>
       <div class="status" role="status" id="fn-status"></div>
     </div>`);
@@ -3868,6 +3915,17 @@ function renderFarmNotes(el) {
   }));
 }
 
+// What the public farm stake has earned by now: the last read, plus the stake's share of the stream since that read's block,
+// to the stream's end. Between reads of one accrual it never counts down (a claim starts a new one, with less earned), so a
+// read landing on a block older than the running figure does not step it back.
+function earnedNow(y) {
+  if (!y?.live || !(y.staked > 0n) || !y.totalStaked) return y?.earned ?? 0n;
+  const v = y.earned + y.rate * y.staked / y.totalStaked * BigInt(Math.max(0, Math.min(chainNow(), y.finish) - y.t)), h = FARM.hi;
+  const out = h && h.who === y.who && y.earned >= h.base && h.v > v ? h.v : v;
+  FARM.hi = { who: y.who, base: y.earned, v: out };
+  return out;
+}
+
 // The public farm, whole: add from ETH, TAC or both (a permit stands in for any approval), stake LP already held, and
 // see, claim and withdraw a position — part or all of it, as both assets or swapped into one.
 function renderPrecision(el) {
@@ -3881,11 +3939,13 @@ function renderPrecision(el) {
   const myDay = has && x.totalStaked ? x.perDay * x.staked / x.totalStaked : 0n;
   mount(el, html`
     <div class="kv"><span>${x.live ? 'Stream ends' : 'Stream'}</span><b>${x.live ? dayFmt(x.finish) : 'between reward periods'}</b></div>
+    <div class="kv"><span>In the pool</span><b>${fmt(x.r0, 18, 4)} ETH + ${fmt(x.r1, 18, 0)} TAC${x.supply ? ` · ${pctFmt(Number(x.totalStaked * 10000n / x.supply) / 100)} staked` : ''}</b></div>
     ${x.live ? aprRow(precisionApr(x)) : ''}
     ${has ? html`
       <div class="kv"><span>Your stake</span><b>${fmt(x.mine.eth, 18, 4)} ETH + ${fmt(x.mine.tac, 18, 2)} TAC</b></div>
       <div class="kv"><span>Earning</span><b>${fmt(myDay, 18, 2)} TAC a day · ${pctFmt(Number(x.staked * 10000n / x.totalStaked) / 100)} of the farm</b></div>
-      <button class="btn ghost" type="button" id="pf-claim" ${x.earned === 0n ? 'disabled' : ''}>Claim ${fmt(x.earned, 18, 2)} TAC</button>
+      <div class="kv"><span>Earned</span><b class="num" id="pf-earned">${fmt(earnedNow(x), 18, 4)} TAC</b></div>
+      <button class="btn ghost" type="button" id="pf-claim" ${earnedNow(x) === 0n ? 'disabled' : ''}>Claim ${fmt(earnedNow(x), 18, 2)} TAC</button>
       <div class="lbl"><span>Withdraw</span></div>
       ${segSub('pfp', FARM.outPct, [['25', '25%'], ['50', '50%'], ['100', 'All']])}
       ${segSub('pfr', FARM.outAs, [['both', 'ETH + TAC'], ['eth', 'As ETH'], ['tac', 'As TAC']])}
@@ -3914,6 +3974,19 @@ function renderPrecision(el) {
     await loadFarms(true); rerender('farm');
   };
   wireSub(el, 'pfm', (m) => { FARM.mode = m; keep($('#sheet-farm'), render.farm); });
+  // What the stake has earned since the read, counted up each second at its share of the stream, to the stream's end.
+  clearInterval(FARM.tick);
+  if (has && x.live) {
+    // Counted from the latest read of this account, which a background refresh may have replaced since this render.
+    const tick = () => {
+      const e = $('#pf-earned'), b = $('#pf-claim'), y = FARM.precision;
+      if (!e?.isConnected || !$('#sheet-farm').open || y?.who !== x.who || !(y.staked > 0n)) { clearInterval(FARM.tick); return; }
+      const v = earnedNow(y);
+      e.textContent = `${fmt(v, 18, 4)} TAC`;
+      if (b && b.getAttribute('aria-busy') !== 'true') { b.textContent = `Claim ${fmt(v, 18, 2)} TAC`; b.disabled = v === 0n; }
+    };
+    FARM.tick = setInterval(tick, 1000);
+  }
 
   // ── add ──
   const ethIn = $('#pf-amt'), tacIn = $('#pf-tac'), go = $('#pf-go'), rc = $('#pf-rcpt'), ackBox = $('#pf-ack');
@@ -4002,7 +4075,7 @@ function renderPrecision(el) {
   // ── the position: claim and withdraw ──
   const c = $('#pf-claim');
   if (c) c.onclick = () => busy(c, async () => {
-    try { await done(await sendTx({ to: ADDR.precisionFarm, data: SEL.claim, label: `Claim ${fmt(x.earned, 18, 2)} TAC from the farm` }), 'Claiming', `Claimed to ${your()}.`); toast('TAC claimed'); }
+    try { await done(await sendTx({ to: ADDR.precisionFarm, data: SEL.claim, label: 'Claim TAC from the farm' }), 'Claiming', `Claimed to ${your()}.`); toast('TAC claimed'); }
     catch (e) { sayErr(status, e); }
   });
   const ex = $('#pf-exit');
@@ -4060,7 +4133,7 @@ function renderShielded(el, p) {
   const r = p.reserves || {};
   const mine = (FARM.positions || []).filter((x) => Number(x.pid) === Number(p.pid));
   mount(el, html`
-    <div class="kv"><span>Bonded</span><b>${Math.round(Number(p.totalShares) * 100 / Math.max(1, Number(r.lpTotalShares || 1)))}% of the pool's shares</b></div>
+    <div class="kv"><span>In the pool</span><b>${lpWorth(p, r.lpTotalShares) || ''}${lpWorth(p, r.lpTotalShares) ? ' · ' : ''}${Math.round(Number(p.totalShares) * 100 / Math.max(1, Number(r.lpTotalShares || 1)))}% bonded</b></div>
     <div class="kv"><span>${FARM.program.epoch?.active ? 'Stream ends' : 'Stream'}</span><b>${FARM.program.epoch?.active ? dayFmt(FARM.program.epoch.periodFinish) : 'between reward periods'}</b></div>
     ${FARM.program.epoch?.active ? aprRow(shieldedApr(p)) : ''}
     <div id="sf-${p.pid}"></div>
@@ -4069,8 +4142,9 @@ function renderShielded(el, p) {
   if (!needKey(box, 'Open your Tacit wallet to see your private positions here.')) return;
   if (FARM.positions == null) { mount(box, html`<div class="kv"><span><span class="sk" style="--w:11ch"></span></span><b><span class="sk" style="--w:12ch"></span></b></div>`); loadPositions().then(() => rerender('farm')).catch((e) => sayErr(status, e)); return; }
   mount(box, html`
-    ${mine.map((pos, i) => { const locked = Number(pos.unlockAt || 0) > chainNow(); return html`
-      <div class="kv"><span>${Number(pos.shares).toLocaleString('en-US')} shares</span><b>${pos.pendingTac} TAC earned</b></div>
+    ${mine.map((pos, i) => { const locked = Number(pos.unlockAt || 0) > chainNow(), day = FARM.program.epoch?.active && Number(p.totalShares) ? Number(p.tacPerDayForPool) * Number(pos.shares) / Number(p.totalShares) : 0; return html`
+      <div class="kv"><span>Your position</span><b>${lpWorth(p, pos.shares) || `${Number(pos.shares).toLocaleString('en-US')} shares`}</b></div>
+      <div class="kv"><span>Earned</span><b>${pos.pendingTac} TAC${day ? ` · about ${day >= 10 ? Math.round(day).toLocaleString('en-US') : day.toFixed(2)} a day` : ''}</b></div>
       <div class="row2"><button class="btn ghost" type="button" data-harvest="${i}" ${BigInt(pos.pendingUnits || 0) > 0n ? '' : 'disabled'}>Harvest</button><button class="btn ghost" type="button" data-unbond="${i}" ${locked ? 'disabled' : ''}>${locked ? `Unbond from ${dayFmt(Number(pos.unlockAt))}` : 'Unbond'}</button></div>`; })}
     ${mine.length ? '' : html`<p class="note">No position here yet. Add liquidity and bond it from the <a href="/#tab=earn">Earn tab</a> of the full app; it shows up here from your key alone.</p>`}`);
   const t = getUx();
@@ -4936,7 +5010,7 @@ function dashItems() {
   }
   const x = FARM.precision && FARM.precision.who === S.address ? FARM.precision : null, pos = S.key ? FARM.positions || [] : [];
   if (x?.staked > 0n || x?.earned > 0n || pos.length) {
-    const scale = big(FARM.program?.unitScale) || E10, earned = (x?.earned || 0n) + pos.reduce((a, p) => a + (big(p.pendingUnits) || 0n) * scale, 0n);
+    const scale = big(FARM.program?.unitScale) || E10, earned = (x ? earnedNow(x) : 0n) + pos.reduce((a, p) => a + (big(p.pendingUnits) || 0n) * scale, 0n);
     const myDay = x?.staked > 0n && x.totalStaked ? x.perDay * x.staked / x.totalStaked : 0n, apr = x?.staked > 0n && x.live ? precisionApr(x) : null;
     out.push({ key: 'farm', icon: 'tk-tac', label: 'Farm rewards', unit: 'TAC', dec: 18, max: 2, v: earned, live: earned > 0n, open: 'farm', show: true,
       meta: apr != null ? `${aprShort(apr)} · ${fmt(myDay, 18, 2)} a day` : `${pos.length} private position${pos.length === 1 ? '' : 's'}` });
