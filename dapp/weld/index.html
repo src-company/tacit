@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-KOM2gKXr2QXafw2+YSPB03SgT7wwIUvq4C2FI3eLkbU=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-KOt/VZ7J/7Ehk9WCzFmk3WeRtPEADWzjMj0B+aD+aaQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -173,6 +173,16 @@ a.di { color: inherit; text-decoration: none; }
 .shelf button { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mute); background: none; border: 0; padding: 4px 0; cursor: pointer; }
 .shelf button:hover { color: var(--ink); }
 .shelf .tk { width: 24px; height: 24px; }
+
+/* ── first visit ── */
+.start { margin: -14px 0 30px; padding: 22px 24px; background: var(--card); border: 1px solid var(--hair); }
+.start h2 { font: 400 26px/1 var(--serif); letter-spacing: -.01em; margin: 0 0 16px; }
+.start ol { list-style: none; counter-reset: s; margin: 0; padding: 0; display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.start li { counter-increment: s; display: grid; align-content: start; gap: 4px; font-size: 13px; }
+.start li b { font-weight: 500; }
+.start li b::before { content: counter(s) '  '; color: var(--mute); font: 500 12px var(--mono); }
+.start li span { color: var(--mute); line-height: 1.5; }
+.start .btn { width: auto; min-width: 180px; display: inline-flex; }
 
 /* ── tiles ── */
 .tiles { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -395,6 +405,9 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
   .sheet-in { padding: 20px 16px calc(24px + env(safe-area-inset-bottom)); }
   .big { font-size: 46px; }
   .dash { margin: -6px 0 24px; }
+  .start { margin: -6px 0 24px; padding: 18px; }
+  .start ol { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .start .btn { width: 100%; }
   .dash-g { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -443,6 +456,16 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     </div>
   </section>
 
+  <section class="start" id="start" aria-labelledby="start-h" hidden>
+    <h2 id="start-h">New here? Three steps.</h2>
+    <ol>
+      <li><b>Open a wallet</b><span>Sign in with MetaMask or a Bitcoin wallet, or create one with Face ID or Touch ID.</span></li>
+      <li><b>Make ETH private</b><span>One transaction moves it in. From then on, amounts and recipients stay hidden.</span></li>
+      <li><b>Use it</b><span>Pay anyone privately, earn TAC, or borrow against bitcoin. One key restores it all.</span></li>
+    </ol>
+    <button class="btn" type="button" id="start-go">Get started</button>
+  </section>
+
   <section class="dash" id="dash" aria-labelledby="dash-h" hidden>
     <div class="dash-h"><h2 id="dash-h">Your Tacit</h2><span id="dash-since"></span></div>
     <div id="dash-due"></div>
@@ -453,14 +476,14 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <a class="tile" href="#eth" data-open="eth" aria-haspopup="dialog">
       <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-eth"/></svg><svg class="tk" aria-hidden="true"><use href="#tk-teth"/></svg></span>
       <h2>Private ETH</h2>
-      <p>Wrap ETH into a private note that is one asset on Ethereum and Bitcoin. Send it to anyone or use it in DeFi.</p>
-      <span class="tile-foot"><span class="dot" data-dot="eth"></span><span data-foot="eth">Proved for you, or on this device</span><span class="go" aria-hidden="true">→</span></span>
+      <p>Make your ETH private, then send it to anyone without the world seeing how much or to whom. Swap, farm and borrow with it too.</p>
+      <span class="tile-foot"><span class="dot" data-dot="eth"></span><span data-foot="eth">On Ethereum, Base and Robinhood</span><span class="go" aria-hidden="true">→</span></span>
     </a>
     <a class="tile" href="#btc" data-open="btc" aria-haspopup="dialog">
       <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-btc"/></svg><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg></span>
       <h2>Bitcoin</h2>
-      <p>Send bitcoin as a silent payment and TAC with the recipient hidden, from the same key.</p>
-      <span class="tile-foot"><span class="dot" data-dot="btc"></span><span data-foot="btc">Silent payments and shielded sends</span><span class="go" aria-hidden="true">→</span></span>
+      <p>Pay in bitcoin or TAC so that nobody watching the chain can tell who you paid.</p>
+      <span class="tile-foot"><span class="dot" data-dot="btc"></span><span data-foot="btc">Private payments on Bitcoin</span><span class="go" aria-hidden="true">→</span></span>
     </a>
     <a class="tile" href="#tac" data-open="tac" aria-haspopup="dialog">
       <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg></span>
@@ -471,20 +494,20 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <a class="tile" href="#pts" data-open="pts" aria-haspopup="dialog">
       <span class="pair"><svg class="tk" aria-hidden="true"><use href="#i-pts"/></svg></span>
       <h2>Points</h2>
-      <p>Earn TAC for wrapping, depositing, swapping, borrowing and naming. Each day’s 1,111 TAC is split by points.</p>
+      <p>Earn TAC just for using Tacit: making ETH private, swapping, borrowing and more. 1,111 TAC is shared out every day.</p>
       <span class="tile-foot"><span class="dot" data-dot="pts"></span><span data-foot="pts">100,000 TAC over 90 days</span><span class="go" aria-hidden="true">→</span></span>
     </a>
     <a class="tile" href="#farm" data-open="farm" aria-haspopup="dialog">
       <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><svg class="tk" aria-hidden="true"><use href="#tk-eth"/></svg></span>
       <h2>Farm TAC</h2>
-      <p>Provide liquidity and earn TAC every second, in public or private pools. While the pools are small, early liquidity earns the most.</p>
+      <p>Put ETH and TAC in a pool, public or private, and earn TAC every second. While the pools are small, early deposits earn the most.</p>
       <span class="tile-foot"><span class="dot live" data-dot="farm"></span><span data-foot="farm">Reading farms…</span><span class="go" aria-hidden="true">→</span></span>
     </a>
     <a class="tile" href="#borrow" data-open="borrow" aria-haspopup="dialog">
       <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-cbtc"/></svg><svg class="tk" aria-hidden="true"><use href="#tk-cusd"/></svg></span>
       <h2>Borrow on Bitcoin</h2>
-      <p>Lock BTC in your own output, post an ETH bond, mint cBTC one to one, and borrow cUSD against it.</p>
-      <span class="tile-foot"><span class="dot" data-dot="borrow"></span><span data-foot="borrow">No custodian, no bridge signers</span><span class="go" aria-hidden="true">→</span></span>
+      <p>Borrow dollars against your bitcoin. The BTC stays at an address only your key can spend, backed by an ETH bond.</p>
+      <span class="tile-foot"><span class="dot" data-dot="borrow"></span><span data-foot="borrow">No one else ever holds your BTC</span><span class="go" aria-hidden="true">→</span></span>
     </a>
   </main>
 
@@ -520,7 +543,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
       <button class="x" type="button" data-close aria-label="Close">×</button>
     </div>
     <div class="seg" role="tablist" aria-label="Pool">
-      <button type="button" role="tab" aria-selected="true" data-eth-mode="v1">Tacit pool<small>tETH · DeFi and Bitcoin</small></button>
+      <button type="button" role="tab" aria-selected="true" data-eth-mode="v1">Tacit pool<small>tETH · send, swap, farm</small></button>
       <button type="button" role="tab" aria-selected="false" data-eth-mode="dev">On this device<small>ETH · pay anyone</small></button>
     </div>
     <div id="eth-v1" role="tabpanel"></div>
@@ -580,6 +603,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
       <h2 id="farm-h" tabindex="-1" autofocus>Farm TAC</h2>
       <button class="x" type="button" data-close aria-label="Close">×</button>
     </div>
+    <p class="lede-s">Deposit into a pool and earn TAC every second, and withdraw whenever you like. The public pool takes ETH and TAC from your wallet; the private pools take private tETH and its partner asset, so what you hold stays hidden.</p>
     <ul class="farms" id="farm-list"></ul>
     <div id="farm-notes"></div>
   </div>
@@ -1713,9 +1737,10 @@ function signIn(id) {
     ${known ? opt('known', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>${known.tacit ? html`Continue as <b>${short(known.tacit, 7)}</b>` : 'Continue with your Tacit wallet'}`, html`Opens with ${viaText(known)}, as on tacit.finance. The same key handles Bitcoin, TAC and ETH here.`, 'main') : ''}
     ${opt('eth', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Ethereum wallet`, 'MetaMask, Rabby, Rainbow or any browser wallet. One signature.')}
     ${opt('btc', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-btc"/></svg>Bitcoin wallet`, 'Xverse, Leather or UniSat. One signature, two the first time.')}
-    ${pk ? opt('passkey', html`<svg class="tk sm" aria-hidden="true"><use href="#i-key"/></svg>Passkey`, 'Touch ID, Windows Hello or a security key.') : ''}
+    ${pk ? opt('passkey', html`<svg class="tk sm" aria-hidden="true"><use href="#i-key"/></svg>Passkey`, 'Already made one? Touch ID, Windows Hello or a security key.') : ''}
+    ${pk && !known ? opt('new', html`<svg class="tk sm" aria-hidden="true"><use href="#i-key"/></svg>No wallet yet? Create one`, 'With Face ID, Touch ID or Windows Hello. Nothing to install.') : ''}
     <p class="more">${saved ? html`<button class="link" type="button" data-in="local">Saved in this browser</button>` : ''}
-      <button class="link" type="button" data-in="paste">Paste a key</button>${pk ? html`<button class="link" type="button" data-in="new">New passkey wallet</button>` : ''}</p>
+      <button class="link" type="button" data-in="paste">Paste a key</button>${pk && known ? html`<button class="link" type="button" data-in="new">New passkey wallet</button>` : ''}</p>
     <div class="amt text" id="${id}-paste" hidden><input id="${id}-hex" type="password" placeholder="64-character Tacit key" autocomplete="off" spellcheck="false" aria-label="Tacit key"><button class="link" type="button" data-in="key">Open</button></div>
   </div>`;
 }
@@ -1873,10 +1898,12 @@ function btcSend(to, sats) {
 }
 
 function paintWallet() {
+  $('#start').hidden = !!(S.key || S.address || knownWallet());           // shown only to someone who has never opened a wallet here
   $('#wallet-dot').className = 'dot' + (S.key ? ' on' : S.address ? ' live' : '');
   $('#wallet-label').textContent = S.key ? short(S.key.tacit, 6) : S.address ? short(S.address) : knownWallet() ? 'Open wallet' : 'Connect wallet';
 }
 $('#wallet').onclick = () => openSheet('wallet');
+$('#start-go').onclick = () => openSheet('wallet');
 const WAL = { mode: 'add', asset: 'eth', chain: 1 };
 // The Tacit account's ETH on Base and Robinhood Chain, read at most once a minute per account: the wallet sheet draws
 // itself again on every change inside it, and those chains' public RPCs limit how often they are asked.
@@ -1909,7 +1936,7 @@ render.wallet = () => {
     ${segSub('wal', WAL.mode, [['add', 'Add ETH'], ['out', 'Send out']])}
     <div id="ac-form"></div>
     <div class="status" role="status" id="ac-status"></div>
-    <div class="kv sep"><span>Bitcoin</span>${btcAddr ? html`<b>${short(btcAddr, 8)}</b>` : html`<span class="mute">connects when you fund a lock</span>`}</div>
+    <div class="kv sep"><span>Bitcoin</span>${btcAddr ? html`<b>${short(btcAddr, 8)}</b>` : html`<span class="mute">connects when you lock BTC to borrow</span>`}</div>
     <p class="note">The key stays in this tab, and whoever holds it holds the Tacit account too. Private payments to your Tacit address reach you here and on tacit.finance.</p>`);
   $('#w-copy').onclick = () => copy(k.tacit, 'Tacit address copied');
   $('#w-lock').onclick = () => { S.key = null; syncAccount(); resetPrivate(); paintWallet(); refreshAll(); rerender('wallet'); };
@@ -2298,7 +2325,7 @@ async function settleLocks(run, kind, status) {
 }
 
 function renderV1(el) {
-  if (!needKey(el, 'Wrap ETH into tETH, a private note in the Tacit pool and the same asset on Bitcoin. Open your Tacit wallet to start.')) return;
+  if (!needKey(el, 'Make your ETH private as tETH, then send it to anyone without the world seeing how much or to whom. Open your Tacit wallet to start.')) return;
   const s = P.scan, last = s || P.err ? null : lastSeen('teth');
   const bal = s ? html`${fmt(s.eth.value, 8, 6)}` : P.err ? html`<span class="err">—</span>` : last != null ? html`<span class="stale">${fmt(last, 8, 6)}</span>` : html`<span class="sk" style="--w:8ch"></span>`;
   mount(el, html`
@@ -2310,7 +2337,7 @@ function renderV1(el) {
     ${depositCallout('eth', 'v1-finish')}
     ${LK.pub === S.key.pubHex && lockList('claim').length ? html`<div class="callout"><span>${lockList('claim').length === 1 ? 'A private payment was' : `${lockList('claim').length} private payments were`} sent to you.</span><button class="btn ghost" type="button" id="v1-claim">Claim</button></div>` : ''}
     ${LK.pub === S.key.pubHex && lockList('refund').length ? html`<div class="callout"><span>${lockList('refund').length === 1 ? 'A private send was' : `${lockList('refund').length} private sends were`} never claimed. ${lockList('refund').length === 1 ? 'It' : 'They'} can come back to you.</span><button class="btn ghost" type="button" id="v1-back">Take back</button></div>` : ''}
-    ${segSub('v1', V1.mode, [['wrap', 'Wrap'], ['send', 'Send'], ['out', 'Withdraw']])}
+    ${segSub('v1', V1.mode, [['wrap', 'Make private'], ['send', 'Send'], ['out', 'Withdraw']])}
     <div id="v1-form"></div>
     <div class="status" role="status" id="v1-status"></div>`);
   wireSub(el, 'v1', (m) => { V1.mode = m; keep($('#sheet-eth'), render.eth); });
@@ -2331,8 +2358,8 @@ function v1Wrap(el, status) {
     <div class="lbl"><span>Amount</span><button type="button" id="w-max">${payName()} <span id="w-bal"><span class="sk" style="--w:5ch"></span></span> ETH</button></div>
     <div class="amt"><input id="w-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="ETH to wrap"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>
     <div class="rcpt" id="w-rcpt" hidden></div>
-    <button class="btn" type="button" id="w-go" disabled>Wrap to tETH</button>
-    <p class="note">One transaction. It carries a tip that pays the relay to prove your note, so nothing is proved on this device.</p>`);
+    <button class="btn" type="button" id="w-go" disabled>Make ETH private</button>
+    <p class="note">One transaction from ${your()}. A small fee in it pays Tacit’s relay to do the privacy work, so nothing heavy runs on your device.</p>`);
   const input = $('#w-amt'), go = $('#w-go'), rc = $('#w-rcpt');
   let bal = null, q = null, seq = 0;
   ethBalance().then((b) => { bal = b; const e = $('#w-bal'); if (e) e.textContent = b == null ? '—' : fmt(b, 18, 4); });
@@ -2744,7 +2771,7 @@ async function devResolve(raw) {
 }
 
 function renderDevice(el) {
-  if (!needKey(el, 'Private ETH on Ethereum, Base and Robinhood Chain, proved here in your browser. Open your Tacit wallet to start.')) return;
+  if (!needKey(el, 'Keep ETH private on Ethereum, Base or Robinhood Chain, with the privacy work done here in your browser. Open your Tacit wallet to start.')) return;
   const c = DEV.chain, W = DEV.W && DEV.key === S.key.pubHex + c.chainId ? DEV.W : null;
   const last = DEV.bal == null ? big(store.get(`tacit-lite-device-bal-v1:${c.chainId}:${S.key.pubHex}`)?.v) : null;
   mount(el, html`
@@ -3036,7 +3063,7 @@ function loadBtc(force = false) {
 }
 load.btc = () => loadBtc();
 function paintBtcFoot() {
-  if (!S.key || BTC.pub !== S.key.pubHex) { setFoot('btc', 'Silent payments and shielded sends'); return; }
+  if (!S.key || BTC.pub !== S.key.pubHex) { setFoot('btc', 'Private payments on Bitcoin'); return; }
   const tac = BTC.held.find((a) => a.id === TAC_BTC_ID), sats = BTC.sats + BTC.silent;
   setFoot('btc', `${fmt(sats, 8, 6)} BTC${tac ? ` · ${fmt(tac.balance, tac.decimals, 2)} TAC` : ''}`, sats > 0n || tac ? 'on' : '');
 }
@@ -3055,7 +3082,7 @@ async function scanShielded(status) {
 }
 render.btc = () => {
   const el = $('#btc-body');
-  if (!needKey(el, 'Send BTC as a silent payment and TAC with the recipient hidden, from your key’s own Bitcoin address. Open your Tacit wallet to start.')) return;
+  if (!needKey(el, 'Pay in bitcoin or TAC so that nobody watching the chain can tell who you paid. Open your Tacit wallet to start.')) return;
   const b = BTC.pub === S.key.pubHex ? BTC : null, last = b || BTC.err ? null : lastSeen('btc');
   if (!b && !BTC.loading && !BTC.err) loadBtc().then(() => rerender('btc')).catch(() => {});
   mount(el, html`
@@ -3133,7 +3160,7 @@ function btcSendForm(f, status, b) {
       const r = await btcRoute(raw, token);
       if (my !== seq || !to.isConnected) return;
       route = r;
-      const how = { sp: 'Silent payment · a fresh output only they can find', addr: 'Plain payment · public on chain', stealth: 'Shielded · the recipient stays hidden', pubkey: 'Private amount · their key is visible' }[r.kind];
+      const how = { sp: 'Silent payment · to a one-time address only they can find', addr: 'Plain payment · public on chain', stealth: 'Shielded · the recipient stays hidden', pubkey: 'Private amount · their key is visible' }[r.kind];
       mount(rc, html`<div class="kv"><span>${r.name || 'To'}</span><b>${r.shown}</b></div><div class="kv"><span>How</span><b>${how}</b></div>`);
       rc.hidden = false;
       const avail = token ? token.balance : b ? b.sats + b.silent : null;
@@ -3309,13 +3336,17 @@ function renderTacBal(el) {
 // points to Finish, same as every other wrap here — the deposit is never asked for twice.
 function tacShield(el, status, acctBal, walletBal) {
   if (!el) return;
+  // Offered only when the Tacit account has public TAC to make private: an empty form above Airdrop · Buy · Sell is noise.
+  if (!acctBal) {
+    mount(el, acctBal != null && walletBal ? html`<p class="note">To make the ${fmt(walletBal, 18, 2)} TAC in your connected wallet private, send it to your Tacit account first (Wallet → Send out → TAC, to your own tacit1 address's Ethereum account). It can be made private from there.</p>` : html``);
+    return;
+  }
   mount(el, html`
-    <div class="lbl"><span>Shield</span><button type="button" id="tsh-max">TAC in your Tacit account ${acctBal == null ? html`<span class="sk" style="--w:5ch"></span>` : fmt(acctBal, 18, 2)}</button></div>
-    <div class="amt"><input id="tsh-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="TAC to shield"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</span></div>
+    <div class="lbl"><span>Make TAC private</span><button type="button" id="tsh-max">TAC in your Tacit account ${fmt(acctBal, 18, 2)}</button></div>
+    <div class="amt"><input id="tsh-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="TAC to make private"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</span></div>
     <div class="rcpt" id="tsh-rcpt" hidden></div>
-    <button class="btn" type="button" id="tsh-go" disabled>Shield</button>
-    ${acctBal != null && !acctBal && walletBal ? html`<p class="note">${fmt(walletBal, 18, 2)} TAC sits in your connected wallet instead. Move it to your Tacit account first (Wallet → Send out → TAC, to your own tacit1 address's Ethereum account), then shield it here.</p>`
-      : html`<p class="note">One transaction, signed by your Tacit account; the relay proves the note after. It stays private until you send it or make it public again.</p>`}`);
+    <button class="btn" type="button" id="tsh-go" disabled>Make private</button>
+    <p class="note">One transaction from your Tacit account; Tacit’s relay does the privacy work after. It stays private until you send it or make it public again.</p>`);
   const amt = $('#tsh-amt'), go = $('#tsh-go'), rc = $('#tsh-rcpt');
   let q = null;
   $('#tsh-max').onclick = () => { if (acctBal) { amt.value = plain(acctBal, 18); amt.dispatchEvent(new Event('input')); } };
@@ -3334,7 +3365,7 @@ function tacShield(el, status, acctBal, walletBal) {
   go.onclick = () => busy(go, async (run) => {
     const x = q;
     if (!x) return;
-    run.go({ label: `Shield ${fmt(x.wei, 18, 6)} TAC`, status: () => $('#tac-bal-status'), clear: () => { clearField(amt); } });
+    run.go({ label: `Make ${fmt(x.wei, 18, 6)} TAC private`, status: () => $('#tac-bal-status'), clear: () => { clearField(amt); } });
     // routerWrap builds, signs and broadcasts in one call, so unlike a plain sendTx there is no hash to check before
     // it either lands or throws: `sent` only turns true once it has actually returned one, the same gate v1Wrap's
     // `hash &&` is — a wallet balance check or a permit failing inside it never reaches here, and is a plain retry.
@@ -3370,7 +3401,7 @@ function tacShield(el, status, acctBal, walletBal) {
 }
 const sendWallet = (label) => ({ to, data, value }) => sendTx({ to, data, value: BigInt(value || 0), via: 'wallet', label });   // the snapshot wallet itself
 function renderAirdrop(el) {
-  if (!S.wallet) { mount(el, gate('Connect the wallet that held the snapshot tokens.', 'Connect wallet', 'air-connect')); return wireConnect('air-connect', () => rerender('tac')); }
+  if (!S.wallet) { mount(el, gate('Connect the wallet that held tokens at the airdrop snapshot to see what it can claim.', 'Connect wallet', 'air-connect')); return wireConnect('air-connect', () => rerender('tac')); }
   if (!AIR) { mount(el, html`<div class="gate"><div class="big"><span class="sk" style="--w:4ch"></span></div><p>Checking ${short(S.wallet)}…</p></div>`); return; }
   const s = AIR;
   if (s.error) { mount(el, gate(`Could not read the airdrop: ${s.error.message}`, 'Try again', 'air-retry')); $('#air-retry').onclick = () => { AIR = null; loadAirdrop().then(() => rerender('tac')); rerender('tac'); }; return; }
@@ -3419,7 +3450,7 @@ function renderAirdrop(el) {
 // zRouter. minOut is the winning venue's own quote less 0.5%.
 const venues = makeEvmTradeVenues({ ethCall: (to, data, block = 'latest', o = {}) => rpc('eth_call', [{ to, data, ...(o.gas ? { gas: o.gas } : {}) }, block]), keccak256: keccak_256 });
 function renderBuy(el) {
-  if (!S.address) { mount(el, gate('Buy public TAC with ETH at the best quote. The Precision route earns points.', 'Connect wallet', 'buy-connect')); return wireConnect('buy-connect', () => rerender('tac')); }
+  if (!S.address) { mount(el, gate('Buy TAC with ETH at the best price across pools. Buying through the Precision pool earns points.', 'Connect wallet', 'buy-connect')); return wireConnect('buy-connect', () => rerender('tac')); }
   mount(el, html`
     <div class="lbl"><span>Pay</span><button type="button" id="b-max">${payName()} <span id="b-bal"><span class="sk" style="--w:5ch"></span></span> ETH</button></div>
     <div class="amt"><input id="b-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="ETH to spend"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>
@@ -3612,7 +3643,7 @@ function leaderboard(rows) {
 }
 render.pts = () => {
   const el = $('#pts-body');
-  if (!S.wallet && !S.key) { mount(el, gate('Points belong to the address that sent each transaction. Connect it to see yours, or open your Tacit wallet.', 'Connect wallet', 'pts-connect')); return wireConnect('pts-connect', () => rerender('pts')); }
+  if (!S.wallet && !S.key) { mount(el, gate('Points go to the address that made each transaction. Connect it to see yours, or open your Tacit wallet.', 'Connect wallet', 'pts-connect')); return wireConnect('pts-connect', () => rerender('pts')); }
   const rows = PTS.key === pointsWho().map(([a]) => a).join() ? PTS.rows : null;
   if (!rows) loadPoints().then(() => rerender('pts')).catch(() => {});
   const on = now() < PTS_END;
@@ -3982,7 +4013,7 @@ function renderPrecision(el) {
   const x = FARM.precision;
   const reading = html`<div class="kv"><span>Stream ends</span><b><span class="sk" style="--w:10ch"></span></b></div><div class="kv"><span>APR now</span><b><span class="sk" style="--w:9ch"></span></b></div>`;
   if (!x) { mount(el, FARM.errs?.precision ? html`<p class="note err">The farm could not be read. <button class="link" type="button" data-retry="farm">Try again</button></p>` : reading); return; }
-  if (!S.address) { mount(el, gate('Deposit ETH, TAC or both, and the farm stakes it for you. TAC streams to you every second.', 'Connect wallet', 'pf-connect')); return wireConnect('pf-connect', () => rerender('farm')); }
+  if (!S.address) { mount(el, gate('Deposit ETH, TAC or both, and the farm puts it to work for you. TAC streams to you every second.', 'Connect wallet', 'pf-connect')); return wireConnect('pf-connect', () => rerender('farm')); }
   if (x.who !== S.address) { mount(el, reading); loadFarms().then(() => rerender('farm')).catch(() => {}); return; }
   if (!FARM.mode) FARM.mode = x.tac >= 10n ** 18n ? 'pair' : 'eth';
   const has = x.staked > 0n, mode = FARM.mode, withEth = mode !== 'tac', withTac = mode !== 'eth';
@@ -4585,8 +4616,10 @@ function bondFunds() {
 RETRY.borrow = () => { delete FLASH['bw-status']; rerender('borrow'); };
 render.borrow = () => {
   const el = $('#borrow-body');
-  if (!needKey(el, 'Lock BTC in an output only your key can spend, mint cBTC one to one, and borrow cUSD against it. Open your Tacit wallet to start.')) return;
+  if (!needKey(el, 'Borrow dollars against your bitcoin, which stays at an address only your key can spend. Open your Tacit wallet to start.')) return;
   const st = LOCK.state, rec = st?.rec;
+  // What the four steps add up to, before any of them: a first-time reader otherwise meets outputs and bonds cold.
+  const intro = html`<p class="lede-s">Borrow dollars (cUSD) against your bitcoin. The BTC never leaves an address only your key can spend; an ETH bond, refundable, stands behind the lock.</p>`;
   const wireFinish = () => { const fin = $('#bw-finish', el); if (fin) fin.onclick = () => busy(fin, (run) => finishDeposits(run, 'borrow', $('#bw-status'))); };
   if (!st) {
     const blanks = [
@@ -4595,7 +4628,7 @@ render.borrow = () => {
       ['Mint cBTC', 'One to one against the lock, free, once Bitcoin confirms it and the bond is posted.'],
       ['Borrow cUSD', 'Borrow against the cBTC up to the pool’s floor. Repay anytime to reclaim it.'],
     ];
-    mount(el, html`${depositCallout('borrow', 'bw-finish')}
+    mount(el, html`${intro}${depositCallout('borrow', 'bw-finish')}
       <ol class="steps">${blanks.map(([h, d], i) => html`<li class="step"><span class="n">${i + 1}</span><div><h3>${h}</h3><div class="d">${d}</div></div></li>`)}</ol>
       <div class="status" role="status" id="bw-status"><span class="sk ln" style="--w:40%"></span></div>`);
     wireFinish();
@@ -4617,7 +4650,7 @@ render.borrow = () => {
             <p class="note">Xverse, Leather or UniSat send it in one popup, or pay the address from anywhere. Locking waits for one confirmation.</p>
             ${lag != null ? html`<p class="note">Minting waits for Bitcoin's proof on Ethereum to reach the lock's block, which trails Bitcoin by at least 24 blocks (about 4 hours). It is at block ${attested.toLocaleString('en-US')}, ${lag.toLocaleString('en-US')} behind Bitcoin${lag > 36 ? ' and catching up' : ''}. Until it is minted, its bond can be taken back.</p>` : ''}`;
   mount(el, html`
-    ${depositCallout('borrow', 'bw-finish')}
+    ${s1 ? '' : intro}${depositCallout('borrow', 'bw-finish')}
     <ol class="steps">
       <li class="${stepCls(s1, !s1)}">
         <span class="n">${s1 ? '✓' : '1'}</span>
@@ -5098,7 +5131,7 @@ async function nextKeyNonce(t, priv, controller, ps, ownerOf) {
 
 // ── tile footers for the private panes ───────────────────────────────────────────────────────────────────
 async function paintPrivateFeet() {
-  if (!S.key) { setFoot('eth', 'Proved for you, or on this device'); setFoot('borrow', 'No custodian, no bridge signers'); return; }
+  if (!S.key) { setFoot('eth', 'On Ethereum, Base and Robinhood'); setFoot('borrow', 'No one else ever holds your BTC'); return; }
   const foot = (s) => {
     const bits = [];
     if (s.eth.value > 0n) bits.push(`${fmt(s.eth.value, 8, 4)} tETH private`);
@@ -5110,7 +5143,7 @@ async function paintPrivateFeet() {
       // this browser still says so, rather than showing the static default while private ETH sits there unseen.
       let dev = 0n;
       for (const c of DEVICE_CHAINS) { const cached = store.get(`tacit-lite-device-bal-v1:${c.chainId}:${S.key.pubHex}`); if (cached?.v) try { dev += BigInt(cached.v); } catch {} }
-      bits.push(dev > 0n ? 'Private ETH on this device too' : 'Proved for you, or on this device');
+      bits.push(dev > 0n ? 'Private ETH on this device too' : 'On Ethereum, Base and Robinhood');
     }
     setFoot('eth', bits.join(' · '), s.eth.value > 0n || lockList('claim').length ? 'on' : '');
   };
