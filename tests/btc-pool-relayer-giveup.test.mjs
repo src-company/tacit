@@ -212,3 +212,44 @@ test('bases that are down do not vote, and all of them down is an error not a gu
   assert.equal(await rateChain([null, 2, null]).feeRate(), 2);
   await assert.rejects(() => rateChain([null, null]).feeRate(), /no base answered/);
 });
+
+// ── change is split back into working coins ─────────────────────────────────
+import { planChangeOutputs } from '../worker-relay/src/lib/btc-pool-relayer.js';
+
+const DUST = 546;
+const plan = (o) => planChangeOutputs({ rate: 2, dust: DUST, survive: 0, ...o });
+
+test('change splits into coins the relayer can actually work with', () => {
+  const parts = plan({ change: 80000 });
+  assert.ok(parts.length > 1, 'a large change should not come back as one coin');
+  assert.ok(parts.every((v) => v >= 12000), 'every piece must be worth binding');
+});
+
+test('the split never spends more than the change it was given', () => {
+  // The extra outputs are paid for out of the change, so parts + their fee must equal it exactly.
+  for (const change of [600, 1000, 5000, 12545, 24999, 25000, 60000, 130000, 999999]) {
+    for (const rate of [1, 2, 13.7, 50]) {
+      const parts = planChangeOutputs({ change, rate, dust: DUST, survive: 0 });
+      const sum = parts.reduce((a, v) => a + v, 0);
+      const extraFee = Math.ceil(31 * Math.max(0, parts.length - 1) * rate);
+      assert.equal(sum + extraFee, parts.length ? change : 0,
+        `change ${change} at ${rate} sat/vB: parts ${JSON.stringify(parts)} do not add up`);
+      assert.ok(parts.every((v) => v >= DUST), `change ${change} at ${rate} produced dust`);
+      assert.ok(sum <= change, 'never pays out more than the change');
+    }
+  }
+});
+
+test('it does not split when splitting would make coins too small, or when there are already enough', () => {
+  assert.deepEqual(plan({ change: 20000 }), [20000], 'two 10k coins are under the target, so keep one');
+  assert.deepEqual(plan({ change: 900 }), [900], 'small change stays whole');
+  assert.deepEqual(plan({ change: 100 }), [], 'below dust there is no output at all');
+  assert.deepEqual(plan({ change: 200000, survive: 9 }), [200000], 'already has plenty of coins');
+});
+
+test('it aims at the gap, not at a fixed number of pieces', () => {
+  const none = plan({ change: 200000, survive: 0 }).length;
+  const some = plan({ change: 200000, survive: 4 }).length;
+  assert.ok(none > some, 'fewer coins on hand should mean more pieces');
+  assert.ok(none <= 4, 'and never more than maxChangeSplit');
+});

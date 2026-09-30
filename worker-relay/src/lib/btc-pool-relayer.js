@@ -30,6 +30,31 @@ const P2WPKH_IN_BASE = 41;
 const P2WPKH_IN_WIT = 1 + 1 + 72 + 1 + 33;
 const TERMINAL = new Set(['confirmed', 'dropped', 'rejected', 'replayed-elsewhere']);
 const CARRIER_DONE = new Set(['confirmed', 'dropped', 'empty', 'cancelled']);
+// A P2WPKH output: 8 value + 1 script length + 22 script. What one more change output adds to the commit.
+const CHANGE_OUT_VB = 31;
+
+// How to hand a carrier's change back. One output is the natural thing to do and the wrong thing to keep
+// doing: every carrier spends its funding and returns the remainder as a single coin, so the wallet
+// converges on one — and one coin is the shape the relayer cannot work in, because the first quote reserves
+// it as a bind and nothing is left to fund the carrier.
+//
+// Splitting is only worth it when every piece lands at a useful size, so this returns one output unless it
+// can do better. The extra outputs are paid for out of the change, which is why the inputs already chosen
+// still cover the transaction and nothing needs re-selecting. Values returned always sum, with the fee the
+// extra outputs cost, to exactly the change passed in.
+export function planChangeOutputs({ change, rate, survive, dust, targetCoins = 6, targetCoinSats = 12000, maxChangeSplit = 4 }) {
+  if (!(change >= dust)) return [];
+  const want = Math.min(maxChangeSplit, Math.max(1, targetCoins - Math.max(0, survive)));
+  for (let k = want; k > 1; k--) {
+    const extraFee = Math.ceil(CHANGE_OUT_VB * (k - 1) * rate);
+    const each = Math.floor((change - extraFee) / k);
+    if (each < targetCoinSats || each < dust) continue;
+    const parts = new Array(k).fill(each);
+    parts[0] = change - extraFee - each * (k - 1);   // the remainder rides on the first
+    return parts;
+  }
+  return [change];
+}
 // States in which each transaction has actually been broadcast, so its txid is worth reporting.
 const REVEAL_OUT = new Set(['broadcast', 'confirmed']);
 const COMMIT_OUT = new Set(['committed', 'broadcast', 'confirmed', 'cancelling', 'cancelled']);
@@ -279,6 +304,13 @@ export function createRelayer({
   // What the coins left after the bind must add up to before a quote is given. The carrier's real cost is
   // only known once a batch is built; this is the floor under which it certainly cannot be paid for.
   minCarrierSats = 3000,
+  // How many spendable coins the relayer tries to keep, and how big each wants to be. A carrier spends its
+  // funding and hands the remainder back as one change output, so left alone the wallet converges on a
+  // single coin — which is the one shape it cannot work in: the first quote reserves it as a bind and
+  // nothing is left to fund the carrier. Change is split back out toward this shape instead.
+  targetCoins = 6,
+  targetCoinSats = 12000,
+  maxChangeSplit = 4,
   // Per-asset price, in the asset's smallest units per satoshi, for assets that opt into cost-linked fees
   // (the third field of BTC_POOL_RELAYER_FEES). Static on purpose: the Bitcoin-lane books are thin, and a
   // fee quoted off one could be moved by whoever wanted a free carrier. It is the asset's price that is
@@ -722,10 +754,18 @@ export function createRelayer({
     // comparable to what quotedFee prices, so only that one is recorded.
     if (envs.length === 1) observedSoloVb = revealVb + commitVb(picked.length);
     const change = total - commitNeed - commitFee;
+    // Split the change back into working coins where it is worth doing. Each extra output costs 31 vB, paid
+    // out of the change itself, so no further input is needed and the inputs already chosen still cover the
+    // transaction. A split only happens when every piece would come out at a useful size — otherwise this
+    // would trade one coin it can use for several it cannot.
+    const changeOutputs = planChangeOutputs({
+      change, rate, dust: prims.DUST, targetCoins, targetCoinSats, maxChangeSplit,
+      survive: utxos.length - (picked.length - forced.length),
+    }).map((value) => ({ value, script: changeSpk }));
     const commitTx = {
       version: 2, locktime: 0,
       inputs: picked.map((u) => ({ txid: u.txid, vout: u.vout, sequence: 0xfffffffd, witness: [] })),
-      outputs: [...envs.map((e, i) => ({ value: envVals[i], script: e.spk })), ...(change >= prims.DUST ? [{ value: change, script: changeSpk }] : [])],
+      outputs: [...envs.map((e, i) => ({ value: envVals[i], script: e.spk })), ...changeOutputs],
     };
     prims.signCommitInputs(commitTx, picked, changeSpk);
     const commitTxid = prims.txid(commitTx);
