@@ -642,6 +642,7 @@ async function cycle() {
       ? ` — broadcast and possibly still pending: ${e.broadcastHashes.join(', ')}`
       : '';
     await confidentialAck({ jobId, error: `settle reverted: ${safeErr(e, 200 - pending.length)}${pending}` });
+    rememberAbandoned(jobId, e.broadcastHashes);
     return true;
   }
 
@@ -655,6 +656,38 @@ async function cycle() {
 // Fee income -> gas, run from the settle loop's idle time. Serialised with settles (same wallet, same
 // nonce) by construction: it is only ever awaited where the loop would otherwise sleep. Off unless
 // REPLENISH_IN_SETTLE=1, and it can never take the loop down — a failure is logged and retried next interval.
+// Settles that were acked failed although a broadcast of theirs may still be included. A private endpoint
+// keeps re-submitting an accepted bundle well past the window the rounds wait, so "we stopped waiting" and
+// "it did not land" stay different facts after the ack too. The hashes were already named in the error so a
+// user could check them by hand; these get checked for them. In memory only: a restart forgets, and the
+// durable version of this belongs on the worker, which owns the job record.
+const abandoned = [];
+const ABANDON_TTL_MS = 2 * 3600_000;
+const ABANDON_MAX = 256;
+
+function rememberAbandoned(jobId, hashes) {
+  if (!Array.isArray(hashes) || !hashes.length) return;
+  abandoned.push({ jobId, hashes: hashes.slice(), at: Date.now() });
+  while (abandoned.length > ABANDON_MAX) abandoned.shift();
+}
+
+async function sweepAbandoned() {
+  for (let i = abandoned.length - 1; i >= 0; i--) {
+    const a = abandoned[i];
+    if (Date.now() - a.at > ABANDON_TTL_MS) { abandoned.splice(i, 1); continue; }
+    for (const h of a.hashes) {
+      const r = await publicClient.getTransactionReceipt({ hash: h }).catch(() => null);
+      if (!r) continue;
+      abandoned.splice(i, 1);
+      if (r.status !== 'success') { log(`job ${a.jobId}: abandoned settle ${h} reverted — failed stands`); break; }
+      log(`job ${a.jobId}: abandoned settle LANDED as ${h} after it was acked failed — correcting the record`);
+      const ack = await confidentialAck({ jobId: a.jobId, txHash: h });
+      if (!ack?.ok) log(`CRITICAL: job ${a.jobId} settled as ${h} but the correction was refused (status ${ack?.status}) — the worker still reports it failed`);
+      break;
+    }
+  }
+}
+
 let lastReplenishAt = 0;
 let drained = false;
 // The highest nonce this process has put on the wire. A settle sent to a private endpoint is invisible to
@@ -721,7 +754,7 @@ async function main() {
       // An empty queue is the common case, not an error — but it must still beat, or /prover-health
       // goes stale (and "down") after 10 quiet minutes on a perfectly healthy relay. heartbeat() itself
       // only fires on real activity (proving/settled/error), so idle time needs its own signal.
-      if (!worked) { if (!shortSince) await heartbeatIdle('settle', 'idle — queue empty'); await maybeReplenish(); await sleep(CFG.settlePollSecs); }
+      if (!worked) { if (!shortSince) await heartbeatIdle('settle', 'idle — queue empty'); await sweepAbandoned(); await maybeReplenish(); await sleep(CFG.settlePollSecs); }
     } catch (e) {
       log('cycle error (continuing):', e.message);
       await heartbeat('settle', `error ${safeErr(e)}`);
