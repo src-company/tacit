@@ -318,6 +318,31 @@ let rec;
     const mintedFromRecovery = await ux2.advance(recovered.walletPub, recovered.id, { walletPriv: WALLET_PRIV });
     ok(mintedFromRecovery.stage === 'minted', 'a record recovered straight into folded mints successfully — this is the exact call that used to throw');
   }
+
+  // ==== a record already saved to storage WITHOUT dest (recoverFromTxid's gap before this fix, sitting in a
+  // real browser's localStorage right now — the fix above only stops NEW records from being written this way,
+  // it does nothing for one already on disk) must still mint: the 'folded' handler self-heals rather than
+  // trusting rec.dest to exist. ====
+  {
+    const storage = makeMemStorage();
+    const ux3 = makeUx(world, storage);
+    // Same journal format putRecord/loadAll use internally (JOURNAL_PREFIX:network:walletPubLowercase, BigInt
+    // fields wrapped as {__big}) — written directly here since a real broken record was never produced by any
+    // exported call, only by code that predates this fix.
+    // rec is already 'minted' by this point in the file (the happy path ran to completion above) — force it
+    // back to 'folded', the actual stage a stuck record like this sits at, and drop the minted-only fields.
+    const { dest, stage, mintedAt, mintedJobId, mintedTxHash, ...rest } = { ...rec, walletPub: rec.walletPub.toLowerCase() };
+    const brokenRec = { ...rest, stage: 'folded' };
+    const wrapBig = (k, v) => (typeof v === 'bigint' && ['amount', 'blinding', 'value'].includes(k) ? { __big: v.toString() } : v);
+    storage.setItem(`tacit-burndep-bridge-v1:signet:${brokenRec.walletPub}`, JSON.stringify([brokenRec], wrapBig));
+
+    const stuck = ux3.list(rec.walletPub).find((r) => r.id === rec.id);
+    ok(!!stuck && stuck.stage === 'folded' && !stuck.dest, 'sanity: the hand-written record is folded with no dest, matching a real pre-fix save');
+
+    const healed = await ux3.advance(rec.walletPub, rec.id, { walletPriv: WALLET_PRIV });
+    ok(healed.stage === 'minted', 'advance() on a pre-existing record with no dest at all still mints — the fix self-heals rather than requiring a fresh recoverFromTxid');
+    ok(!!healed.dest && healed.dest.owner.toLowerCase() === dest.owner.toLowerCase() && healed.dest.blinding === dest.blinding, 'the self-healed dest matches the original — derived, not guessed');
+  }
 }
 
 // ==== resume after a simulated crash: a fresh instance, same storage, never re-signs ====

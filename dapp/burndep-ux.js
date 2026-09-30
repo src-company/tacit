@@ -405,16 +405,20 @@ export function makeBurnDepositUx(deps) {
     },
     folded: async (rec, { walletPriv }) => {
       if (!walletPriv) throw new Error('burndep-ux: this stage needs the wallet key');
-      const secret = pool.deriveNote(walletPriv, withHex(tacAssetId), rec.dest.index).secret;
+      // A record saved before dest was always written (recoverFromTxid's old gap, or any other path that
+      // reaches here without it) has no dest yet — derive and persist it now rather than throwing on
+      // rec.dest.index, since it's fully determined by the wallet key and doesn't need rebuilding from chain.
+      const dest = rec.dest || deriveDest(walletPriv, rec.burnHome, rec.burnHome.txid, rec.source.amount);
+      const secret = pool.deriveNote(walletPriv, withHex(tacAssetId), dest.index).secret;
       const minted = await bridgeMint.bridgeMint({
         network, sourceClass: 0,
         spentTxid: withHex(revHex(rec.burnHome.txid)), spentVout: 0,
         asset: withHex(tacAssetId), chainBinding: withHex(chainBindingHex()),
         burned: { value: rec.source.amount, blinding: rec.burnHome.blinding, owner: '0x' + '00'.repeat(32) },
-        dest: { value: rec.dest.value, blinding: rec.dest.blinding, owner: rec.dest.owner },
+        dest: { value: dest.value, blinding: dest.blinding, owner: dest.owner },
         recovery: { ownerPub: null, secret },
       });
-      return putRecord({ ...rec, stage: 'minted', mintedAt: now(), mintedJobId: minted.jobId || null, mintedTxHash: minted.txHash || null });
+      return putRecord({ ...rec, dest, stage: 'minted', mintedAt: now(), mintedJobId: minted.jobId || null, mintedTxHash: minted.txHash || null });
     },
   };
 
