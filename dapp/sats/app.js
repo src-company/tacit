@@ -2,7 +2,7 @@
 // or the chain comes from ../tacit.js, imported only once the user connects.
 
 const TACIT_URL = '/tacit.js?cb=c3643d6d';
-const SECRET_URL = '/sats/secret.js?cb=b08f5612';
+const SECRET_URL = '/sats/secret.js?cb=a58ec682';
 const MIX_URL = '/sats/mix.js?cb=52f7e8da';
 const ETH_URL = '/sats/eth.js?cb=401998ca';
 const POOL_STATUS = 'https://tacit-btc-pool.onrender.com/btc-pool/status';
@@ -29,7 +29,8 @@ const SHARED_WALLET_KEYS = [
 const SP_INDEX_URL = { signet: 'https://tacit-sp-index.onrender.com', mainnet: null };
 const DUST = 546;
 const POLL_MS = 20_000;
-// Tokens always scanned for shielded receipts, beside the ones the wallet holds (signet test cBTC).
+// Tokens always scanned for shielded receipts, beside the ones the wallet holds (signet test cBTC). On
+// mainnet the pool's own assets are added at scan time from secret.js, so they are not repeated here.
 const KNOWN_ASSETS = { signet: ['17619b4c65ad462481b74a59dbd566730a4376f07fb0e6ff8beca216044466c5'], mainnet: [] };
 // Sats a token send needs on hand for its commit and reveal fees.
 const TOKEN_SEND_SATS = 3000;
@@ -945,9 +946,17 @@ async function checkToken(txid) {
   return found;
 }
 
+// The pool's own assets, so a wallet that has never held one still finds a shielded receipt of it — the
+// case for anyone taking delivery of a pool asset for the first time. secret.js owns the list, and it is
+// already the module this page imports lazily, so there is one source of truth and no second copy to drift.
+async function poolAssetIds() {
+  try { const m = await import(SECRET_URL); return (m.livePoolAssets?.() || []).map((a) => a.id); } catch { return []; }
+}
+
 // Shielded receipts for the tokens this wallet holds or knows of, via the worker's per-token transfer index.
 async function scanTokens(line) {
-  const ids = [...new Set([...(KNOWN_ASSETS[T.NET.name] || []), ...held.map((a) => a.id)])];
+  const seeded = T.NET.name === 'mainnet' ? await poolAssetIds() : [];
+  const ids = [...new Set([...(KNOWN_ASSETS[T.NET.name] || []), ...seeded, ...held.map((a) => a.id)])];
   let found = 0, txs = 0;
   for (const id of ids) {
     const r = await T.scanAssetForStealthReceipts(id, {

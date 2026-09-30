@@ -39,11 +39,28 @@ const poolClients = {
 export const poolClient = poolClients.signet;
 export const poolClientFor = (network) => poolClients[network] || poolClients.signet;
 
-// TAC is the only asset the pool takes on mainnet at launch (SPEC §3.10). Same asset id as the EVM
-// confidential pool; its pool-side amounts are 8-decimal fixed point (tacitDecimals in
-// confidential-deployments.js), independent of the ERC-20's 18.
-export const TAC_ASSET_MAINNET = 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
-const TAC_DECIMALS_FALLBACK = 8;
+// The assets the pool takes on mainnet. The pool is asset-generic — one verifying key, the asset as a
+// public input, an asset-blind indexer — so an asset joins by being listed here; a relayed one also needs
+// an entry in the relay's BTC_POOL_RELAYER_FEES. Pool amounts are 8-decimal fixed point (tacitDecimals in
+// confidential-deployments.js), independent of any ERC-20's 18.
+//
+// Asset is public in every envelope (0x6C ‖ asset(32) ‖ …), so each asset gets its own anonymity set.
+// Listing a second one widens what the pool accepts; it does not deepen what is already in it.
+export const MAINNET_POOL_ASSETS = [
+  { ticker: 'TAC', decimals: 8, logo: '../tac-logo.png', live: true,
+    id: 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b' },
+  // cBTC reaches Bitcoin by bridging back from Ethereum (crossOut → T_CROSSOUT_MINT), not by being etched
+  // here, and the pool takes a crossout-mint note like any other — the shield-input rule refuses only a
+  // note bound to a pool deployment (T_CXFER_BOUND). Listed ahead of the supply: until some is bridged
+  // across it reads as an empty balance, and the relay prices it only once BTC_POOL_RELAYER_FEES has it.
+  { ticker: 'cBTC', decimals: 8, logo: null, live: true,
+    id: '62a20d98fc1cd20289621d1315294cb8772f934d822e404b71e1f471cf0679c8' },
+];
+
+// The pool's first asset, and the one the TAC-specific surfaces (/tac, the holdings shield link) address.
+export const TAC_ASSET_MAINNET = MAINNET_POOL_ASSETS[0].id;
+export const livePoolAssets = () => MAINNET_POOL_ASSETS.filter((a) => a.live);
+const TAC_DECIMALS_FALLBACK = MAINNET_POOL_ASSETS[0].decimals;
 
 const te = new TextEncoder();
 const SEQ = 0xfffffffd;
@@ -1047,20 +1064,23 @@ function parseTacUnits(str, decimals) {
   return BigInt((m[1] || '0') + (m[2] || '').padEnd(decimals, '0'));
 }
 
-// mount(el, ctx) for the mainnet pool panel: TAC balance (public + shielded), shield, pay privately, receive
-// and exit. ctx is the same shape mount() takes; getSats is unused here.
+// mount(el, ctx) for the mainnet pool panel: balance (public + shielded), shield, pay privately, receive
+// and exit, for whichever of MAINNET_POOL_ASSETS is selected. ctx is the same shape mount() takes;
+// getSats is unused here.
 export function mountMainnet(root, ctx) {
   const { tacit } = ctx;
   const log = ctx.log || (() => {});
   const explorer = tacit.NET?.explorer || 'https://mempool.space';
   const txLink = (txid, label) => el('a', { href: `${explorer}/tx/${txid}`, target: '_blank', rel: 'noopener noreferrer' }, label || `${txid.slice(0, 10)}…`);
   const poolWallet = () => (ctx.wallet?.priv ? poolWalletFor(ctx.wallet.priv, 'mainnet') : null);
-  const asset = TAC_ASSET_MAINNET;
+  // Read at call time, so switching asset redirects the loads and the actions already wired up.
+  let sel = livePoolAssets()[0] || MAINNET_POOL_ASSETS[0];
+  const asset = () => sel.id;
 
   let who = null;
   let running = null;
   const errs = {}; // 'load' | 'shield' | 'pay' | 'receive' | 'exit' → last error line
-  let pub = { loading: false, utxos: [], decimals: TAC_DECIMALS_FALLBACK };
+  let pub = { loading: false, utxos: [], decimals: sel.decimals };
   let shielded = { loading: false, notes: null };
   let relay = { checked: false, live: false };
   let lastShield = null, lastPay = null, lastExit = null;
@@ -1074,7 +1094,7 @@ export function mountMainnet(root, ctx) {
   const shieldedTotal = () => (shielded.notes || []).filter((x) => !x.spent).reduce((t, x) => t + BigInt(x.value), 0n);
   const publicTotal = () => pub.utxos.reduce((t, u) => t + (typeof u.amount === 'bigint' ? u.amount : BigInt(u.amount)), 0n);
 
-  // Public TAC: the same batched, cached holdings scan every other Wallet/Send/Holdings surface uses — not a
+  // Public balance: the same batched, cached holdings scan every other Wallet/Send/Holdings surface uses — not a
   // one-off UTXO walk. scanHoldings() also carries each UTXO's opening (txid, vout, amount, blinding), which
   // Shield needs.
   async function loadPublic() {
@@ -1082,18 +1102,18 @@ export function mountMainnet(root, ctx) {
     pub = { ...pub, loading: true }; render();
     try {
       const h = await tacit.scanHoldings();
-      const entry = h instanceof Map ? h.get(asset) : null;
-      pub = { loading: false, utxos: entry?.utxos || [], decimals: Number.isInteger(entry?.decimals) ? entry.decimals : TAC_DECIMALS_FALLBACK };
+      const entry = h instanceof Map ? h.get(asset()) : null;
+      pub = { loading: false, utxos: entry?.utxos || [], decimals: Number.isInteger(entry?.decimals) ? entry.decimals : sel.decimals };
     } catch (e) { pub = { ...pub, loading: false }; errs.load = ctx.errMsg ? ctx.errMsg(e) : String(e?.message || e); }
     render();
   }
 
-  // Shielded TAC: the replay service's batched note feed (poolClientFor('mainnet').allNotes(), paged 1000 at
+  // Shielded balance: the replay service's batched note feed (poolClientFor('mainnet').allNotes(), paged 1000 at
   // a time), scanned locally with the viewing key — the same call the signet demo's Receive step makes.
   async function loadShielded() {
     const pw = poolWallet(); if (!pw) return;
     shielded = { ...shielded, loading: true }; render();
-    try { shielded = { loading: false, notes: await poolNotes(pw, asset) }; }
+    try { shielded = { loading: false, notes: await poolNotes(pw, asset()) }; }
     catch (e) { shielded = { ...shielded, loading: false }; errs.receive = ctx.errMsg ? ctx.errMsg(e) : String(e?.message || e); }
     render();
   }
@@ -1122,7 +1142,7 @@ export function mountMainnet(root, ctx) {
     b.addEventListener('click', onClick);
     return b;
   }
-  const tok = (cls) => el('img', { class: cls ? `tok ${cls}` : 'tok', src: '../tac-logo.png', alt: '', 'aria-hidden': 'true' });
+  const tok = (cls) => (sel.logo ? el('img', { class: cls ? `tok ${cls}` : 'tok', src: sel.logo, alt: '', 'aria-hidden': 'true' }) : null);
 
   // Status lines proveHere/payPrivately/exitToWallet report through `say`, written directly into a persistent
   // node rather than through render() — proving ticks every 500ms and a full rebuild would drop focus from
@@ -1139,17 +1159,17 @@ export function mountMainnet(root, ctx) {
     await ctx.ensureKey?.();
     const pw = poolWallet(); if (!pw) throw new Error('Unlock the wallet first.');
     if (!pub.utxos.length) await loadPublic(); // fresh scan once unlocked, for a wallet that was still locked (so not yet scanned) when the button was clicked
-    if (!pub.utxos.length) throw new Error('No TAC to shield yet.');
+    if (!pub.utxos.length) throw new Error(`No ${sel.ticker} to shield yet.`);
     const val = (u) => (typeof u.amount === 'bigint' ? u.amount : BigInt(u.amount));
     const biggest = [...pub.utxos].sort((a, b) => (val(b) > val(a) ? 1 : val(b) < val(a) ? -1 : 0))[0];
     const note = {
-      assetId: asset, txid: biggest.utxo.txid, vout: biggest.utxo.vout,
+      assetId: asset(), txid: biggest.utxo.txid, vout: biggest.utxo.vout,
       amount: val(biggest).toString(), blinding: blindingHex(biggest.blinding),
     };
     shieldStatus.textContent = '';
     const r = await shieldNote(tacit, { note, poolWallet: pw, say: (m) => { shieldStatus.textContent = m; } });
     lastShield = { txid: r.revealTxid, value: r.poolNote.value };
-    ctx.track?.(r.revealTxid, `Shielded ${fmt(r.poolNote.value)} TAC`);
+    ctx.track?.(r.revealTxid, `Shielded ${fmt(r.poolNote.value)} ${sel.ticker}`);
     log('Shielded.');
     ctx.refresh?.();
     try { tacit.invalidateHoldingsCache?.(); } catch {}
@@ -1164,12 +1184,12 @@ export function mountMainnet(root, ctx) {
     const value = parseTacUnits(payAmtField.value, pub.decimals);
     if (value <= 0n) throw new Error('Enter an amount above zero.');
     payStatus.textContent = '';
-    const r = await payPrivately(tacit, { poolWallet: pw, to, amount: value, asset, anchor, say: (m) => { payStatus.textContent = m; } });
+    const r = await payPrivately(tacit, { poolWallet: pw, to, amount: value, asset: asset(), anchor, say: (m) => { payStatus.textContent = m; } });
     if (r.wait) { pending.pay = { ...r }; return; }
     lastPay = { txid: r.revealTxid, to: to.slice(0, 16) + '…', value: value.toString(), relayed: r.relayed };
     toField.value = ''; payAmtField.value = '';
-    ctx.track?.(r.revealTxid, `Paid ${fmt(value)} private TAC`);
-    log(`Paid ${fmt(value)} TAC privately.`);
+    ctx.track?.(r.revealTxid, `Paid ${fmt(value)} private ${sel.ticker}`);
+    log(`Paid ${fmt(value)} ${sel.ticker} privately.`);
     await loadShielded();
   }
 
@@ -1179,16 +1199,32 @@ export function mountMainnet(root, ctx) {
     const value = parseTacUnits(exitAmtField.value, pub.decimals);
     if (value <= 0n) throw new Error('Enter an amount above zero.');
     exitStatus.textContent = '';
-    const r = await exitToWallet(tacit, { poolWallet: pw, amount: value, asset, anchor, say: (m) => { exitStatus.textContent = m; } });
+    const r = await exitToWallet(tacit, { poolWallet: pw, amount: value, asset: asset(), anchor, say: (m) => { exitStatus.textContent = m; } });
     if (r.wait) { pending.exit = { ...r }; return; }
     lastExit = { txid: r.revealTxid, value: value.toString() };
     exitAmtField.value = '';
-    ctx.track?.(r.revealTxid, `Exited ${fmt(value)} TAC`);
-    log(`Exited ${fmt(value)} TAC to your wallet.`);
+    ctx.track?.(r.revealTxid, `Exited ${fmt(value)} ${sel.ticker}`);
+    log(`Exited ${fmt(value)} ${sel.ticker} to your wallet.`);
     ctx.refresh?.();
     try { tacit.invalidateHoldingsCache?.(); } catch {}
     await loadPublic();
     await loadShielded();
+  }
+
+  // Everything on this panel is per-asset — balances, the last receipts, a pending anchor wait — so a
+  // switch clears them rather than showing one asset's numbers under another's name.
+  function selectAsset(id) {
+    const next = livePoolAssets().find((a) => a.id === id);
+    if (!next || next.id === sel.id) return;
+    sel = next;
+    pub = { loading: false, utxos: [], decimals: sel.decimals };
+    shielded = { loading: false, notes: null };
+    lastShield = lastPay = lastExit = null;
+    for (const k of Object.keys(pending)) delete pending[k];
+    for (const k of Object.keys(errs)) delete errs[k];
+    render();
+    loadPublic();
+    loadShielded();
   }
 
   function waitBoxFor(id, w, retry) {
@@ -1208,33 +1244,36 @@ export function mountMainnet(root, ctx) {
         : 'Gasless relay: coming soon. Shielding, payments and exits all work now — each pays its own Bitcoin network fee.'));
 
     if (!who?.connected) {
-      items.push(el('p', { class: 'note' }, 'Connect a wallet above to shield, pay and exit TAC in the pool.'));
+      items.push(el('p', { class: 'note' }, `Connect a wallet above to shield, pay and exit ${sel.ticker} in the pool.`));
       root.replaceChildren(...items.filter((x) => x != null));
       return;
     }
 
-    items.push(el('div', { class: 'field' }, el('label', {}, 'Asset'),
-      el('div', { class: 'row', style: 'margin:0' }, tok(), el('select', { disabled: true, 'aria-label': 'Pool asset' }, el('option', {}, 'TAC')))));
+    const live = livePoolAssets();
+    items.push(el('div', { class: 'field' }, el('label', { for: 'mn-asset' }, 'Asset'),
+      el('div', { class: 'row', style: 'margin:0' }, tok(),
+        el('select', { id: 'mn-asset', 'aria-label': 'Pool asset', ...(live.length > 1 ? {} : { disabled: true }), onchange: (e) => selectAsset(e.target.value) },
+          ...live.map((a) => el('option', a.id === sel.id ? { value: a.id, selected: 'selected' } : { value: a.id }, a.ticker))))));
 
     items.push(el('div', { class: 'addrs' },
-      el('div', { class: 'kv' }, el('span', {}, tok(), ' public'), el('b', {}, pub.loading ? '…' : `${fmt(publicTotal())} TAC`)),
-      el('div', { class: 'kv' }, el('span', {}, tok('shielded'), ' shielded'), el('b', {}, shielded.loading ? '…' : shielded.notes ? `${fmt(shieldedTotal())} TAC` : '— scan below'))));
+      el('div', { class: 'kv' }, el('span', {}, tok(), ' public'), el('b', {}, pub.loading ? '…' : `${fmt(publicTotal())} ${sel.ticker}`)),
+      el('div', { class: 'kv' }, el('span', {}, tok('shielded'), ' shielded'), el('b', {}, shielded.loading ? '…' : shielded.notes ? `${fmt(shieldedTotal())} ${sel.ticker}` : '— scan below'))));
     items.push(el('div', { class: 'row' }, button('Refresh', () => { loadPublic(); loadShielded(); })));
     items.push(errLine('load'));
 
     items.push(el('p', { class: 'eyebrow sub-h' }, 'Shield'));
-    items.push(el('p', { class: 'note' }, 'Move TAC you hold into the pool, where amounts and owners are hidden. Self-funded: this wallet pays the Bitcoin fee.'));
-    if (lastShield) items.push(el('div', {}, `${fmt(lastShield.value)} TAC shielded in `, txLink(lastShield.txid), '.'));
-    if (who?.unlocked && !pub.loading && !pub.utxos.length) items.push(el('div', { class: 'small muted' }, 'No TAC in this wallet yet. Get some on ', el('a', { href: '/' }, 'tacit.finance'), ', then come back to shield it.'));
-    items.push(el('div', { class: 'row' }, button('Shield my TAC', () => run('shield', doShield), who?.unlocked && !pub.loading && !pub.utxos.length), running === 'shield' ? shieldStatus : null));
+    items.push(el('p', { class: 'note' }, `Move ${sel.ticker} you hold into the pool, where amounts and owners are hidden. Self-funded: this wallet pays the Bitcoin fee.`));
+    if (lastShield) items.push(el('div', {}, `${fmt(lastShield.value)} ${sel.ticker} shielded in `, txLink(lastShield.txid), '.'));
+    if (who?.unlocked && !pub.loading && !pub.utxos.length) items.push(el('div', { class: 'small muted' }, `No ${sel.ticker} in this wallet yet. Get some on `, el('a', { href: '/' }, 'tacit.finance'), ', then come back to shield it.'));
+    items.push(el('div', { class: 'row' }, button(`Shield my ${sel.ticker}`, () => run('shield', doShield), who?.unlocked && !pub.loading && !pub.utxos.length), running === 'shield' ? shieldStatus : null));
     items.push(errLine('shield'));
 
     items.push(el('p', { class: 'eyebrow sub-h' }, 'Pay privately'));
-    if (lastPay) items.push(el('div', {}, `Paid ${fmt(lastPay.value)} TAC to ${lastPay.to} in `, txLink(lastPay.txid), lastPay.relayed ? ' (relayed).' : ' (self-funded).'));
+    if (lastPay) items.push(el('div', {}, `Paid ${fmt(lastPay.value)} ${sel.ticker} to ${lastPay.to} in `, txLink(lastPay.txid), lastPay.relayed ? ' (relayed).' : ' (self-funded).'));
     if (pending.pay) items.push(waitBoxFor('pay', pending.pay, doPay));
     else items.push(
       el('div', { class: 'field' }, el('label', { for: 'mn-pay-to' }, 'To: a pool address (bp1…)'), toField),
-      el('div', { class: 'field' }, el('label', { for: 'mn-pay-amt' }, 'Amount (TAC)'), payAmtField),
+      el('div', { class: 'field' }, el('label', { for: 'mn-pay-amt' }, `Amount (${sel.ticker})`), payAmtField),
       el('div', { class: 'row' }, button('Pay privately', () => run('pay', () => doPay())), running === 'pay' ? payStatus : null));
     items.push(errLine('pay'));
 
@@ -1246,11 +1285,11 @@ export function mountMainnet(root, ctx) {
     items.push(errLine('receive'));
 
     items.push(el('p', { class: 'eyebrow sub-h' }, 'Exit'));
-    items.push(el('p', { class: 'note' }, 'Leave the pool as an ordinary TAC note in your wallet. Self-funded: this wallet pays the Bitcoin fee.'));
-    if (lastExit) items.push(el('div', {}, `${fmt(lastExit.value)} TAC left the pool to your wallet in `, txLink(lastExit.txid), '.'));
+    items.push(el('p', { class: 'note' }, `Leave the pool as an ordinary ${sel.ticker} note in your wallet. Self-funded: this wallet pays the Bitcoin fee.`));
+    if (lastExit) items.push(el('div', {}, `${fmt(lastExit.value)} ${sel.ticker} left the pool to your wallet in `, txLink(lastExit.txid), '.'));
     if (pending.exit) items.push(waitBoxFor('exit', pending.exit, doExit));
     else items.push(
-      el('div', { class: 'field' }, el('label', { for: 'mn-exit-amt' }, 'Amount (TAC)'), exitAmtField),
+      el('div', { class: 'field' }, el('label', { for: 'mn-exit-amt' }, `Amount (${sel.ticker})`), exitAmtField),
       el('div', { class: 'row' }, button('Exit to my wallet', () => run('exit', () => doExit())), running === 'exit' ? exitStatus : null));
     items.push(errLine('exit'));
 
