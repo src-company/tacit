@@ -303,8 +303,9 @@ export function makeConfidentialNames({ call, send = null, secp, keccak256 }) {
     return value === '' ? null : value;
   }
 
-  // Strict decoder for the record value: bech32m "tacit" address, 101-byte payload, version 0, Ethereum lane
-  // flagged, Ethereum-lane key (last 33 bytes) a valid secp256k1 point.
+  // Decoder for the record value: bech32m "tacit" address, version 0, carrying at least an Ethereum lane or a
+  // pool lane (or both) — a record with neither pays nothing this file knows how to resolve. When present, the
+  // Ethereum-lane key (33 bytes right after spend/scan) must be a valid secp256k1 point.
   function decodeTacitAddress(value) {
     const s = String(value == null ? '' : value).trim();
     let d;
@@ -314,26 +315,34 @@ export function makeConfidentialNames({ call, send = null, secp, keccak256 }) {
     if (d.hrp !== 'tacit') throw new NameError('bad-address', `Not a Tacit mainnet address (prefix "${d.hrp}").`);
     const p = d.payloadBytes;
     if (p[0] !== 0) throw new NameError('bad-address', `Unsupported Tacit address version ${p[0]}.`);
-    if (!(p[1] & 0x02)) throw new NameError('bad-address', 'This Tacit address does not carry an Ethereum lane.');
-    // 101 bytes, plus the pool lane's 97 when flagged (0x04); later lanes (0x08 and up) follow and are not read here.
-    const want = 101 + (p[1] & 0x04 ? 97 : 0), unknown = p[1] & ~0x07;
+    if (!(p[1] & 0x06)) throw new NameError('bad-address', 'This Tacit address carries neither an Ethereum lane nor a pool lane, so it cannot receive a payment.');
+    const hasEvm = !!(p[1] & 0x02), hasPool = !!(p[1] & 0x04);
+    // 68 bytes (version+flags+spend+scan), plus the Ethereum lane's 33 when flagged (0x02), plus the pool lane's
+    // 97 when flagged (0x04); later lanes (0x08 and up) follow and are not read here.
+    const want = 68 + (hasEvm ? 33 : 0) + (hasPool ? 97 : 0), unknown = p[1] & ~0x07;
     if (unknown ? p.length < want : p.length !== want) throw new NameError('bad-address', `Tacit address payload is ${p.length} bytes, expected ${want}.`);
-    const keyHex = hexOf(p.slice(68, 101));
-    try { secp.ProjectivePoint.fromHex(keyHex); } catch {
-      throw new NameError('bad-address', 'The Ethereum-lane key in this Tacit address is not a valid point.');
+    let key = null;
+    if (hasEvm) {
+      const keyHex = hexOf(p.slice(68, 101));
+      try { secp.ProjectivePoint.fromHex(keyHex); } catch {
+        throw new NameError('bad-address', 'The Ethereum-lane key in this Tacit address is not a valid point.');
+      }
+      key = '0x' + keyHex;
     }
+    const poolAt = 68 + (hasEvm ? 33 : 0);
     return {
       address: s,
       flags: p[1],
       spendKey: '0x' + hexOf(p.slice(2, 35)),
       scanKey: '0x' + hexOf(p.slice(35, 68)),
-      key: '0x' + keyHex,
+      // The Ethereum-lane key, when the address carries one: what a private send pays.
+      ...(key ? { key } : {}),
       // The pool lane, when the address carries one: the bp1… address a shielded-pool payment pays.
-      ...(p[1] & 0x04 ? { pool: poolAddressOf(p.slice(101, 198)) } : {}),
+      ...(hasPool ? { pool: poolAddressOf(p.slice(poolAt, poolAt + 97)) } : {}),
     };
   }
 
-  // name → { name, address, key, source, node }. Throws NameError with a code the caller can explain.
+  // name → { name, address, key?, pool?, source, node }. Throws NameError with a code the caller can explain.
   async function resolveName(name) {
     const c = classify(name);
     const record = await readRecord(c.name);
@@ -344,7 +353,7 @@ export function makeConfidentialNames({ call, send = null, secp, keccak256 }) {
     try { d = decodeTacitAddress(record); } catch (e) {
       throw new NameError('bad-record', `${c.name} has a "${RECORD_KEY}" record that is not a usable Tacit address: ${e.message}`, { name: c.name, source: c.source });
     }
-    return { name: c.name, address: d.address, key: d.key, ...(d.pool ? { pool: d.pool } : {}), source: c.source, node: namehash(c.name) };
+    return { name: c.name, address: d.address, ...(d.key ? { key: d.key } : {}), ...(d.pool ? { pool: d.pool } : {}), source: c.source, node: namehash(c.name) };
   }
 
   // ── primary name ──
@@ -417,6 +426,9 @@ export function makeConfidentialNames({ call, send = null, secp, keccak256 }) {
     }
     if (looksLikeName(s)) {
       const r = await resolveName(s);
+      if (!r.key) {
+        throw new NameError('bad-record', `${r.name} has a "${RECORD_KEY}" record with no Ethereum-lane key, so it can't receive a private send. Ask them to publish one, or pay their pool address (bp1…) directly instead.`, { name: r.name, source: r.source });
+      }
       return { pubHex: r.key, name: r.name, address: r.address, source: r.source, node: r.node };
     }
     if (typeof local !== 'function') throw new NameError('bad-recipient', 'Enter a Tacit address, a shielded pubkey, or a name.');

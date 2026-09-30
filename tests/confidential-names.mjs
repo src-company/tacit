@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import { keccak_256 } from '../node_modules/@noble/hashes/sha3.js';
 import * as secp from '../node_modules/@noble/secp256k1/index.js';
-import { makeTacitAddress } from '../dapp/tacit-address.js';
+import { makeTacitAddress, poolAddressOf } from '../dapp/tacit-address.js';
 import {
   makeConfidentialNames, makeMainnetCall, NameError, CallRevert, WNS, GNS, ENS_REGISTRY, RECORD_KEY,
 } from '../dapp/confidential-names.js';
@@ -272,6 +272,47 @@ test('decoder strictness', () => {
   bad('not an address', /./);
   // flags with the Ethereum bit but not the Bitcoin bit is still a 101-byte layout and is accepted
   assert.strictEqual(n.decodeTacitAddress(bech32m('tacit', payload({ flags: 2 }))).flags, 2);
+});
+
+// A pool lane with no Ethereum lane: flags 0x01 (Bitcoin) | 0x04 (pool), no byte 68..101 at all — the pool bytes
+// sit directly after spend/scan. A record like this can't pay a private send (no Ethereum-lane key) but can still
+// pay a shielded-pool payment, and must decode rather than being refused outright.
+const poolOnlyPayload = (() => {
+  const keys = new Uint8Array(97).fill(0x09);
+  const p = new Uint8Array(68 + 97);
+  p[0] = 0; p[1] = 0x01 | 0x04;
+  p.set(pub(0x11), 2); p.set(pub(0x22), 35); p.set(keys, 68);
+  return { bytes: p, keys, address: bech32m('tacit', p) };
+})();
+
+test('decoder: a pool-lane-only address (no Ethereum lane) decodes to its pool address, with no key', () => {
+  const n = names(world());
+  const d = n.decodeTacitAddress(poolOnlyPayload.address);
+  assert.strictEqual(d.key, undefined);
+  assert.strictEqual(d.pool, poolAddressOf(poolOnlyPayload.keys));
+  assert.strictEqual(d.flags, 0x05);
+  assert.strictEqual(d.spendKey, '0x' + hex(pub(0x11)));
+});
+
+test('decoder: an address with neither an Ethereum nor a pool lane is refused, naming both', () => {
+  const n = names(world());
+  assert.throws(
+    () => n.decodeTacitAddress(bech32m('tacit', payload({ flags: 1 }))),
+    (e) => e instanceof NameError && e.code === 'bad-address' && /neither an Ethereum lane nor a pool lane/.test(e.message),
+  );
+});
+
+test('resolveName / resolveRecipient: a pool-lane-only record resolves for the pool but is refused for a private send', async () => {
+  const wd = world(); const n = names(wd);
+  wd.wns.text[w(n.namehash('poolonly.wei'))] = poolOnlyPayload.address;
+  const r = await n.resolveName('poolonly.wei');
+  assert.strictEqual(r.key, undefined);
+  assert.strictEqual(r.pool, poolAddressOf(poolOnlyPayload.keys));
+  const local = (s) => ({ error: 'nope' });
+  await assert.rejects(
+    n.resolveRecipient('poolonly.wei', { local }),
+    (e) => e instanceof NameError && e.code === 'bad-record' && /no Ethereum-lane key/.test(e.message) && /bp1…/.test(e.message),
+  );
 });
 
 // ── primary name ──
