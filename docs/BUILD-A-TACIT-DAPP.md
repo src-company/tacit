@@ -1218,7 +1218,7 @@ Base `https://api.tacit.finance`. Everything below is public; nothing needs a ke
 | endpoint | |
 |---|---|
 | `POST /confidential/submit` | `{ type, op, memos, mode?, feeAsset? }` → `{ jobId }`. `mode: 'prove'` returns a proof for you to submit yourself; default `'settle'` has the relay submit it. |
-| `GET /confidential/status?id=` | `pending` → `proving` → `settled` \| `failed`; a `mode: 'prove'` job ends at `proven` and carries the proof |
+| `GET /confidential/status?id=` | `pending` → `proving` → `settled` \| `failed`; a `mode: 'prove'` job ends at `proven` and carries the proof (`publicValues`, `proof`) and the `memos` it commits to, which `settle()` must carry exactly: the same op submitted twice is proved once, with the first submit's memos. A prove job whose deposit was settled from elsewhere first reads `settled`, with that transaction |
 | `GET /confidential/quote?asset=cETH&amountWei=` | `{ ticker, assetId, relayFeeEligible, staticFloorUnits, gasAwareFloorUnits }` — floors are in the asset's **in-system units**, not wei. `asset` takes a ticker or a `0x` asset id. With `amountWei`, it adds `recommendedWrapTipWei` and `recommendedTipRecipient` (the tipped wrap, §5) and `recommendedProveTipWei`. |
 | `GET /confidential/index?from=&limit=` | the pool's event stream plus the stealth lock set, in chain order behind one cursor — recover a key's notes and locks without running a scanner |
 | `GET /farm/program?network=mainnet`, `GET /farm/health` | the launch farms' emission schedule and a solvency verdict, read from the manager on chain |

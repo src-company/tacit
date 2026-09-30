@@ -2809,7 +2809,10 @@ async function handleConfidentialJob(req, env, cors) {
     const jobs = await q.nextBatch({ max: Math.min(want, 16) });
     return jsonResponse({ jobs }, 200, { ...cors, 'Cache-Control': 'no-store' });
   }
-  const job = await q.nextJob();
+  // ?mode=prove takes only jobs that want a proof back (the page sends the settle itself); an older relay that
+  // doesn't ask gets the oldest job of any mode, as before.
+  const mode = new URL(req.url).searchParams.get('mode');
+  const job = await q.nextJob(mode === 'prove' || mode === 'settle' ? { mode } : {});
   return jsonResponse(job || {}, 200, { ...cors, 'Cache-Control': 'no-store' });
 }
 async function handleConfidentialAck(req, env, cors) {
@@ -2820,7 +2823,7 @@ async function handleConfidentialAck(req, env, cors) {
   try { body = await req.json(); } catch { return jsonResponse({ ok: false, error: 'bad json' }, 400, cors); }
   if (!body.jobId) return jsonResponse({ ok: false, error: 'jobId required' }, 400, cors);
   const r = await q.ackJob(String(body.jobId), { txHash: body.txHash, error: body.error, publicValues: body.publicValues, proof: body.proof,
-    activateTx: body.activateTx, activateError: body.activateError, broadcastHashes: body.broadcastHashes });
+    activateTx: body.activateTx, activateError: body.activateError, broadcastHashes: body.broadcastHashes, settledBy: body.settledBy });
   return jsonResponse(r, 200, cors);
 }
 async function handleConfidentialStatus(env, url, cors) {

@@ -940,7 +940,7 @@ await test('a keeper that cannot front a send says so on /quote and /relay (503)
   try {
     let r = await fetch(`${base}/quote`);
     assert.equal(r.status, 503);
-    assert.match((await r.json()).error, /short of gas/);
+    assert.match((await r.json()).error, /can't take this one right now; send it from your own wallet/);
     r = await fetch(base + '/relay', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(relayTx()) });
     assert.equal(r.status, 503);
     assert.equal(chain.sent.length, 0, 'nothing was sent');

@@ -188,13 +188,15 @@ export function makeConfidentialSettler({ storage, hash, now, feeGate, priceFee,
   // re-read after CLAIM_VERIFY_DELAY_MS. Concurrent writes to one key still land in some final order, so
   // exactly one claimant's nonce survives that wait — the other sees a foreign nonce and backs off to try
   // the next candidate instead of also proving this one.
-  async function nextJob() {
+  // `mode`, when given, takes only jobs of that mode ('prove' or 'settle'), oldest first; others stay queued.
+  async function nextJob({ mode = null } = {}) {
     const pend = await storage.getPending();
     for (const id of pend) {
       // Read-check-write of the job record is one step, so an ack or another claim cannot land between them.
       const claim = await exclusive(async () => {
         const j = await storage.getJob(id);
         if (!j) return null;
+        if (mode && (j.mode || 'settle') !== mode) return null;
         const claimable = j.status === 'pending' || (j.status === 'proving' && clock() - (j.claimedAt || 0) > CLAIM_TTL_MS);
         if (!claimable) return null;
         const nonce = crypto.randomUUID();
@@ -278,7 +280,7 @@ export function makeConfidentialSettler({ storage, hash, now, feeGate, priceFee,
 
   function ackJob(jobId, ack = {}) { return exclusive(() => ackJobLocked(jobId, ack)); }
 
-  async function ackJobLocked(jobId, { txHash, error, publicValues, proof, activateTx, activateError, broadcastHashes }) {
+  async function ackJobLocked(jobId, { txHash, error, publicValues, proof, activateTx, activateError, broadcastHashes, settledBy }) {
     const j = await storage.getJob(jobId);
     if (!j) return { ok: false, reason: 'unknown job' };
     if (j.status === 'settled' || j.status === 'proven') {
@@ -295,6 +297,11 @@ export function makeConfidentialSettler({ storage, hash, now, feeGate, priceFee,
       if (Array.isArray(broadcastHashes) && broadcastHashes.length) {
         j.broadcastHashes = broadcastHashes.slice(0, 8).map((h) => String(h));
       }
+    } else if (settledBy) {
+      // What the job consumes was consumed by a settle found on chain (a deposit settled from elsewhere, by the page
+      // itself or another settler): the job is done by that transaction, whichever mode it was asked in.
+      j.status = 'settled'; j.txHash = String(settledBy);
+      delete j.broadcastHashes;
     } else if ((j.mode || 'settle') === 'prove') {
       if (!publicValues || !proof) { j.status = 'failed'; j.error = 'prove-only ack missing publicValues/proof'; }
       else { j.status = 'proven'; j.publicValues = publicValues; j.proof = proof; }
@@ -317,8 +324,12 @@ export function makeConfidentialSettler({ storage, hash, now, feeGate, priceFee,
     // both are public (they go on-chain in the settle call anyway).
     // `activation` is null for a job without an exit recipe; otherwise 'pending' until the relay reports its
     // activateExit as 'done' (activateTx) or 'failed' (activateError — the user activates it themselves).
+    // A proven job's memos are the ones its proof commits to: the settle must carry exactly these, and a page that
+    // asks again for the same op (a reload, a second press) sealed different ones. They are sealed to their
+    // recipients and go on chain with the settle.
     return { jobId, type: j.type, mode: j.mode || 'settle', status: j.status, txHash: j.txHash, error: j.error,
       createdAt: j.createdAt, publicValues: j.publicValues || null, proof: j.proof || null,
+      memos: j.status === 'proven' && Array.isArray(j.memos) ? j.memos : null,
       activation: j.exit ? (j.activateTx ? 'done' : j.activateError ? 'failed' : 'pending') : null,
       activateTx: j.activateTx || null, activateError: j.activateError || null,
       // Published deliberately: on a failed settle these are the only handles on a transaction that may

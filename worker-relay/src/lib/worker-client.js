@@ -118,9 +118,10 @@ export async function reflectionEthStatePublish(body) {
 }
 
 // ── Confidential settle ──
-export async function confidentialJob() {
+// `mode` ('prove' | 'settle') asks for jobs of that mode only.
+export async function confidentialJob({ mode = null } = {}) {
   // { jobId, type, op, memos:[], mode } | {}
-  return getJson('/confidential/job');
+  return getJson(mode ? `/confidential/job?mode=${mode}` : '/confidential/job');
 }
 // Claim several jobs that can share one settle. Falls back to a single job when the worker is older (no
 // `jobs` key) so the relay never wedges on a version skew.

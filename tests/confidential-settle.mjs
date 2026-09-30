@@ -66,6 +66,48 @@ const routeOp = { asset0: 'aa', assetFinal: 'bb', hops: [{ reserveAPre: '1000', 
   ok('claims are FIFO and locked — a claimed job is not handed out again');
 }
 
+// ───────────────── 3b. a claim can ask for one mode: prove-only jobs go through while settle jobs wait ─────────────────
+{
+  const q = makeConfidentialSettler({ storage: freshStore(), hash, now, sleep: instantSleep });
+  const settle = await q.submitJob({ type: 'swap', op: swapOp });
+  const prove = await q.submitJob({ type: 'lp', op: lpOp, mode: 'prove' });
+  const p1 = await q.nextJob({ mode: 'prove' });
+  assert.strictEqual(p1.jobId, prove.jobId, 'the prove-only job is handed out ahead of an older settle job');
+  assert.strictEqual(p1.mode, 'prove');
+  assert.strictEqual(await q.nextJob({ mode: 'prove' }), null, 'no other prove-only job: the settle job is not taken');
+  assert.strictEqual((await q.jobStatus(settle.jobId)).status, 'pending', 'the settle job stays queued');
+  const s1 = await q.nextJob();
+  assert.strictEqual(s1.jobId, settle.jobId, 'an unfiltered claim still takes it');
+  ok('a claim filtered to prove mode takes only prove-only jobs; settle jobs stay queued');
+}
+
+// ───────────────── 3c. a proven job hands back the memos its proof commits to ─────────────────
+{
+  const q = makeConfidentialSettler({ storage: freshStore(), hash, now, sleep: instantSleep });
+  const memos = ['0xaa01', '0xbb02'];
+  const j = await q.submitJob({ type: 'lp', op: lpOp, memos, mode: 'prove' });
+  assert.strictEqual((await q.jobStatus(j.jobId)).memos, null, 'no memos before it is proven');
+  const again = await q.submitJob({ type: 'lp', op: lpOp, memos: ['0xcc03'], mode: 'prove' });
+  assert.strictEqual(again.jobId, j.jobId, 'the same op asked again joins the same job');
+  await q.nextJob({ mode: 'prove' });
+  await q.ackJob(j.jobId, { publicValues: '0x01', proof: '0x02' });
+  const st = await q.jobStatus(j.jobId);
+  assert.strictEqual(st.status, 'proven');
+  assert.deepStrictEqual(st.memos, memos, 'the proven job returns the memos it was proved with, not the second press\'s');
+  ok('a proven job returns the memos its proof commits to');
+
+  // A prove job whose deposit was settled from elsewhere first is acked as settled by that transaction: done, not
+  // failed. (A bare txHash on a prove job still fails closed: tests/confidential-relay.mjs.)
+  const w = await q.submitJob({ type: 'wrap', op: { asset: '0x01', value: '5', cx: '0x02', cy: '0x03', owner: '0x04' }, memos: ['0xdd04'], mode: 'prove' });
+  await q.nextJob({ mode: 'prove' });
+  await q.ackJob(w.jobId, { txHash: '0xfeed', settledBy: '0xfeed' });
+  const ws = await q.jobStatus(w.jobId);
+  assert.strictEqual(ws.status, 'settled');
+  assert.strictEqual(ws.txHash, '0xfeed');
+  assert.strictEqual(ws.memos, null);
+  ok('a prove job whose deposit was already settled reads as settled, with that transaction');
+}
+
 // ───────────────── 4. stale claim is reclaimable (box crash) ─────────────────
 {
   const q = makeConfidentialSettler({ storage: freshStore(), hash, now, sleep: instantSleep });

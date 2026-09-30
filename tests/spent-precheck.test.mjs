@@ -5,7 +5,7 @@
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { keccak256, concat, pad } from '../worker-relay/node_modules/viem/_esm/index.js';
-import { depositsOf, spentInputsOf, noteNullifier, depositIdOf, consumedInputs, consumedInput, unlandedDeposits } from '../worker-relay/src/lib/spent-precheck.js';
+import { depositsOf, spentInputsOf, noteNullifier, depositIdOf, consumedInputs, consumedInput, consumedAck, unlandedDeposits } from '../worker-relay/src/lib/spent-precheck.js';
 import { secp, sha256, keccak_256 } from '../dapp/vendor/tacit-deps.min.js';
 import { makeConfidentialPool } from '../dapp/confidential-pool.js';
 
@@ -76,6 +76,16 @@ await okAsync('a deposit the pool never recorded is named; pending, consumed and
   assert.deepEqual(await unlandedDeposits(wrapJob, { client: chain({ consumed: [depWrap] }), pool: POOL }), []);
   assert.deepEqual(await unlandedDeposits(wrapJob, { client: chain({ broken: true }), pool: POOL }), []);
   assert.deepEqual(await unlandedDeposits(unwrapJob, { client: chain({ absent: [depWrap] }), pool: POOL }), []);
+});
+
+ok('a gone input acks the job settled when its own settle, or any settle of its deposit, is found; a spent note otherwise fails it', () => {
+  const dep = { kind: 'deposit', id: '0x01' }, nu = { kind: 'nullifier', id: '0x02' };
+  assert.deepEqual(consumedAck(dep, { own: '0xaa' }), { txHash: '0xaa' });
+  assert.deepEqual(consumedAck(nu, { own: '0xaa' }), { txHash: '0xaa' });
+  assert.deepEqual(consumedAck(dep, { by: '0xbb' }), { txHash: '0xbb', settledBy: '0xbb' }, 'a deposit settled from the page itself is this job done');
+  assert.match(consumedAck(nu, { by: '0xbb' }).error, /already spent in 0xbb; if that was this same request, it went through/);
+  assert.match(consumedAck(dep, {}).error, /already settled into a private note$/);
+  assert.match(consumedAck(nu, {}).error, /already spent;/);
 });
 
 console.log(`\n${pass} passed, 0 failed`);

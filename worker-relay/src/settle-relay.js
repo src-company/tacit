@@ -24,7 +24,7 @@ import { CFG, OP_GAS, DEFAULT_OP_GAS, OP_PROVE } from './lib/config.js';
 import { confidentialJob, confidentialBatch, confidentialAck, confidentialActivateAck, heartbeat, heartbeatIdle } from './lib/worker-client.js';
 import { proveSettle } from './lib/prover.js';
 import { assertMemosMatchProof } from './lib/memo-root.js';
-import { consumedInput, unlandedDeposits, spentInputsOf, noteNullifier } from './lib/spent-precheck.js';
+import { consumedInput, consumedAck, unlandedDeposits, spentInputsOf, noteNullifier } from './lib/spent-precheck.js';
 import { findCarrier, isRevert } from './lib/landed-elsewhere.js';
 import { cbtcMintBlocker } from './lib/cbtc-mint-precheck.js';
 import { cdpBlocker } from './lib/cdp-precheck.js';
@@ -398,17 +398,10 @@ async function skipConsumed(job) {
   const find = (needles) => findCarrier({ client: publicClient, pool: POOL, needles, fromBlock }).catch(() => null);
   const memos = (Array.isArray(job.memos) ? job.memos : []).filter((m) => String(m || '').replace(/^0x/i, '').length >= 64);
   const own = (job.mode || 'settle') === 'settle' && memos.length ? await find(memos) : null;
-  if (own) {
-    log(`job ${job.jobId} type=${job.type} already settled in ${own}`);
-    await confidentialAck({ jobId: job.jobId, txHash: own });
-    return true;
-  }
-  const by = await find([gone.id]);
-  log(`job ${job.jobId} type=${job.type} not proved: ${gone.reason}${by ? ` in ${by}` : ''}`);
-  const where = by ? ` in ${by}` : '';
-  await confidentialAck({ jobId: job.jobId, error: gone.kind === 'deposit'
-    ? `this deposit was already settled into a private note${where}`
-    : `this note was already spent${where}; if that was this same request, it went through` });
+  const by = own ? null : await find([gone.id]);
+  const ack = consumedAck(gone, { own, by });
+  log(`job ${job.jobId} type=${job.type} ${ack.txHash ? `already settled in ${ack.txHash}` : `not proved: ${gone.reason}${by ? ` in ${by}` : ''}`}`);
+  await confidentialAck({ jobId: job.jobId, ...ack });
   return true;
 }
 
@@ -539,9 +532,11 @@ async function batchCycle() {
 }
 
 // A settle is paid from the settle wallet after its proof is bought, and a node refuses a send whose worst-case fee
-// the wallet cannot cover, so while the wallet is short every job would be proved and then failed. The queue is not
-// read at all until it is funded again: jobs wait as queued, and nothing is spent on a proof that cannot land. The
-// budget is an ordinary op's padded gas at the fee cap submitCall uses. An unreadable chain is not a reason to stop.
+// the wallet cannot cover, so while the wallet is short every job it settles would be proved and then failed. Those
+// jobs wait as queued until it is funded again, and nothing is spent on a proof that cannot land. A job that asks
+// only for its proof (the page sends the settle from its own account) needs nothing from the wallet, so those are
+// still proved. The budget is an ordinary op's padded gas at the fee cap submitCall uses. An unreadable chain is not
+// a reason to stop.
 const SETTLE_FUNDS_GAS = CFG.settleFundsGas;
 let shortSince = 0, shortNotedAt = 0;
 async function fundsShort() {
@@ -562,7 +557,7 @@ async function fundsShort() {
   if (!shortSince) shortSince = Date.now();
   if (Date.now() - shortNotedAt >= 60_000) {
     shortNotedAt = Date.now();
-    const why = `settle wallet holds ${eth(have)} ETH, under the ${eth(need)} ETH a settle can cost at today's gas — leaving jobs queued until it is topped up`;
+    const why = `settle wallet holds ${eth(have)} ETH, under the ${eth(need)} ETH a settle can cost at today's gas — proving only jobs a page settles itself; the rest wait until it is topped up`;
     log(why);
     await heartbeat('settle', why);
   }
@@ -570,14 +565,17 @@ async function fundsShort() {
 }
 
 async function cycle() {
-  if (await fundsShort()) return false;
-  if (await batchCycle()) return true;
-  const job = await confidentialJob();
+  const short = await fundsShort();
+  if (!short && await batchCycle()) return true;
+  const job = await confidentialJob(short ? { mode: 'prove' } : {});
   const jobId = job?.jobId;
   if (!jobId) return false; // empty queue
 
   const type = job.type;
   const mode = job.mode || 'settle';
+  // A worker that predates the mode filter can hand a settle job over while the wallet is short: it is left
+  // claimed and unacked, so it comes back to the queue when the claim lapses, and nothing is spent on it now.
+  if (short && mode !== 'prove') return false;
   const memos = Array.isArray(job.memos) ? job.memos : [];
   if (!OP_GAS[type] && type !== 'transfer') {
     // unknown-but-provable ops still allowed; gas defaults. Only truly-unknown type fails at prove.
