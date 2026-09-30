@@ -1655,7 +1655,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // OP_LP_BOND witness through the relay. The guest emits one leaf (the receipt), so the settle carries one memo
   // for it: the empty seed-derived memo, since the receipt key and nonce re-derive from the wallet key and the
   // spent A note (lpBondPosition) and the shares are public in the bond's CdpMint.
-  async function lpBond({ walletPriv, controller, aNote, bNote, feeBps = 30, selfRelay = false, maxDonationBps, waitOpts } = {}) {
+  async function lpBond({ walletPriv, controller, aNote, bNote, feeBps = 30, selfRelay = false, selfSettle = null, maxDonationBps, waitOpts } = {}) {
     if (!controller) throw new Error('lp-bond: farm controller not configured for this network');
     [aNote, bNote] = await sameRoot(walletPriv, aNote, bNote);
     const res = await poolReserves(routePoolId(aNote.asset, bNote.asset, feeBps));
@@ -1668,7 +1668,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     const outputs = [{ seedDerived: true }];
     const sealedMemos = guard.sealMemosForOutputs({ outputs, ephRand: freshEph });
     guard.assertOutputsRecoverable({ leaves, outputs, memos: sealedMemos });
-    const r = await _dispatch({ type: 'lpbond', spec: { op: b.op, leaves, outputs, ephRand: freshEph }, sealedMemos, selfRelay, walletPriv, waitOpts });
+    const r = await _dispatch({ type: 'lpbond', spec: { op: b.op, leaves, outputs, ephRand: freshEph }, sealedMemos, selfRelay, selfSettle, walletPriv, waitOpts });
     return { ...r, dShares: b.dShares, bondNonce: b.bondNonce, receiptOwner: b.receiptOwner, receiptLeaf: b.receiptLeaf, anchorLeaf: b.anchorLeaf, lpAsset: b.lpAsset, assetA: b.assetA, assetB: b.assetB };
   }
 
@@ -3064,12 +3064,15 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // at the cost of revealing the user's EOA as msg.sender.
   // `sealedMemos` are sealed HERE in the client and passed through to settle() verbatim — nothing server-side
   // re-seals them, which is why the memo ephemeral is fresh randomness per memo.
-  async function _dispatch({ type, spec, sealedMemos, selfRelay, walletPriv, waitOpts, pair = null }) {
+  async function _dispatch({ type, spec, sealedMemos, selfRelay, selfSettle = null, walletPriv, waitOpts, pair = null }) {
     // Pass the memos THIS caller already sealed (and checked via assertOutputsRecoverable) straight through
     // to submitOp, instead of letting it reseal with a fresh ephRand — otherwise the memo the local recovery
     // check validated is never the one that actually ships (see submitOp's own `outputs`+`memos` branch).
-    if (!selfRelay) return relay.settle({ type, ...spec, memos: sealedMemos }, waitOpts);
+    if (!selfRelay && !selfSettle) return relay.settle({ type, ...spec, memos: sealedMemos }, waitOpts);
     const proven = await relay.prove({ type, ...spec, memos: sealedMemos }, waitOpts);
+    // `selfSettle({ publicValues, proof, memos, pair })` → { txHash }: the caller sends settle() from whichever account
+    // it pays with (settleCalldata builds the call), as openCdp's does.
+    if (selfSettle) return proven.status === 'settled' ? proven : { jobId: proven.jobId, ...(await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos: sealedMemos, pair })) };
     return submitSettle({ settlerPriv: walletPriv, publicValues: proven.publicValues, proof: proven.proof, memos: sealedMemos, pair });
   }
 

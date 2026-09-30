@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-GmoywrjPLevrTEQUXlb8l5Nab2uzKoKY+rLJMKu8l08=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-LzIzLhp0JuoJQSS5kzDGKUPo/LB3yiKgnEEQI6nFTxY=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -337,6 +337,11 @@ a.btn { text-decoration: none; white-space: nowrap; }
 .ptl-w { min-width: 0; }
 .ptl-m { display: block; color: var(--mute); font-size: 11.5px; margin-top: 2px; overflow-wrap: anywhere; }
 .ptl b { flex: none; font-weight: 500; }
+.ptl.lb li { padding: 6px 0; }
+.ptl.lb li.me { color: var(--ink); font-weight: 500; }
+.ptl.lb li.gap { justify-content: center; color: var(--mute); padding: 2px 0; border-top: 0; }
+.ptl.lb a { color: inherit; text-underline-offset: 3px; }
+.ptl .rk { display: inline-block; min-width: 3ch; color: var(--mute); }
 a.opt { color: inherit; text-decoration: none; }
 .kv.sep { border-top: 1px solid var(--hair); margin-top: 18px; padding-top: 12px; }
 .opt[aria-busy="true"] .opt-t::after { content: ''; width: 11px; height: 11px; margin-left: auto; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
@@ -2086,7 +2091,7 @@ function wireSub(el, name, set) { $$(`[data-${name}]`, el).forEach((b) => b.oncl
 
 // ── Tacit V1 pool: shared module, loaded on first use ────────────────────────────────────────────────────
 const getUx = lazy(async () => {
-  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=676d9988'), import('/confidential-deployments.js')]);
+  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=ea084947'), import('/confidential-deployments.js')]);
   dep.setActiveNetwork('mainnet');
   setExternalTacHolders(() => (S.wallet ? [S.wallet] : []));      // public TAC in the connected wallet counts toward the exit-fee tier, as on tacit.finance
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
@@ -3537,7 +3542,7 @@ async function readPoints(current) {
   const lb = await board;
   for (const r of rows) { const i = lb ? lb.findIndex((e) => String(e.address).toLowerCase() === r.addr) : -1; r.rank = i >= 0 ? i + 1 : lb && lb.length >= PTS_BOARD ? 0 : null; }
   if (key !== pointsWho().map(([a]) => a).join() || !current()) return;
-  Object.assign(PTS, { at: Date.now(), key, rows });
+  Object.assign(PTS, { at: Date.now(), key, rows, board: lb });
   paintPointsFoot();
 }
 load.pts = () => loadPoints();
@@ -3561,6 +3566,18 @@ const EARN = [
   ['borrow', 'cbtc', 'Post a bond toward cBTC', '1,000 per wstETH'],
   ['borrow', 'cusd', 'Borrow cUSD', '2 per dollar, when you send the loan yourself'],
 ];
+// The program's leaderboard: the top five, whoever is looking wherever they stand, and the top 25 on request.
+function leaderboard(rows) {
+  const lb = rows && PTS.board;
+  if (!lb?.length) return '';
+  const mine = new Set(rows.map((r) => r.addr)), line = (e, i) => { const me = mine.has(String(e.address).toLowerCase()); return html`
+    <li class="${me ? 'me' : ''}"><span class="ptl-w"><span class="rk num">${i + 1}</span><a href="${ETHERSCAN(e.address)}" target="_blank" rel="noopener">${short(e.address)}</a>${me ? ' · you' : ''}</span><b class="num">${ptsFmt(e.points)}</b></li>`; };
+  const you = rows.filter((r) => r.rank > 5).sort((a, b) => a.rank - b.rank);
+  return html`
+    <div class="lbl"><span>Leaderboard</span><span>${lb.length >= PTS_BOARD ? `${PTS_BOARD}+` : lb.length} taking part</span></div>
+    <ol class="ptl lb">${lb.slice(0, 5).map(line)}${you.map((r) => html`<li class="gap" aria-hidden="true">⋯</li>${line(lb[r.rank - 1], r.rank - 1)}`)}</ol>
+    ${lb.length > 5 ? html`<details class="lockmore ptlog"><summary>The top ${Math.min(25, lb.length)}</summary><ol class="ptl lb">${lb.slice(0, 25).map(line)}</ol></details>` : ''}`;
+}
 render.pts = () => {
   const el = $('#pts-body');
   if (!S.wallet && !S.key) { mount(el, gate('Points belong to the address that sent each transaction. Connect it to see yours, or open your Tacit wallet.', 'Connect wallet', 'pts-connect')); return wireConnect('pts-connect', () => rerender('pts')); }
@@ -3596,6 +3613,7 @@ render.pts = () => {
       </div>`) : pointsWho().map(([, label]) => html`
       <div class="pt"><div class="bal"><div><div class="v"><span class="sk" style="--w:5ch"></span></div><div class="u">points · ${label}</div></div>
         <div class="side"><span class="sk" style="--w:8ch"></span><br><span class="sk" style="--w:11ch"></span></div></div></div>`)}
+    ${leaderboard(rows)}
     <div class="lbl"><span>Earn more</span></div>
     <div class="opts">${EARN.map(([go, ic, t, m]) => html`<button class="opt" type="button" data-earn="${go}"><span class="opt-t"><svg class="tk sm" aria-hidden="true"><use href="#tk-${ic}"/></svg>${t}</span><span class="opt-m">${m}</span></button>`)}
       <a class="opt" href="${ZSWAP}" target="_blank" rel="noopener"><span class="opt-t"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Swap or bet with ETH on zSwap ↗</span><span class="opt-m">1,000 per ETH</span></a></div>
@@ -4146,7 +4164,8 @@ function renderShielded(el, p) {
       <div class="kv"><span>Your position</span><b>${lpWorth(p, pos.shares) || `${Number(pos.shares).toLocaleString('en-US')} shares`}</b></div>
       <div class="kv"><span>Earned</span><b>${pos.pendingTac} TAC${day ? ` · about ${day >= 10 ? Math.round(day).toLocaleString('en-US') : day.toFixed(2)} a day` : ''}</b></div>
       <div class="row2"><button class="btn ghost" type="button" data-harvest="${i}" ${BigInt(pos.pendingUnits || 0) > 0n ? '' : 'disabled'}>Harvest</button><button class="btn ghost" type="button" data-unbond="${i}" ${locked ? 'disabled' : ''}>${locked ? `Unbond from ${dayFmt(Number(pos.unlockAt))}` : 'Unbond'}</button></div>`; })}
-    ${mine.length ? '' : html`<p class="note">No position here yet. Add liquidity and bond it from the <a href="/#tab=earn">Earn tab</a> of the full app; it shows up here from your key alone.</p>`}`);
+    <div id="sj-${p.pid}"></div>`);
+  farmJoin($(`#sj-${p.pid}`, box), p, status, mine.length > 0);
   const t = getUx();
   $$('[data-harvest]', box).forEach((b) => b.onclick = () => busy(b, async (run) => {
     try { say(status, 'The relay is proving your harvest…'); await (await t).farmHarvest({ walletPriv: walletPriv(), position: mine[Number(b.dataset.harvest)], waitOpts: run.wait('Harvest farm rewards', 15 * 60e3) }); say(status, html`<span class="ok">Harvested to a wTAC note,</span> the farm’s reward token, redeemable one for one for TAC.`); toast('Harvested'); await loadPositions(); rerender('farm'); }
@@ -4156,6 +4175,125 @@ function renderShielded(el, p) {
     try { say(status, 'The relay is proving your unbond…'); await (await t).farmUnbond({ walletPriv: walletPriv(), position: mine[Number(b.dataset.unbond)], waitOpts: run.wait('Unbond from a farm', 15 * 60e3) }); say(status, html`<span class="ok">Unbonded. Your liquidity is a private note again.</span>`); toast('Unbonded'); await loadPositions(); rerender('farm'); }
     catch (e) { sayErr(status, /forfeit/i.test(e?.message || '') ? new Error('Harvest first; unbonding now would forfeit the TAC it has earned.') : e); }
   }));
+}
+
+// Joining a private farm: private tETH and the paired asset are added to the pool and bonded into the farm in one settle
+// (OP_LP_BOND). The bond spends both notes whole, so each is first cut to the pool's ratio. It carries no fee leg to pay a
+// relay, so the relay only proves it and the paying account sends it. The position's key re-derives from the Tacit key.
+const JOIN_K = ['eth', 'tac', 'cusd', 'cbtc'], JOIN_GAS = 800000n;                 // the mainnet bond used about 700,000 gas
+const kOfAsset = (id) => JOIN_K.find((k) => P.scan?.[k]?.id && P.scan[k].id === String(id).toLowerCase());
+const JOIN = {};                                                                   // per pool: live reserves and quoted fees
+async function joinTerms(t, p, fresh = false) {
+  const j = JOIN[p.pid];
+  if (!fresh && j && Date.now() - j.at < 30e3) return j;
+  const kA = kOfAsset(p.reserves?.assetA), kB = kOfAsset(p.reserves?.assetB);
+  const [res, feeA, feeB, gp] = await Promise.all([t.poolReserves(p.poolId), t.quoteOpFee(POOL_TK[kA], 'transfer'), t.quoteOpFee(POOL_TK[kB], 'transfer'), rpc('eth_gasPrice', []).then(BigInt).catch(() => 0n)]);
+  if (!res || !(res.totalShares > 0n)) throw new Error('This pool is not open for liquidity yet.');
+  if (String(res.assetA).toLowerCase() !== String(p.reserves.assetA).toLowerCase()) throw new Error('This pool reads differently from the farm program. Try again in a minute.');
+  return (JOIN[p.pid] = { at: Date.now(), res, feeA: BigInt(feeA), feeB: BigInt(feeB), gas: JOIN_GAS * gp * 3n / 2n });
+}
+function farmJoin(el, p, status, has) {
+  const r = p.reserves || {}, kA = kOfAsset(r.assetA), kB = kOfAsset(r.assetB), pid = p.pid;
+  const tkB = String(p.pair).split('/').find((x) => x !== 'cETH'), other = shownAs(tkB), dpB = /BTC/.test(tkB) ? 6 : 2;
+  if (!P.scan) { mount(el, html`<div class="kv"><span><span class="sk" style="--w:10ch"></span></span><b><span class="sk" style="--w:14ch"></span></b></div>`); return; }
+  if (!kA || !kB) { mount(el, html``); return; }
+  const bA = spendable(kA), bB = spendable(kB);
+  if (!bA || !bB) {
+    const get = { tac: html`<button class="link" type="button" data-join-get="tac">shield TAC</button>`, cusd: html`<button class="link" type="button" data-join-get="borrow">borrow cUSD</button>`, cbtc: html`<button class="link" type="button" data-join-get="borrow">mint cBTC</button>` }[kB];
+    mount(el, html`<p class="note">${has ? 'To add more, you' : 'To farm here, you'} need private tETH and private ${other}, added together at the pool’s ratio. ${bA ? '' : html`<button class="link" type="button" data-join-get="private">Wrap ETH</button>${bB ? '' : ' and '}`}${bB ? '' : get}${bA && bB ? '' : '.'}</p>`);
+    $$('[data-join-get]', el).forEach((b) => b.onclick = () => { $('#sheet-farm').close(); openSheet(b.dataset.joinGet); });
+    return;
+  }
+  mount(el, html`
+    <div class="lbl"><span>${has ? 'Add more' : 'Add and farm'}</span><button type="button" id="sj-max-${pid}">Max</button></div>
+    <div class="lbl"><span>tETH</span><span>Private ${fmt(bA, 8, 6)} tETH${inUse(kA, 8, 6, 'tETH')}</span></div>
+    <div class="amt"><input id="sj-a-${pid}" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="tETH to add"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-teth"/></svg>tETH</span></div>
+    <div class="lbl"><span>${other}</span><span>Private ${fmt(bB, 8, dpB)} ${other}${inUse(kB, 8, dpB, other)}</span></div>
+    <div class="amt"><input id="sj-b-${pid}" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="${other} to add"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#${LOGO[tkB] || 'tk-tac'}"/></svg>${other}</span></div>
+    <div class="rcpt" id="sj-rcpt-${pid}" hidden></div>
+    <button class="btn" type="button" id="sj-go-${pid}" disabled>${has ? 'Add to the farm' : 'Add and farm'}</button>
+    <p class="note">The relay proves the bond and ${your()} sends it, paying its gas, so that account is seen joining this farm. What you add shows in the pool’s public reserves, as all liquidity does; your private balances do not.</p>`);
+  const aIn = $(`#sj-a-${pid}`), bIn = $(`#sj-b-${pid}`), go = $(`#sj-go-${pid}`), rc = $(`#sj-rcpt-${pid}`);
+  const bFor = (a, res) => (a * res.reserveB + res.reserveA - 1n) / res.reserveA;         // the paired side at the pool's ratio, rounded up
+  const aFor = (b, res) => (b * res.reserveA) / res.reserveB;
+  let q = null, seq = 0;
+  const reading = () => { mount(rc, html`<p class="note">Reading the pool and the relay’s fees…</p>`); rc.hidden = false; };
+  const requote = async (e) => {
+    const my = ++seq;
+    q = null; go.disabled = true;
+    if ((aIn.value || bIn.value) && !JOIN[pid]) reading();
+    try {
+      const t = await getUx(), j = await joinTerms(t, p), res = j.res;
+      if (my !== seq || !go.isConnected) return;
+      // A typed paired side sets the tETH side, unless the tETH already there is what it comes from (a re-render restores both).
+      if (e?.target === bIn) { const b = parseUnits(bIn.value, 8), a0 = parseUnits(aIn.value, 8); if (!b) aIn.value = ''; else if (!a0 || bFor(a0, res) !== b) aIn.value = plain(aFor(b, res), 8); }
+      const a = parseUnits(aIn.value, 8) || 0n, b = a ? bFor(a, res) : 0n;
+      if (e?.target !== bIn) bIn.value = a ? plain(b, 8) : '';
+      if (!a) { rc.hidden = true; return; }
+      // A note already that exact size is spent as it is; otherwise one is cut from the rest, for the relay's fee.
+      const exact = (k, v) => freeNotes(P.scan?.[k]?.notes).some((n) => BigInt(n.value) === v);
+      const fA = exact(kA, a) ? 0n : j.feeA, fB = exact(kB, b) ? 0n : j.feeB;
+      const shares = t.pool.lpAddShares(res.totalShares, a, b, res.reserveA, res.reserveB), bonded = BigInt(p.totalShares || 0);
+      const day = FARM.program?.epoch?.active ? Number(p.tacPerDayForPool) * Number(shares) / Number(bonded + shares) : 0;
+      const eth = await ethBalance();
+      if (my !== seq || !go.isConnected) return;
+      q = { a, b, shares, over: a + fA > spendable(kA) || b + fB > spendable(kB), gasShort: eth != null && eth < j.gas };
+      mount(rc, html`
+        <div class="kv"><span>Adds</span><b>${fmt(a, 8, 6)} tETH + ${fmt(b, 8, dpB)} ${other}</b></div>
+        <div class="kv"><span>Share of the farm</span><b>${sharePct(Number(shares) / Number(bonded + shares))}</b></div>
+        ${day ? html`<div class="kv"><span>Earns about</span><b>${day >= 10 ? Math.round(day).toLocaleString('en-US') : day.toFixed(2)} TAC a day</b></div>` : ''}
+        ${fA || fB ? html`<div class="kv"><span>Relay fee to cut your notes to size</span><b>${[fA ? `${fmt(fA, 8, 6)} tETH` : '', fB ? `${fmt(fB, 8, dpB)} ${other}` : ''].filter(Boolean).join(' + ')}</b></div>` : ''}
+        <div class="kv"><span>Gas, from ${your()}</span><b>about ${fmt(j.gas, 18, 5)} ETH</b></div>`);
+      rc.hidden = false;
+      if (q.over) warn(rc, `More than your private balance covers${fA || fB ? ' with the relay fee' : ''}. Try Max.`);
+      else if (q.gasShort) warn(rc, lowEth());
+      go.disabled = q.over || q.gasShort;
+    } catch (e2) { if (my === seq) quoteErr(rc, e2); }
+  };
+  onEdit([aIn, bIn], go, requote);
+  $(`#sj-max-${pid}`).onclick = async () => {
+    if (!JOIN[pid]) reading();
+    try {
+      const t = await getUx(), j = await joinTerms(t, p), res = j.res;
+      const room = (k, fee) => { const v = spendable(k); return v > fee ? v - fee : 0n; };
+      let a = room(kA, j.feeA), b = bFor(a, res);
+      if (b > room(kB, j.feeB)) a = aFor(room(kB, j.feeB), res);
+      // The sheet may have been drawn again while the pool was read: fill the field on the page now, and let its own form
+      // quote it.
+      const ai = $(`#sj-a-${pid}`);
+      if (ai) { ai.value = a > 0n ? plain(a, 8) : ''; ai.dispatchEvent(new Event('input')); }
+    } catch (e) { const rn = $(`#sj-rcpt-${pid}`); if (rn) quoteErr(rn, e); }
+  };
+  if (aIn.value) requote({ target: aIn });
+  go.onclick = () => busy(go, async (run) => {
+    const z = q;
+    if (!z || z.over || z.gasShort) return;
+    try {
+      const t = await getUx(), priv = walletPriv();
+      // The ratio is read again now, so a trade since the quote is not added off-ratio (the pool would keep the excess).
+      const j = await joinTerms(t, p, true), a = z.a, b = bFor(a, j.res);
+      const nA = await noteFor(run, t, priv, a, (n) => BigInt(n.value) === a, status, kA);
+      const nB = await noteFor(run, t, priv, b, (n) => BigInt(n.value) === b, status, kB);
+      const selfSettle = async (x) => {
+        run.check();
+        say(status, `Sending the bond from ${your()}…`);
+        const hash = await sendTx({ to: t.cfg.pool, data: t.settleCalldata(x), label: `Add ${fmt(a, 8, 6)} tETH + ${fmt(b, 8, dpB)} ${other} to the farm` });
+        await waitTx(hash);
+        return { txHash: hash };
+      };
+      say(status, 'The relay is proving your farm entry…');
+      const res = await t.lpBond({ walletPriv: priv, controller: FARM.program.manager, aNote: nA, bNote: nB, feeBps: Number(j.res.feeBps ?? p.feeBps ?? 30), selfSettle,
+        waitOpts: run.wait(`Add ${pairName(p.pair)} liquidity and farm it`, 20 * 60e3) });
+      [aIn, bIn].forEach(clearField);
+      say(status, html`<span class="ok">In the farm: TAC is streaming to your private position.</span> ${res?.txHash ? txLink(res.txHash) : ''}`);
+      toast('Added to the farm');
+      delete JOIN[pid];
+      await Promise.allSettled([scanPrivate(true), loadPositions(), loadFarms(true)]); rerender('farm');
+    } catch (e) {
+      sayErr(status, /off-ratio/.test(e?.message || '') ? new Error('The pool’s price moved while your notes were cut to size. Press again: the notes are ready and nothing was added.') : e);
+      await Promise.allSettled([scanPrivate(true)]); rerender('farm');
+    }
+  });
 }
 
 // ── borrow on Bitcoin: lock → bond → mint cBTC → borrow cUSD ─────────────────────────────────────────────

@@ -31,6 +31,8 @@
 //            or out as tacUSD to an 0x… address, with fees shown first and an amount over the balance refused
 //   tacsend  the TAC sheet's own Send, private-only: a stubbed cTAC note goes privately to a tacit1 address, shown as
 //            TAC never cTAC, or out as public TAC to an 0x… address for a partial amount, beside the one-tap Make public
+//   farmjoin a private farm joined from weld: stubbed tETH and TAC notes are cut to the live pool ratio and handed to
+//            lpBond for the farm manager, with a self-settle hook so the paying account sends the bond
 //   shield   the TAC sheet's Shield: public TAC funded into the key's own Tacit account wraps in one router
 //            transaction; the fork's stubbed settle leaves it pending, offered to Finish like any other TAC deposit
 //   btc      a pasted key's Bitcoin sheet: balances read, BTC routes (tacit1 and sp1 as silent payments, bc1 plain), TAC
@@ -59,7 +61,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,shield,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,farmjoin,shield,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -764,7 +766,8 @@ await step('csend', async () => {
     ok(/Private 28(\.00)? cUSD/.test(await text(r.page, '#cs-max')), `csend: the cUSD balance is the notes' sum (${await text(r.page, '#cs-max')})`);
     await r.page.fill('#cs-to', tacit1('abc'.padEnd(64, '9')));
     await r.page.fill('#cs-amt', '15');                           // clears the claim's relay fee at today's gas, and fits with a split
-    await until(r.page, () => /They get about/.test(document.querySelector('#cs-rcpt')?.textContent || '') && !document.querySelector('#cs-go').disabled, null, 60000)
+    // The relay-fee quote prices proving through zQuoter, whose DEX reads a cold fork fetches slot by slot: well over a minute.
+    await until(r.page, () => /They get about/.test(document.querySelector('#cs-rcpt')?.textContent || '') && !document.querySelector('#cs-go').disabled, null, 240000)
       .catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | preview: ${(await text(r.page, '#cs-rcpt')).replace(/\s+/g, ' ')} | status: ${await text(r.page, '#bw-status')} | errors: ${r.errors.slice(0, 2).join(' | ')}`); });
     ok(true, `csend: a tacit1 recipient is quoted privately (${(await text(r.page, '#cs-rcpt')).replace(/\s+/g, ' ').trim()})`);
     await r.page.fill('#cs-to', '0x000000000000000000000000000000000000dEaD');
@@ -821,6 +824,79 @@ await step('shield', async () => {
   } finally { await r.browser.close(); }
 });
 
+// Joining a private farm from weld: stubbed private tETH and TAC notes, a relay split that leaves the exact note it was
+// asked for, and lpBond itself recorded rather than proved (the fork has no prover). The form sizes both sides to the live
+// pool ratio, Max leaves each side's split fee, the notes are cut to exactly those sizes, and the bond goes to the farm
+// manager with a self-settle hook so the paying account sends it.
+await step('farmjoin', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  const hex = 'f4a3e'.padEnd(64, '6');
+  const acct = makeEvmAccount({ secp, keccak256: keccak_256, sha256 }).deriveEvmAccount(Buffer.from(hex, 'hex'), 'mainnet').address;
+  await rpc('anvil_setBalance', [acct, '0x' + (10n ** 18n).toString(16)]);
+  const CETH = '0x3cba71e1114af183cdeacc6b8457a474d17529fd28704480ca799d0d03126f34', CTAC = '0xf0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
+  await r.page.route(/\/confidential-pool-ux\.js\?cb=/, (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: `
+    import * as real from '/confidential-pool-ux.js?stub=real';
+    export * from '/confidential-pool-ux.js?stub=real';
+    export function makeConfidentialPoolUx(o) {
+      const ux = real.makeConfidentialPoolUx(o), balance = ux.balance;
+      let seq = 0;
+      const note = (asset, value) => { seq++; return { asset, value: String(value), leafIndex: 910000 + seq, cx: '0x' + seq.toString(16).padStart(64, 'a'), cy: '0x01', owner: '0x02', root: '0x03', path: [] }; };
+      let add = [note('${CETH}', 2000000n), note('${CTAC}', 50000000000n)];
+      window.__splits = [];
+      ux.balance = async (priv) => {
+        const b = await balance(priv);
+        b.notes = [...b.notes, ...add];
+        for (const n of add) { const g = b.byAsset[n.asset] ||= { asset: n.asset, value: 0n, notes: [] }; g.value = BigInt(g.value) + BigInt(n.value); g.notes = [...g.notes, n]; }
+        return b;
+      };
+      ux.transfer = async ({ notes, amount, fee }) => {
+        const sum = notes.reduce((a, n) => a + BigInt(n.value), 0n), gone = new Set(notes.map((n) => n.cx));
+        add = add.filter((n) => !gone.has(n.cx)).concat([note(notes[0].asset, amount), note(notes[0].asset, sum - BigInt(amount) - BigInt(fee))]);
+        window.__splits.push({ asset: notes[0].asset, amount: String(amount), fee: String(fee) });
+        return { status: 'settled' };
+      };
+      ux.lpBond = async (a) => {
+        window.__join = { controller: a.controller, a: a.aNote.value, b: a.bNote.value, aAsset: a.aNote.asset, bAsset: a.bNote.asset, feeBps: a.feeBps, selfSettle: typeof a.selfSettle, calldata: ux.settleCalldata({ publicValues: '0x01', proof: '0x02', memos: [] }).slice(0, 10) };
+        return { txHash: null, dShares: 1n };
+      };
+      return ux;
+    }` }));
+  try {
+    await r.page.goto(r.url + '#wallet');
+    await r.page.click('#wallet-body [data-in="paste"]');
+    await r.page.fill('#ws-hex', hex);
+    await r.page.click('#wallet-body [data-in="key"]');
+    await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+    await r.page.evaluate(() => { location.hash = ''; location.hash = '#farm'; });
+    await r.page.waitForSelector('[data-farm="pid0"] > button', { timeout: 120000 });
+    await r.page.click('[data-farm="pid0"] > button');
+    await r.page.waitForSelector('#sj-max-0', { timeout: 240000 }).catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | ${(await text(r.page, '#farm-pid0')).replace(/\s+/g, ' ').slice(0, 300)}`); });
+    await r.page.click('#sj-max-0');
+    // Cold, the fork fetches the relay-fee quote's DEX reads slot by slot (see csend): minutes where mainnet takes a second.
+    await until(r.page, () => /Adds/.test(document.querySelector('#sj-rcpt-0')?.textContent || '') && !document.querySelector('#sj-go-0').disabled, null, 420000)
+      .catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | ${(await text(r.page, '#sj-rcpt-0')).replace(/\s+/g, ' ')}`); });
+    await shot(r.page, 'farmjoin');
+    const rc = (await text(r.page, '#sj-rcpt-0')).replace(/\s+/g, ' ');
+    ok(/Share of the farm/.test(rc) && /Relay fee to cut your notes to size/.test(rc) && /Gas, from your Tacit account/.test(rc), `farmjoin: Max quotes both sides, the split fees and the gas (${rc})`);
+    await r.page.click('#sj-go-0');
+    await until(r.page, () => !!window.__join || /err/.test(document.querySelector('#sf-status-0')?.innerHTML || ''), null, 120000);
+    const j = await r.page.evaluate(() => window.__join), splits = await r.page.evaluate(() => window.__splits);
+    if (!j) throw new Error(`no bond: ${await text(r.page, '#sf-status-0')}`);
+    // The live pool, read the way pool-ux reads it: pools(bytes32) → reserves A and B.
+    const poolId = '0x248497bf6f943cd2b39a04bf5841056c58dfd7ef196188cb4f0ac1fd11dc7c00';
+    const sel = Buffer.from(keccak_256('pools(bytes32)')).toString('hex').slice(0, 8);
+    const w = (await rpc('eth_call', [{ to: '0x000000000Ed1eabD231Be41d93b719056F7febFC', data: '0x' + sel + poolId.slice(2) }, 'latest'])).slice(2);
+    const rA = BigInt('0x' + w.slice(3 * 64, 4 * 64)), rB = BigInt('0x' + w.slice(4 * 64, 5 * 64)), a = BigInt(j.a), b = BigInt(j.b);
+    ok(j.controller.toLowerCase() === '0x000031c47cb61fab1ce2790a69625fabb71ede24' && j.selfSettle === 'function' && j.calldata === '0x' + Buffer.from(keccak_256('settle(bytes,bytes,bytes[])')).toString('hex').slice(0, 8),
+      `farmjoin: the bond goes to the farm manager, settled by the paying account (${j.controller}, ${j.selfSettle}, ${j.calldata})`);
+    ok(j.aAsset === CETH && j.bAsset === CTAC && b * rA >= a * rB && (b - 1n) * rA < a * rB, `farmjoin: the TAC side is the tETH side at the live ratio, rounded up (${a} : ${b}, pool ${rA} : ${rB})`);
+    ok(splits.length === 2 && splits.every((x) => BigInt(x.amount) + BigInt(x.fee) <= (x.asset === CETH ? 2000000n : 50000000000n)) && BigInt(splits[0].amount) === a && BigInt(splits[1].amount) === b,
+      `farmjoin: each note is cut to exactly its side, its fee within the balance (${JSON.stringify(splits)})`);
+    await until(r.page, () => /In the farm/.test(document.querySelector('#sf-status-0')?.textContent || ''), null, 60000).catch(() => {});
+    ok(/In the farm/.test(await text(r.page, '#sf-status-0')), `farmjoin: the sheet says it is in (${await text(r.page, '#sf-status-0')})`);
+    if (r.errors.length) { fails++; console.log('FAIL farmjoin page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { await r.browser.close(); }
+});
 await step('tacsend', async () => {
   const r = await openPage({ account: A0, key: K0 });
   const hex = 'ac5e4'.padEnd(64, '3');
@@ -1192,12 +1268,15 @@ await step('ptsview', async () => {
   await r.page.click('#pts-connect');
   await until(r.page, () => !!document.querySelector('#pts-body .ptl'), null, 60000);
   await r.page.click('#pts-body .ptlog summary');
+  await shot(r.page, 'ptsview');
   const v = await r.page.evaluate(() => ({ body: document.querySelector('#pts-body').textContent.replace(/\s+/g, ' '),
     items: [...document.querySelectorAll('#pts-body .ptl li')].map((li) => li.textContent.replace(/\s+/g, ' ').trim()),
     links: [...document.querySelectorAll('#pts-body .ptl a')].map((a) => a.href) }));
   ok(/^Wrapped ETH/.test(v.items[0] || '') && /^Deposited ETH on Base/.test(v.items[1] || '') && /^Swapped ETH/.test(v.items[2] || ''), `ptsview: recent points in time order across chains (${v.items.join(' | ')})`);
   ok(/Holder boost at last activity\s*1\.5×/.test(v.body), 'ptsview: the holder boost is the newest activity\'s');
   ok(/rank\s*#2/.test(v.body) && /Claimed so far\s*5 TAC/.test(v.body) && /10% · about 111\.11 TAC/.test(v.body) && /closes in \d/.test(v.body), `ptsview: rank, claimed, today's share and the countdown (${v.body.slice(0, 400)})`);
+  const board = await r.page.$$eval('#pts-body ol.lb:not(details ol) li', (l) => l.map((li) => li.textContent.replace(/\s+/g, ' ').trim()));
+  ok(board.length === 2 && /^1\s*0x1111…1111/.test(board[0]) && /^2\s*0xf39f…2266 · you/.test(board[1]) && /2 taking part/.test(v.body), `ptsview: the leaderboard marks this address (${board.join(' | ')})`);
   ok(v.links.some((h) => h.startsWith('https://basescan.org/tx/0x' + 'b'.repeat(64))) && v.links.some((h) => h.startsWith('https://etherscan.io/tx/0x' + 'a'.repeat(64))), 'ptsview: each activity links to its own chain\'s explorer');
   ok(!(await r.page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), 'ptsview: no sideways scroll');
   if (r.errors.length) { fails++; console.log('FAIL ptsview page errors: ' + r.errors.slice(0, 3).join(' | ')); }
