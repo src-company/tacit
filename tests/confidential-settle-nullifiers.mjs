@@ -146,10 +146,15 @@ const opFix = (name) => JSON.parse(readFileSync(new URL(`../contracts/sp1/confid
   const rb = route.verifyRoute(bearer.op, { merkleRootFrom: pool.merkleRootFrom, spendRoot: bearer.spendRoot });
   assert.strictEqual(lc(rb.nullifiers[0]), lc(pool.nullifier(pool.leaf(A, bearer.op.in.cx, bearer.op.in.cy, '0x' + '00'.repeat(32)))), 'bearer: leaf-bound nullifier');
 
+  // Without an nk the nullifier cannot be derived at all. Reporting null for it is fail-open: the caller
+  // takes the route as verified and records a spend that nothing marks as spent. It refuses instead.
   const unknown = mk({ owner: OWNER, leafIndex: 0, path: pool.zeros });
-  const ru = route.verifyRoute(unknown.op, { merkleRootFrom: pool.merkleRootFrom, spendRoot: unknown.spendRoot });
-  assert.strictEqual(ru.nullifiers[0], null, 'no nk supplied: no nullifier is invented');
-  ok('OP_SWAP_ROUTE: native_nu with nk, leaf-bound for bearer, rejection on a wrong nk, null without nk');
+  assert.throws(
+    () => route.verifyRoute(unknown.op, { merkleRootFrom: pool.merkleRootFrom, spendRoot: unknown.spendRoot }),
+    /requires nk/,
+    'no nk: refuse, rather than report a spend carrying no nullifier',
+  );
+  ok('OP_SWAP_ROUTE: native_nu with nk, leaf-bound for bearer, refusal on a wrong nk and on none');
 }
 
 // ───────── 5. other settle fixtures' `expected` blocks agree with the witness and the proven PV ─────────
