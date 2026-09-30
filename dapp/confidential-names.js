@@ -315,15 +315,17 @@ export function makeConfidentialNames({ call, send = null, secp, keccak256 }) {
     if (d.hrp !== 'tacit') throw new NameError('bad-address', `Not a Tacit mainnet address (prefix "${d.hrp}").`);
     const p = d.payloadBytes;
     if (p[0] !== 0) throw new NameError('bad-address', `Unsupported Tacit address version ${p[0]}.`);
-    if (!(p[1] & 0x06)) throw new NameError('bad-address', 'This Tacit address carries neither an Ethereum lane nor a pool lane, so it cannot receive a payment.');
-    const hasEvm = !!(p[1] & 0x02), hasPool = !!(p[1] & 0x04);
+    if (!(p[1] & 0x86)) throw new NameError('bad-address', 'This Tacit address carries neither an Ethereum lane nor a pool lane, so it cannot receive a payment.');
+    if ((p[1] & 0x02) && (p[1] & 0x80)) throw new NameError('bad-address', 'This Tacit address names its Ethereum-side key twice.');
+    // 0x80: the Ethereum-side key is the Bitcoin spend key, carried once.
+    const hasEvm = !!(p[1] & 0x02), sameKey = !!(p[1] & 0x80), hasPool = !!(p[1] & 0x04);
     // 68 bytes (version+flags+spend+scan), plus the Ethereum lane's 33 when flagged (0x02), plus the pool lane's
-    // 97 when flagged (0x04); later lanes (0x08 and up) follow and are not read here.
-    const want = 68 + (hasEvm ? 33 : 0) + (hasPool ? 97 : 0), unknown = p[1] & ~0x07;
+    // 97 when flagged (0x04); later lanes (0x08 to 0x40) follow and are not read here.
+    const want = 68 + (hasEvm ? 33 : 0) + (hasPool ? 97 : 0), unknown = p[1] & ~0x87;
     if (unknown ? p.length < want : p.length !== want) throw new NameError('bad-address', `Tacit address payload is ${p.length} bytes, expected ${want}.`);
     let key = null;
-    if (hasEvm) {
-      const keyHex = hexOf(p.slice(68, 101));
+    if (hasEvm || sameKey) {
+      const keyHex = hexOf(hasEvm ? p.slice(68, 101) : p.slice(2, 35));
       try { secp.ProjectivePoint.fromHex(keyHex); } catch {
         throw new NameError('bad-address', 'The Ethereum-lane key in this Tacit address is not a valid point.');
       }

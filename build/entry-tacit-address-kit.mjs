@@ -7,7 +7,7 @@
 //   keyFromSignature(sig, { address })         → the 32-byte Tacit key. sig: the 65-byte signature (hex or bytes);
 //                                                address: the account that signed, checked by recovery
 //   addressesFromKey(key)                      → { address, poolAddress, flags }: the tacit1… address with its pool
-//                                                lane (flags 0x07, 329 characters) and the bp1… pool address;
+//                                                lane (flags 0x85, 276 characters) and the bp1… pool address;
 //                                                { pool: false } gives the address without it (flags 0x03)
 //   decodeTacitAddress(address)                → { network, version, flags, lanes: { btc, evm?, pool? } }; throws
 //                                                on anything that is not a valid tacit1… address
@@ -72,7 +72,7 @@ export function addressesFromKey(key, { pool: withPool = true, network = 'mainne
     seed = hmac(sha256, k, POOL_SEED_TAG);
     const w = pool.walletFromSeed(seed, network);
     const address = encodeTacitAddress({ network, btcSpendPub: spendPub, btcScanPub, evmOwnerPub: spendPub, ...(withPool ? { poolKeys: hexToBytes(w.address.replace(/^0x/, '')) } : {}) });
-    return { address, poolAddress: w.addressString, flags: withPool ? 0x07 : 0x03 };
+    return { address, poolAddress: w.addressString, flags: decode(address).flags };
   } finally { k.fill(0); seed?.fill(0); }
 }
 

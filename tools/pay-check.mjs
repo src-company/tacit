@@ -122,13 +122,13 @@ try {
       await p.fill('#f-amt', '');
       // A tacit1 from before the pool lane is explained; a unified one pays its pool address; a name without a record says so.
       const OLD = 'tacit1qqps9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczlduk6e0c7';
-      const UNI = 'tacit1qqrs9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczldupxsdkdfvdwck5vqnkn28cnyq3sxsrl7myfdwua48xq0zsc4dsrlsrlklwss3n6mv4vqkqkq8d5qrj6e6hgt34qmnmh4m8vayny376ryzlgcw47etgmm9cugrjtxwwkj6e267hm5qgc62yyyupg0j62zpafjgjz2hf';
+      const UNI = 'tacit1qzzs9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxqngxmx5kxhvt2xqfmf4rufjqgcrgplldjykhww6nnq83gv2kcplcplm0hgggeadk2kqtqtqrk6qpedvat59c6sdeam6ankwjfjgldpjp05v82lv45dajuwype9n88tfdv4d0ta6qyvd9zzzwq58ed9pq75emyyf75';
       await p.click('#chains [data-chain="8453"]'); await p.waitForSelector('#f-to');
       await p.fill('#f-to', OLD); await sleep(600);
       ok(/before pool payments/.test(await p.textContent('#f-rcpt')), 'send: a tacit1 from before the pool lane is explained');
       await p.fill('#f-amt', '0.00001'); await p.fill('#f-to', UNI);
       await p.waitForFunction(() => /→ bp1q/.test(document.querySelector('#f-rcpt').textContent) || /More than/.test(document.querySelector('#f-rcpt').textContent), null, { timeout: 30e3 }).catch(() => {});
-      ok(/To\s*tacit1qqrs9.*→ bp1qf5rd/.test((await p.textContent('#f-rcpt')).replace(/\s+/g, ' ')) || /More than/.test(await p.textContent('#f-rcpt')), `send: a unified tacit1 pays its pool address: ${(await p.textContent('#f-rcpt')).replace(/\s+/g, ' ').trim().slice(0, 90)}`);
+      ok(/To\s*tacit1qzzs9.*→ bp1qf5rd/.test((await p.textContent('#f-rcpt')).replace(/\s+/g, ' ')) || /More than/.test(await p.textContent('#f-rcpt')), `send: a unified tacit1 pays its pool address: ${(await p.textContent('#f-rcpt')).replace(/\s+/g, ' ').trim().slice(0, 90)}`);
       await p.fill('#f-to', 'nobody-tacit-pay-check.wei');
       await p.waitForFunction(() => /has not published|could not|refus|no record/i.test(document.querySelector('#f-rcpt').textContent), null, { timeout: 30e3 }).catch(() => {});
       ok(/has not published/i.test(await p.textContent('#f-rcpt')), `send: a name without a record says so: ${(await p.textContent('#f-rcpt')).trim().slice(0, 90)}`);
@@ -209,7 +209,7 @@ try {
     const origin = new URL(URL_).origin, { ctx, p, errors } = await page(browser);
     const text = async (sel) => (await p.textContent(sel)).replace(/\s+/g, ' ').trim();
     const OLD = 'tacit1qqps9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczlduk6e0c7';
-    const UNI = 'tacit1qqrs9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczldupxsdkdfvdwck5vqnkn28cnyq3sxsrl7myfdwua48xq0zsc4dsrlsrlklwss3n6mv4vqkqkq8d5qrj6e6hgt34qmnmh4m8vayny376ryzlgcw47etgmm9cugrjtxwwkj6e267hm5qgc62yyyupg0j62zpafjgjz2hf';
+    const UNI = 'tacit1qzzs9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxqngxmx5kxhvt2xqfmf4rufjqgcrgplldjykhww6nnq83gv2kcplcplm0hgggeadk2kqtqtqrk6qpedvat59c6sdeam6ankwjfjgldpjp05v82lv45dajuwype9n88tfdv4d0ta6qyvd9zzzwq58ed9pq75emyyf75';
     const BP = 'bp1qf5rdn2trtk94rqya5637yeqyvp5qllkeztth8dfesrc5x9tvqluqlahm5yyv7km9tq9s9spmdqqukkw46zudgxu7aawem8fyey0kseqh6xr40k26x7ew8zqujenn45kk2kh47aqzxxj3pp8q2rukjss02vszf7eaa';
     // Links the ETH page made before it moved keep working.
     await p.goto(origin + '/pay/#gift=' + 'ab'.repeat(32) + '&chain=base');

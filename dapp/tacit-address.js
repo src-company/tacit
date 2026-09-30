@@ -5,17 +5,20 @@
 //   - BTC spend pubkey  → CXFER pubkey sends + stealth one-time derivation
 //   - BTC scan pubkey   → BIP-352 silent payments + stealth scan
 //   - EVM owner pubkey   → confidential-pool note transfer (== compressed wallet
-//                          pubkey; carried explicitly so it survives any future
-//                          divergence from the BTC spend key)
+//                          pubkey: written out (0x02), or marked as the BTC
+//                          spend key (0x80) beside the pool lane)
 //   - Pool keys          → the shielded pools proved on the device (the EVM pool on
 //                          Ethereum, Base and Robinhood Chain, and the Bitcoin pool):
 //                          view key V (33, secp) ‖ A ‖ N (32 each, BabyJub), the same
 //                          97 bytes a bp1… address carries
 //
 // Payload: [version 0x00][flags][lanes in flag-bit order]. Lanes: 0x01 Bitcoin (spend ‖ scan, 66 bytes, required),
-// 0x02 Ethereum-side key (33), 0x04 pool keys (97). Bits 0x08 and up are reserved for later lanes, each of a length
-// its own definition fixes; they follow the known lanes, so a reader that does not know one reads the lanes it
-// knows and ignores the rest. With no unknown bit set the length is exact.
+// 0x02 Ethereum-side key (33), 0x04 pool keys (97). 0x80 carries no bytes: the Ethereum-side key is the Bitcoin spend
+// key, as it is for every key a Tacit app derives, so an address with the pool lane says so instead of repeating
+// 33 bytes (it never sets 0x02 as well). Bits 0x08 to 0x40 are reserved for later lanes, each of a length its own
+// definition fixes; they follow the known lanes, so a reader that does not know one reads the lanes it knows and
+// ignores the rest. With no unknown bit set the length is exact. A reader from before 0x80 sees the Bitcoin and pool
+// lanes and no Ethereum-side key, so it pays the pool and refuses a private send rather than guessing a key.
 //
 // All three derive deterministically from one wallet root — no new key material.
 // Sharing the address links the holder's OWN two lanes to whoever receives it
@@ -125,7 +128,8 @@ export const TACIT_ADDR_VERSION = 0x00;
 export const TACIT_LANE_BTC = 0x01;
 export const TACIT_LANE_EVM = 0x02;
 export const TACIT_LANE_POOL = 0x04;
-const TACIT_LANES_KNOWN = TACIT_LANE_BTC | TACIT_LANE_EVM | TACIT_LANE_POOL;
+export const TACIT_EVM_IS_SPEND = 0x80;
+const TACIT_LANES_KNOWN = TACIT_LANE_BTC | TACIT_LANE_EVM | TACIT_LANE_POOL | TACIT_EVM_IS_SPEND;
 // The pool lane is a bp1… address's payload; its prefix per network (btc-shielded-pool.js ADDRESS_HRP).
 export const POOL_HRP_BY_NETWORK = { mainnet: 'bp', signet: 'tbp' };
 
@@ -142,7 +146,9 @@ export function makeTacitAddress({ secp }) {
     secp.ProjectivePoint.fromHex(Array.from(u8, (x) => x.toString(16).padStart(2, '0')).join(''));
   };
 
-  // poolKeys: the 97-byte pool payload (V ‖ A ‖ N), as a bp1… address carries it; see poolKeysOf.
+  // poolKeys: the 97-byte pool payload (V ‖ A ‖ N), as a bp1… address carries it; see poolKeysOf. With it, an
+  // Ethereum-side key equal to the spend key is written as 0x80 rather than repeated; without it the address is the
+  // form every app has published since the start (flags 0x03), byte for byte.
   function encodeTacitAddress({ network, btcSpendPub, btcScanPub, evmOwnerPub, poolKeys }) {
     const hrp = TACIT_HRP_BY_NETWORK[network];
     if (!hrp) throw new Error(`unknown network: ${network}`);
@@ -152,8 +158,9 @@ export function makeTacitAddress({ secp }) {
     let payload = _concat(btcSpendPub, btcScanPub);
     if (evmOwnerPub) {
       assertPoint(evmOwnerPub, 'evmOwnerPub');
-      flags |= TACIT_LANE_EVM;
-      payload = _concat(payload, evmOwnerPub);
+      const same = evmOwnerPub.every((b, i) => b === btcSpendPub[i]);
+      if (poolKeys && same) flags |= TACIT_EVM_IS_SPEND;
+      else { flags |= TACIT_LANE_EVM; payload = _concat(payload, evmOwnerPub); }
     }
     if (poolKeys) {
       if (!(poolKeys instanceof Uint8Array) || poolKeys.length !== 97) throw new Error('poolKeys must be the 97-byte pool payload');
@@ -173,6 +180,7 @@ export function makeTacitAddress({ secp }) {
     const version = payloadBytes[0], flags = payloadBytes[1];
     if (version !== TACIT_ADDR_VERSION) throw new Error(`unsupported version ${version}`);
     if (!(flags & TACIT_LANE_BTC)) throw new Error('unified address must carry the Bitcoin lane');
+    if ((flags & TACIT_LANE_EVM) && (flags & TACIT_EVM_IS_SPEND)) throw new Error('an address names its Ethereum-side key once');
     const wantLen = 2 + 33 + 33 + ((flags & TACIT_LANE_EVM) ? 33 : 0) + ((flags & TACIT_LANE_POOL) ? 97 : 0);
     const unknown = flags & ~TACIT_LANES_KNOWN;
     if (unknown ? payloadBytes.length < wantLen : payloadBytes.length !== wantLen) throw new Error(`payload length ${payloadBytes.length} != ${wantLen}`);
@@ -185,7 +193,7 @@ export function makeTacitAddress({ secp }) {
       const evmOwnerPub = payloadBytes.slice(68, 101);
       assertPoint(evmOwnerPub, 'evmOwnerPub');
       lanes.evm = { ownerPub: evmOwnerPub };
-    }
+    } else if (flags & TACIT_EVM_IS_SPEND) lanes.evm = { ownerPub: btcSpendPub.slice() };
     if (flags & TACIT_LANE_POOL) {
       const at = 68 + ((flags & TACIT_LANE_EVM) ? 33 : 0), keys = payloadBytes.slice(at, at + 97);
       assertPoint(keys.slice(0, 33), 'pool view key');

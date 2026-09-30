@@ -25,7 +25,7 @@ const te = new TextEncoder();
 // The key 0x0707…07, pinned in tests/tacit-address-pool.mjs.
 const V0 = 'tacit1qqps9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczlduk6e0c7';
 const BP = 'bp1qf5rdn2trtk94rqya5637yeqyvp5qllkeztth8dfesrc5x9tvqluqlahm5yyv7km9tq9s9spmdqqukkw46zudgxu7aawem8fyey0kseqh6xr40k26x7ew8zqujenn45kk2kh47aqzxxj3pp8q2rukjss02vszf7eaa';
-const UNIFIED = 'tacit1qqrs9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczldupxsdkdfvdwck5vqnkn28cnyq3sxsrl7myfdwua48xq0zsc4dsrlsrlklwss3n6mv4vqkqkq8d5qrj6e6hgt34qmnmh4m8vayny376ryzlgcw47etgmm9cugrjtxwwkj6e267hm5qgc62yyyupg0j62zpafjgjz2hf';
+const UNIFIED = 'tacit1qzzs9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxqngxmx5kxhvt2xqfmf4rufjqgcrgplldjykhww6nnq83gv2kcplcplm0hgggeadk2kqtqtqrk6qpedvat59c6sdeam6ankwjfjgldpjp05v82lv45dajuwype9n88tfdv4d0ta6qyvd9zzzwq58ed9pq75emyyf75';
 
 // The address every Tacit app shows for a key: its Bitcoin keys, the Ethereum-side key and the ETH pool wallet's own keys.
 function theirs(key) {
@@ -54,7 +54,7 @@ await test('the identity message is the one every Tacit app signs', () => {
 
 await test('the pinned key: unified address, pool address, and the address without the pool lane', () => {
   const key = new Uint8Array(32).fill(7);
-  assert.deepEqual(kit.addressesFromKey(key), { address: UNIFIED, poolAddress: BP, flags: 0x07 });
+  assert.deepEqual(kit.addressesFromKey(key), { address: UNIFIED, poolAddress: BP, flags: 0x85 });
   assert.equal(kit.addressesFromKey(key, { pool: false }).address, V0);
 });
 
@@ -65,7 +65,9 @@ await test('addresses match the apps\' own for 40 random keys; the pool lane is 
     const d = kit.decodeTacitAddress(k.address);
     assert.equal(d.lanes.pool.poolAddress, t.bp);
     assert.equal(k.address, encodeTacitAddress({ network: 'mainnet', btcSpendPub: t.spendPub, btcScanPub: t.btcScanPub, evmOwnerPub: t.spendPub, poolKeys: d.lanes.pool.keys }));
-    assert.equal(k.address.length, 329);
+    assert.equal(k.address.length, 276);
+    assert.equal(k.flags, 0x85);
+    assert.equal(bytesToHex(d.lanes.evm.ownerPub), bytesToHex(t.spendPub));
     assert.equal(kit.addressesFromKey(key, { pool: false }).address, encodeTacitAddress({ network: 'mainnet', btcSpendPub: t.spendPub, btcScanPub: t.btcScanPub, evmOwnerPub: t.spendPub }));
   }
 });
