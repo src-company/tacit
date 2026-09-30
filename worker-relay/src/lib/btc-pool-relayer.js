@@ -477,14 +477,16 @@ export function createRelayer({
     return null;
   }
 
-  function info() {
+  async function info() {
     const b = batch && !batch.closed && !batch.draining ? batch : null;
     return {
       network, address: wallet.addressString, fundAddress,
-      // The floor for every relayed asset. For one that is cost-linked the quote can be higher than this,
-      // so `feeRateSatsPerVb` and `carrierVb` are published too: enough for a caller to work out what a
-      // quote will say, and to see why it moved, without asking.
-      fees: Object.fromEntries([...feeTable].map(([a, f]) => ['0x' + a, f.toString()])),
+      // What a quote would say right now, asset by asset — not the configured floor. Callers size a spend
+      // from this (amount + fee must come out of the notes they hold), so publishing the floor while
+      // quoting something higher hands them an amount their own spend cannot cover. The floor is still
+      // here as `feeFloors`, and carrierVb and the margin below show how the number was arrived at.
+      fees: Object.fromEntries(await Promise.all([...feeTable.keys()].map(async (a) => ['0x' + a, (await quotedFee(a)).toString()]))),
+      feeFloors: Object.fromEntries([...feeTable].map(([a, f]) => ['0x' + a, f.toString()])),
       feeUnitsPerSat: rateTable.size ? Object.fromEntries([...rateTable].map(([a, r]) => ['0x' + a, r.toString()])) : null,
       carrierVb: observedSoloVb ?? soloCarrierVb,
       feeMarginPct,
@@ -1130,7 +1132,7 @@ export function createRelayer({
       let m;
       const client = clientKey(req);
       const limited = (route) => { if (!limiter(`${route} ${client}`)) throw new RelayError(429, 'rate limited'); };
-      if (p === `${PREFIX}/info` && req.method === 'GET') send(200, info());
+      if (p === `${PREFIX}/info` && req.method === 'GET') send(200, await info());
       else if (p === `${PREFIX}/quote` && req.method === 'POST') { limited('quote'); send(200, await quote(await readBody(req), client)); }
       else if (p === `${PREFIX}/submit` && req.method === 'POST') { limited('submit'); send(200, await submit(await readBody(req), client)); }
       else if ((m = p.match(/^\/btc-pool\/relay\/status\/([0-9a-f]{32})$/)) && req.method === 'GET') {

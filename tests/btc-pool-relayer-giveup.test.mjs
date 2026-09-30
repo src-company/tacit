@@ -253,3 +253,14 @@ test('it aims at the gap, not at a fixed number of pieces', () => {
   assert.ok(none > some, 'fewer coins on hand should mean more pieces');
   assert.ok(none <= 4, 'and never more than maxChangeSplit');
 });
+
+test('what info publishes is what a quote charges', async () => {
+  // Clients size a spend from info.fees — amount + fee has to come out of the notes they hold — so a floor
+  // published against a higher quote hands them an amount their own spend cannot cover.
+  const r = feeRelayer({ rate: 3, unitsPerSat: 1n, min: 10n, vb: 2000 });
+  const info = await r.info();
+  const q = await r.quote({ asset: ASSET });
+  assert.equal(info.fees[ASSET], q.fee, 'published fee must be the quoted fee');
+  assert.equal(info.feeFloors[ASSET], '10', 'the configured floor is still visible');
+  assert.notEqual(info.fees[ASSET], info.feeFloors[ASSET], 'and this case is one where they differ');
+});
