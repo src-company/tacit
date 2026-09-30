@@ -474,6 +474,8 @@ await step('device', async () => {
   await page.waitForSelector('[data-chain="1"]', { timeout: 60000 });
   await page.click('[data-chain="1"]');
   await page.waitForSelector('#d-amt', { timeout: 60000 });
+  const hl = await page.$$eval('#d-pay a', (as) => as.map((a) => a.getAttribute('href')));
+  ok(['/pay/eth/', '/pay/eth/#link', '/pay/eth/#receive'].every((h) => hl.includes(h)), `device: tacit pay is highlighted, with its links (${hl.join(' ')})`);
   // DEV.mode (the sub-tab) persists across sheet reopens, a deliberate feature: a scenario run right after devsend
   // (which leaves it on Send) must not inherit that here.
   await page.click('[data-dev="deposit"]');
@@ -722,6 +724,9 @@ function tacit1(hex) {
   const pub = secp.getPublicKey(priv, true);
   return makeTacitAddress({ secp }).encodeTacitAddress({ network: 'mainnet', btcSpendPub: pub, btcScanPub: secp.getPublicKey(scan.toString(16).padStart(64, '0'), true), evmOwnerPub: pub });
 }
+// The address the page shows for a key: the unified one, with the pool lane (flags 0x85).
+const { unifiedAddress } = await import(new URL('../dapp/tacit-unified.js', import.meta.url));
+const shownAddress = (hex) => unifiedAddress(hex).address;
 const walletText = (p) => p.evaluate(() => document.querySelector('#wallet-body')?.textContent.replace(/\s+/g, ' ') || '');
 // Open the wallet sheet by changing the hash; a navigation to the same URL would reload and drop the key.
 const toWallet = (p) => p.evaluate(() => { location.hash = ''; location.hash = '#wallet'; });
@@ -965,8 +970,8 @@ await step('keys', async () => {
   await r.page.fill('#ws-hex', hex);
   await r.page.click('#wallet-body [data-in="key"]');
   await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
-  const t1 = tacit1(hex);
-  ok((await shown(r.page)).includes(`${t1.slice(0, 14)}…${t1.slice(-12)}`), `keys: a pasted key opens its own tacit1 address ${t1.slice(0, 14)}…`);
+  const t1 = shownAddress(hex);
+  ok((await shown(r.page)).includes(`${t1.slice(0, 14)}…${t1.slice(-12)}`), `keys: a pasted key opens its own unified tacit1 address ${t1.slice(0, 14)}…`);
   if (r.errors.length) { fails++; console.log('FAIL keys page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   await r.browser.close();
 });
@@ -989,7 +994,7 @@ await step('saved', async () => {
   await r.page.waitForSelector('#pass-dialog[open] #pass-input-1', { timeout: 120000 });
   await r.page.fill('#pass-input-1', pass); await r.page.click('#pass-submit');
   await until(r.page, () => !!document.querySelector('#wallet-dot.on'), null, 120000);
-  const t1 = tacit1(hex);
+  const t1 = shownAddress(hex);
   ok((await shown(r.page)).includes(`${t1.slice(0, 14)}…${t1.slice(-12)}`), 'saved: the passphrase opens the same key tacit.finance saved');
   ok(await r.page.evaluate(() => localStorage.getItem('tacit-active-mode-v1') === 'local'), 'saved: tacit.finance\'s own wallet choice is left as it was');
   if (r.errors.length) { fails++; console.log('FAIL saved page errors: ' + r.errors.slice(0, 3).join(' | ')); }
@@ -1189,6 +1194,7 @@ await step('btc', async () => {
   };
   const t1 = tacit1(hex);
   ok(/Silent payment/.test(await route(t1, 'sp')), 'btc: BTC to a tacit1 address goes as a silent payment');
+  ok(/Silent payment/.test(await route(shownAddress(hex), 'sp')), 'btc: BTC to a unified tacit1 address goes as a silent payment');
   ok(/Plain payment/.test(await route('bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', 'addr')), 'btc: BTC to a bc1 address is a plain payment');
   ok(/Ethereum address/.test(await route(A0, 'err')), 'btc: an Ethereum address is refused with a reason');
   ok(/More than you hold/.test(await text(r.page, '#bt-rcpt')) || await r.page.isDisabled('#bt-go'), 'btc: an unfunded key cannot send');
@@ -1245,11 +1251,12 @@ await step('pts', async () => {
   await w.page.fill('#wei-name', label);
   await until(w.page, () => !document.querySelector('#wei-go').disabled, null, 60000);
   await w.page.click('#wei-go');
-  await until(w.page, () => /pays you privately|err/.test(document.querySelector('#pts-status')?.innerHTML || ''), null, 300000);
+  const tick = setInterval(async () => { try { console.log('    [pts] ' + (await w.page.evaluate(() => document.querySelector('#pts-status')?.textContent || '(no status)')).slice(0, 140)); } catch {} }, 20000);
+  await until(w.page, () => /pays you privately|err/.test(document.querySelector('#pts-status')?.innerHTML || ''), null, 300000).finally(() => clearInterval(tick));
   const node = namehash(label + '.wei');
   const owner = await rpc('eth_call', [{ to: WNS, data: '0x6352211e' + node }, 'latest']).catch(() => '0x');
   const rec = readStr(await rpc('eth_call', [{ to: WNS, data: '0x59d1d43c' + node + word(64) + abiStr('finance.tacit') }, 'latest']).catch(() => '0x'));
-  ok(owner.slice(-40) === acct.slice(2) && rec === tacit1(hex), `pts: ${label}.wei registers to the Tacit account through zRouter and carries its tacit1 (${await text(w.page, '#pts-status')})`);
+  ok(owner.slice(-40) === acct.slice(2) && rec === shownAddress(hex), `pts: ${label}.wei registers to the Tacit account through zRouter and carries its unified tacit1 (${await text(w.page, '#pts-status')})`);
   if (w.errors.length) { fails++; console.log('FAIL pts page errors: ' + w.errors.slice(0, 3).join(' | ')); }
   await w.browser.close();
 });

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-kHFc32De8+uiKI5Y3QcY7bd6ZqFFmSCzjKTv1PNBi6c=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-KOM2gKXr2QXafw2+YSPB03SgT7wwIUvq4C2FI3eLkbU=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -297,6 +297,14 @@ a.btn { text-decoration: none; white-space: nowrap; }
 .callout { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; margin: 0 0 16px;
   font-size: 12.5px; background: var(--field); border-left: 2px solid var(--orange); }
 .callout .btn { width: auto; min-height: 36px; margin: 0; padding: 6px 14px; }
+.hl { padding: 12px 14px; margin: 0 0 16px; background: var(--field); border: 1px solid var(--hair); border-left: 2px solid var(--ok); }
+.hl-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.hl-h b { font-weight: 500; }
+.hl-h .btn { width: auto; min-height: 34px; margin: 0; padding: 6px 14px; font-size: 12.5px; }
+.hl ul { margin: 8px 0 0; padding: 0 0 0 18px; font-size: 12.5px; color: var(--mute); }
+.hl li + li { margin-top: 3px; }
+.hl a:not(.btn) { color: var(--ink); }
+.hl .note { margin-top: 8px; }
 .callout.bad { border-left-color: var(--err); }
 .ack { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 12.5px; color: var(--err); cursor: pointer; }
 .ack input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--err); flex: none; }
@@ -513,7 +521,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     </div>
     <div class="seg" role="tablist" aria-label="Pool">
       <button type="button" role="tab" aria-selected="true" data-eth-mode="v1">Tacit pool<small>tETH · DeFi and Bitcoin</small></button>
-      <button type="button" role="tab" aria-selected="false" data-eth-mode="dev">On this device<small>ETH · proved in your browser</small></button>
+      <button type="button" role="tab" aria-selected="false" data-eth-mode="dev">On this device<small>ETH · pay anyone</small></button>
     </div>
     <div id="eth-v1" role="tabpanel"></div>
     <div id="eth-dev" role="tabpanel" hidden></div>
@@ -1524,7 +1532,7 @@ const readJson = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'nu
 const isPub = (h) => /^(0x)?0[23][0-9a-f]{64}$/i.test(String(h || ''));
 const pubOf = (privHex) => bytesToHex(secp.getPublicKey(hexToBytes(privHex), true));
 
-// The unified tacit1 address: the Bitcoin spend key, its BIP-352 scan key and the pool owner key, all from one root.
+// The tacit1 address without the pool lane: the Bitcoin spend key, its BIP-352 scan key and the Ethereum-side key.
 function tacitAddress(privHex) {
   const spend = hexToBytes(privHex);
   const scan = BigInt('0x' + bytesToHex(bip352TaggedHash('BIP0352/ScanKey', spend))) % secp.CURVE.n;
@@ -1564,21 +1572,34 @@ const viaText = (k) => {
   })[k.mode] || 'your wallet';
 };
 
+// The address this page shows and publishes: the unified one (with the pool lane, so every pool pays it too) once its
+// module has loaded, which starts as soon as a way in is on screen; the one without the pool lane until then.
+let UNI = null;
+const loadUnified = lazy(async () => (UNI = await import('/tacit-unified.js?cb=a5b3a042')));
+const addressFor = (privHex) => { try { if (UNI) return UNI.unifiedAddress(privHex).address; } catch {} return tacitAddress(privHex); };
+const rememberKey = (key) => { const { priv, ...pub } = key; try { if (key.mode === 'key') localStorage.removeItem(LITE_ID); else localStorage.setItem(LITE_ID, JSON.stringify(pub)); } catch {} };
 function setKey(k) {
   const pubHex = String(k.pubHex || pubOf(k.priv)).replace(/^0x/, '').toLowerCase();
   if (pubOf(k.priv) !== pubHex) throw new Error('That wallet opened a different key than expected. Nothing was changed.');
-  S.key = { ...k, pubHex, tacit: tacitAddress(k.priv) };
-  const { priv, ...pub } = S.key;
-  try { if (k.mode === 'key') localStorage.removeItem(LITE_ID); else localStorage.setItem(LITE_ID, JSON.stringify(pub)); } catch {}
+  const key = S.key = { ...k, pubHex, tacit: addressFor(k.priv) };
+  rememberKey(key);
   S.pay = store.get(PAY)?.[pubHex] || null;
   syncAccount(); resetPrivate(); paintWallet(); refreshAll();
-  toast(`Opened ${short(S.key.tacit, 8)}`);
+  const opened = () => { if (S.key === key) toast(`Opened ${short(key.tacit, 8)}`); };
+  if (UNI) return opened();
+  loadUnified().then(() => {
+    if (S.key !== key) return;
+    key.tacit = addressFor(key.priv);
+    rememberKey(key);
+    paintWallet();
+    for (const n of SHEETS) rerender(n);
+  }).catch(() => {}).finally(opened);
 }
 
 // tacit.js opens the passphrase-locked and Bitcoin-signed keys exactly as tacit.finance does. It loads only for
 // those paths, as a library: it reads the shared network once at import, so this page pins mainnet for its visit,
 // and any call that rewrites the app's linked-wallet records is run with them put back afterwards.
-const TACIT_URL = '/tacit.js?cb=dc374c44';
+const TACIT_URL = '/tacit.js?cb=83e824e7';
 const SHARED_NET = 'tacit-network-v1', PREV_NET = 'tacit-lite-prev-net-v1';
 const SHARED_WALLET_KEYS = ['tacit-eth-identity', 'tacit-btc-identity', 'tacit-active-mode-v1', 'tacit-ext-mode-v1', 'tacit-ext-state-v1',
   ...['mainnet', 'signet'].flatMap((n) => [`tacit-eth-identity:${n}`, `tacit-btc-identity:${n}`])];
@@ -1699,6 +1720,7 @@ function signIn(id) {
   </div>`;
 }
 function wireSignIn(root, id, after) {
+  loadUnified().catch(() => {});
   const box = root.querySelector(`#${id}-in`);
   if (!box) return;
   const known = knownWallet();
@@ -2731,6 +2753,16 @@ function renderDevice(el) {
       <svg class="tk md" aria-hidden="true"><use href="#tk-eth"/></svg>
       <div><div class="v num">${DEV.bal != null ? fmt(DEV.bal, 18, 6) : DEV.err ? html`<span class="err">—</span>` : last != null ? html`<span class="stale">${fmt(last, 18, 6)}</span>` : html`<span class="sk" style="--w:8ch"></span>`}</div><div class="u">ETH, private on ${c.name}</div></div>
       <div class="side">${DEV.err ? html`<button class="link" type="button" id="d-rescan">retry</button>` : DEV.bal != null ? html`<button class="link" type="button" id="d-rescan">refresh</button>` : 'updating…'}</div>
+    </div>
+    <div class="hl" id="d-pay">
+      <div class="hl-h"><b>Pay anyone privately</b><a class="btn sm" href="/pay/eth/">Open tacit pay</a></div>
+      <ul>
+        <li>An 0x address or a name, held until it blends in</li>
+        <li>Someone with no wallet yet: <a href="/pay/eth/#link">send a link</a> they take to any wallet, gas-free</li>
+        <li>Get paid <a href="/pay/eth/#receive">by link or QR</a>, from any wallet or exchange</li>
+        <li>Prove a payment later, from your key alone</li>
+      </ul>
+      <p class="note">The same pool, balances and key as here, on Ethereum, Base and Robinhood Chain.</p>
     </div>
     ${segSub('dev', DEV.mode, [['deposit', 'Deposit'], ['send', 'Send'], ['out', 'Withdraw'], ['receive', 'Receive']])}
     <div id="d-form"></div>

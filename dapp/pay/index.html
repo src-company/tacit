@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ODi3A8q/01s3rNEDGSlM3y7lLBJtyVqCzYVSt+lA34w=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ZuCmf+2+i+1VjioQp3Yh9zV4Gxel94dwpcSz6oBZ4xQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Pay anyone privately: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key, proved on your device, recovered from the key alone.">
@@ -543,7 +543,7 @@ const viaText = (k) => ({ eth: `Ethereum ${short(k.address || '')}`, btc: `Bitco
 // lock, BIP-352 silent payments, shielded asset sends. It holds one key at a time, so every use takes a turn and the
 // key changes only between turns. It reads the shared network once at import, so this page pins mainnet for its visit
 // and puts back any linked-wallet records a call rewrites.
-const TACIT_URL = '/tacit.js?cb=dc374c44';
+const TACIT_URL = '/tacit.js?cb=83e824e7';
 const SHARED_NET = 'tacit-network-v1', PREV_NET = 'tacit-pay-prev-net-v1';
 const SHARED_WALLET_KEYS = ['tacit-eth-identity', 'tacit-btc-identity', 'tacit-active-mode-v1', 'tacit-ext-mode-v1', 'tacit-ext-state-v1',
   ...['mainnet', 'signet'].flatMap((n) => [`tacit-eth-identity:${n}`, `tacit-btc-identity:${n}`])];
@@ -589,15 +589,22 @@ function dropTacitKey() {
 const mainnetBtc = (a) => { if (!/^(bc1|[13])/i.test(String(a || ''))) throw new Error('Your Bitcoin wallet is on a test network. Switch it to mainnet.'); };
 const tPriv = () => { const h = bytesToHex(T.wallet.priv); T.wallet.priv.fill(0); T.wallet.priv = null; return h; };
 
+// The address this page shows: the unified one (with the pool lane, so the pools pay it too) once its module has
+// loaded, which starts as soon as a way in is on screen; the one without the pool lane until then.
+let UNI = null;
+const loadUnified = lazy(async () => (UNI = await import('/tacit-unified.js?cb=a5b3a042')));
+const addressFor = (privHex) => { try { if (UNI) return UNI.unifiedAddress(privHex).address; } catch {} return tacitAddress(privHex); };
+const rememberKey = (key) => { const { priv, ...pub } = key; writeJson(PAY_ID, key.mode === 'key' ? null : pub); };
 function setKey(k) {
   const pubHex = lc(String(k.pubHex || pubOf(k.priv)).replace(/^0x/, ''));
   if (pubOf(k.priv) !== pubHex) throw new Error('That wallet opened a different key than expected. Nothing was changed.');
   forget();
-  S.key = { ...k, pubHex, tacit: tacitAddress(k.priv) };
-  const { priv, ...pub } = S.key;
-  writeJson(PAY_ID, k.mode === 'key' ? null : pub);
+  const key = S.key = { ...k, pubHex, tacit: addressFor(k.priv) };
+  rememberKey(key);
   paintWallet(); render();
-  toast(`Opened ${short(S.key.tacit, 8)}`);
+  const opened = () => { if (S.key === key) toast(`Opened ${short(key.tacit, 8)}`); };
+  if (UNI) opened();
+  else loadUnified().then(() => { if (S.key !== key) return; key.tacit = addressFor(key.priv); rememberKey(key); paintWallet(); render(); }).catch(() => {}).finally(opened);
   loadMode(true);
   if (FOUND.v) checkFound();
 }
@@ -702,6 +709,7 @@ function signIn(id) {
   </div>`;
 }
 function wireSignIn(root, id, after) {
+  loadUnified().catch(() => {});
   const box = root.querySelector(`#${id}-in`);
   if (!box) return;
   const known = knownWallet();
@@ -1012,14 +1020,16 @@ function tacSend(f) {
 }
 function tacReceive(f) {
   const addr = TAC.pw?.addressString || null;
+  let pooled = false;
+  try { pooled = !!decodeTacitAddress(S.key.tacit).lanes.pool; } catch {}
   mount(f, html`
-    <div class="blk"><div class="lbl"><span>Your pool address</span><span>for shielded TAC</span></div>
-      <div class="addr"><code>${addr || '…'}</code>${addr ? html`<button class="link" type="button" data-copy="${addr}">copy</button>` : ''}</div>
-      <p class="note">TAC paid here lands inside the shielded pool: it never appears on chain, and your key finds it on its own. The same address takes ETH privately.</p></div>
-    <div class="blk"><div class="lbl"><span>Your Tacit address</span><span>from older Tacit wallets</span></div>
+    <div class="blk"><div class="lbl"><span>Your Tacit address</span><span>the one to share</span></div>
       <div class="addr"><code>${S.key.tacit}</code><button class="link" type="button" data-copy="${S.key.tacit}">copy</button></div>
-      <p class="note">A shielded transfer to it arrives at your Bitcoin address, where you can shield it into the pool.</p></div>
-    <div class="foot-a"><span class="mute">Paid by a shielded transfer?</span><button class="link" type="button" id="f-scan">Look for payments to me</button></div>`);
+      <p class="note">${pooled ? 'Tacit apps pay TAC to it inside the shielded pool: it never appears on chain, and your key finds it on its own. The same address takes BTC and ETH.' : 'A shielded transfer to it arrives at your Bitcoin address, where you can shield it into the pool.'}</p></div>
+    <div class="blk"><div class="lbl"><span>Pool address</span><span>the pool part alone</span></div>
+      <div class="addr"><code>${addr || '…'}</code>${addr ? html`<button class="link" type="button" data-copy="${addr}">copy</button>` : ''}</div>
+      <p class="note">For an app that asks for a bp1… address. What it receives lands in the same shielded balance.</p></div>
+    <div class="foot-a"><span class="mute">Paid by a shielded transfer from an older app?</span><button class="link" type="button" id="f-scan">Look for payments to me</button></div>`);
   wireShare(f);
   $('#f-scan').onclick = (e) => busyBtn(e.currentTarget, () => scanForMe());
 }

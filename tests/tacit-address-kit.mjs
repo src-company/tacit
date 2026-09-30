@@ -13,6 +13,7 @@ import { makeEvmPoolZk } from '../dapp/evm-pool-zk.js';
 import { evmPoolKeys } from '../dapp/evm-pool-wallet.js';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7 } from '../dapp/vendor/tacit-poseidon.min.js';
 import * as kit from '../dapp/kit/tacit-address-kit.js';
+import { unifiedAddress } from '../dapp/tacit-unified.js';
 
 if (!secp.etc.hmacSha256Sync) secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, concatBytes(...m));   // for signing in this test
 let n = 0;
@@ -69,6 +70,16 @@ await test('addresses match the apps\' own for 40 random keys; the pool lane is 
     assert.equal(k.flags, 0x85);
     assert.equal(bytesToHex(d.lanes.evm.ownerPub), bytesToHex(t.spendPub));
     assert.equal(kit.addressesFromKey(key, { pool: false }).address, encodeTacitAddress({ network: 'mainnet', btcSpendPub: t.spendPub, btcScanPub: t.btcScanPub, evmOwnerPub: t.spendPub }));
+  }
+});
+
+await test('the apps\' own module (tacit-unified.js) gives the kit\'s address, and leaves the key as given', () => {
+  assert.deepEqual(unifiedAddress(new Uint8Array(32).fill(7)), { address: UNIFIED, poolAddress: BP });
+  assert.equal(unifiedAddress('07'.repeat(32)).address, UNIFIED);
+  for (let i = 0; i < 20; i++) {
+    const key = secp.utils.randomPrivateKey(), copy = Uint8Array.from(key), k = kit.addressesFromKey(key);
+    assert.deepEqual(unifiedAddress(key), { address: k.address, poolAddress: k.poolAddress });
+    assert.deepEqual(key, copy);
   }
 });
 

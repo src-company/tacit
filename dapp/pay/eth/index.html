@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-8bIxNvP+pBV+iar+CpOKXrP6tpya50x0JL/2SAJSSag=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-/BmTq/SuZQDHzmJMrp+YBPuCcPteZmVUNPCBjMXGjMA=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -469,7 +469,7 @@ const BAL_SEEN = 'tacit-pay-bal-v1';                                  // last ba
 const PAY_ID = 'tacit-pay-id-v1', CHAIN_PREF = 'tacit-pay-chain-v1', ROUTE_PREF = 'tacit-pay-route-v1';
 // Showing the unified tacit1… address (it carries the pool keys) and offering names the one-press upgrade to it, once
 // every app that reads tacit1… reads the pool lane. Sending to one works either way.
-const UNIFIED_LIVE = false;
+const UNIFIED_LIVE = true;
 const POLL_MS = 30_000, POLL_OTHER_MS = 120_000, BOXES = 41;
 
 // ── small helpers ────────────────────────────────────────────────────────────────────────────────────────
@@ -712,7 +712,7 @@ const viaText = (k) => ({ eth: `Ethereum ${short(k.address || '')}`, btc: `Bitco
 // A Bitcoin wallet, or a key saved in this browser, opens through tacit.js exactly as tacit.finance does. It loads only for
 // those paths, as a library: it reads the shared network once at import, so this page pins mainnet for its visit, and any
 // call that rewrites the app's linked-wallet records is run with them put back afterwards.
-const TACIT_URL = '/tacit.js?cb=dc374c44';
+const TACIT_URL = '/tacit.js?cb=83e824e7';
 const SHARED_NET = 'tacit-network-v1', PREV_NET = 'tacit-pay-prev-net-v1';
 const SHARED_WALLET_KEYS = ['tacit-eth-identity', 'tacit-btc-identity', 'tacit-active-mode-v1', 'tacit-ext-mode-v1', 'tacit-ext-state-v1',
   ...['mainnet', 'signet'].flatMap((n) => [`tacit-eth-identity:${n}`, `tacit-btc-identity:${n}`])];
@@ -755,7 +755,7 @@ async function setKey(k) {
   const { priv, ...pub } = S.key;
   if (k.mode === 'key') writeJson(PAY_ID, null); else writeJson(PAY_ID, pub);
   paintWallet(); renderApp(); paintRecover(); readPoints(true);
-  toast(`Opened ${short(keys.address, 8)}`);
+  toast(`Opened ${short(UNIFIED_LIVE ? unifiedAddress() : keys.address, 8)}`);
   syncAll(true);
   historyAll();
 }
@@ -1340,7 +1340,7 @@ const ethIcon = html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/>
 
 function paintWallet() {
   $('#wallet-dot').className = 'dot' + (S.key ? ' on' : S.wallet ? ' live' : '');
-  $('#wallet-label').textContent = S.key ? short(S.key.bp, 6) : S.wallet ? short(S.wallet) : knownWallet() ? 'Open wallet' : 'Connect';
+  $('#wallet-label').textContent = S.key ? short(UNIFIED_LIVE ? unifiedAddress() : S.key.bp, 6) : S.wallet ? short(S.wallet) : knownWallet() ? 'Open wallet' : 'Connect';
   if ($('#sheet-wallet').open) renderWalletSheet();
 }
 function paintChains() {
@@ -2448,7 +2448,7 @@ function renderWalletSheet() {
   }
   const k = S.key;
   mount(el, html`
-    <div class="who"><div class="a num">${short(k.bp, 14)}</div><div class="u">Your pool address · opened with ${viaText(k)}</div>
+    <div class="who"><div class="a num">${short(UNIFIED_LIVE ? unifiedAddress() : k.bp, 14)}</div><div class="u">${UNIFIED_LIVE ? 'Your Tacit address' : 'Your pool address'} · opened with ${viaText(k)}</div>
       <div class="row2"><button class="btn ghost" type="button" id="w-copy">Copy address</button><button class="btn ghost" type="button" id="w-lock">Lock</button></div></div>
     <div class="kv"><span>Pays gas when you send it yourself</span>${S.wallet ? html`<b>${short(S.wallet, 6)}</b>` : html`<button class="link" type="button" id="w-conn">Connect a wallet</button>`}</div>
     <div id="w-up"></div>
@@ -2543,7 +2543,7 @@ async function claimGift(to) {
   paintGift();
 }
 
-// ── links: #pay=bp1…&amount=0.01&chain=base, #send, #withdraw, #receive, #deposit, #base … ─────────────────
+// ── links: #pay=bp1…&amount=0.01&chain=base, #send, #link (Send, by link), #withdraw, #receive, #deposit, #base … ──
 // A payment proof opened from a link: #proof=<chain>:<tx>:<output>:<one-time key>. Checking it against an address
 // reads the transaction's memo and leaf from the chain; the link alone says nothing about the amount or the recipient.
 const PROOF = { v: null, res: null, busy: false };
@@ -2597,7 +2597,8 @@ function applyHash() {
     if (!c) S.chain = CHAINS[1];
     loadGift();
   }
-  const tab = TABS.find(([k]) => words.includes(k))?.[0] || q.get('tab');
+  const tab = TABS.find(([k]) => words.includes(k))?.[0] || q.get('tab') || (words.includes('link') ? 'send' : null);
+  if (words.includes('link')) S.sendMode = 'link';
   if (c) { S.chain = c; writeJson(CHAIN_PREF, c.chainId); if (c.chainId !== 1) S.dest = 'addr'; }
   if (bp) {
     REQ.v = { bp, n: /^[0-9a-f]{1,64}$/.test(n) ? n : null, amount, note: (q.get('for') || '').trim().slice(0, 60) };

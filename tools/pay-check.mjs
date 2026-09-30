@@ -134,7 +134,7 @@ try {
       ok(/has not published/i.test(await p.textContent('#f-rcpt')), `send: a name without a record says so: ${(await p.textContent('#f-rcpt')).trim().slice(0, 90)}`);
       await p.fill('#f-amt', '');
       const own = await p.evaluate(() => document.querySelector('#wallet-label').textContent);
-      ok(/^bp1/.test(own), 'wallet chip shows the pool address');
+      ok(/^tacit1qz…/.test(own), `wallet chip shows the unified address: ${own}`);
       // Withdraw: a partial amount shows what stays private.
       await p.click('#tabs [data-tab="withdraw"]');
       await p.click('#chains [data-chain="8453"]');
@@ -145,10 +145,12 @@ try {
       if (/Arrives/.test(rc)) ok(/Blends in well|Could blend in better|Easy to link to you/.test(rc) && /hides among \d+ notes from \d+ deposits/.test(rc), `withdraw privacy check: ${(await p.textContent('.pv')).replace(/\s+/g, ' ').trim().slice(0, 160)}`);
       ok((/Arrives/.test(rc) && /Stays private/.test(rc)) || /More than/.test(rc), `withdraw receipt: ${rc.replace(/\s+/g, ' ').trim()}`);
       const link = await getPaidLink(p, '0.01', 'coffee & cake');
-      ok(/#pay=bp1[a-z0-9]+&n=[0-9a-f]{64}&amount=0\.01&chain=base&for=coffee/.test(link), `payment link: ${link.slice(0, 60)}…${link.slice(-50)}`);
+      ok(/#pay=tacit1qzz[a-z0-9]{267}&n=[0-9a-f]{64}&amount=0\.01&chain=base&for=coffee/.test(link), `payment link: ${link.slice(0, 60)}…${link.slice(-50)}`);
       const q = await readQr(p);
       ok(q === null || q === link, q === null ? 'QR present (install jsqr to decode it)' : 'the QR code decodes to the same link');
-      ok(/^bp1/.test(await p.textContent('.addr code')), 'receive shows the pool address');
+      const recv = await p.$$eval('.addr code', (x) => x.map((c) => c.textContent));
+      ok(/^tacit1qzz/.test(recv[0]) && recv[0].length === 276, `receive shows the unified address: ${recv[0].slice(0, 16)}…`);
+      ok(await p.evaluate(() => [...document.querySelectorAll('[data-copy]')].some((b) => /^bp1/.test(b.dataset.copy))), 'and still offers the pool address alone');
       await shot(p, 'key-desktop');
       const r = await page(browser, { viewport: { width: 390, height: 844 } });
       await r.p.goto(link.replace(/^https?:\/\/[^/]+/, new URL(URL_).origin));
@@ -240,7 +242,7 @@ try {
     await p.click('#tabs [data-tab="receive"]');
     await p.waitForFunction(() => [...document.querySelectorAll('.addr code')].every((c) => c.textContent !== '…'), null, { timeout: 120e3 }).catch(() => {});
     const addrs = await p.$$eval('.addr code', (x) => x.map((c) => c.textContent));
-    ok(/^tacit1/.test(addrs[0]) && /^sp1/.test(addrs[1]) && /^bc1/.test(addrs[2]), `receive shows the Tacit, silent-payment and Bitcoin addresses: ${addrs.map((a) => a.slice(0, 8)).join(' ')}`);
+    ok(/^tacit1qzz/.test(addrs[0]) && addrs[0].length === 276 && /^sp1/.test(addrs[1]) && /^bc1/.test(addrs[2]), `receive shows the unified Tacit, silent-payment and Bitcoin addresses: ${addrs.map((a) => a.slice(0, 10)).join(' ')}`);
     await p.click('#modes [data-mode="tac"]');
     await p.waitForFunction(() => /TAC, shielded/.test(document.querySelector('#bal').textContent) && !document.querySelector('#bal .sk'), null, { timeout: 180e3 });
     ok(/TAC, shielded/.test(await text('#bal')) && !/—/.test(await text('#bal .v')), `shielded TAC read: ${await text('#bal')}`);
@@ -250,8 +252,9 @@ try {
     ok(/Shielded transfer from your Bitcoin address/.test(await route(OLD, /Shielded transfer|err/)), 'TAC to a tacit1 from before the pool lane: a shielded transfer');
     ok(/Bitcoin address/.test(await route('bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', /Bitcoin address|err/)), 'TAC to bc1 is refused');
     await p.click('#tabs [data-tab="receive"]');
-    await p.waitForFunction(() => /^bp1/.test(document.querySelector('.addr code')?.textContent || ''), null, { timeout: 60e3 }).catch(() => {});
-    ok(/^bp1/.test(await p.textContent('.addr code')), 'TAC receive shows the pool address');
+    await p.waitForFunction(() => [...document.querySelectorAll('.addr code')].some((c) => /^bp1/.test(c.textContent)), null, { timeout: 60e3 }).catch(() => {});
+    const tacAddrs = await p.$$eval('.addr code', (x) => x.map((c) => c.textContent));
+    ok(/^tacit1qzz/.test(tacAddrs[0]) && /^bp1/.test(tacAddrs[1]) && /inside the shielded pool/.test(await p.textContent('#form')), 'TAC receive shows the unified address, which the pool pays, and the pool address alone');
     await p.setViewportSize({ width: 390, height: 900 });
     ok((await p.evaluate(() => document.documentElement.scrollWidth)) <= 390, 'no sideways scroll at 390px');
     await p.click('#modes [data-mode="eth"]');

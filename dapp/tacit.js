@@ -5073,12 +5073,30 @@ const { encodeTacitAddress, decodeTacitAddress } = makeTacitAddress({ secp });
 // from wallet.priv: the BTC spend pubkey, the BIP-352 scan pubkey, and the EVM
 // confidential-note owner pubkey (which is identity().pubHex == the compressed
 // wallet pubkey; the domain-separated EVM material is the gas EOA + note secret,
-// not the note owner). Deterministic, no new key material, no pool dependency.
+// not the note owner). Deterministic, no new key material. On mainnet it also
+// carries the pool keys every shielded pool pays (tacit-unified.js), once that
+// module has loaded for this wallet; until then, and on other networks, the
+// address without them.
+const _unified = { pub: null, addr: null };
 function tacitAddressForWallet(wallet, network = currentNetworkName()) {
   const spendPriv = wallet.priv;
   const btcSpendPub = secp.getPublicKey(spendPriv, true);
+  if (network === 'mainnet') {
+    const pub = bytesToHex(btcSpendPub);
+    if (_unified.pub === pub && _unified.addr) return _unified.addr;
+    if (_unified.pub !== pub) _loadUnifiedAddress(spendPriv, pub);
+  }
   const { scanPub } = deriveSilentPaymentKeys(spendPriv);
   return encodeTacitAddress({ network, btcSpendPub, btcScanPub: scanPub, evmOwnerPub: btcSpendPub });
+}
+function _loadUnifiedAddress(spendPriv, pub) {
+  Object.assign(_unified, { pub, addr: null });
+  const priv = typeof spendPriv === 'string' ? hexToBytes(spendPriv.replace(/^0x/, '')) : Uint8Array.from(spendPriv);
+  import('./tacit-unified.js').then((m) => {
+    if (_unified.pub !== pub) return;
+    _unified.addr = m.unifiedAddress(priv).address;
+    try { _renderWalletTacitAddress(); } catch {}
+  }).catch(() => { if (_unified.pub === pub) _unified.pub = null; }).finally(() => priv.fill(0));
 }
 
 // Resolve a Send-tab recipient string to a confidential-pool pubkey. Accepts a unified
