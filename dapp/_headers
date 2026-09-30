@@ -23,3 +23,10 @@
   X-Frame-Options: SAMEORIGIN
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
+
+# Files other apps load or vendor: the standalone EVM pool wallet and its ceremony files, and the address kit.
+/evm-pool/*
+  Access-Control-Allow-Origin: *
+
+/kit/*
+  Access-Control-Allow-Origin: *
