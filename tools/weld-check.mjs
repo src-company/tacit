@@ -447,6 +447,17 @@ await step('devsend', async () => {
   ok(/Send to this address/.test(await text(page, '#d-go')) && /leaves the pool/.test(await text(page, '#d-to-note')), 'devsend: an 0x… address is paid by a withdrawal to it');
   await page.fill('#d-to', bp1);
   ok(/^bp1/.test(bp1) && /Send privately/.test(await text(page, '#d-go')) && /inside the pool/.test(await text(page, '#d-to-note')), 'devsend: a bp1… pool address is paid privately');
+  // A tacit1 with the pool lane pays its pool address (tests/tacit-address-pool.mjs vectors); one from before it is sent to the Tacit pool tab.
+  const UNI = 'tacit1qqrs9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczldupxsdkdfvdwck5vqnkn28cnyq3sxsrl7myfdwua48xq0zsc4dsrlsrlklwss3n6mv4vqkqkq8d5qrj6e6hgt34qmnmh4m8vayny376ryzlgcw47etgmm9cugrjtxwwkj6e267hm5qgc62yyyupg0j62zpafjgjz2hf';
+  const OLD = 'tacit1qqps9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczlduk6e0c7';
+  await page.fill('#d-amt', '0.001');
+  await page.fill('#d-to', UNI);
+  await page.waitForFunction(() => /→ bp1q/.test(document.querySelector('#d-rcpt').textContent), null, { timeout: 30000 }).catch(() => {});
+  ok(/tacit1qqrs.*→ bp1qf5rd/.test((await text(page, '#d-rcpt')).replace(/\s+/g, ' ')), `devsend: a unified tacit1 pays its pool address: ${(await text(page, '#d-rcpt')).replace(/\s+/g, ' ').slice(0, 80)}`);
+  await page.fill('#d-to', OLD);
+  await page.waitForFunction(() => /before pool payments/.test(document.querySelector('#d-rcpt').textContent), null, { timeout: 30000 }).catch(() => {});
+  ok(/Tacit pool tab/.test(await text(page, '#d-rcpt')), 'devsend: a tacit1 from before the pool lane points to the Tacit pool tab');
+  await page.fill('#d-amt', '');
 });
 
 await step('device', async () => {

@@ -109,8 +109,19 @@ try {
       // Send refuses what is not a pool address.
       await p.fill('#f-to', '0x' + '11'.repeat(20)); await sleep(300);
       ok(/Use Withdraw/.test(await p.textContent('#f-rcpt')), 'send: an 0x address points to Withdraw');
-      await p.fill('#f-to', 'tacit1qqqqqqqq'); await sleep(300);
-      ok(/tacit1 address/.test(await p.textContent('#f-rcpt')), 'send: a tacit1 address is explained');
+      // A tacit1 from before the pool lane is explained; a unified one pays its pool address; a name without a record says so.
+      const OLD = 'tacit1qqps9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczlduk6e0c7';
+      const UNI = 'tacit1qqrs9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczldupxsdkdfvdwck5vqnkn28cnyq3sxsrl7myfdwua48xq0zsc4dsrlsrlklwss3n6mv4vqkqkq8d5qrj6e6hgt34qmnmh4m8vayny376ryzlgcw47etgmm9cugrjtxwwkj6e267hm5qgc62yyyupg0j62zpafjgjz2hf';
+      await p.click('#chains [data-chain="8453"]'); await p.waitForSelector('#f-to');
+      await p.fill('#f-to', OLD); await sleep(600);
+      ok(/before pool payments/.test(await p.textContent('#f-rcpt')), 'send: a tacit1 from before the pool lane is explained');
+      await p.fill('#f-amt', '0.00001'); await p.fill('#f-to', UNI);
+      await p.waitForFunction(() => /→ bp1q/.test(document.querySelector('#f-rcpt').textContent) || /More than/.test(document.querySelector('#f-rcpt').textContent), null, { timeout: 30e3 }).catch(() => {});
+      ok(/To\s*tacit1qqrs9.*→ bp1qf5rd/.test((await p.textContent('#f-rcpt')).replace(/\s+/g, ' ')) || /More than/.test(await p.textContent('#f-rcpt')), `send: a unified tacit1 pays its pool address: ${(await p.textContent('#f-rcpt')).replace(/\s+/g, ' ').trim().slice(0, 90)}`);
+      await p.fill('#f-to', 'nobody-tacit-pay-check.wei');
+      await p.waitForFunction(() => /has not published|could not|refus|no record/i.test(document.querySelector('#f-rcpt').textContent), null, { timeout: 30e3 }).catch(() => {});
+      ok(/has not published/i.test(await p.textContent('#f-rcpt')), `send: a name without a record says so: ${(await p.textContent('#f-rcpt')).trim().slice(0, 90)}`);
+      await p.fill('#f-amt', '');
       const own = await p.evaluate(() => document.querySelector('#wallet-label').textContent);
       ok(/^bp1/.test(own), 'wallet chip shows the pool address');
       // Withdraw: a partial amount shows what stays private.
