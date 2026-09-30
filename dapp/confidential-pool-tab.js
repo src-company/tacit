@@ -213,10 +213,12 @@ function crossoutRecordsHtml(records, network) {
     const err = r.lastError ? `<div class="muted" style="font-size:10px;color:var(--red,#c33);">${esc(r.lastError.message)}</div>` : '';
     const showContinue = r.stage !== 'minted';
     return `<div class="list-row" style="flex-direction:column;align-items:flex-start;gap:2px;">`
-      + `<div style="display:flex;justify-content:space-between;width:100%;align-items:center;">`
+      + `<div style="display:flex;justify-content:space-between;width:100%;align-items:center;gap:6px;">`
       + `<span style="font-size:11px;">${esc(label)}${revealLink}</span>`
-      + (showContinue ? `<button data-id="${esc(r.id)}" class="cpool-crossout-continue" style="padding:2px 8px;font-size:10px;flex:0 0 auto;">Continue</button>` : '')
-      + `</div>${err}</div>`;
+      + `<span style="display:flex;gap:4px;flex:0 0 auto;">`
+      + (showContinue ? `<button data-id="${esc(r.id)}" class="cpool-crossout-continue" style="padding:2px 8px;font-size:10px;">Continue</button>` : '')
+      + `<button data-id="${esc(r.id)}" data-txhash="${esc(r.settle && r.settle.txHash || '')}" class="cpool-crossout-abandon muted" title="Remove from this list only — does not undo anything on chain" style="padding:2px 8px;font-size:10px;">✕</button>`
+      + `</span></div>${err}</div>`;
   }).join('');
   return `<div style="margin-bottom:4px;"><b style="font-size:11px;">Bridges to Bitcoin</b></div>${rows}`;
 }
@@ -266,6 +268,47 @@ function wireCrossoutResume(wallet, crossoutUx) {
   };
 }
 
+// Same "no black hole" rationale as dapp/tacit.js's _startBurndepAutoRefresh for the forward bridge: without
+// this, a cross-out only ever advances on an explicit Continue click or a fresh start() -- someone who bridges
+// and then just doesn't come back to click through each stage would otherwise sit stalled indefinitely even
+// though every remaining step is a plain poll. Self-stops once nothing is left to watch. Checks the panel's
+// own .active class (toggled by _activateTab in dapp/tacit.js for every tab-panel uniformly) rather than a
+// nav-button selector, since this tab is reached from a wallet-lane card, not a top-level .tab button.
+// wallet is a `const` in tacit.js (mutated in place on lock/unlock, never reassigned), so capturing it once
+// here stays correct across the poller's whole lifetime. crossoutUx is NOT: _crossoutUxSingleton() hands back
+// a different instance per network, so a network switch mid-poll needs the timer restarted against the new
+// one rather than silently continuing to poll the old network through a stale closure.
+const CROSSOUT_POLL_INTERVAL_MS = 75 * 1000;
+let _crossoutPollTimer = null;
+let _crossoutPollNetwork = null;
+function _startCrossoutAutoRefresh(wallet, crossoutUx) {
+  if (_crossoutPollTimer) {
+    if (_crossoutPollNetwork === crossoutUx.network) return;
+    _stopCrossoutAutoRefresh();
+  }
+  _crossoutPollNetwork = crossoutUx.network;
+  _crossoutPollTimer = setInterval(async () => {
+    if (document.hidden) return;
+    if (!wallet || !wallet.priv) { _stopCrossoutAutoRefresh(); return; }
+    const walletPub = bytesToHex(secp.getPublicKey(wallet.priv, true));
+    let records;
+    try { records = crossoutUx.list(walletPub).filter((r) => r.stage !== 'minted'); }
+    catch { return; }
+    if (!records.length) { _stopCrossoutAutoRefresh(); return; }
+    let changed = false;
+    for (const rec of records) {
+      if (rec.stage === 'covered') continue; // covered -> mint-signed needs the key -- user-driven only
+      try { const after = await crossoutUx.advance(walletPub, rec.id); if (after.stage !== rec.stage) changed = true; }
+      catch { changed = true; /* the record's own lastError just moved even though its stage didn't -- re-render so it shows */ }
+    }
+    if (changed && document.getElementById('tab-confidential-pool')?.classList.contains('active')) renderConfidentialPoolTab(wallet, crossoutUx);
+  }, CROSSOUT_POLL_INTERVAL_MS);
+}
+function _stopCrossoutAutoRefresh() {
+  if (_crossoutPollTimer) { clearInterval(_crossoutPollTimer); _crossoutPollTimer = null; }
+  _crossoutPollNetwork = null;
+}
+
 function wireCrossout(wallet, ux, crossoutUx, notes) {
   const listEl = el('cpool-crossout-list');
   const statusEl = el('cpool-crossout-status');
@@ -274,6 +317,7 @@ function wireCrossout(wallet, ux, crossoutUx, notes) {
   if (!crossoutUx) { listEl.textContent = 'Not available in this build.'; return; }
 
   const walletPub = bytesToHex(secp.getPublicKey(wallet.priv, true));
+  const pendingRecords = (() => { try { return crossoutUx.list(walletPub).filter((r) => r.stage !== 'minted'); } catch { return []; } })();
   // The resume box is always rendered, even with zero records -- same reasoning as burndep's own (dapp/tacit.js's
   // _renderHoldingsBurndepBridges): it disappearing exactly when there's nothing else to show is exactly when
   // it's most needed.
@@ -284,6 +328,7 @@ function wireCrossout(wallet, ux, crossoutUx, notes) {
       wireCrossoutResume(wallet, crossoutUx);
     } catch {}
   };
+  if (pendingRecords.length) _startCrossoutAutoRefresh(wallet, crossoutUx);
 
   const tacAsset = ux.assetByTicker && ux.assetByTicker.cTAC && ux.assetByTicker.cTAC.assetId;
   const tacNotes = tacAsset ? (notes || []).filter((n) => String(n.asset).toLowerCase() === String(tacAsset).toLowerCase()) : [];
@@ -341,6 +386,17 @@ function wireCrossout(wallet, ux, crossoutUx, notes) {
           // no manual re-enable/relabel needed here, unlike wireResumeWraps (which doesn't always re-render).
           setTimeout(() => renderConfidentialPoolTab(wallet, crossoutUx), 800);
         }
+      };
+    }
+    for (const btn of inflightEl.querySelectorAll('.cpool-crossout-abandon')) {
+      btn.onclick = () => {
+        const txHash = btn.getAttribute('data-txhash');
+        const recoveryLine = txHash
+          ? ` It already settled on Ethereum — if you change your mind, bring it back with "Recover a bridge from its Ethereum settle tx hash" using ${txHash}.`
+          : '';
+        if (!window.confirm(`Remove this bridge from your list?\n\nThis only removes it here — it does not undo anything on chain.${recoveryLine}`)) return;
+        crossoutUx.abandon(walletPub, btn.getAttribute('data-id'));
+        renderConfidentialPoolTab(wallet, crossoutUx);
       };
     }
   }
