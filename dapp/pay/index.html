@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-clINr0oVOo173xrjOH/dFUw9vzh9sr8Yl/UNUxVv+zM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-AaQehGMMwr3SPvF+loKVldrLVBAnhghSxdxHZ10UuN4=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -595,7 +595,9 @@ const S = { key: null, keys: null, wallet: null, provider: null, chain: chainOf(
 const CH = Object.fromEntries(CHAINS.map((c) => [c.chainId, { W: null, for: null, bal: null, notes: [], quote: null, waiting: null, err: null, syncing: null, at: 0, hist: null, histing: null, histNext: null, histErr: null, last: null }]));
 const evm = makeEvmWallet({ secp, sha256, keccak256: keccak_256, bytesToHex, hexToBytes, prfBytesToScalar, netName: 'mainnet' });
 const ROUTES = readJson(ROUTE_PREF) || {};
-const routeOf = (tab) => (ROUTES[tab] === 'wallet' || !chainKeeper(S.chain) ? 'wallet' : 'relay');
+// The relay sends unless you chose your wallet, or the relay has no quote to give right now (down, or short of gas).
+const relayUp = () => !!chainKeeper(S.chain) && !CH[S.chain.chainId]?.quoteErr;
+const routeOf = (tab) => (ROUTES[tab] === 'wallet' || !relayUp() ? 'wallet' : 'relay');
 const chainKeeper = (c) => c.keeper || null;
 
 // The wallet a returning visitor already has here or on weld: an Ethereum wallet or a passkey reopens in one step.
@@ -780,12 +782,13 @@ function syncChain(c, fresh = false) {
   const p = st.syncing = prev.catch(() => {}).then(async () => {
     const W = await walletOn(c);
     const boxes = [0, ...linkRange()];
-    const [s, q, waits] = await Promise.all([W.sync(), chainKeeper(c) ? W.quote().catch(() => null) : null,
+    let quoteErr = null;
+    const [s, q, waits] = await Promise.all([W.sync(), chainKeeper(c) ? W.quote().catch((e) => { quoteErr = e; return null; }) : null,
       Promise.all(boxes.map((i) => W.waiting(i).then((v) => [i, v], () => [i, null])))]);
     const waitBoxes = waits.filter(([, v]) => v != null && v > 0n), w = waitBoxes.reduce((a, [, v]) => a + v, 0n);
     if (st.W !== W || S.key?.pubHex !== pub) return;
     if (st.bal != null && st.bal !== s.balance) historyOf(c, true);             // something arrived or left: read it into the history
-    Object.assign(st, { bal: s.balance, notes: W.notes().map((n) => BigInt(n.v)), quote: q, waiting: w, waitBoxes, err: null, at: Date.now() });
+    Object.assign(st, { bal: s.balance, notes: W.notes().map((n) => BigInt(n.v)), quote: q, quoteErr, waiting: w, waitBoxes, err: null, at: Date.now() });
     const seen = readJson(BAL_SEEN) || {};
     seen[pub] = { ...(seen[pub] || {}), [c.chainId]: s.balance.toString() };
     writeJson(BAL_SEEN, seen);
@@ -1069,7 +1072,7 @@ const kvRow = (k, v, cls = '') => html`<div class="kv"><span>${k}</span><b class
 const txLink = (c, h) => html`<a href="${c.explorer}/tx/${h}" target="_blank" rel="noopener">${short(h, 6)} ↗</a>`;
 const routeSeg = (tab, fee) => html`<div class="lbl"><span>Sent by</span></div>
   <div class="seg sub" role="radiogroup" aria-label="Sent by">
-    <button type="button" role="radio" data-route="relay" aria-selected="${routeOf(tab) === 'relay'}" ${chainKeeper(S.chain) ? '' : 'disabled'}>The relay<small>${fee != null ? `fee ${fmt(fee, 18, 6)} ETH` : 'no gas needed'}</small></button>
+    <button type="button" role="radio" data-route="relay" aria-selected="${routeOf(tab) === 'relay'}" ${relayUp() ? '' : 'disabled'}>The relay<small>${!relayUp() ? 'unavailable right now' : fee != null ? `fee ${fmt(fee, 18, 6)} ETH` : 'no gas needed'}</small></button>
     <button type="button" role="radio" data-route="wallet" aria-selected="${routeOf(tab) === 'wallet'}">Your wallet<small>${S.wallet ? short(S.wallet) + ' pays gas' : 'pays gas, no fee'}</small></button>
   </div>`;
 function wireRoute(f, tab) {
