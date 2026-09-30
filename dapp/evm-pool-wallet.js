@@ -368,8 +368,15 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   }
 
   // Reads new events: those `confirmations` deep are kept, the rest are re-read next time. With a keeper, confirmed
-  // history comes from its feed first when it can.
-  async function sync() {
+  // history comes from its feed first when it can. One read at a time: each absorbs into the state the last one left,
+  // so a caller arriving while one runs waits for it, then reads what came after.
+  let reading = Promise.resolve();
+  function sync() {
+    const run = reading.catch(() => {}).then(readNew);
+    reading = run;
+    return run;
+  }
+  async function readNew() {
     const tip = Number(BigInt(await chain.rpc('eth_blockNumber')));
     const safe = tip - confirmations;
     if (keeper && feed && saved.block < safe) await syncFromFeed(safe).catch(() => {});
@@ -399,11 +406,12 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
 
   // ── spending ──
 
-  // A busy keeper answers 429 with Retry-After: wait and ask again a few times.
-  async function keeperFetch(path, init) {
+  // A busy keeper answers 429 with Retry-After: wait and ask again a few times. A keeper that never answers gives up
+  // in time (a relay may wait on the chain; everything else answers fast), so no read or action waits on it forever.
+  async function keeperFetch(path, init = {}) {
     if (!keeper) throw new Error('no relayer is configured for this chain');
     for (let i = 0; ; i++) {
-      const r = await fetchImpl(`${keeper}${path}`, init);
+      const r = await fetchImpl(`${keeper}${path}`, { ...init, signal: init.signal || AbortSignal.timeout?.(path === '/relay' ? 180_000 : 30_000) });
       if (r.status !== 429 || i >= 4) return r;
       await new Promise((ok) => setTimeout(ok, (Number(r.headers?.get?.('retry-after')) || 3) * 1000 * (0.5 + Math.random())));
     }
@@ -619,6 +627,7 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     connect(s) { signer = s; },
     // Forgets the synced state and rebuilds it from chain logs alone (no feed).
     async rescan() {
+      await reading.catch(() => {});
       saved = blank(); view = null; persist();
       const f = feed; feed = false;
       try { return await sync(); } finally { feed = f; }

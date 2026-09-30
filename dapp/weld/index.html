@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-LjyeMN0mPPgGCFjYqW+ekuNff0lDD1hc3+sEZ3pw4kI=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-pe6pGX9wamsmz2jR+WFL34GLNQDjQhOWfk2EX8KY8Cg=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -471,6 +471,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <nav aria-label="More">
       <a href="/">Full app</a>
       <a href="/weld/stats/">Stats</a>
+      <a href="/pay/">Pay privately</a>
       <a href="/tacit-v1.pdf">Whitepaper</a>
       <a href="https://github.com/src-company/tacit/blob/main/docs/BUILD-A-TACIT-DAPP.md" rel="noopener">Build on Tacit</a>
       <a href="https://github.com/src-company/tacit/blob/main/SECURITY.md" rel="noopener">Security</a>
@@ -2526,7 +2527,7 @@ function v1Out(el, status) {
 const DEV = { chain: DEVICE_CHAINS.find((c) => c.chainId === store.get('tacit-lite-device-chain')) || DEVICE_CHAINS[1], mode: 'deposit', dest: 'addr', W: null, bal: null, key: null, quote: null, err: null };
 const getDeviceMods = lazy(async () => {
   const [zkm, wm, pm, pos] = await Promise.all([
-    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=f8c2ced2'), import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
+    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=14825eb2'), import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
   ]);
   const PO = { 2: pos.poseidon2, 3: pos.poseidon3, 4: pos.poseidon4, 5: pos.poseidon5, 7: pos.poseidon7 };
   return { zk: zkm.makeEvmPoolZk({ poseidon: (xs) => PO[xs.length](xs) }), ...wm, vkHash: pm.vkHash };
@@ -2722,14 +2723,13 @@ function renderDevice(el) {
       if (!raw || !amount) return;
       let bad = null;
       if (k === 'addr') { try { recipientOf(raw); } catch (x) { bad = x; } }
-      const relayFee = k === 'addr' && DEV.quote?.fee ? BigInt(DEV.quote.fee) : 0n;
-      if (relayFee) mount(rc, html`<div class="kv"><span>Relay fee</span><b>${fmt(relayFee, 18, 6)} ETH</b></div><div class="kv"><span>Arrives</span><b>${fmt(amount > relayFee ? amount - relayFee : 0n, 18, 6)} ETH</b></div>`);
+      const relayFee = k && DEV.quote?.fee ? BigInt(DEV.quote.fee) : 0n;
+      if (relayFee) mount(rc, html`<div class="kv"><span>Relay fee, from your private balance</span><b>${fmt(relayFee, 18, 6)} ETH</b></div><div class="kv"><span>Arrives</span><b>${fmt(amount, 18, 6)} ETH</b></div>`);
       const over = DEV.bal != null && amount + relayFee > DEV.bal;
-      go.disabled = !k || !!bad || over || (k === 'addr' && amount <= relayFee);
+      go.disabled = !k || !!bad || over;
       if (!k) { if (!/^(0x[0-9a-fA-F]{0,39}|bp1[a-z0-9]*)$/i.test(raw)) warn(rc, 'Not a bp1 pool address or an 0x address.'); }        // not while one is still being typed
       else if (bad) warn(rc, bad.message);
       else if (over) warn(rc, 'More than your private balance.');
-      else if (k === 'addr' && amount <= relayFee) warn(rc, 'Send more than the relay fee.');
       else rc.hidden = !relayFee;
     };
     for (const el of [toEl, amt]) el.addEventListener('input', check);          // synchronous: no network in this check
@@ -2771,13 +2771,12 @@ function renderDevice(el) {
         let bad = null;
         if (raw) { try { recipientOf(raw); } catch (x) { bad = x; } }
         const relayFee = DEV.quote?.fee ? BigInt(DEV.quote.fee) : 0n;
-        if (relayFee) mount(rc, html`<div class="kv"><span>Relay fee</span><b>${fmt(relayFee, 18, 6)} ETH</b></div><div class="kv"><span>Arrives</span><b>${fmt(amount > relayFee ? amount - relayFee : 0n, 18, 6)} ETH</b></div>`);
+        if (relayFee) mount(rc, html`<div class="kv"><span>Relay fee, from your private balance</span><b>${fmt(relayFee, 18, 6)} ETH</b></div><div class="kv"><span>Arrives</span><b>${fmt(amount, 18, 6)} ETH</b></div>`);
         const over = DEV.bal != null && amount + relayFee > DEV.bal;
-        go.disabled = !raw || !!bad || over || amount <= relayFee;
+        go.disabled = !raw || !!bad || over;
         if (!raw) {}
         else if (bad && !/^0(x[0-9a-fA-F]{0,39})?$/i.test(raw)) warn(rc, bad.message);            // not while an address is still being typed
         else if (over) warn(rc, 'More than your private balance.');
-        else if (amount <= relayFee) warn(rc, 'Send more than the relay fee.');
         else rc.hidden = !relayFee;
       } else {
         const over = DEV.bal != null && amount > DEV.bal;

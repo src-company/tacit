@@ -278,7 +278,11 @@ try {
     await p.click('#f-sweep');
     await p.waitForFunction(() => /Taken in/.test(document.querySelector('#status').textContent) || document.querySelector('#status .err'), null, { timeout: 600e3 });
     ok(/Taken in/.test(await p.textContent('#status')), `the payee takes it in: ${(await p.textContent('#status')).trim()}`);
-    await p.waitForFunction(() => [...document.querySelectorAll('.rows li')].some((l) => /deposit address/.test(l.textContent)), null, { timeout: 600e3 }).catch(() => {});
+    const tw = Date.now();
+    const probe = setInterval(async () => { try { console.log(`    [${Math.round((Date.now() - tw) / 1000)} s] ${(await p.textContent('#recover-at'))} · ${(await p.$$eval('.chainsum li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()).join(' | ')))}`); } catch {} }, 60e3);
+    await p.waitForFunction(() => [...document.querySelectorAll('.rows li')].some((l) => /deposit address/.test(l.textContent)), null, { timeout: 900e3 }).catch(() => {});
+    clearInterval(probe);
+    console.log(`    history showed it after ${Math.round((Date.now() - tw) / 1000)} s`);
     const got = await p.$$eval('.rows li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
     console.log('    ' + got.join('\n    '));
     ok(got.some((r) => /^Came in at your deposit address ?\+0\.003 ETH/.test(r)), 'the payee’s key finds the wallet payment');
