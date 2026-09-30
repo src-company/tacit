@@ -27,6 +27,10 @@
 //            zRouter's commit and reveal and publishes its tacit1 address on it
 //   csend    the Borrow sheet's Send: private cUSD/cBTC (notes stubbed into the balance) go privately to a tacit1 address
 //            or out as tacUSD to an 0x… address, with fees shown first and an amount over the balance refused
+//   tacsend  the TAC sheet's own Send, private-only: a stubbed cTAC note goes privately to a tacit1 address, shown as
+//            TAC never cTAC, or out as public TAC to an 0x… address for a partial amount, beside the one-tap Make public
+//   shield   the TAC sheet's Shield: public TAC funded into the key's own Tacit account wraps in one router
+//            transaction; the fork's stubbed settle leaves it pending, offered to Finish like any other TAC deposit
 //   btc      a pasted key's Bitcoin sheet: balances read, BTC routes (tacit1 and sp1 as silent payments, bc1 plain), TAC
 //            routes refuse plain addresses, a tacit1's silent-payment keys are the ones this wallet scans, a payment link checks
 //   activity relayed jobs (dispatched as tacit:job, as the relay client does) move Queued → Proving → Done or Failed, with
@@ -53,7 +57,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,activity,receipts,stats,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,shield,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -761,6 +765,91 @@ await step('csend', async () => {
     await until(r.page, () => /Private 0\.0005 cBTC/.test(document.querySelector('#cs-max')?.textContent || ''), null, 30000);
     ok(true, `csend: switching to cBTC shows its balance (${await text(r.page, '#cs-max')})`);
     if (r.errors.length) { fails++; console.log('FAIL csend page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { await r.browser.close(); }
+});
+
+await step('shield', async () => {
+  const hex = '5411d'.padEnd(64, '3');
+  const acct = makeEvmAccount({ secp, keccak256: keccak_256, sha256 }).deriveEvmAccount(Buffer.from(hex, 'hex'), 'mainnet').address;
+  await fundTac(acct, 40n * 10n ** 18n);
+  await rpc('anvil_setBalance', [acct, '0x' + (10n ** 17n).toString(16)]);   // gas for the router wrap's own transaction
+  const r = await openPage({ account: A0, key: K0 });
+  try {
+    await r.page.goto(r.url + '#wallet');
+    await r.page.click('#wallet-body [data-in="paste"]');
+    await r.page.fill('#ws-hex', hex);
+    await r.page.click('#wallet-body [data-in="key"]');
+    await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+    await r.page.evaluate(() => { location.hash = ''; location.hash = '#tac'; });
+    await r.page.waitForSelector('#tac-shield #tsh-go', { timeout: 240000 }).catch(async (e) => {
+      throw new Error(`${e.message.split('\n')[0]} | bal: ${(await r.page.evaluate(() => (document.querySelector('#tac-bal')?.textContent || '').replace(/\s+/g, ' ').slice(0, 300)))} | errors: ${r.errors.slice(0, 2).join(' | ')}`);
+    });
+    await until(r.page, () => /account 40(\.00)?$/.test((document.querySelector('#tsh-max')?.textContent || '').trim()), null, 60000)
+      .catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | max: ${await text(r.page, '#tsh-max')} | acct: ${acct} | errors: ${r.errors.slice(0, 2).join(' | ')}`); });
+    ok(true, `shield: the account's own public TAC is offered, no cTAC leakage (${await text(r.page, '#tsh-max')})`);
+    await r.page.fill('#tsh-amt', '25');
+    await until(r.page, () => !document.querySelector('#tsh-go').disabled, null, 30000);
+    await r.page.click('#tsh-go');
+    await until(r.page, () => /press Finish|err/i.test(document.querySelector('#tac-bal-status')?.textContent || ''), null, 240000)
+      .catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | status: ${await text(r.page, '#tac-bal-status')} | errors: ${r.errors.slice(0, 2).join(' | ')}`); });
+    const st = await text(r.page, '#tac-bal-status');
+    // Direct (still in this sheet when it fails) or handed off to Activity first (this run, on a stubbed fork, always
+    // does — the relay accepts the job before its stubbed status ever answers) word it differently; both say the
+    // deposit is safe and point to Finish, never ask for it again.
+    ok(/deposit is (in the Tacit pool|safe in the pool)/.test(st) && /press Finish/.test(st), `shield: a one-tx deposit from the account, settle left to Finish like every other wrap here (${st.slice(0, 140)})`);
+    ok(await r.page.$eval('#tsh-amt', (i) => i.value === ''), 'shield: the amount field empties once the deposit lands');
+    await until(r.page, () => !!document.querySelector('#tac-finish'), null, 60000).then(() => true, () => false)
+      .then((v) => ok(v, 'shield: the deposit is then offered to Finish, same as any other pending TAC deposit'));
+    if (r.errors.length) { fails++; console.log('FAIL shield page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { await r.browser.close(); }
+});
+
+await step('tacsend', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  const hex = 'ac5e4'.padEnd(64, '3');
+  // The page's pool module, with a private cTAC note (the pool asset id TAC and cTAC share) added to the balance.
+  const TACID = '0xf0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
+  await r.page.route(/\/confidential-pool-ux\.js\?cb=/, (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: `
+    import * as real from '/confidential-pool-ux.js?stub=real';
+    export * from '/confidential-pool-ux.js?stub=real';
+    export function makeConfidentialPoolUx(o) {
+      const ux = real.makeConfidentialPoolUx(o), balance = ux.balance;
+      const note = { asset: '${TACID}', value: '3000000000', leafIndex: 900010, cx: '0x' + '7'.repeat(64), cy: '0x01', owner: '0x02' };
+      ux.balance = async (priv) => {
+        const b = await balance(priv);
+        b.notes = [...b.notes, note];
+        const g = b.byAsset[note.asset] ||= { asset: note.asset, value: 0n, notes: [] };
+        g.value = BigInt(g.value) + BigInt(note.value); g.notes = [...g.notes, note];
+        return b;
+      };
+      return ux;
+    }` }));
+  try {
+    await r.page.goto(r.url + '#wallet');
+    await r.page.click('#wallet-body [data-in="paste"]');
+    await r.page.fill('#ws-hex', hex);
+    await r.page.click('#wallet-body [data-in="key"]');
+    await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+    await r.page.evaluate(() => { location.hash = ''; location.hash = '#tac'; });
+    await r.page.waitForSelector('#tac-send:not([hidden]) #ts-to', { timeout: 240000 }).catch(async (e) => {
+      throw new Error(`${e.message.split('\n')[0]} | sheet: ${(await r.page.evaluate(() => (document.querySelector('#tac-bal')?.textContent || '').replace(/\s+/g, ' ').slice(-300)))} | errors: ${r.errors.slice(0, 2).join(' | ')}`);
+    });
+    ok(/Private 30(\.00)? TAC/.test(await text(r.page, '#ts-max')), `tacsend: the private balance is offered, no cTAC/tacTAC leakage (${await text(r.page, '#ts-max')})`);
+    ok(!(await r.page.$('[data-ts]')), 'tacsend: one source only, no toggle (public TAC already sends from the wallet sheet)');
+    await r.page.fill('#ts-to', tacit1('abd'.padEnd(64, '9')));
+    await r.page.fill('#ts-amt', '15');
+    await until(r.page, () => /They get about/.test(document.querySelector('#ts-rcpt')?.textContent || '') && !document.querySelector('#ts-go').disabled, null, 60000)
+      .catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | preview: ${(await text(r.page, '#ts-rcpt')).replace(/\s+/g, ' ')} | status: ${await text(r.page, '#tac-bal-status')} | errors: ${r.errors.slice(0, 2).join(' | ')}`); });
+    ok(/TAC/.test(await text(r.page, '#ts-rcpt')) && !/cTAC/.test(await text(r.page, '#ts-rcpt')), `tacsend: a tacit1 recipient is quoted privately, shown as TAC (${(await text(r.page, '#ts-rcpt')).replace(/\s+/g, ' ').trim()})`);
+    await r.page.fill('#ts-to', '0x000000000000000000000000000000000000dEaD');
+    await until(r.page, () => /Arrives/.test(document.querySelector('#ts-rcpt')?.textContent || '') && !document.querySelector('#ts-go').disabled, null, 60000);
+    ok(/Relay fee/.test(await text(r.page, '#ts-rcpt')) && /Arrives[^]*TAC/.test(await text(r.page, '#ts-rcpt')), `tacsend: an 0x recipient gets a partial amount as public TAC, fee first (${(await text(r.page, '#ts-rcpt')).replace(/\s+/g, ' ').trim()})`);
+    await r.page.fill('#ts-amt', '1000');
+    await until(r.page, () => /More than your private balance/.test(document.querySelector('#ts-rcpt')?.textContent || ''), null, 60000);
+    ok(await r.page.$eval('#ts-go', (b) => b.disabled), 'tacsend: more than the private balance is refused');
+    // The one-tap "Make public" (drains every worthwhile note) still sits alongside the new partial-amount form.
+    ok(/Make public/.test(await text(r.page, '#tac-bal')), 'tacsend: the all-at-once "Make public" action is unchanged');
+    if (r.errors.length) { fails++; console.log('FAIL tacsend page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   } finally { await r.browser.close(); }
 });
 
