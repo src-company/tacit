@@ -156,6 +156,22 @@ export function makeEvmWallet({ secp, sha256, keccak256, bytesToHex, hexToBytes,
         + 'from it. Every compliant signer produces the canonical form, so this usually means the signature '
         + 'was altered in transit. Reconnect with a wallet you trust and retry; nothing was derived or spent.');
     }
+    // The first key this account derives here is taken only when a second signature over the same message is the same
+    // bytes. A wallet that signs differently each time (some MPC wallets) would otherwise hand out a key it could never
+    // produce again, and anything paid to it would be out of reach. The key itself comes from the first signature, as
+    // it always has, so no existing identity changes; a known account (anchored) is not asked twice.
+    if (!readAnchor(address)) {
+      const again = await provider.request({ method: 'personal_sign', params: ['0x' + bytesToHex(enc(msg)), '0x' + address] });
+      const b = typeof again === 'string' && again.startsWith('0x') ? hexToBytes(again.slice(2)) : null;
+      if (b && b.length === 65 && (b[64] === 0 || b[64] === 1)) b[64] += 27;
+      const same = !!b && b.length === 65 && b.every((x, i) => x === sigBytes[i]);
+      if (b) b.fill(0);
+      if (!same) {
+        sigBytes.fill(0);
+        throw new Error('This wallet signed the Tacit message differently the second time, so it cannot hold a stable Tacit key: '
+        + 'anything sent to it could not be opened again. Nothing was derived. Use a passkey or another wallet.');
+      }
+    }
     const priv = prfBytesToScalar(sha256(sigBytes)); sigBytes.fill(0);
     const privHex = priv instanceof Uint8Array ? bytesToHex(priv) : String(priv);
     const pubHex = bytesToHex(secp.getPublicKey(priv instanceof Uint8Array ? priv : hexToBytes(privHex), true));

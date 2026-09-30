@@ -20,7 +20,7 @@ globalThis.document = dom.window.document;
 globalThis.localStorage = dom.window.localStorage;
 globalThis.sessionStorage = dom.window.sessionStorage;
 globalThis.location = dom.window.location;
-globalThis.navigator = dom.window.navigator;
+Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true, writable: true });   // a getter on Node 21+
 globalThis.prompt = () => null;
 globalThis.alert = () => {};
 globalThis.confirm = () => false;
@@ -144,7 +144,7 @@ freshStorage();
   const e = await unlock(T);
   ok('signet unlock succeeds', e === null);
   ok('signet unlock never refuses', !refused(e));
-  ok('signet unlock asks for exactly one signature, over the signet message', ethSigns.length === 1 && ethSigns[0] === 'signet');
+  ok('signet unlock asks twice (a first key is taken only when a second signature repeats it), both over the signet message', ethSigns.length === 2 && ethSigns.every((n) => n === 'signet'));
   ok('signet key is the signet derivation', pubHexOf(T) === ETH_SIG && !!T.wallet.priv);
   ok('signet record stored', rec('tacit-eth-identity:signet')?.pubkey === ETH_SIG);
   ok('mainnet record untouched', rec('tacit-eth-identity:mainnet')?.pubkey === ETH_MAIN);
@@ -212,7 +212,7 @@ localStorage.setItem('tacit-active-mode-v1', 'eth');
   ok('unscoped record kept as a copy', rec('tacit-eth-identity')?.pubkey === ETH_MAIN);
   ok('signet load is linked, awaiting a signature', T.wallet.mode === 'eth' && T.wallet.pub === null);
   const e = await unlock(T);
-  ok('signet unlock: one signature, signet key, no refusal', e === null && ethSigns.length === 1 && pubHexOf(T) === ETH_SIG);
+  ok('signet unlock: signed twice, signet key, no refusal', e === null && ethSigns.length === 2 && pubHexOf(T) === ETH_SIG);
 
   ethSigns.length = 0;
   T = await load('mainnet');

@@ -1634,6 +1634,20 @@ const ethWallet = {
       throw new Error('Ethereum wallet unavailable');
     }
     const { priv, pub, pubHex } = await this.deriveKey(provider, addr);
+    // The first key this account derives on this network is taken only when a second signature derives the same key. A
+    // wallet that signs differently each time (some MPC wallets) would otherwise hand out a key it could never produce
+    // again, and anything paid to it would be out of reach. The key comes from the first signature as it always has, so
+    // no existing identity changes; an account already enrolled here is not asked twice.
+    if (!(this.state?.pubkey && this.state.address === addr && !this.state.netUnverified)) {
+      const again = await this.deriveKey(provider, addr);
+      const same = again.pubHex === pubHex;
+      if (again.priv?.fill) again.priv.fill(0);
+      if (!same) {
+        if (priv?.fill) priv.fill(0);
+        throw new Error('This wallet signed the Tacit message differently the second time, so it cannot hold a stable Tacit key: '
+        + 'anything sent to it could not be opened again. Nothing was derived. Use a passkey or another wallet.');
+      }
+    }
     // Refuse to silently swap identities. If this account enrolled before and
     // the re-derived key differs — wallet changed its signing, or the
     // derivation message changed — surface it rather than dropping the user

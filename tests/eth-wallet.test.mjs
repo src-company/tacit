@@ -20,7 +20,7 @@ globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.localStorage = dom.window.localStorage;
 globalThis.location = dom.window.location;
-globalThis.navigator = dom.window.navigator;
+Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true, writable: true });   // a getter on Node 21+
 globalThis.prompt = () => null;
 globalThis.alert = () => {};
 globalThis.confirm = () => false;
@@ -174,5 +174,32 @@ reset();
   ok('refused login leaves the wallet locked', wallet.priv === null && wallet.mode === null);
 }
 
+
+console.log('\nethWallet.login — a wallet that signs differently each time:');
+reset();
+{
+  const base = makeProvider({ signingPriv: SIGNER_PRIV });
+  let n = 0;
+  globalThis.window.ethereum = { request: async (a) => {
+    if (a.method !== 'personal_sign') return base.request(a);
+    n++;
+    if (n % 2 === 1) return base.request(a);
+    // A second, equally valid low-s signature from the same account over the same message, as a randomised signer makes.
+    const msg = new TextDecoder().decode(hexToBytes(String(a.params[0]).replace(/^0x/, '')));
+    const sig = secp.sign(eip191Hash(msg), SIGNER_PRIV, { extraEntropy: new Uint8Array(32).fill(7) });
+    return '0x' + bytesToHex(sig.toCompactRawBytes()) + (sig.recovery + 27).toString(16).padStart(2, '0');
+  } };
+  await expectThrow('refuses a first key from a wallet whose signature changes', () => ethWallet.login({ address: ADDR }), (e) => /differently the second time/i.test(e?.message || ''));
+  ok('nothing is left unlocked or remembered', wallet.priv === null && wallet.mode === null && !ethWallet.state);
+}
+reset();
+{
+  globalThis.window.ethereum = makeProvider({ signingPriv: SIGNER_PRIV });
+  const first = (await ethWallet.login({ address: ADDR })).pubkey;
+  let asked = 0; const inner = globalThis.window.ethereum.request;
+  globalThis.window.ethereum.request = async (a) => { if (a.method === 'personal_sign') asked++; return inner(a); };
+  wallet.priv = null; wallet.pub = null; wallet.mode = null;
+  ok('an enrolled account derives the same key and is asked once', (await ethWallet.login({ address: ADDR })).pubkey === first && asked === 1);
+}
 console.log(`\n${pass} passed, ${fail} failed.`);
 process.exit(fail === 0 ? 0 : 1);
