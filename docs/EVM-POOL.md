@@ -99,6 +99,34 @@ tag  = keccak256("tacit-evm-pool-aead-tag-v1" ‖ k ‖ ct)[0..16)
 A wallet accepts a memo only if `Poseidon(asset, value, npk, rho)` equals the output's leaf.
 Public signal order: `root, oldRoot, newRoot, startIndex, publicAmount, extDataHash, asset, nf[2], outLeaf[2]`.
 
+### Payment proofs and payment links
+
+In `dapp/evm-pool-wallet.js` a spend's one-time keys are derived from the sender's key, so the sender finds its
+payments again from the key alone (`paymentKey`); a deposit's are random, as are every output's in the standalone
+wallet below:
+
+```
+e_k = HMAC-SHA256(sha256("tacit-evm-pool-eph-v1" ‖ be256(v)), be256(chainId) ‖ be256(nf0) ‖ k) mod n
+      v = the sender's view scalar, nf0 = the spend's first nullifier, k = the output (0 or 1)
+```
+
+A payment proof is `(chain, tx, k, e_k)`. Anyone holding the recipient's address checks it (`verifyPayment`):
+`e_k·G` is the memo's `pk_eph`, the memo opens under `s = compress(e_k·V)`, and the note it opens to is the output's
+leaf. It shows nothing about any other address.
+
+A payment link hands over a key of its own, whose pool balance holds the payment:
+
+```
+seed_i = HMAC-SHA256(identity key, "tacit-pay-gift-v1" ‖ be32(chainId) ‖ be32(i))      i = 0, 1, 2, …
+https://tacit.finance/pay/#gift=<seed_i hex>&chain=<ethereum|base|robinhood>&for=<note>
+```
+
+`seed_i` is an identity key like any other: its pool keys are `evmPoolKeys(seed_i)`, and whoever opens the link
+withdraws its balance to an address or sends it into their own. The sender funds link `i` with a private send, so the
+key alone finds every link it sent: each of its sends' paid outputs, opened with `e_k` under the keys of links `0, 1, …`
+(ten past the last one found). A link was taken once its note's nullifier is on chain; taken back if that transaction
+paid the sender. A link's index is chosen only after that chain's history is read, so no seed is funded twice.
+
 ## Calling the pool
 
 ```solidity

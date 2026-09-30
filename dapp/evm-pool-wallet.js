@@ -639,6 +639,12 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   }
 
   const self = { V: keys.V, A: keys.A, N: keys.N };
+  // amount 'max': all that one spend takes out, its two largest notes, less the fee quoted for that very spend.
+  const maxOf = (fee) => {
+    const u = unspent().map((n) => BigInt(n.v)).sort((a, b) => (b < a ? -1 : 1)), total = (u[0] ?? 0n) + (u[1] ?? 0n);
+    if (total <= fee) throw new Error('not enough in the pool for this amount and its fee');
+    return total - fee;
+  };
   const NODE_INTERFACE = '0x00000000000000000000000000000000000000C8';
   const hasCode = async (rpc, a) => { const c = await rpc('eth_getCode', [a, 'latest']); return !!c && c !== '0x'; };
 
@@ -667,14 +673,13 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     // Asks the relayer to watch a receive box (and look now).
     watchReceive: (index = RECEIVE_INDEX) => keeperPost('/receive', { chainId: chain.chainId, npk: receiveKeys(zk, keys.zkWallet, index).npk.toString(), feeBps: RECEIVE_FEE_BPS }),
 
-    // Pays `amount` wei out of the pool to `to` (0x…). → tx hash.
+    // Pays `amount` wei (or 'max') out of the pool to `to` (0x…). → tx hash.
     async withdraw({ to, amount, via = null, onStep = () => {} }) {
       if (!/^0x[0-9a-fA-F]{40}$/.test(String(to)) || BigInt(to) === 0n) throw new Error('enter a 0x address');
-      const a = BigInt(amount);
-      if (a <= 0n) throw new Error('enter an amount');
+      if (amount !== 'max' && BigInt(amount) <= 0n) throw new Error('enter an amount');
       await sync();
       const q = await quoteFor(via);
-      const fee = q ? BigInt(q.fee) : 0n;
+      const fee = q ? BigInt(q.fee) : 0n, a = amount === 'max' ? maxOf(fee) : BigInt(amount);
       const ins = await prepare(a + fee, q, onStep);
       const change = ins.reduce((s, n) => s + BigInt(n.v), 0n) - a - fee;
       return transact({ ins, outs: [change > 0n ? { to: self, value: change } : null, null], extAmount: -a, recipient: to, q, onStep });
@@ -716,14 +721,13 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       });
     },
 
-    // Sends `amount` wei privately to a Secret Sats address. → tx hash.
+    // Sends `amount` wei (or 'max') privately to a Secret Sats address. → tx hash.
     async send({ to, amount, via = null, onStep = () => {} }) {
       const recipient = recipientOf(keys, to);
-      const a = BigInt(amount);
-      if (a <= 0n) throw new Error('enter an amount');
+      if (amount !== 'max' && BigInt(amount) <= 0n) throw new Error('enter an amount');
       await sync();
       const q = await quoteFor(via);
-      const fee = q ? BigInt(q.fee) : 0n;
+      const fee = q ? BigInt(q.fee) : 0n, a = amount === 'max' ? maxOf(fee) : BigInt(amount);
       const ins = await prepare(a + fee, q, onStep);
       const change = ins.reduce((s, n) => s + BigInt(n.v), 0n) - a - fee;
       return transact({ ins, outs: [{ to: recipient, value: a }, { to: self, value: change }], q, onStep });

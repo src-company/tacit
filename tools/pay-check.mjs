@@ -5,6 +5,10 @@
 //   relay  (opt-in, spends funds) KEY pays KEY2 privately on mainnet through the relay; KEY2's key alone finds it
 //   fork   an anvil fork of Base: deposit from a wallet, send privately and withdraw part, all proved in the page and
 //          sent by the wallet (no relay), then the history rebuilt from chain logs names all three
+//   anyone the same fork with a real keeper relaying: pay an 0x address now, or hold it until it blends in (after a
+//          deposit made for it when the balance is short); save a name for an address; pay by link, taken by a keyless
+//          recipient to their address and into another key's private balance, or taken back; the links found again
+//          from the key alone
 //   PLAYWRIGHT=<path to playwright-core> KEY=<64-hex Tacit key with history> [PAGE=<url>] node tools/pay-check.mjs [live,fork]   (SHOTS=<dir>)
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -15,7 +19,7 @@ import { extname, join, normalize } from 'node:path';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'live,fork').split(','));
+const ONLY = new Set((process.argv[2] || 'live,fork,anyone').split(','));
 const SHOTS = process.env.SHOTS || null;
 const WEB = 21000 + Math.floor(Math.random() * 2000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -106,9 +110,13 @@ try {
       const rows = await p.$$eval('.rows li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
       console.log('    ' + rows.slice(0, 8).join('\n    '));
       ok(rows.length > 0, `history rows: ${rows.length}`);
-      // Send refuses what is not a pool address.
-      await p.fill('#f-to', '0x' + '11'.repeat(20)); await sleep(300);
-      ok(/Use Withdraw/.test(await p.textContent('#f-rcpt')), 'send: an 0x address points to Withdraw');
+      // Send pays an 0x address (as a withdrawal to it, or a deposit first and the payment held) and refuses the pool's own.
+      await p.fill('#f-amt', '0.00001'); await p.fill('#f-to', '0x' + '11'.repeat(20));
+      await p.waitForFunction(() => /Arrives|Two steps/.test(document.querySelector('#f-rcpt').textContent), null, { timeout: 60e3 }).catch(() => {});
+      ok(/Arrives|Two steps keep this private/.test(await p.textContent('#f-rcpt')), `send: an 0x address is paid: ${(await p.textContent('#f-rcpt')).replace(/\s+/g, ' ').trim().slice(0, 80)}`);
+      await p.fill('#f-to', '0x000000c2A20657CE25f2Ba99737933D031AFBEE9'); await sleep(300);
+      ok(/cannot receive a payment/.test(await p.textContent('#f-rcpt')), 'send: the pool’s own address is refused');
+      await p.fill('#f-amt', '');
       // A tacit1 from before the pool lane is explained; a unified one pays its pool address; a name without a record says so.
       const OLD = 'tacit1qqps9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczlduk6e0c7';
       const UNI = 'tacit1qqrs9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczldupxsdkdfvdwck5vqnkn28cnyq3sxsrl7myfdwua48xq0zsc4dsrlsrlklwss3n6mv4vqkqkq8d5qrj6e6hgt34qmnmh4m8vayny376ryzlgcw47etgmm9cugrjtxwwkj6e267hm5qgc62yyyupg0j62zpafjgjz2hf';
@@ -281,6 +289,8 @@ try {
     const rows = await p.$$eval('.rows li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
     console.log('    ' + rows.join('\n    '));
     ok(rows.some((r) => /^Shielded in ?\+0\.01 ETH/.test(r)) && rows.some((r) => /^Sent privately ?−0\.004 ETH.*kept 0\.006/.test(r)) && rows.some((r) => /^Withdrew to 0x3333…3333 ?−0\.002 ETH.*kept 0\.004/.test(r)), 'rebuilt history names the deposit, the private payment and the withdrawal');
+    // The balance is read again beside the history; the two agree once both are in.
+    await p.waitForFunction(() => /matches/.test(document.querySelector('.chainsum li:nth-child(2)')?.textContent || ''), null, { timeout: 180e3 }).catch(() => {});
     ok(/matches/.test(await p.$eval('.chainsum li:nth-child(2)', (e) => e.textContent)), 'rebuilt balance matches');
     // The sender proves the private payment; anyone with the recipient's address can check it, and only against that address.
     await p.click('[data-proof]');
@@ -342,6 +352,173 @@ try {
     ok(!errors.length, `no page errors ${errors.join(' | ')}`);
     await ctx.close();
     anvil.kill('SIGKILL');
+  }
+
+  if (ONLY.has('anyone')) {
+    console.log('anyone (Base fork, real keeper)');
+    const PORT = WEB + 2, KPORT = WEB + 3, ANVIL = `http://127.0.0.1:${PORT}`;
+    const anvil = spawn('anvil', ['--port', String(PORT), '--fork-url', process.env.BASE_RPC || 'https://mainnet.base.org', '--chain-id', '8453', '--silent', '--no-rate-limit'], { stdio: 'ignore' });
+    process.on('exit', () => anvil.kill('SIGKILL'));
+    const rpc = async (method, params = []) => { const r = await (await fetch(ANVIL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })).json(); if (r.error) throw new Error(r.error.message); return r.result; };
+    for (let i = 0; ; i++) { try { await rpc('eth_chainId'); break; } catch { if (i > 120) throw new Error('anvil did not start'); await sleep(500); } }
+    const ACCT = '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266', RELAYER = '0x70997970c51812dc3a010c7d01b50e0d17dc79c8';
+    for (const a of [ACCT, RELAYER]) { await rpc('anvil_setCode', [a, '0x']); await rpc('anvil_setBalance', [a, '0x' + (10n ** 18n).toString(16)]); }
+    await rpc('anvil_autoImpersonateAccount', [true]);
+    const kdb = join(process.env.TMPDIR || '/tmp', `pay-check-keeper-${KPORT}.db`);
+    const keeper = spawn('node', ['src/evm-pool-keeper.js'], {
+      cwd: new URL('../worker-relay/', import.meta.url).pathname, stdio: 'ignore',
+      env: { ...process.env, EVM_POOL_ADDR: '0x000000c2A20657CE25f2Ba99737933D031AFBEE9', EVM_POOL_ROUTER_ADDR: '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5', EVM_POOL_RPC_URL: ANVIL,
+        EVM_POOL_CHAIN_ID: '8453', EVM_POOL_KEEPER_PRIV: '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d', EVM_POOL_KEEPER_DB: kdb, PORT: String(KPORT),
+        EVM_POOL_KEEPER_POLL_SECS: '1', EVM_POOL_CONFIRMATIONS: '0', EVM_POOL_START_BLOCK: '51864014', EVM_POOL_KEEPER_SEND_RPC_URLS: ANVIL, EVM_POOL_KEEPER_RATE_PER_MIN: '200' },
+    });
+    process.on('exit', () => keeper.kill('SIGKILL'));
+    for (let i = 0; ; i++) { try { if ((await fetch(`http://127.0.0.1:${KPORT}/health`)).ok) break; } catch {} if (i > 120) throw new Error('keeper did not start'); await sleep(500); }
+    const route = async (ctx) => {
+      await ctx.route(/mainnet\.base\.org|base\.drpc\.org/, async (r) => {
+        const body = r.request().postData();
+        let text;
+        try { text = await (await fetch(ANVIL, { method: 'POST', headers: { 'content-type': 'application/json' }, body })).text(); }
+        catch (e) { text = JSON.stringify({ jsonrpc: '2.0', id: JSON.parse(body || '{}').id ?? 1, error: { code: -32000, message: `fork: ${e.message}` } }); }
+        await r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: text }).catch(() => {});
+      });
+      await ctx.route(/tacit-evm-pool-keeper(-robinhood)?\.onrender\.com/, (r) => r.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"error":"stubbed"}' }));
+      await ctx.route(/tacit-evm-pool-keeper-base\.onrender\.com/, async (r) => {
+        const u = new URL(r.request().url()), req = r.request();
+        try {
+          const res = await fetch(`http://127.0.0.1:${KPORT}${u.pathname}${u.search}`, { method: req.method(), headers: { 'content-type': 'application/json' }, body: req.method() === 'GET' ? undefined : req.postData() });
+          await r.fulfill({ status: res.status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: await res.text() });
+        } catch (e) { await r.fulfill({ status: 502, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ error: e.message }) }).catch(() => {}); }
+      });
+    };
+    const init = `(() => {
+      const ANVIL = 'https://mainnet.base.org', ACCT = ${JSON.stringify(ACCT)};
+      let chain = '0x2105';
+      const call = async (method, params) => { const r = await (await fetch(ANVIL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })).json(); if (r.error) throw Object.assign(new Error(r.error.message), r.error); return r.result; };
+      window.ethereum = { isMetaMask: true, on() {}, removeListener() {}, request: async ({ method, params }) => {
+        if (method === 'eth_requestAccounts' || method === 'eth_accounts') return [ACCT];
+        if (method === 'eth_chainId') return chain;
+        if (method === 'wallet_switchEthereumChain') { chain = params[0].chainId; return null; }
+        if (method === 'eth_sendTransaction') return call('eth_sendTransaction', [{ ...params[0], from: ACCT }]);
+        return call(method, params || []);
+      } };
+      localStorage.setItem('tacit-pay-chain-v1', '8453');
+    })();`;
+    const hexKey = () => [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, '0')).join('');
+    const balOf = async (a) => BigInt(await rpc('eth_getBalance', [a, 'latest']));
+    // Waits for a status the press made: the one left from the last action is cleared first.
+    const waitStatus = (p, re) => p.waitForFunction((s) => new RegExp(s).test(document.querySelector('#status').textContent) || document.querySelector('#status .err'), re.source, { timeout: 900e3 });
+    const press = async (p, sel, re) => { await p.evaluate(() => { document.querySelector('#status').textContent = ''; }); await p.click(sel); await waitStatus(p, re); };
+    const text = async (p, sel) => (await p.textContent(sel)).replace(/\s+/g, ' ').trim();
+    const { ctx, p, errors } = await page(browser, { init, route });
+    await p.goto(URL_);
+    await p.waitForSelector('#g-in');
+    const key = hexKey(), other = hexKey();
+    await openKey(p, other);
+    await p.click('#tabs [data-tab="receive"]');
+    const otherBp = (await p.textContent('.addr code')).trim();
+    await p.click('#wallet'); await p.click('#w-lock'); await p.click('#sheet-wallet [data-close]');
+    await openKey(p, key);
+    await p.evaluate(() => document.querySelector('#wallet-label').click()); await p.click('#w-conn'); await p.click('#sheet-wallet [data-close]');
+    await p.click('#tabs [data-tab="deposit"]');
+    await p.fill('#f-damt', '0.01');
+    await press(p, '#f-go', /Deposited/);
+    ok(/Deposited/.test(await p.textContent('#status')), `deposit: ${await text(p, '#status')}`);
+    await p.waitForFunction(() => /0\.01/.test(document.querySelector('#bal .v').textContent), null, { timeout: 120e3 }).catch(() => {});
+
+    // An 0x address in Send, with a name saved for it; just after a deposit the payment can wait until it blends in.
+    const ALICE = '0x' + '44'.repeat(20), alice0 = await balOf(ALICE);
+    await p.click('#tabs [data-tab="send"]');
+    await p.fill('#f-to', ALICE); await p.fill('#f-amt', '0.002');
+    await p.waitForSelector('#f-save:not([hidden])');
+    await p.fill('#f-pname', 'Alice'); await p.click('#f-psave');
+    await p.waitForSelector('.pchip');
+    ok(/Alice/.test(await p.textContent('.people')), 'a name saved for an 0x address shows as a chip');
+    await p.fill('#f-amt', '0.002');
+    await p.waitForFunction(() => /Pay Alice now/.test(document.querySelector('#f-go').textContent), null, { timeout: 300e3 });
+    await p.waitForSelector('#f-later:not([hidden])', { timeout: 300e3 });
+    ok(/since yours/.test(await p.textContent('.pv')), `the privacy check asks to wait: ${(await text(p, '.pv')).slice(0, 120)}`);
+    await p.click('#f-later');
+    await p.waitForSelector('#due:not([hidden]) [data-due]');
+    const dueText = await text(p, '#due');
+    ok(/Pay Alice/.test(dueText) && /0\.002 ETH/.test(dueText) && /of 5 deposits by others since yours/.test(dueText), `held until it blends in: ${dueText.slice(0, 160)}`);
+    await p.waitForSelector('#due [data-due]:not([disabled])', { timeout: 300e3 });
+    await press(p, '#due [data-due]', /Paid Alice/);
+    ok(/Paid Alice 0\.002 ETH/.test(await p.textContent('#status')), `paid from the card, relayed: ${await text(p, '#status')}`);
+    ok(await balOf(ALICE) - alice0 === 2n * 10n ** 15n, 'Alice’s address received exactly 0.002 ETH');
+    ok(await p.$eval('#due', (e) => e.hidden), 'the card is gone once paid');
+
+    // Short of private ETH: one press deposits a round amount, and the payment waits for it.
+    const BOB = '0x' + '55'.repeat(20);
+    await p.fill('#f-to', BOB); await p.fill('#f-amt', '0.02');
+    await p.waitForFunction(() => /Deposit .* ETH, pay later/.test(document.querySelector('#f-go').textContent), null, { timeout: 120e3 });
+    ok(/Deposit 0\.025 ETH, pay later/.test(await p.textContent('#f-go')), `a short balance offers a round deposit: ${await text(p, '#f-go')}`);
+    await press(p, '#f-go', /Deposited/);
+    ok(/waits above/.test(await p.textContent('#status')) && /Pay 0x5555…5555/.test(await text(p, '#due')), `deposited, payment held: ${await text(p, '#status')}`);
+    await p.click('#due [data-undue]');
+    ok(await p.$eval('#due', (e) => e.hidden), 'a held payment can be cancelled');
+
+    // Pay by link: a keyless recipient takes it to their address.
+    const makeLink = async (amount, note) => {
+      if (!(await p.$('#f-byaddr'))) await p.click('#f-bylink');
+      await p.waitForFunction(() => !/Reading your past links/.test(document.querySelector('#f-rcpt').textContent), null, { timeout: 900e3 });
+      await p.fill('#f-gamt', amount); await p.fill('#f-gfor', note);
+      await p.waitForSelector('#f-go:not([disabled])', { timeout: 120e3 });
+      await press(p, '#f-go', /link is ready/);
+      ok(/link is ready/.test(await p.textContent('#status')), `link made for ${amount} ETH: ${await text(p, '#status')}`);
+      return (await p.textContent('.glink code')).trim();
+    };
+    const link1 = await makeLink('0.003', 'fork gift');
+    ok(/#gift=[0-9a-f]{64}&chain=base&for=fork\+gift$/.test(link1), 'the link carries its key, the chain and the note');
+    const CAROL = '0x' + '66'.repeat(20), carol0 = await balOf(CAROL);
+    {
+      const r = await page(browser, { init: init.replace("localStorage.setItem('tacit-pay-chain-v1', '8453');", ''), route });
+      await r.p.goto(link1.replace(/^https?:\/\/[^/]+/, new URL(URL_).origin));
+      await r.p.waitForFunction(() => !!document.querySelector('#gift-take') && /came with the link/.test(document.querySelector('#gift').textContent), null, { timeout: 300e3 });
+      ok(/fork gift/.test(await r.p.textContent('#gift')) && /Base/.test(await r.p.textContent('#gift')), `the link opens with its amount and note: ${(await text(r.p, '#gift')).slice(0, 100)}`);
+      await r.p.fill('#gift-to', CAROL);
+      await r.p.click('#gift-take');
+      await r.p.waitForFunction(() => /Sent to 0x/.test(document.querySelector('#gift').textContent) || document.querySelector('#gift-status .err'), null, { timeout: 900e3 });
+      ok(/Sent to 0x6666…6666/.test(await r.p.textContent('#gift')), `taken by a keyless recipient, relayed: ${await text(r.p, '#gift-status') || (await text(r.p, '#gift')).slice(0, 100)}`);
+      { const got = await balOf(CAROL) - carol0; ok(got > 29n * 10n ** 14n && got <= 31n * 10n ** 14n, `they got what was sent, the relay’s fee having ridden in the link: ${Number(got) / 1e18} ETH`); }
+      await r.p.goto(link1.replace(/^https?:\/\/[^/]+/, new URL(URL_).origin));
+      await r.p.waitForFunction(() => /Empty/.test(document.querySelector('#gift').textContent), null, { timeout: 300e3 });
+      ok(true, 'the link, opened again, says it is empty');
+      ok(!r.errors.length, `recipient page: no page errors ${r.errors.join(' | ')}`);
+      await r.ctx.close();
+    }
+    // Another link, taken into someone's own private balance; a third, taken back.
+    const link2 = await makeLink('0.001', '');
+    {
+      const r = await page(browser, { init, route });
+      await r.p.goto(link2.replace(/^https?:\/\/[^/]+/, new URL(URL_).origin));
+      await r.p.waitForSelector('#gift-keep:not([disabled])', { timeout: 300e3 }).catch(async (e) => { console.log('    ' + await text(r.p, '#gift')); throw e; });
+      await openKey(r.p, other);
+      await r.p.click('#gift-keep');
+      await r.p.waitForFunction(() => /In your private balance/.test(document.querySelector('#gift').textContent) || document.querySelector('#gift-status .err'), null, { timeout: 900e3 });
+      ok(/In your private balance/.test(await r.p.textContent('#gift')), `kept private by a Tacit user: ${await text(r.p, '#gift-status') || (await text(r.p, '#gift')).slice(0, 80)}`);
+      await r.ctx.close();
+    }
+    await makeLink('0.0015', 'back');
+    await p.waitForSelector('[data-gback]', { timeout: 300e3 });
+    const backs = await p.$$('[data-gback]');
+    await p.evaluate(() => { document.querySelector('#status').textContent = ''; });
+    await backs[0].click();
+    await waitStatus(p, /Taken back/);
+    ok(/Taken back into your private balance/.test(await p.textContent('#status')), `a link taken back: ${await text(p, '#status')}`);
+    // The links, found again from the key alone: this browser's own record of them wiped, history rebuilt.
+    await p.evaluate(() => { for (const k of Object.keys(localStorage)) if (/^tacit-pay-gifts-v1:/.test(k)) localStorage.removeItem(k); });
+    await p.evaluate(() => { const d = document.querySelector('details.adv'); d.open = true; d.dispatchEvent(new Event('toggle')); });
+    await p.click('#rc-go');
+    await p.waitForFunction(() => document.querySelectorAll('.gl li').length >= 3 && !/rebuilding/.test(document.querySelector('#recover-at').textContent), null, { timeout: 900e3 }).catch(() => {});
+    const links = await p.$$eval('.gl li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
+    console.log('    ' + links.join('\n    '));
+    ok(links.length === 3 && links.filter((l) => /· taken$/.test(l)).length === 2 && links.some((l) => /taken back$/.test(l)), 'every link found again from the key, with what became of it');
+    const rows = await p.$$eval('.rows li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
+    ok(rows.filter((r) => /^Sent by link/.test(r)).length === 3 && rows.some((r) => /^Took back a link/.test(r)), `activity names the links: ${rows.filter((r) => /link/.test(r)).join(' | ').slice(0, 200)}`);
+    await shot(p, 'anyone-after');
+    ok(!errors.length, `no page errors ${errors.join(' | ')}`);
+    await ctx.close();
+    keeper.kill('SIGKILL'); anvil.kill('SIGKILL');
   }
 } finally {
   await browser.close();
