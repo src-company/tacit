@@ -3150,9 +3150,18 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     if (!pol || !meta) return staticFloor;
     let gwei; try { gwei = BigInt((await rpc('eth_gasPrice', [])) || '0'); } catch { return staticFloor; }
     if (gwei <= 0n) return staticFloor;
-    // 1.35x margin: minutes pass between quoting this and the settle landing, and the base fee can climb
-    // materially in that window.
-    const costWei = ((SETTLE_GAS[opKind] || 500000n) * gwei + PROVE_COST_WEI) * 135n / 100n;
+    // Margin for the gas the settle actually pays, which is not the gas quoted here: minutes pass, and the
+    // base fee can climb in that window. A flat multiplier is the wrong shape when gas is cheap — 1.35x of
+    // 0.12 gwei is 0.16, and an ordinary drift to 0.4 leaves the relay short — so the quote also carries a
+    // fixed absolute headroom. The headroom dominates below ~0.86 gwei and vanishes into the multiplier
+    // above it, so ordinary conditions price exactly as they did before.
+    // POLICY KNOB: headroom is how far the base fee may climb before the settle lands. Raising it protects
+    // the relay and overcharges the calm case. It cannot be recovered afterwards — the fee is committed in
+    // the proof, so a quote that turns out short is simply absorbed.
+    const DRIFT_HEADROOM_WEI = 300000000n; // 0.3 gwei
+    const margin = gwei * 135n / 100n;
+    const quoteGwei = margin > gwei + DRIFT_HEADROOM_WEI ? margin : gwei + DRIFT_HEADROOM_WEI;
+    const costWei = (SETTLE_GAS[opKind] || 500000n) * quoteGwei + PROVE_COST_WEI * 135n / 100n;
     let floor;
     if (pol.usd === 'eth') {
       floor = _ladderFee(costWei / _unitScaleOf(ticker));
