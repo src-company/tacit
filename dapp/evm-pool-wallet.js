@@ -714,6 +714,17 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       return h;
     },
 
+    // Deposits `amount` wei from the signer straight into a private note for someone else's pool address (bp1…),
+    // proved here and sent by the signer: the deposit (its sender and amount) shows on chain, whom it pays does not;
+    // the recipient finds it by its memo. → tx hash.
+    async depositTo({ to, amount, onStep = () => {} }) {
+      const recipient = recipientOf(keys, to);
+      const a = BigInt(amount);
+      if (a <= 0n) throw new Error('enter an amount');
+      await sync();
+      return transact({ ins: [], outs: [{ to: recipient, value: a }, null], extAmount: a, onStep });
+    },
+
     // Sweeps a receive box (the private ETH address by default) into a note here, submitted by the signer: no fee,
     // any amount. → tx hash.
     async sweep({ index = RECEIVE_INDEX, onStep = () => {} } = {}) {

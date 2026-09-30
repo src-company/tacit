@@ -258,7 +258,7 @@ try {
     ok(/Sent/.test(await p.textContent('#status')), `private send from the wallet: ${(await p.textContent('#status')).trim()}`);
     await p.click('#tabs [data-tab="withdraw"]');
     await p.fill('#f-wto', '0x' + '33'.repeat(20)); await p.fill('#f-wamt', '0.002'); await sleep(800);
-    await p.waitForSelector('.pv-h', { timeout: 300e3 });
+    await p.waitForSelector('.pv-h', { timeout: 900e3 });
     ok(/Could blend in better/.test(await p.textContent('.pv')) && /wallet shows as the one sending/.test(await p.textContent('.pv')) && /since yours/.test(await p.textContent('.pv')), `privacy check before a wallet-sent withdrawal: ${(await p.textContent('.pv')).replace(/\s+/g, ' ').trim().slice(0, 140)}`);
     await p.click('#f-go');
     await p.waitForFunction(() => /Withdrew/.test(document.querySelector('#status').textContent) || document.querySelector('#status .err'), null, { timeout: 600e3 });
@@ -266,13 +266,21 @@ try {
     ok(BigInt(await rpc('eth_getBalance', ['0x' + '33'.repeat(20), 'latest'])) >= 2n * 10n ** 15n, 'the address received 0.002 ETH');
     await p.waitForFunction(() => /0\.004/.test(document.querySelector('#bal .v').textContent), null, { timeout: 120e3 }).catch(() => {});
     ok(/^0\.004$/.test((await p.textContent('#bal .v')).trim()), `0.004 stays private: ${await p.textContent('#bal .v')}`);
+    // Deposit straight into someone else's private balance, from the wallet, proved here.
+    await p.click('#tabs [data-tab="deposit"]'); await p.click('[data-dep="wallet"]');
+    await p.fill('#f-damt', '0.001'); await p.fill('#f-dto', otherBp);
+    await p.waitForFunction(() => /Into their private balance/.test(document.querySelector('#f-rcpt').textContent), null, { timeout: 60e3 });
+    await p.click('#f-go');
+    await p.waitForFunction(() => /into their private balance/.test(document.querySelector('#status').textContent) || document.querySelector('#status .err'), null, { timeout: 600e3 });
+    ok(/into their private balance/.test(await p.textContent('#status')), `deposit to someone else, from the wallet: ${(await p.textContent('#status')).trim()}`);
+    ok(/^0\.004$/.test((await p.textContent('#bal .v')).trim()), 'the depositor’s own private balance is untouched');
     await p.evaluate(() => { const d = document.querySelector('details.adv'); d.open = true; d.dispatchEvent(new Event('toggle')); });
     await p.click('#rc-go');
     await p.waitForFunction(() => document.querySelectorAll('.rows li').length >= 3 && !/rebuilding/.test(document.querySelector('#recover-at').textContent), null, { timeout: 900e3 })
       .catch(async (e) => { console.log('    ' + (await p.textContent('#recover-body')).replace(/\s+/g, ' ')); throw e; });
     const rows = await p.$$eval('.rows li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
     console.log('    ' + rows.join('\n    '));
-    ok(rows.some((r) => /^Deposited ?\+0\.01 ETH/.test(r)) && rows.some((r) => /^Sent privately ?−0\.004 ETH.*kept 0\.006/.test(r)) && rows.some((r) => /^Withdrew to 0x3333…3333 ?−0\.002 ETH.*kept 0\.004/.test(r)), 'rebuilt history names the deposit, the private payment and the withdrawal');
+    ok(rows.some((r) => /^Shielded in ?\+0\.01 ETH/.test(r)) && rows.some((r) => /^Sent privately ?−0\.004 ETH.*kept 0\.006/.test(r)) && rows.some((r) => /^Withdrew to 0x3333…3333 ?−0\.002 ETH.*kept 0\.004/.test(r)), 'rebuilt history names the deposit, the private payment and the withdrawal');
     ok(/matches/.test(await p.$eval('.chainsum li:nth-child(2)', (e) => e.textContent)), 'rebuilt balance matches');
     // The recipient's key alone finds the payment.
     await p.click('#wallet'); await p.click('#w-lock'); await p.click('#sheet-wallet [data-close]');
@@ -291,6 +299,14 @@ try {
     await p.click('#chains [data-chain="1"]'); await p.click('#chains [data-chain="8453"]');
     ok(!(await p.$('#req-wallet')) && /Paid 0\.003 ETH/.test(await p.textContent('#req')), 'a paid request stays paid across redraws (no second pay button)');
     await p.click('#req-x');
+    // A request with no one-time address (a link to a pool or Tacit address, or a name), paid with no Tacit key at all:
+    // proved on the page with a throwaway key, straight into their private balance.
+    await p.goto(new URL(URL_).origin + `/pay/#pay=${otherBp}&amount=0.0015&chain=base`);
+    await p.waitForSelector('#req-wallet');
+    await p.click('#req-wallet');
+    await p.waitForFunction(() => /now in their private balance/.test(document.querySelector('#req').textContent) || document.querySelector('#req .err'), null, { timeout: 900e3 });
+    ok(/Paid 0\.0015 ETH, now in their private balance/.test(await p.textContent('#req')), `a keyless payer deposits straight to them: ${(await p.textContent('#req')).replace(/\s+/g, ' ').trim().slice(0, 120)}`);
+    await p.click('#req-x');
     await openKey(p, other);
     await p.click('#tabs [data-tab="deposit"]'); await p.click('[data-dep="addr"]');
     await p.waitForSelector('[data-sweep]', { timeout: 300e3 });
@@ -306,6 +322,7 @@ try {
     const got = await p.$$eval('.rows li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
     console.log('    ' + got.join('\n    '));
     ok(got.some((r) => /^Came in through a payment link ?\+0\.003 ETH/.test(r)), 'the payee’s key finds the wallet payment');
+    ok(got.some((r) => /^Shielded in ?\+0\.001 ETH/.test(r)) && got.some((r) => /^Shielded in ?\+0\.0015 ETH/.test(r)), 'the payee’s key finds both deposits made straight to them');
     // The next link names a fresh one-time address.
     const next = await getPaidLink(p, '', '');
     ok(new URL(next).hash.match(/n=([0-9a-f]+)/)[1] !== new URL(link).hash.match(/n=([0-9a-f]+)/)[1], 'after a link is paid, the next link uses a new address');

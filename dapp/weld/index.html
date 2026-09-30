@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-qyJ+ccBAG+k6Oeltgmq1JANrtCNLbz7a5HeCl+dfdjo=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-08tPgEbWrkvAXNo8waaBU+EttalzbN1ol29P2+pxSsQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -2550,7 +2550,7 @@ function v1Out(el, status) {
 const DEV = { chain: DEVICE_CHAINS.find((c) => c.chainId === store.get('tacit-lite-device-chain')) || DEVICE_CHAINS[1], mode: 'deposit', dest: 'addr', W: null, bal: null, key: null, quote: null, err: null };
 const getDeviceMods = lazy(async () => {
   const [zkm, wm, pm, pos] = await Promise.all([
-    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=b3166a8c'), import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
+    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=a064c735'), import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
   ]);
   const PO = { 2: pos.poseidon2, 3: pos.poseidon3, 4: pos.poseidon4, 5: pos.poseidon5, 7: pos.poseidon7 };
   return { zk: zkm.makeEvmPoolZk({ poseidon: (xs) => PO[xs.length](xs) }), ...wm, vkHash: pm.vkHash };
@@ -2664,6 +2664,21 @@ function deviceSync(fresh = false) {
   }).finally(() => { if (DEV.syncing === p) DEV.syncing = null; });
   return p;
 }
+// A pool recipient as typed: a tacit1… address carrying the pool lane, or a .wei, .gwei or .eth name whose record does.
+// → { bp, label } or { error }. One from before the pool lane can be paid only from the Tacit pool tab.
+async function devResolve(raw) {
+  const lo = raw.toLowerCase();
+  if (/^tacit1/.test(lo)) {
+    let d;
+    try { d = decodeTacitAddress(lo); } catch { return { error: 'Not a valid Tacit address.' }; }
+    if (d.network !== 'mainnet') return { error: 'That Tacit address is for a test network.' };
+    return d.lanes.pool ? { bp: d.lanes.pool.poolAddress, label: short(lo, 8) } : { error: 'This Tacit address is from before pool payments, so it can’t receive in this pool yet. Pay it from the Tacit pool tab instead.' };
+  }
+  let r;
+  try { r = await (await getNames()).resolveName(lo); } catch (e) { return { error: e.message }; }
+  return r.pool ? { bp: r.pool, label: r.name } : { error: `${r.name} points to a Tacit address from before pool payments, so it can’t receive in this pool yet. Pay it from the Tacit pool tab instead.` };
+}
+
 function renderDevice(el) {
   if (!needKey(el, 'Private ETH on Ethereum, Base and Robinhood Chain, proved here in your browser. Open your Tacit wallet to start.')) return;
   const c = DEV.chain, W = DEV.W && DEV.key === S.key.pubHex + c.chainId ? DEV.W : null;
@@ -2698,21 +2713,33 @@ function renderDevice(el) {
   const wireMax = () => $('#d-maxp')?.addEventListener('click', () => { const fe = BigInt(DEV.quote?.fee || 0), v = DEV.bal > fe ? DEV.bal - fe : 0n, amt = $('#d-amt'); amt.value = v ? plain(v, 18) : ''; amt.dispatchEvent(new Event('input')); });
   if (DEV.mode === 'deposit') {
     mount(f, html`${amountField('d-amt', 'Amount', html`<button type="button" id="d-max">${payName()} <span id="d-wb"><span class="sk" style="--w:5ch"></span></span> ETH</button>`)}
+      <div class="lbl"><span>To</span><span>yourself, unless you name someone</span></div>
+      <div class="amt text"><input id="d-dto" placeholder="Yourself · or bp1…, tacit1… or name.wei" autocomplete="off" spellcheck="false" aria-label="Deposit to"></div>
       <div class="rcpt" id="d-rcpt" hidden></div>
       <button class="btn" type="button" id="d-go" disabled>Deposit privately</button>
-      <p class="note">Proved on this device, then sent from ${your()}: you pay the gas, no fee.</p>`);
+      <p class="note">Proved on this device, then sent from ${your()}: you pay the gas, no fee. The deposit shows on chain; whose private balance it lands in does not.</p>`);
     let wb = null;
-    const amt = $('#d-amt'), go = $('#d-go'), rc = $('#d-rcpt');
+    const amt = $('#d-amt'), go = $('#d-go'), rc = $('#d-rcpt'), toEl = $('#d-dto'), dsv = { raw: '', r: null };
     const rpcOf = async () => (await getDeviceMods()).jsonRpc(c.rpc);
     rpcOf().then((r) => r('eth_getBalance', [S.address, 'latest'])).then((b) => { wb = BigInt(b); $('#d-wb').textContent = fmt(wb, 18, 4); check(); }).catch(() => { const e = $('#d-wb'); if (e) e.textContent = '—'; });
     const check = () => {
-      const amount = parseUnits(amt.value);
-      go.disabled = true; rc.hidden = true;
+      const amount = parseUnits(amt.value), raw = toEl.value.trim();
+      if (raw && dsv.raw !== raw) {
+        dsv.raw = raw; dsv.r = null;
+        (/^bp1/i.test(raw) ? Promise.resolve({ bp: raw }) : /^tacit1/i.test(raw) || /\.(g?wei|eth)$/i.test(raw) ? devResolve(raw) : Promise.resolve({ error: 'Enter a pool address (bp1…), a Tacit address or a name, or leave it empty for yourself.' }))
+          .then((r) => { if (dsv.raw === raw) { dsv.r = r; check(); } });
+      }
+      go.disabled = true; rc.hidden = true; mount(rc, html``);
+      go.textContent = raw && dsv.r?.bp ? 'Deposit to them privately' : 'Deposit privately';
+      if (raw && !dsv.r) { mount(rc, html`<p class="note">Looking it up…</p>`); rc.hidden = false; return; }
+      if (raw && dsv.r.error) { warn(rc, dsv.r.error); return; }
       if (!amount) return;
       const over = wb != null && amount > wb;
       go.disabled = over;
-      if (over) warn(rc, 'More than your wallet balance.'); else mount(rc, html``);
+      if (over) warn(rc, 'More than your wallet balance.');
+      else if (raw) { mount(rc, html`<div class="kv"><span>To</span><b>${dsv.r.label ? `${dsv.r.label} → ` : ''}${short(dsv.r.bp, 8)}</b></div>`); rc.hidden = false; }
     };
+    toEl.addEventListener('input', check);
     $('#d-max').onclick = () => { if (wb != null) { const v = wb > 3n * 10n ** 15n ? wb - 3n * 10n ** 15n : 0n; amt.value = v ? plain(v, 18) : ''; amt.dispatchEvent(new Event('input')); } };
     amt.addEventListener('input', check); check();                              // synchronous: no network in this check
     amt.addEventListener('focus', warm, { once: true });
@@ -2720,11 +2747,19 @@ function renderDevice(el) {
       try {
         const amount = parseUnits(amt.value);
         if (!amount) throw new Error('Enter an amount.');
+        const raw = toEl.value.trim();
+        let to = null;
+        if (raw) {                                                                  // looked up again as it is sent, and must still point where it was shown
+          const r = /^bp1/i.test(raw) ? { bp: raw } : await devResolve(raw);
+          if (r.error) throw new Error(r.error);
+          if (r.bp !== dsv.r?.bp) throw new Error('Where that address or name points changed. Check it and deposit again.');
+          to = r.bp;
+        }
         const W2 = await deviceWallet();
-        await payingAccount(); W2.connect(payFrom(c.chainId, `Deposit ${fmt(amount, 18, 6)} ETH on this device${c.chainId === 1 ? '' : `, on ${c.name}`}`));
-        const h = await W2.deposit({ amount, onStep: step });
+        await payingAccount(); W2.connect(payFrom(c.chainId, `Deposit ${fmt(amount, 18, 6)} ETH${to ? ' to someone else’s private balance' : ''} on this device${c.chainId === 1 ? '' : `, on ${c.name}`}`));
+        const h = to ? await W2.depositTo({ to, amount, onStep: step }) : await W2.deposit({ amount, onStep: step });
         clearField(amt); rc.hidden = true;
-        afterAction(html`<span class="ok">Deposited.</span> ${explorer(h)}`);
+        afterAction(html`<span class="ok">${to ? 'Deposited into their private balance.' : 'Deposited.'}</span> ${explorer(h)}`);
       } catch (e) { sayErr(status, e); }
     });
   } else if (DEV.mode === 'send') {
@@ -2733,18 +2768,7 @@ function renderDevice(el) {
     // address from before the pool lane cannot be paid in this pool, only from the Tacit pool tab.
     const kind = (v) => (/^0x[0-9a-fA-F]{40}$/.test(v) ? 'addr' : /^bp1/i.test(v) ? 'pool' : /^tacit1/i.test(v) || /^[^\s]+\.(g?wei|eth)$/i.test(v) ? 'uni' : '');
     const rsv = { raw: '', r: null };
-    const resolve = async (raw) => {
-      const lo = raw.toLowerCase();
-      if (/^tacit1/.test(lo)) {
-        let d;
-        try { d = decodeTacitAddress(lo); } catch { return { error: 'Not a valid Tacit address.' }; }
-        if (d.network !== 'mainnet') return { error: 'That Tacit address is for a test network.' };
-        return d.lanes.pool ? { bp: d.lanes.pool.poolAddress, label: short(lo, 8) } : { error: 'This Tacit address is from before pool payments, so it can’t receive in this pool yet. Pay it from the Tacit pool tab instead.' };
-      }
-      let r;
-      try { r = await (await getNames()).resolveName(lo); } catch (e) { return { error: e.message }; }
-      return r.pool ? { bp: r.pool, label: r.name } : { error: `${r.name} points to a Tacit address from before pool payments, so it can’t receive in this pool yet. Pay it from the Tacit pool tab instead.` };
-    };
+    const resolve = devResolve;
     mount(f, html`<div class="lbl"><span>To</span></div>
       <div class="amt text"><input id="d-to" placeholder="bp1…, tacit1…, name.wei or 0x…" autocomplete="off" spellcheck="false" aria-label="Recipient"></div>
       <p class="note" id="d-to-note"></p>
