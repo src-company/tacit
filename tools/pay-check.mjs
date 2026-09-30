@@ -228,7 +228,7 @@ try {
     await p.click('#rc-chain');
     await p.evaluate(() => document.querySelector('#wallet-label').click()); await p.click('#w-conn'); await p.click('#sheet-wallet [data-close]');
     await p.click('#tabs [data-tab="deposit"]');
-    await p.fill('#f-amt', '0.01');
+    await p.fill('#f-damt', '0.01');
     const t0 = Date.now();
     await p.click('#f-go');
     await p.waitForFunction(() => /Deposited/.test(document.querySelector('#status').textContent) || document.querySelector('#status .err'), null, { timeout: 600e3 });
@@ -267,8 +267,10 @@ try {
     await p.goto(link.replace(/^https?:\/\/[^/]+/, new URL(URL_).origin));
     await p.waitForSelector('#req-wallet');
     await p.click('#req-wallet');
-    await p.waitForFunction(() => /Paid/.test(document.querySelector('#req-status').textContent) || document.querySelector('#req-status .err'), null, { timeout: 120e3 });
-    ok(/Paid 0\.003 ETH/.test(await p.textContent('#req-status')), `paid from a wallet, no Tacit key: ${(await p.textContent('#req-status')).trim()}`);
+    await p.waitForFunction(() => /Moving into their private balance|now in their/.test(document.querySelector('#req').textContent) || document.querySelector('#req .err'), null, { timeout: 180e3 });
+    ok(/Paid 0\.003 ETH/.test(await p.textContent('#req')), `paid from a wallet, no Tacit key: ${(await p.textContent('#req')).replace(/\s+/g, ' ').trim()}`);
+    await p.click('#chains [data-chain="1"]'); await p.click('#chains [data-chain="8453"]');
+    ok(!(await p.$('#req-wallet')) && /Paid 0\.003 ETH/.test(await p.textContent('#req')), 'a paid request stays paid across redraws (no second pay button)');
     await p.click('#req-x');
     await openKey(p, other);
     await p.click('#tabs [data-tab="deposit"]'); await p.click('[data-dep="addr"]');
