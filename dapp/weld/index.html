@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-08tPgEbWrkvAXNo8waaBU+EttalzbN1ol29P2+pxSsQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-wxgQbEpsPRqyJymkw9lJbKLZmViT2XH9WAxO5/wtjsc=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -133,6 +133,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .di { display: flex; flex-direction: column; gap: 3px; width: 100%; min-height: 86px; padding: 12px 14px; text-align: left; cursor: pointer;
   background: var(--card); border: 1px solid var(--hair); transition: border-color .15s, box-shadow .15s; }
 .di:hover { border-color: var(--ink); box-shadow: var(--lift); }
+a.di { color: inherit; text-decoration: none; }
 .di-k { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--mute); letter-spacing: .02em; }
 .di-k .tk { width: 18px; height: 18px; }
 .di-k .dot { margin-left: auto; }
@@ -2550,7 +2551,7 @@ function v1Out(el, status) {
 const DEV = { chain: DEVICE_CHAINS.find((c) => c.chainId === store.get('tacit-lite-device-chain')) || DEVICE_CHAINS[1], mode: 'deposit', dest: 'addr', W: null, bal: null, key: null, quote: null, err: null };
 const getDeviceMods = lazy(async () => {
   const [zkm, wm, pm, pos] = await Promise.all([
-    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=a064c735'), import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
+    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=483900e7'), import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
   ]);
   const PO = { 2: pos.poseidon2, 3: pos.poseidon3, 4: pos.poseidon4, 5: pos.poseidon5, 7: pos.poseidon7 };
   return { zk: zkm.makeEvmPoolZk({ poseidon: (xs) => PO[xs.length](xs) }), ...wm, vkHash: pm.vkHash };
@@ -2663,6 +2664,33 @@ function deviceSync(fresh = false) {
     }
   }).finally(() => { if (DEV.syncing === p) DEV.syncing = null; });
   return p;
+}
+// Your Tacit reads this key's private ETH on every chain, not only the one the device sheet shows: each chain's
+// balance is synced from the key and kept where the sheet keeps it. Secret Sats, the Bitcoin pool, holds this key's
+// TAC and cBTC under a wallet derived from the same key, read from the pool's public note feed.
+const HELD = { pub: null, at: 0, loading: null, sats: null, satsErr: false };
+function loadHeld(force = false) {
+  const pub = S.key?.pubHex;
+  if (!pub) return Promise.resolve();
+  if (HELD.pub !== pub) Object.assign(HELD, { pub, at: 0, loading: null, sats: null, satsErr: false });
+  if (HELD.loading) return HELD.loading;
+  if (!force && Date.now() - HELD.at < 5 * 60e3) return Promise.resolve();
+  const priv = walletPriv(), kv = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+  const chains = DEVICE_CHAINS.map(async (c) => {
+    if (c.chainId === DEV.chain.chainId) return deviceSync();
+    const m = await getDeviceMods();
+    const W = m.makeEvmPoolWallet({ zk: m.zk, keys: m.evmPoolKeys(m.zk, priv), keeper: c.keeper, store: kv, prove: null,
+      chain: { chainId: c.chainId, pool: EVM_POOL, router: EVM_ROUTER, rpc: m.jsonRpc(c.rpc), deployBlock: c.deployBlock, confirmations: c.confirmations } });
+    const s = await W.sync();
+    if (S.key?.pubHex === pub) { store.set(`tacit-lite-device-bal-v1:${c.chainId}:${pub}`, { v: s.balance.toString(), at: Date.now() }); dashSoon(); }
+  });
+  const sats = (async () => {
+    const X = await import('/sats/secret.js?cb=696162eb');
+    const notes = (await X.poolNotes(X.poolWalletFor(priv, 'mainnet'))).filter((n) => !n.spent);
+    const held = X.livePoolAssets().map((a) => ({ ...a, value: notes.filter((n) => strip(n.asset).toLowerCase() === a.id).reduce((t, n) => t + BigInt(n.value), 0n) }));
+    if (S.key?.pubHex === pub) { HELD.sats = held; HELD.satsErr = false; dashSoon(); }
+  })().catch(() => { if (S.key?.pubHex === pub) { HELD.satsErr = true; dashSoon(); } });
+  return (HELD.loading = Promise.allSettled([...chains, sats]).then(() => { if (HELD.pub === pub) HELD.at = Date.now(); }).finally(() => { if (HELD.pub === pub) HELD.loading = null; }));
 }
 // A pool recipient as typed: a tacit1… address carrying the pool lane, or a .wei, .gwei or .eth name whose record does.
 // → { bp, label } or { error }. One from before the pool lane can be paid only from the Tacit pool tab.
@@ -4873,8 +4901,9 @@ function dashItems() {
   if (k) {
     out.push({ key: 'teth', icon: 'tk-teth', label: 'tETH', dec: 8, max: 6, v: s ? s.eth.value : null, err: scanErr, meta: 'private', open: 'private', core: true });
     let dev = null;
-    for (const c of DEVICE_CHAINS) { const v = big(store.get(`tacit-lite-device-bal-v1:${c.chainId}:${k}`)?.v); if (v != null) dev = (dev || 0n) + v; }
-    out.push({ key: 'dev', icon: 'tk-eth', label: 'ETH', dec: 18, max: 5, v: dev, meta: 'private on this device', open: 'device', show: dev > 0n });
+    const on = [];
+    for (const c of DEVICE_CHAINS) { const v = big(store.get(`tacit-lite-device-bal-v1:${c.chainId}:${k}`)?.v); if (v != null) { dev = (dev || 0n) + v; if (v > 0n) on.push(c.name); } }
+    out.push({ key: 'dev', icon: 'tk-eth', label: 'ETH', dec: 18, max: 5, v: dev, meta: on.length ? `private on ${on.join(', ')}` : 'private', open: 'device', show: dev > 0n });
   }
   const who = [...new Set([S.wallet, S.acct?.address].filter(Boolean).map((a) => a.toLowerCase()))].join();
   const pubTac = who && TACB.who === who ? TACB.erc : null, privTac = k ? (s ? s.tac.value * E10 : null) : 0n;
@@ -4884,6 +4913,10 @@ function dashItems() {
     const b = BTC.pub === k ? BTC : null, tacB = b?.held.find((a) => a.id === TAC_BTC_ID), lk = LOCKNOTE.pub === k ? LOCKNOTE : null;
     out.push({ key: 'btc', icon: 'tk-btc', label: 'BTC', dec: 8, max: 6, v: b ? b.sats + b.silent : null, lazy: true, open: 'btc', show: !!b && (b.sats + b.silent > 0n || !!tacB),
       meta: tacB ? `and ${fmt(tacB.balance, tacB.decimals, 2)} TAC on Bitcoin` : b ? 'at your Bitcoin address' : 'open to read' });
+    // Secret Sats: each asset this key holds in the Bitcoin pool, opening the page that spends it.
+    const sats = HELD.pub === k ? HELD.sats : null;
+    for (const a of sats || []) out.push({ key: `sats-${a.ticker.toLowerCase()}`, icon: a.ticker === 'TAC' ? 'tk-tac' : 'tk-cbtc', label: a.ticker, dec: a.decimals, max: a.ticker === 'TAC' ? 2 : 6,
+      v: a.value, meta: 'Secret Sats, private on Bitcoin', href: a.ticker === 'TAC' ? '/tac/' : '/sats/', show: a.value > 0n });
     const cb = s ? s.cbtc.notes.reduce((a, n) => a + BigInt(n.value), 0n) : null;
     out.push({ key: 'cbtc', icon: 'tk-cbtc', label: 'cBTC', dec: 8, max: 6, v: cb, err: scanErr, meta: lk?.text || 'private', open: 'borrow', show: cb > 0n || !!lk?.text });
     out.push({ key: 'cusd', icon: 'tk-cusd', label: 'cUSD', dec: 8, max: 2, v: s ? s.cusd.value : null, err: scanErr, open: 'borrow', show: s?.cusd.value > 0n || !!lk?.borrowed,
@@ -4930,9 +4963,10 @@ function paintDash() {
     if (it.v != null) DASH.cur[it.key] = it.num ? String(Math.round(it.v)) : String(it.v);
     const value = it.v != null ? html`${show(it.v)}${it.unit ? html` <small>${it.unit}</small>` : ''}` : prev != null && !it.err ? html`<span class="stale">${show(prev)}</span>`
       : it.err || it.lazy ? '—' : html`<span class="sk" style="--w:7ch"></span>`;
-    return html`<li><button class="di" type="button" ${it.asset ? html`data-asset="${it.asset}"` : html`data-dash-open="${it.open}"`}>
-      <span class="di-k"><svg class="tk" aria-hidden="true"><use href="#${it.icon}"/></svg>${it.label}${it.live ? html`<span class="dot live"></span>` : ''}</span>
-      <span class="di-v num">${value}</span><span class="di-m">${delta}${it.err ? 'could not read · open to retry' : it.meta || (it.v == null ? html`<span class="sk" style="--w:12ch"></span>` : '')}</span></button></li>`;
+    const body = html`<span class="di-k"><svg class="tk" aria-hidden="true"><use href="#${it.icon}"/></svg>${it.label}${it.live ? html`<span class="dot live"></span>` : ''}</span>
+      <span class="di-v num">${value}</span><span class="di-m">${delta}${it.err ? 'could not read · open to retry' : it.meta || (it.v == null ? html`<span class="sk" style="--w:12ch"></span>` : '')}</span>`;
+    return it.href ? html`<li><a class="di" href="${it.href}">${body}</a></li>`
+      : html`<li><button class="di" type="button" ${it.asset ? html`data-asset="${it.asset}"` : html`data-dash-open="${it.open}"`}>${body}</button></li>`;
   };
   const items = dashItems().filter((it) => it.core || it.show || Number(base[it.key]?.v || 0) > 0);
   const due = [];
@@ -4990,6 +5024,7 @@ function refreshAll() {
   paintPrivateFeet(); paintBtcFoot(); paintPointsFoot();
   if (S.wallet || S.key) loadPoints(true).then(() => rerender('pts')).catch(() => {});
   if (T && S.key) loadBtc().then(() => rerender('btc')).catch(() => {});
+  if (S.key) loadHeld().catch(() => {});
   for (const n of SHEETS) rerender(n);
   dashSoon();
 }

@@ -282,6 +282,18 @@ try {
     console.log('    ' + rows.join('\n    '));
     ok(rows.some((r) => /^Shielded in ?\+0\.01 ETH/.test(r)) && rows.some((r) => /^Sent privately ?−0\.004 ETH.*kept 0\.006/.test(r)) && rows.some((r) => /^Withdrew to 0x3333…3333 ?−0\.002 ETH.*kept 0\.004/.test(r)), 'rebuilt history names the deposit, the private payment and the withdrawal');
     ok(/matches/.test(await p.$eval('.chainsum li:nth-child(2)', (e) => e.textContent)), 'rebuilt balance matches');
+    // The sender proves the private payment; anyone with the recipient's address can check it, and only against that address.
+    await p.click('[data-proof]');
+    const proofLink = await p.evaluate(() => navigator.clipboard.readText());
+    const q = await ctx.newPage();
+    await q.goto(proofLink.replace(/^https?:\/\/[^/]+/, new URL(URL_).origin));
+    await q.waitForSelector('#pf-to');
+    const check = async (addr) => { await q.fill('#pf-to', addr); await q.click('#pf-go'); await q.waitForFunction(() => /This transaction paid|was not to|err/.test(document.querySelector('#pf-status').innerHTML), null, { timeout: 120e3 }); return (await q.textContent('#pf-status')).trim(); };
+    const right = await check(otherBp);
+    ok(/paid 0\.004 ETH privately/.test(right), `a payment proof checks out for its recipient: ${right}`);
+    const wrong = await check('bp1qf5rdn2trtk94rqya5637yeqyvp5qllkeztth8dfesrc5x9tvqluqlahm5yyv7km9tq9s9spmdqqukkw46zudgxu7aawem8fyey0kseqh6xr40k26x7ew8zqujenn45kk2kh47aqzxxj3pp8q2rukjss02vszf7eaa');
+    ok(/was not to/.test(wrong), `and proves nothing about another address: ${wrong}`);
+    await q.close();
     // The recipient's key alone finds the payment.
     await p.click('#wallet'); await p.click('#w-lock'); await p.click('#sheet-wallet [data-close]');
     await openKey(p, other);

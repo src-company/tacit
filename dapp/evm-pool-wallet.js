@@ -25,6 +25,7 @@ const REFUND_GAP = 20;
 const te = new TextEncoder();
 const TAG_AEAD = te.encode('tacit-evm-pool-aead-v1');
 const TAG_MAC = te.encode('tacit-evm-pool-aead-tag-v1');
+const TAG_EPH = te.encode('tacit-evm-pool-eph-v1');
 const SEED_TAG = te.encode('tacit-btc-pool-seed-v1');
 const ZERO = '0x0000000000000000000000000000000000000000';
 const VMAX = 1n << 120n;
@@ -103,6 +104,29 @@ export function openNotes(zk, keys, items) {
   const out = items.map(() => null);
   live.forEach((i, j) => { if (ss[j]) out[i] = opened(zk, keys, ss[j], ms[i].subarray(33), items[i]); });
   return out;
+}
+
+// The one-time key e of output `k` of a spend whose first input has nullifier `nf`, on `chainId`:
+//   e = HMAC-SHA256(key = sha256("tacit-evm-pool-eph-v1" ‖ be32(v)), msg = be32(chainId) ‖ be32(nf) ‖ k) mod n
+// A nullifier is spent once, so e never repeats; and the sender (or a holder of its view key) can derive it again
+// from the key alone, to prove the payment to anyone who knows the recipient's address (verifyPayment). Deposits
+// have no input and use a random e.
+export function paymentKey(keys, { chainId, nf, k }) {
+  const key = sha256(concatBytes(TAG_EPH, word(keys.v)));
+  const e = toBig(hmac(sha256, key, concatBytes(word(BigInt(chainId)), word(BigInt(nf)), Uint8Array.of(k)))) % N_SECP;
+  if (!e) throw new Error('evm-pool-wallet: degenerate payment key');
+  return e;
+}
+
+// Checks a payment proof: that an output with `memo` and `leaf` pays a note to the pool address `to`, given its
+// one-time key `e` (paymentKey). → the amount in wei, or null. `keys` is any wallet's, used only to read `to`.
+export function verifyPayment(zk, keys, { to, e, memo, leaf, asset }) {
+  const r = recipientOf(keys, to), m = memoBytes(memo);
+  if (m.length !== MEMO_LEN || !eq(G.multiply(BigInt(e)).toRawBytes(true), m.subarray(0, 33))) return null;
+  const s = r.V.multiply(BigInt(e)).toRawBytes(true), v = open(s, m.subarray(33));
+  if (v === null) return null;
+  const o = zk.outputKeys(r.A, r.N, s);
+  return zk.leafOf(asset, v, o.npk, o.rho) === BigInt(leaf) ? v : null;
 }
 
 // A recipient from a Secret Sats address string.
@@ -529,7 +553,9 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   // it to be mined and proves again when another transaction lands first. → tx hash.
   // selfCall(tx) → { to, data }: what the signer submits, when not pool.transact (withdrawToV1).
   async function transact({ ins, outs, extAmount = 0n, recipient = ZERO, q = null, extra = {}, selfCall = null, onStep = () => {} }) {
-    const sealed = outs.map((o) => (o ? sealNote(zk, { to: o.to, value: o.value, asset }) : null));
+    // A spend's outputs take one-time keys the sender can derive again (paymentKey); a deposit's are random.
+    const eOf = (k) => (ins.length ? paymentKey(keys, { chainId: chain.chainId, nf: BigInt(ins[0].nf), k }) : undefined);
+    const sealed = outs.map((o, k) => (o ? sealNote(zk, { to: o.to, value: o.value, asset, e: eOf(k) }) : null));
     const memo0 = sealed[0]?.memo ?? new Uint8Array(), memo1 = sealed[1]?.memo ?? new Uint8Array();
     const fee = q ? BigInt(q.fee) : 0n, relayer = q ? q.relayer : ZERO;
     const inputs = [...ins.map(asInput), ...Array(2 - ins.length).fill({ dummy: true })];

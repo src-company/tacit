@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-8/6v2YbX/ndJdQFeU9tek59Fhmmxmi5yxOmW4208td8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-RHxhpTe6BFMrkGVYLveytCbgZsQZwvgceXEhXnlaZjA=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -337,6 +337,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 
   <main>
     <section class="card app" aria-label="Private ETH">
+      <div class="req" id="proof" hidden></div>
       <div class="req" id="req" hidden></div>
       <div class="seg" role="tablist" aria-label="Chain" id="chains"></div>
       <div class="bal" id="bal"></div>
@@ -548,13 +549,13 @@ const sayErr = (el, e) => say(el, html`<span class="err">${errText(e)}</span>`);
 // ── pool modules, loaded once, right after the page ──────────────────────────────────────────────────────
 const mods = lazy(async () => {
   const [zkm, wm, gw, pm, pos] = await Promise.all([
-    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=a064c735'), import('/evm-pool-gateway.js'),
+    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=483900e7'), import('/evm-pool-gateway.js'),
     import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
   ]);
   const PO = { 2: pos.poseidon2, 3: pos.poseidon3, 4: pos.poseidon4, 5: pos.poseidon5, 7: pos.poseidon7 };
   return {
     zk: zkm.makeEvmPoolZk({ poseidon: (xs) => PO[xs.length](xs) }), poolAsset: zkm.poolAsset, extDataHash: zkm.extDataHash,
-    evmPoolKeys: wm.evmPoolKeys, makeEvmPoolWallet: wm.makeEvmPoolWallet, jsonRpc: wm.jsonRpc, openNotes: wm.openNotes, sealNote: wm.sealNote, recipientOf: wm.recipientOf,
+    evmPoolKeys: wm.evmPoolKeys, makeEvmPoolWallet: wm.makeEvmPoolWallet, jsonRpc: wm.jsonRpc, openNotes: wm.openNotes, sealNote: wm.sealNote, recipientOf: wm.recipientOf, paymentKey: wm.paymentKey, verifyPayment: wm.verifyPayment,
     receiveKeys: gw.receiveKeys, receiveBoxAddress: gw.receiveBoxAddress, RECEIVE_FEE_BPS: gw.RECEIVE_FEE_BPS, vkHash: pm.vkHash,
   };
 });
@@ -984,7 +985,7 @@ async function scanHistory(c, onStep) {
   const leafAt = new Map();
   for (const t of ts) for (let k = 0; k < 2; k++) if (t.outLeaf[k] !== 0n) leafAt.set(t.firstIndex + k, t.outLeaf[k]);
   const mine = new Map(), byTx = new Map();
-  const rec = (t) => { if (!byTx.has(t.tx)) byTx.set(t.tx, { t, ins: [], outs: [] }); return byTx.get(t.tx); };
+  const rec = (t) => { if (!byTx.has(t.tx)) byTx.set(t.tx, { t, ins: [], outs: [], ours: new Set() }); return byTx.get(t.tx); };
   const want = [];
   for (const t of ts) for (let k = 0; k < 2; k++) if (t.outLeaf[k] !== 0n && t.memo[k].length === 65) want.push([t, k]);
   const opened = m.openNotes(m.zk, keys, want.map(([t, k]) => ({ memo: t.memo[k], leaf: t.outLeaf[k], asset })));
@@ -993,8 +994,18 @@ async function scanHistory(c, onStep) {
     if (!o) return;
     const index = t.firstIndex + k;
     mine.set(m.zk.nullifier(o.nk, t.outLeaf[k], index).toString(), { v: o.v, index });
-    rec(t).outs.push(o.v);
+    rec(t).outs.push(o.v); rec(t).ours.add(k);
   });
+  // A payment this key sent can be proven when its output's memo was sealed with the key's own one-time key
+  // (payments made before those keys were derived used random ones).
+  const provable = (t, ours) => {
+    for (const k of [0, 1]) {
+      if (ours.has(k) || t.outLeaf[k] === 0n || t.memo[k]?.length !== 65) continue;
+      const e = m.paymentKey(keys, { chainId: c.chainId, nf: t.nf[0], k });
+      if (bytesToHex(secp.ProjectivePoint.BASE.multiply(e).toRawBytes(true)) === bytesToHex(t.memo[k].subarray(0, 33))) return { k, e };
+    }
+    return null;
+  };
   const rows = [];
   for (const r of evs.filter((e) => e.kind === 'received')) {
     const b = boxes.get(lc(r.box)), leaf = leafAt.get(r.index);
@@ -1027,11 +1038,11 @@ async function scanHistory(c, onStep) {
     x.t.dest = Object.entries(BRIDGES).find(([, a]) => input.includes(strip(lc(a))))?.[0];
   });
   const sum = (a) => a.reduce((s, v) => s + v, 0n);
-  for (const { t, ins, outs } of byTx.values()) {
+  for (const { t, ins, outs, ours } of byTx.values()) {
     const used = sum(ins), kept = sum(outs), fee = t.fee ?? 0n, ext = t.ext ?? 0n;
     if (ins.length) {
       if (ext < 0n) rows.push({ kind: t.dest ? 'bridge' : 'out', v: -ext, to: t.recipient, dest: t.dest, fee, kept, refund: t.refund, tx: t.tx, block: t.block });
-      else { const paid = used - kept - fee; rows.push(paid > 0n ? { kind: 'sent', v: paid, fee, kept, tx: t.tx, block: t.block } : { kind: 'self', v: kept, fee, tx: t.tx, block: t.block }); }
+      else { const paid = used - kept - fee; rows.push(paid > 0n ? { kind: 'sent', v: paid, fee, kept, proof: provable(t, ours), tx: t.tx, block: t.block } : { kind: 'self', v: kept, fee, tx: t.tx, block: t.block }); }
     } else if (kept > 0n) rows.push({ kind: ext > 0n ? 'dep' : 'in', v: kept, from: ext > 0n ? t.from : undefined, tx: t.tx, block: t.block });
   }
   const blocks = [...new Set(rows.map((r) => r.block))], time = new Map();
@@ -1182,7 +1193,7 @@ function paintBal() {
   if (re) re.onclick = () => { re.disabled = true; syncChain(c, true); };
 }
 const TABS = [['deposit', 'Deposit'], ['send', 'Send'], ['withdraw', 'Withdraw'], ['receive', 'Receive']];
-function renderApp() { paintReq(); paintChains(); paintBal(); renderTabs(); renderForm(); }
+function renderApp() { paintProof(); paintReq(); paintChains(); paintBal(); renderTabs(); renderForm(); }
 function renderTabs() {
   mount($('#tabs'), html`${TABS.map(([k, l]) => html`<button type="button" role="tab" data-tab="${k}" aria-selected="${k === S.tab}" ${S.busy ? 'disabled' : ''}>${l}</button>`)}`);
   $$('#tabs [data-tab]').forEach((b) => b.onclick = () => { if (S.busy) return; S.tab = b.dataset.tab; say($('#status'), ''); renderTabs(); renderForm(); });
@@ -1989,12 +2000,13 @@ function paintRecover() {
       const [label, isIn] = KIND[r.kind];
       const bits = [r.chain.name, r.time ? ago(r.time) : null, r.fee ? `fee ${fmt(r.fee, 18, 6)}` : null, (r.kind === 'sent' || r.kind === 'out' || r.kind === 'bridge') && r.kept ? `kept ${eth(r.kept)}` : null].filter(Boolean).join(' · ');
       return html`<li><div class="h"><b>${label}${r.kind === 'out' ? html` to <span class="nw">${short(r.to)}</span>` : r.kind === 'bridge' ? ` to ${r.dest}` : ''}</b><span class="${isIn ? 'in' : ''}">${isIn ? '+' : r.kind === 'self' ? '' : '−'}${fmt(r.v, 18, 6)} ETH</span></div>
-        <div class="f">${bits} · ${txLink(r.chain, r.tx)}</div></li>`;
+        <div class="f">${bits} · ${txLink(r.chain, r.tx)}${r.proof ? html` · <button class="link" type="button" data-proof="${r.chain.key}:${r.tx}:${r.proof.k}:${r.proof.e.toString(16).padStart(64, '0')}">prove it</button>` : ''}</div></li>`;
     })}</ul>
     <p class="note">Who received a private payment is known only to you and them: the chain holds the amount sealed to their key, and nothing that names them.</p>` : CHAINS.every((c) => CH[c.chainId].hist) ? html`<p class="note">No payments yet. Deposit to start.</p>` : ''}`);
   $('#rc-chain').onchange = (e) => { S.chainOnly = e.target.checked; };
   el.querySelector('details.adv').ontoggle = (e) => { S.advOpen = e.target.open; };
   $('#rc-go').onclick = (e) => rebuild(e.currentTarget);
+  $$('[data-proof]', el).forEach((b) => b.onclick = () => copy(`${location.origin}/pay/#proof=${b.dataset.proof}`, 'Proof link copied. Anyone who knows their address can check it.'));
   $('#rc-csv')?.addEventListener('click', () => {
     const q = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
     const lines = [['date', 'chain', 'type', 'amount_eth', 'fee_eth', 'kept_eth', 'to', 'tx'].join(',')].concat(all.map((r) => [
@@ -2037,6 +2049,44 @@ async function busyBtn(btn, fn) {
 }
 
 // ── links: #pay=bp1…&amount=0.01&chain=base, #send, #withdraw, #receive, #deposit, #base … ─────────────────
+// A payment proof opened from a link: #proof=<chain>:<tx>:<output>:<one-time key>. Checking it against an address
+// reads the transaction's memo and leaf from the chain; the link alone says nothing about the amount or the recipient.
+const PROOF = { v: null, res: null, busy: false };
+function paintProof() {
+  const el = $('#proof'), p = PROOF.v;
+  el.hidden = !p;
+  if (!p) return;
+  mount(el, html`
+    <div class="lbl"><span>Payment proof</span><button class="link" type="button" id="pf-x">dismiss</button></div>
+    <div class="req-m">A private payment on ${p.chain.full} in ${txLink(p.chain, p.tx)}. Enter who it was for to check it; the link alone shows nothing more.</div>
+    <div class="amt text act"><input id="pf-to" placeholder="bp1…, tacit1… or name.wei" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Recipient"><button class="link" type="button" id="pf-go">check</button></div>
+    <div class="status" role="status" id="pf-status">${PROOF.busy ? html`<span class="spin" aria-hidden="true"></span>Checking on chain…` : PROOF.res || ''}</div>`);
+  $('#pf-x').onclick = () => { PROOF.v = null; PROOF.res = null; paintProof(); };
+  const go = () => checkProof($('#pf-to').value.trim());
+  $('#pf-go').onclick = go;
+  $('#pf-to').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+}
+async function checkProof(raw) {
+  const p = PROOF.v;
+  if (!raw || PROOF.busy) return;
+  Object.assign(PROOF, { busy: true, res: null }); paintProof();
+  try {
+    const r = await resolveRecipient(raw);
+    if (r.error) throw new Error(r.error);
+    const m = await mods(), rpc = await rpcOn(p.chain), rc = await rpc('eth_getTransactionReceipt', [p.tx]);
+    const asset = m.poolAsset({ chainId: BigInt(p.chain.chainId), pool: POOL, token: ZERO });
+    let paid = null;
+    for (const l of rc?.logs || []) {
+      if (lc(l.address) !== lc(POOL) || l.topics[0] !== T_TRANSACT) continue;
+      const d = decodeTransact(l);
+      paid = m.verifyPayment(m.zk, await spareKeys(), { to: r.bp, e: p.e, memo: d.memo[p.k], leaf: d.outLeaf[p.k], asset });
+      if (paid != null) break;
+    }
+    const who = r.label || short(r.bp, 8);
+    PROOF.res = paid != null ? html`<span class="ok">✓ This transaction paid ${fmt(paid, 18, 6)} ETH privately to ${who}.</span>` : html`<span class="err">This payment was not to ${who}.</span>`;
+  } catch (e) { PROOF.res = html`<span class="err">${errText(e)}</span>`; }
+  PROOF.busy = false; paintProof();
+}
 function applyHash() {
   const h = location.hash.replace(/^#/, '');
   if (!h) return;
@@ -2044,6 +2094,8 @@ function applyHash() {
   const words = h.includes('=') ? [] : h.split(/[&,]/);
   const c = chainOf(q.get('chain') || words.find((w) => chainOf(w)) || '');
   const bp = (q.get('pay') || '').trim(), n = (q.get('n') || '').trim().toLowerCase(), amount = parseUnits(q.get('amount') || '') || null;
+  const pf = /^([a-z0-9]+):(0x[0-9a-f]{64}):([01]):([0-9a-f]{1,64})$/i.exec((q.get('proof') || '').trim());
+  if (pf && chainOf(pf[1])) PROOF.v = { chain: chainOf(pf[1]), tx: pf[2], k: Number(pf[3]), e: BigInt('0x' + pf[4]) };
   const tab = TABS.find(([k]) => words.includes(k))?.[0] || q.get('tab');
   if (c) { S.chain = c; writeJson(CHAIN_PREF, c.chainId); if (c.chainId !== 1) S.dest = 'addr'; }
   if (bp) {
