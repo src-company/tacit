@@ -9,6 +9,9 @@
 import assert from 'node:assert';
 import { hmac } from '../node_modules/@noble/hashes/hmac.js';
 import { sha256 as nobleSha256 } from '../node_modules/@noble/hashes/sha2.js';
+import { keccak_256 } from '../node_modules/@noble/hashes/sha3.js';
+import { makeConfidentialPool } from '../dapp/confidential-pool.js';
+import { makeConfidentialEvmLog } from '../dapp/confidential-evm-log.js';
 
 // dapp/bitcoin-taproot-wallet.js (imported transitively by crossout-ux.js) pulls in the vendor bundle
 // (poseidon et al.), which expects a browser-like global scope at import time -- same shim
@@ -23,9 +26,16 @@ globalThis.setTimeout = realST; globalThis.clearTimeout = realCT;
 // dynamic (after the shim above), same reason crossout-ux.js itself is imported dynamically below.
 const { secp } = await import('../dapp/vendor/tacit-deps.min.js');
 secp.etc.hmacSha256Sync = (k, ...m) => hmac(nobleSha256, k, secp.etc.concatBytes(...m));
+const { makeBtcWallet } = await import('../dapp/bitcoin-taproot-wallet.js');
+// The self-bridge destination is always this wallet's own Bitcoin key (crossout-ux.js's own freshPrims) --
+// computed once here so the recovery tests can assert against it without re-deriving it inline each time.
+const destXonlyOf = (priv) => bytesToHex(makeBtcWallet({ priv, hrp: 'bc', fetchUtxos: async () => [], broadcastTx: async () => {}, fetchFeeRate: async () => 1 }).wallet.xonly());
 
 const { makeCrossoutUx, CROSSOUT_BETA_CAP_RAW } = await import('../dapp/crossout-ux.js');
 globalThis.fetch = realFetch;
+
+const pool = makeConfidentialPool({ secp, keccak256: keccak_256, sha256: nobleSha256 });
+const evmLog = makeConfidentialEvmLog({ keccak256: keccak_256 });
 
 let n = 0, failures = 0;
 const ok = (c, m) => { if (c) { console.log('  ok -', m); n++; } else { console.error('  FAIL -', m); failures++; } };
@@ -33,6 +43,32 @@ const ok = (c, m) => { if (c) { console.log('  ok -', m); n++; } else { console.
 const stripHex = (h) => String(h).replace(/^0x/, '');
 const withHex = (h) => '0x' + stripHex(h);
 const bytesToHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+const hexToBytes = (h) => { const s = stripHex(h); const a = new Uint8Array(s.length / 2); for (let i = 0; i < a.length; i++) a[i] = parseInt(s.slice(2 * i, 2 * i + 2), 16); return a; };
+const topicCrossOutRecorded = '0x' + bytesToHex(keccak_256(new TextEncoder().encode('CrossOutRecorded(bytes32,uint16,bytes32,bytes32,bytes32)')));
+// Builds a raw {topics, data} log exactly as ConfidentialPool would emit CrossOutRecorded, so
+// evmLog.decodeLog (the real decoder, not a stand-in) is what recoverFromEthTx actually exercises.
+function buildCrossOutRecordedLog({ claimId, destChain, destCommitment, nullifier, assetId }) {
+  const word32 = (n) => { const b = new Uint8Array(32); b[31] = Number(n); return b; };
+  const data = new Uint8Array(128);
+  data.set(word32(destChain), 0);
+  data.set(hexToBytes(destCommitment), 32);
+  data.set(hexToBytes(nullifier), 64);
+  data.set(hexToBytes(assetId), 96);
+  return { topics: [topicCrossOutRecorded, claimId], data: '0x' + bytesToHex(data) };
+}
+// The exact HMAC-bound blinding crossOut() derives by default (confidential-pool-ux.js) -- reproduced here
+// so the "happy path" recovery test's fixture is internally consistent with what recoverFromEthTx recomputes,
+// and so a real start() and a real recoverFromEthTx over the same (walletPriv, nullifier) can be asserted equal.
+function deriveCrossoutBlinding(walletPriv, nullifierHex) {
+  const domain = new TextEncoder().encode('tacit-crossout-blinding-v1');
+  const nullifierBytes = hexToBytes(nullifierHex);
+  const msg = new Uint8Array(domain.length + nullifierBytes.length);
+  msg.set(domain); msg.set(nullifierBytes, domain.length);
+  const raw = hmac(nobleSha256, walletPriv, msg);
+  let b = 0n; for (const x of raw) b = (b << 8n) | BigInt(x);
+  b %= secp.CURVE.n;
+  return b === 0n ? 1n : b;
+}
 
 const ASSET = withHex('a5'.repeat(32));
 const WALLET_PRIV = new Uint8Array(32).fill(0x33);
@@ -46,10 +82,16 @@ const CY = withHex('c3'.repeat(32));
 // ---- an in-memory "world": chain state + worker endpoints, driven by this test ----
 function makeWorld() {
   const chainTxs = new Map(); // txid(bare) -> {status:{confirmed}}
+  const ethReceipts = new Map(); // txHash(display) -> receipt
   const broadcasts = [];
   let ethCovered = false;
   let claimIdVerified = true;
   let claimIdNote = 'corroborated against CrossOutRecorded';
+
+  async function rpc(method, params) {
+    if (method === 'eth_getTransactionReceipt') return ethReceipts.get(stripHex(params[0]).toLowerCase()) || null;
+    throw new Error(`world: unhandled rpc ${method}`);
+  }
 
   const fetchImpl = async (url) => {
     const u = new URL(url, 'http://x');
@@ -85,10 +127,11 @@ function makeWorld() {
   }
 
   return {
-    fetchImpl, chain, crossOut,
+    fetchImpl, chain, crossOut, rpc,
     setEthCovered: (v) => { ethCovered = v; },
     setClaimIdVerified: (v, note) => { claimIdVerified = v; claimIdNote = note || claimIdNote; },
     mineRevealTxid: (txid) => chainTxs.set(stripHex(txid), { status: { confirmed: true } }),
+    setEthReceipt: (txHash, receipt) => ethReceipts.set(stripHex(txHash).toLowerCase(), receipt),
     broadcasts,
   };
 }
@@ -97,7 +140,7 @@ function makeUx(world) {
   return makeCrossoutUx({
     network: 'mainnet', hrp: 'bc', workerBase: 'http://worker', fetchImpl: world.fetchImpl,
     storage: (() => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, v), removeItem: (k) => m.delete(k), get length() { return m.size; }, key: (i) => Array.from(m.keys())[i] || null }; })(),
-    secp, crossOut: world.crossOut, tacAssetId: ASSET, chain: world.chain,
+    secp, hmac, sha256: nobleSha256, crossOut: world.crossOut, pool, rpc: world.rpc, evmLog, tacAssetId: ASSET, chain: world.chain,
   });
 }
 
@@ -219,6 +262,66 @@ function makeUx(world) {
   ux.abandon(WALLET_PUB, NOTE.nullifier);
   ok(ux.list(WALLET_PUB).length === 0, 'abandon() removes the record');
   ok(ux.isReserved(NOTE.nullifier) === false, 'an abandoned note is no longer reserved');
+}
+
+// ---- recoverFromEthTx: rebuilds an identical record from just the settle tx hash + amount, no journal ----
+{
+  const world = makeWorld();
+  const ux = makeUx(world);
+  const destXonly = destXonlyOf(WALLET_PRIV);
+  const rDest = deriveCrossoutBlinding(WALLET_PRIV, NOTE.nullifier);
+  const { cx, cy } = pool.commitXY(NOTE.value, rDest);
+  const destCommitment = pool.btcNoteLeaf(ASSET, cx, cy, withHex(destXonly));
+  const settleTxHash = withHex('ee'.repeat(32));
+  world.setEthReceipt(settleTxHash, {
+    blockNumber: '0x' + (77777).toString(16),
+    logs: [buildCrossOutRecordedLog({ claimId: CLAIM_ID, destChain: 1, destCommitment, nullifier: NOTE.nullifier, assetId: ASSET })],
+  });
+
+  const rec = await ux.recoverFromEthTx(settleTxHash, WALLET_PRIV, { amount: NOTE.value });
+  ok(rec.stage === 'settled', 'recoverFromEthTx() rebuilds a settled record from chain data alone');
+  ok(rec.settle.claimId.toLowerCase() === CLAIM_ID.toLowerCase(), 'the claimId comes straight from the event, not guessed');
+  ok(rec.settle.cx.toLowerCase() === cx.toLowerCase() && rec.settle.cy.toLowerCase() === cy.toLowerCase(), 'cx/cy are correctly re-derived from (walletPriv, nullifier, amount)');
+  ok(rec.settle.ethBlock === 77777, 'the settle block number is read from the receipt');
+  ok(rec.destXonly.toLowerCase() === destXonly.toLowerCase(), 'the self-bridge destination key matches, needing no stored state at all');
+  ok(ux.isReserved(NOTE.nullifier) === true, 'the recovered record shows up as reserved, same as a freshly-started one');
+
+  // Advancing it forward from here uses the exact same path a normal record would.
+  world.setEthCovered(true);
+  const covered = await ux.advance(WALLET_PUB, NOTE.nullifier);
+  ok(covered.stage === 'covered', 'a recovered record advances normally afterward');
+}
+
+// ---- recoverFromEthTx refuses rather than misfiling on any wrong input ----
+{
+  const world = makeWorld();
+  const ux = makeUx(world);
+  const destXonly = destXonlyOf(WALLET_PRIV);
+  const rDest = deriveCrossoutBlinding(WALLET_PRIV, NOTE.nullifier);
+  const { cx, cy } = pool.commitXY(NOTE.value, rDest);
+  const destCommitment = pool.btcNoteLeaf(ASSET, cx, cy, withHex(destXonly));
+  const settleTxHash = withHex('ef'.repeat(32));
+  world.setEthReceipt(settleTxHash, {
+    blockNumber: '0x1',
+    logs: [buildCrossOutRecordedLog({ claimId: CLAIM_ID, destChain: 1, destCommitment, nullifier: NOTE.nullifier, assetId: ASSET })],
+  });
+
+  let threwWrongAmount = false;
+  try { await ux.recoverFromEthTx(settleTxHash, WALLET_PRIV, { amount: NOTE.value + 1n }); }
+  catch (e) { threwWrongAmount = /does not match/.test(e.message); }
+  ok(threwWrongAmount, 'a wrong amount is caught by the destCommitment check, not silently written');
+
+  let threwNoReceipt = false;
+  try { await ux.recoverFromEthTx(withHex('ff'.repeat(32)), WALLET_PRIV, { amount: NOTE.value }); }
+  catch (e) { threwNoReceipt = /no receipt/.test(e.message); }
+  ok(threwNoReceipt, 'an unmined or wrong-network tx hash is refused up front');
+
+  let threwNoEvent = false;
+  const emptyTxHash = withHex('f0'.repeat(32));
+  world.setEthReceipt(emptyTxHash, { blockNumber: '0x1', logs: [] });
+  try { await ux.recoverFromEthTx(emptyTxHash, WALLET_PRIV, { amount: NOTE.value }); }
+  catch (e) { threwNoEvent = /no CrossOutRecorded/.test(e.message); }
+  ok(threwNoEvent, 'a tx with no CrossOutRecorded event is refused rather than guessed at');
 }
 
 console.log(`\n${n} crossout-ux checks passed${failures ? `, ${failures} FAILED` : ''}`);

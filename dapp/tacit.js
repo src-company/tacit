@@ -19835,8 +19835,9 @@ function _crossoutUxSingleton() {
   const poolUx = _poolUxSingleton();
   _crossoutUxNet = net;
   return (_crossoutUx = makeCrossoutUx({
-    network: net, hrp: NET.hrp, workerBase: WORKER_BASE, secp,
-    crossOut: poolUx.crossOut, tacAssetId: '0x' + CANONICAL_TAC_ASSET_ID_HEX,
+    network: net, hrp: NET.hrp, workerBase: WORKER_BASE, secp, hmac, sha256,
+    crossOut: poolUx.crossOut, pool: poolUx.pool, rpc: poolUx.rpc, evmLog: poolUx.evmLog,
+    tacAssetId: '0x' + CANONICAL_TAC_ASSET_ID_HEX,
     chain: { getUtxos, pickSafeCommitSats, broadcastWithRetry, getFeeRate },
     postHint,
   }));

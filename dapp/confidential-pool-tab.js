@@ -221,6 +221,51 @@ function crossoutRecordsHtml(records, network) {
   return `<div style="margin-bottom:4px;"><b style="font-size:11px;">Bridges to Bitcoin</b></div>${rows}`;
 }
 
+// Always present regardless of whether any record is journalled -- same rationale as burndep's own resume
+// box (dapp/tacit.js's _renderHoldingsBurndepBridges): the journal is a local cache, and losing it must not
+// also lose the only way back. recoverFromEthTx re-derives everything from the settle tx hash + the amount
+// (not recoverable from chain data alone) and refuses -- throws -- rather than journalling a wrong record if
+// the recomputed destCommitment doesn't match the real on-chain event.
+function crossoutResumeBoxHtml(hasRecords) {
+  return `<details style="${hasRecords ? 'margin-top:10px;padding-top:8px;border-top:1px solid var(--ink-faint);' : ''}">`
+    + `<summary class="muted" style="cursor:pointer;font-size:11px;">${hasRecords ? "Don't see a bridge you expect? " : ''}Recover a bridge from its Ethereum settle tx hash →</summary>`
+    + `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">`
+    + `<input type="text" data-crossout-resume-txhash placeholder="Ethereum settle tx hash" style="flex:1;min-width:160px;font-size:11px;">`
+    + `<input type="text" data-crossout-resume-amount placeholder="Amount (e.g. 250)" style="width:100px;font-size:11px;">`
+    + `<button data-crossout-resume-btn style="font-size:11px;padding:5px 10px;white-space:nowrap;">Recover</button>`
+    + `</div>`
+    + `<div class="muted" data-crossout-resume-status style="font-size:11px;margin-top:4px;"></div>`
+    + `</details>`;
+}
+
+// Wired independently of the note picker below (which needs the wallet to actually hold a TAC note) since
+// recovery must work even when the picker has nothing to show.
+function wireCrossoutResume(wallet, crossoutUx) {
+  const btn = document.querySelector('[data-crossout-resume-btn]');
+  if (!btn) return;
+  btn.onclick = async () => {
+    const txInput = document.querySelector('[data-crossout-resume-txhash]');
+    const amountInput = document.querySelector('[data-crossout-resume-amount]');
+    const statusEl = document.querySelector('[data-crossout-resume-status]');
+    const txHash = (txInput?.value || '').trim().toLowerCase();
+    const amountStr = (amountInput?.value || '').trim();
+    if (!/^(0x)?[0-9a-f]{64}$/.test(txHash)) { if (statusEl) statusEl.textContent = 'Enter a valid Ethereum transaction hash.'; return; }
+    const amountTac = Number(amountStr);
+    if (!Number.isFinite(amountTac) || amountTac <= 0) { if (statusEl) statusEl.textContent = 'Enter the TAC amount this bridge carries.'; return; }
+    btn.disabled = true;
+    if (statusEl) statusEl.textContent = 'Checking the settle and rebuilding this bridge from chain data…';
+    try {
+      const amountRaw = BigInt(Math.round(amountTac * 1e8)); // TAC uses 8 decimals
+      await crossoutUx.recoverFromEthTx(txHash.startsWith('0x') ? txHash : '0x' + txHash, wallet.priv, { amount: amountRaw });
+      notify('Bridge recovered from its transaction hash', 'ok');
+      setTimeout(() => renderConfidentialPoolTab(wallet, crossoutUx), 1500);
+    } catch (e) {
+      if (statusEl) statusEl.textContent = `Could not recover: ${e?.message || e}`;
+      btn.disabled = false;
+    }
+  };
+}
+
 function wireCrossout(wallet, ux, crossoutUx, notes) {
   const listEl = el('cpool-crossout-list');
   const statusEl = el('cpool-crossout-status');
@@ -229,7 +274,16 @@ function wireCrossout(wallet, ux, crossoutUx, notes) {
   if (!crossoutUx) { listEl.textContent = 'Not available in this build.'; return; }
 
   const walletPub = bytesToHex(secp.getPublicKey(wallet.priv, true));
-  const refresh = () => { try { if (inflightEl) inflightEl.innerHTML = crossoutRecordsHtml(crossoutUx.list(walletPub), crossoutUx.network); } catch {} };
+  // The resume box is always rendered, even with zero records -- same reasoning as burndep's own (dapp/tacit.js's
+  // _renderHoldingsBurndepBridges): it disappearing exactly when there's nothing else to show is exactly when
+  // it's most needed.
+  const refresh = () => {
+    try {
+      const records = crossoutUx.list(walletPub);
+      if (inflightEl) inflightEl.innerHTML = crossoutRecordsHtml(records, crossoutUx.network) + crossoutResumeBoxHtml(records.length > 0);
+      wireCrossoutResume(wallet, crossoutUx);
+    } catch {}
+  };
 
   const tacAsset = ux.assetByTicker && ux.assetByTicker.cTAC && ux.assetByTicker.cTAC.assetId;
   const tacNotes = tacAsset ? (notes || []).filter((n) => String(n.asset).toLowerCase() === String(tacAsset).toLowerCase()) : [];

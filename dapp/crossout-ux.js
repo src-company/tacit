@@ -61,18 +61,18 @@ function deserializeRecord(text) {
   return JSON.parse(text, (k, v) => (v && typeof v === 'object' && typeof v.__big === 'string' ? BigInt(v.__big) : v));
 }
 
-// deps: { network, hrp, workerBase, fetchImpl, storage, secp, crossOut, tacAssetId,
-//         chain: {getUtxos, pickSafeCommitSats, broadcastWithRetry, getFeeRate}, postHint }
-// `crossOut` is the confidential pool ux's own crossOut function (dapp/confidential-pool-ux.js) -- injected
-// rather than re-instantiated here, matching how burndep-ux.js takes `bridgeMint` from the same pool ux
-// singleton instead of building its own. `postHint` is optional (tacit.js's local fast-track poke at the
-// worker's /hint route) -- a fold happens on the worker's own scan cadence regardless.
+// deps: { network, hrp, workerBase, fetchImpl, storage, secp, hmac, sha256, crossOut, pool, rpc, evmLog,
+//         tacAssetId, chain: {getUtxos, pickSafeCommitSats, broadcastWithRetry, getFeeRate}, postHint }
+// `crossOut`, `pool`, `rpc`, `evmLog` are the confidential pool ux's own (dapp/confidential-pool-ux.js) --
+// injected rather than re-instantiated here, matching how burndep-ux.js takes `bridgeMint`/`pool` from the
+// same pool ux singleton instead of building its own. `postHint` is optional (tacit.js's local fast-track
+// poke at the worker's /hint route) -- a fold happens on the worker's own scan cadence regardless.
 export function makeCrossoutUx(deps) {
   const {
     network = 'mainnet', hrp = 'bc', workerBase, fetchImpl, storage: storageIn = null,
-    secp, crossOut, tacAssetId, chain, postHint = null,
+    secp, hmac, sha256, crossOut, pool, rpc, evmLog, tacAssetId, chain, postHint = null,
   } = deps || {};
-  for (const [k, v] of Object.entries({ workerBase, secp, crossOut, tacAssetId, chain })) {
+  for (const [k, v] of Object.entries({ workerBase, secp, hmac, sha256, crossOut, pool, rpc, evmLog, tacAssetId, chain })) {
     if (v == null) throw new Error(`crossout-ux: deps.${k} required`);
   }
   const storage = storageIn || defaultStorage();
@@ -279,6 +279,69 @@ export function makeCrossoutUx(deps) {
   function list(walletPub) { return loadAll(walletPub); }
   function abandon(walletPub, id) { saveAll(walletPub, loadAll(walletPub).filter((r) => r.id !== id)); }
 
+  // Recovers a bridge from just its Ethereum settle tx hash and the wallet key -- the case where the journal
+  // itself is gone (a different browser/device, or cleared storage) but the settle already happened, so
+  // everything else is derivable from chain data + this wallet's own deterministic derivations:
+  //   - CrossOutRecorded's own `nullifier` field is the spent note's nullifier (crossOut's bindNullifier),
+  //     read directly off the log rather than guessed;
+  //   - the destination blinding is HMAC-bound to that nullifier (see start()'s destXonly comment and
+  //     crossOut()'s own rDest derivation in confidential-pool-ux.js) -- reproducible from (walletPriv,
+  //     nullifier) alone, never stored;
+  //   - destXonly is always this wallet's own Bitcoin key (v1 is self-bridge only), so it needs no source at
+  //     all beyond walletPriv.
+  // `amount` is the one thing NOT recoverable from chain data (the value is hidden under the commitment) --
+  // same shape as burndep-ux.js's recoverFromTxid needing `amount` for the identical reason. The recomputed
+  // (cx, cy) are checked against the event's own destCommitment before anything is journalled; a wrong amount
+  // (or any other wrong input) makes that check fail rather than silently writing an unopenable record.
+  //
+  // Always rebuilds at 'settled', even if the Bitcoin-side mint was already broadcast before the journal was
+  // lost -- there is no way to ask the chain "has this claimId already been revealed" directly. Worst case,
+  // advancing the recovered record re-broadcasts a second, redundant commit/reveal pair: fold_crossout's own
+  // replay gate takes the first one and ignores the second, so this costs a small avoidable Bitcoin fee, not a
+  // double mint. Same category of limitation as burndep-ux.js's own recoverFromTxid not recovering a bridge
+  // stuck before its burn exists -- stated here rather than engineered around under this rare edge case.
+  async function recoverFromEthTx(settleTxHash, walletPriv, { amount } = {}) {
+    if (amount == null) throw new Error('crossout-ux: recoverFromEthTx needs { amount } -- the confidential value the original note carried (not recoverable from chain data alone)');
+    const walletPub = secp.getPublicKey(walletPriv, true);
+    const receipt = await rpc('eth_getTransactionReceipt', [settleTxHash]);
+    if (!receipt) throw new Error('crossout-ux: no receipt for this transaction hash (not yet mined, or wrong network)');
+    const ethBlock = receipt.blockNumber ? Number(BigInt(receipt.blockNumber)) : null;
+    const events = (receipt.logs || []).map((l) => evmLog.decodeLog(l)).filter((e) => e && e.type === 'CrossOutRecorded');
+    if (!events.length) throw new Error('crossout-ux: this transaction carries no CrossOutRecorded event');
+    if (events.length > 1) throw new Error('crossout-ux: this transaction recorded more than one crossOut -- recovery only handles the single-note case this module itself ever produces');
+    const ev = events[0];
+    if (lc(stripHex(ev.assetId)) !== lc(stripHex(tacAssetId))) throw new Error('crossout-ux: this crossOut is for a different asset');
+
+    const destXonly = bytesToHexLocal(freshPrims(walletPriv).wallet.xonly());
+    const privBytes = walletPriv instanceof Uint8Array ? walletPriv : hexToBytesLocal(stripHex(walletPriv));
+    const domain = new TextEncoder().encode('tacit-crossout-blinding-v1');
+    const nullifierBytes = hexToBytesLocal(stripHex(ev.nullifier));
+    const msg = new Uint8Array(domain.length + nullifierBytes.length);
+    msg.set(domain); msg.set(nullifierBytes, domain.length);
+    const raw = hmac(sha256, privBytes, msg);
+    let b = 0n; for (const x of raw) b = (b << 8n) | BigInt(x);
+    b %= secp.CURVE.n;
+    const rDest = b === 0n ? 1n : b;
+
+    const { cx, cy } = pool.commitXY(BigInt(amount), rDest);
+    const recomputed = pool.btcNoteLeaf(withHex(tacAssetId), cx, cy, withHex(destXonly));
+    if (lc(recomputed) !== lc(ev.destCommitment)) {
+      throw new Error('crossout-ux: recomputed destCommitment does not match the event -- wrong amount, wrong wallet key, or this settle used an explicit non-default blinding recovery cannot reproduce');
+    }
+
+    const id = ev.nullifier;
+    const rec = {
+      id, network, walletPub: bytesToHexLocal(walletPub), stage: 'settled', createdAt: now(), recoveredAt: now(),
+      source: { nullifier: id, value: BigInt(amount), assetId: tacAssetId },
+      destXonly,
+      settle: {
+        txHash: stripHex(settleTxHash), claimId: ev.claimId, cx, cy, destCommitment: ev.destCommitment,
+        ethBlock, claimIdVerified: true, claimIdNote: 'recovered from the CrossOutRecorded event directly',
+      },
+    };
+    return putRecord(rec);
+  }
+
   async function resumeAll(walletPub, { walletPriv = null } = {}) {
     const out = [];
     for (const rec of loadAll(walletPub)) {
@@ -289,5 +352,5 @@ export function makeCrossoutUx(deps) {
     return out;
   }
 
-  return { CROSSOUT_BETA_CAP_RAW, network, eligibleNotes, isReserved, isFundingReserved, start, advance, resumeAll, list, abandon };
+  return { CROSSOUT_BETA_CAP_RAW, network, eligibleNotes, isReserved, isFundingReserved, start, advance, recoverFromEthTx, resumeAll, list, abandon };
 }
