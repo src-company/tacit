@@ -94,7 +94,7 @@ contracts/sp1/confidential/dist/
 # One-off local scratch (never part of the repo)
 scratch-*
 _scan-receipts.mjs
-ops/box-artifacts/
+ops/
 scratchpad/
 
 # local deploy tooling (not published)
