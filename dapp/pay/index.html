@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-IrMkMZpZrVdV4bgxMJ3iDGVtk5jp7NTJUm2A0YWnIuQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-OP+XMpNSFbDIdtRXcPjlUBn04tv4NVqRED2+a1LNP8E=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -231,6 +231,14 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .chainsum li:last-child { border-bottom: 0; }
 .chainsum .n { min-width: 9ch; color: var(--ink); }
 .chainsum .s { margin-left: auto; color: var(--mute); text-align: right; }
+.pv { margin-top: 12px; padding: 10px 12px; background: var(--field); border-left: 2px solid var(--ok); }
+.pv.pv-fair { border-left-color: var(--orange); }
+.pv.pv-weak { border-left-color: var(--err); }
+.pv-h { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 500; }
+.pv-h i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.pv-fair .pv-h i { background: var(--orange); }
+.pv-weak .pv-h i { background: var(--err); }
+.pv .note { margin-top: 4px; }
 .route { margin: 14px 0 0; font-size: 12.5px; color: var(--mute); }
 .route b { font-weight: 500; color: var(--ink); }
 .adv { margin-top: 12px; }
@@ -651,6 +659,7 @@ async function setKey(k) {
 }
 function forget() {
   S.key = null; S.keys = null; BOXQ.for = null;
+  for (const c of CHAINS) JUST[c.chainId].length = 0;
   for (const k of Object.keys(DRAFT)) delete DRAFT[k];
   if (REQ.v) { DRAFT['f-to'] = REQ.v.bp; if (REQ.v.amount) DRAFT['f-amt'] = plain(REQ.v.amount); }
   for (const st of Object.values(CH)) Object.assign(st, { W: null, for: null, bal: null, notes: [], quote: null, waiting: null, err: null, syncing: null, at: 0, hist: null, histing: null, histNext: null, histErr: null, last: null, waitBoxes: [], quoteErr: null, deferred: false });
@@ -818,7 +827,7 @@ function syncChain(c, fresh = false) {
     const waitBoxes = waits.filter(([, v]) => v != null && v > 0n), w = waitBoxes.reduce((a, [, v]) => a + v, 0n);
     if (st.W !== W || S.key?.pubHex !== pub) return;
     if (st.bal != null && st.bal !== s.balance) historyOf(c, true);             // something arrived or left: read it into the history
-    Object.assign(st, { bal: s.balance, notes: W.notes().map((n) => BigInt(n.v)), quote: q, quoteErr, waiting: w, waitBoxes, err: null, at: Date.now() });
+    Object.assign(st, { bal: s.balance, leaves: s.leaves, notes: W.notes().map((n) => BigInt(n.v)), quote: q, quoteErr, waiting: w, waitBoxes, err: null, at: Date.now() });
     const seen = readJson(BAL_SEEN) || {};
     seen[pub] = { ...(seen[pub] || {}), [c.chainId]: s.balance.toString() };
     writeJson(BAL_SEEN, seen);
@@ -981,7 +990,11 @@ async function scanHistory(c, onStep) {
     const rc = await rpc('eth_getTransactionReceipt', [x.t.tx]);
     const lg = rc?.logs?.find((l) => lc(l.address) === lc(POOL) && l.topics[0] === T_TRANSACT && BigInt(l.topics[1]) === x.t.nf[0] && BigInt(l.topics[2]) === x.t.nf[1]);
     if (lg) { const d = decodeTransact(lg); Object.assign(x.t, { recipient: d.recipient, ext: d.ext, fee: d.fee }); }
+    if (rc?.from) x.t.from = lc(rc.from);
   });
+  // The account behind each deposit of this key's is public; a withdrawal back to it undoes the deposit's privacy.
+  const deposits = [...byTx.values()].filter((x) => !x.ins.length && (x.t.ext ?? 0n) > 0n && !x.t.from);
+  await eachLimit(deposits, 4, async (x) => { const rc = await rpc('eth_getTransactionReceipt', [x.t.tx]).catch(() => null); if (rc?.from) x.t.from = lc(rc.from); });
   // A withdrawal that ran calls (a bridge move, a swap) names its refund box in its calldata, public from then on, so
   // that box is never handed out as a payment link's address; a canonical bridge in it makes the row a move.
   const calls = [...byTx.values()].filter((x) => x.ins.length && (x.t.ext ?? 0n) < 0n);
@@ -998,13 +1011,75 @@ async function scanHistory(c, onStep) {
     if (ins.length) {
       if (ext < 0n) rows.push({ kind: t.dest ? 'bridge' : 'out', v: -ext, to: t.recipient, dest: t.dest, fee, kept, refund: t.refund, tx: t.tx, block: t.block });
       else { const paid = used - kept - fee; rows.push(paid > 0n ? { kind: 'sent', v: paid, fee, kept, tx: t.tx, block: t.block } : { kind: 'self', v: kept, fee, tx: t.tx, block: t.block }); }
-    } else if (kept > 0n) rows.push({ kind: ext > 0n ? 'dep' : 'in', v: kept, tx: t.tx, block: t.block });
+    } else if (kept > 0n) rows.push({ kind: ext > 0n ? 'dep' : 'in', v: kept, from: ext > 0n ? t.from : undefined, tx: t.tx, block: t.block });
   }
   const blocks = [...new Set(rows.map((r) => r.block))], time = new Map();
   await eachLimit(blocks, 4, async (b) => { const blk = await rpc('eth_getBlockByNumber', ['0x' + b.toString(16), false]).catch(() => null); if (blk) time.set(b, Number(BigInt(blk.timestamp))); });
   for (const r of rows) { r.time = time.get(r.block) || 0; r.chain = c; }
   const unspent = [...mine.entries()].filter(([nf, n]) => !spent.has(nf) && n.v > 0n).map(([, n]) => n.v);
   return { rows: rows.sort((a, b) => b.block - a.block), balance: sum(unspent), notes: unspent.length, source, through: tip, at: Date.now() };
+}
+// Every deposit and withdrawal into or out of the pool on a chain, by block and amount: the crowd a withdrawal has
+// to blend into. Public data, read from the chain and cached here only so the next read starts where this one ended.
+const POOLQ = {};
+function poolStats(c) {
+  const key = `tacit-pay-pool-v1:${c.chainId}:${lc(POOL)}`, q = POOLQ[c.chainId] ||= { v: readJson(key), p: null, at: 0 };
+  if (q.p) return q.p;
+  if (q.v && Date.now() - q.at < 60_000) return Promise.resolve(q.v);
+  q.p = (async () => {
+    const rpc = await rpcOn(c), tip = Number(BigInt(await rpc('eth_blockNumber')));
+    const v = q.v?.through >= c.deployBlock - 1 ? q.v : { through: c.deployBlock - 1, ins: [], outs: [] };
+    if (tip > v.through) {
+      for (const l of await logs(rpc, POOL, [T_TRANSACT], v.through + 1, tip)) {
+        const d = decodeTransact(l);
+        if (d.ext > 0n) v.ins.push([d.block, d.ext.toString()]); else if (d.ext < 0n) v.outs.push([d.block, (-d.ext).toString()]);
+      }
+      v.through = tip;
+      writeJson(key, v);
+    }
+    q.v = v; q.at = Date.now();
+    return v;
+  })().finally(() => { q.p = null; });
+  return q.p;
+}
+// How well a withdrawal (or a move) of `amount` to `to` blends in, from what anyone can see on chain: whether `to` is
+// an account that put ETH in, whether the amount repeats one of this key's deposits, how many deposits have landed
+// since this key's last, and the route. → { level: 'strong' | 'fair' | 'weak', notes: [text], round } or null while
+// the pool is being read.
+const YOUNG_POOL = 25;
+// Deposits and take-ins made in this tab, counted at once rather than when the history next reads the chain.
+const JUST = Object.fromEntries(CHAINS.map((c) => [c.chainId, []]));
+const justDid = (c, row) => JUST[c.chainId].push({ block: Number.MAX_SAFE_INTEGER, time: Math.floor(Date.now() / 1000), ...row });
+const ROUND = [1n, 25n, 5n].flatMap((m) => Array.from({ length: 22 }, (_, k) => m * 10n ** BigInt(k))).sort((a, b) => (a < b ? -1 : 1));
+function privacyCheck(c, amount, to, via) {
+  const st = CH[c.chainId], v = POOLQ[c.chainId]?.v, h = st.hist;
+  if (!v || !h) { poolStats(c).then(() => FORM.check?.()).catch(() => {}); return null; }
+  const mine = [...h.rows.filter((r) => r.kind === 'dep' || r.kind === 'box' || r.kind === 'link'), ...JUST[c.chainId].filter((j) => !h.rows.some((r) => lc(r.tx) === lc(j.tx)))];
+  const notes = [];
+  let level = 'strong';
+  const fair = (t) => { notes.push(t); if (level === 'strong') level = 'fair'; };
+  const depositors = new Set(mine.map((r) => r.from).filter(Boolean));
+  if (to && (depositors.has(lc(to)) || (S.wallet && lc(to) === lc(S.wallet)))) {
+    level = 'weak';
+    notes.push(depositors.has(lc(to)) ? 'This address put ETH into the pool, so withdrawing to it ties the two together. Use a fresh address.' : 'This is your connected wallet: withdrawing to it links it to the pool. A fresh address keeps them apart.');
+  }
+  const near = (x) => x === amount || (x > amount ? x - amount : amount - x) * 1000n <= amount;
+  const same = mine.find((r) => near(r.v) || near(r.v + (r.fee || 0n)));
+  const when = (r) => new Date((r.time || 0) * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  if (same) fair(`Close to the ${same.kind === 'dep' ? 'deposit you made' : 'amount that came in'} on ${when(same)}, so the two can be paired. A different amount, or taking it out in parts, blends in better.`);
+  // More than two significant digits reads like a fingerprint; a round amount blends in with everyone else's.
+  const odd = amount.toString().replace(/0+$/, '').length > 2, round = ROUND.filter((r) => r <= amount).pop();
+  if (!same && odd && round) notes.push('Round amounts blend in with more withdrawals.');
+  const last = mine.reduce((a, r) => (r.block > (a?.block ?? -1) ? r : a), null);
+  if (last) {
+    const since = v.ins.filter(([b]) => b > last.block).length, hours = last.time ? (Date.now() / 1000 - last.time) / 3600 : Infinity;
+    if (since < 5 || hours < 24) fair(`${since ? `Only ${since} deposit${since === 1 ? '' : 's'} by others since yours` : 'No one else has deposited since yours'}${last.time ? `, ${ago(last.time)}` : ''}. Waiting a day, and for a few more, makes this much harder to link.`);
+  }
+  if (via === 'self') fair('Your wallet shows as the one sending it.');
+  // A small crowd is the limit no timing or amount can beat: say so, rather than call it strong.
+  if (v.ins.length < YOUNG_POOL) fair(`The pool on ${c.full} is still young: ${v.ins.length} deposit${v.ins.length === 1 ? '' : 's'} so far. Every new deposit makes yours harder to single out.`);
+  const crowd = `Your ETH hides among ${st.leaves ?? '…'} notes from ${v.ins.length} deposits in the pool on ${c.full}.`;
+  return { level, notes, crowd, round: (same || odd) && round && round !== amount ? round : null };
 }
 async function eachLimit(items, n, fn) {
   const q = [...items];
@@ -1023,6 +1098,7 @@ function historyOf(c, fresh = false) {
     .finally(() => {
       if (st.histing === p) st.histing = null;
       paintRecover();
+      if (!S.busy && c === S.chain) FORM.check?.();
       if (S.key?.pubHex === pub && linkIndex() != null) {
         watchLinks(); watchLinkBoxes();
         if (!S.busy && (FORM.needsLink || (FORM.linkK != null && FORM.linkK !== linkIndex()))) renderForm();
@@ -1112,6 +1188,15 @@ function renderForm() {
 // addresses changed, the relay came or went, or the link it shows was paid.
 const formStale = (c) => c === S.chain && ((FORM.needsW && CH[c.chainId].W) || (FORM.waitShown !== undefined && CH[c.chainId].waiting !== FORM.waitShown)
   || (FORM.relayShown !== undefined && FORM.relayShown !== relayUp()) || (FORM.linkK !== undefined && FORM.linkK !== linkIndex()));
+const privacyView = (c, amount, to, via) => {
+  const p = privacyCheck(c, amount, to, via);
+  if (!p) return html`<div class="pv"><p class="note">Checking how well this blends in…</p></div>`;
+  const label = { strong: 'Blends in well', fair: 'Could blend in better', weak: 'Easy to link to you' }[p.level];
+  return html`<div class="pv pv-${p.level}"><div class="pv-h"><i></i>${label}</div>
+    ${p.notes.map((t) => html`<p class="note">${t}</p>`)}
+    ${p.round && p.round < amount ? html`<p class="note"><button class="link" type="button" id="pv-round" data-v="${p.round}">Take out ${fmt(p.round, 18, 6)} ETH instead</button></p>` : ''}
+    <p class="note mute">${p.crowd}</p></div>`;
+};
 const clearDraft = (...ids) => { for (const id of ids) { delete DRAFT[id]; const i = $('#' + id); if (i) i.value = ''; } FORM.check?.(); };
 const amountField = (id, label, extra = '') => html`
   <div class="lbl"><span>${label}</span>${extra}</div>
@@ -1229,7 +1314,9 @@ function formDeposit(f) {
     $$('[data-sweep]', f).forEach((sw) => sw.onclick = () => act(sw, async (step) => {
       const W2 = await walletOn(c);
       await signerFor(c).ready();
-      const h = await W2.sweep({ index: Number(sw.dataset.sweep), onStep: step });
+      const i = Number(sw.dataset.sweep), v = (cur().waitBoxes || []).find(([x]) => x === i)?.[1] ?? 0n;
+      const h = await W2.sweep({ index: i, onStep: step });
+      justDid(c, { kind: i ? 'link' : 'box', v, tx: h });
       done(c, h, 'Taken in.');
     }));
   } else {
@@ -1258,6 +1345,7 @@ function formDeposit(f) {
         const W2 = await walletOn(c);
         await signerFor(c).ready();
         const h = await W2.deposit({ amount: a, onStep: step });
+        justDid(c, { kind: 'dep', v: a, from: lc(S.wallet), tx: h });
         clearDraft('f-damt');
         done(c, h, `Deposited ${fmt(a, 18, 6)} ETH.`);
       });
@@ -1355,7 +1443,8 @@ function formWithdraw(f) {
       ${prepay() ? kvRow('Bridge gas prepaid, up to', `${fmt(prepay(), 18, 6)} ETH, the unused part joins your balance there`) : ''}
       ${plan?.merges ? kvRow(`Combining notes first (${plan.merges}×)`, `${fmt(fee * BigInt(plan.merges), 18, 6)} ETH`) : ''}
       ${change != null ? kvRow('Stays private', `${fmt(change, 18, 6)} ETH`) : ''}
-      ${!l2 && S.wallet && lc(raw) === lc(S.wallet) ? html`<p class="note warn">This is your connected wallet: the withdrawal links it to the pool on chain.</p>` : ''}`);
+      ${privacyView(c, a, l2 ? null : raw, l2 ? null : routeOf(tab) === 'wallet' ? 'self' : null)}`);
+    $('#pv-round')?.addEventListener('click', (e) => { amt.value = plain(BigInt(e.currentTarget.dataset.v)); amt.dispatchEvent(new Event('input')); });
     rc.hidden = false; go.disabled = false;
   };
   go.onclick = () => act(go, async (step) => {
@@ -1685,7 +1774,7 @@ function paintRecover() {
     if (!h) return html`<li><span class="n">${c.name}</span><span class="s">—</span></li>`;
     const match = st.bal != null && st.bal === h.balance;
     const n = h.rows.length;
-    return html`<li><span class="n">${c.name}</span><span class="num">${eth(h.balance)} ETH</span><span class="s">${n} payment${n === 1 ? '' : 's'}${match ? html` · <span class="ok">matches your balance</span>` : ''}</span></li>`;
+    return html`<li><span class="n">${c.name}</span><span class="num">${eth(h.balance)} ETH</span><span class="s">${n} payment${n === 1 ? '' : 's'}${st.leaves != null ? ` · among ${st.leaves} pool notes` : ''}${match ? html` · <span class="ok">matches your balance</span>` : ''}</span></li>`;
   };
   mount(el, html`
     <p class="lede-s">Rebuilt just now from your key and the chain: what you received, and what you sent with its fee and the change you kept. Your key is the only backup; this browser keeps only a view, never a spend key.</p>

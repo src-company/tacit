@@ -118,7 +118,9 @@ try {
       await p.click('#chains [data-chain="8453"]');
       await p.waitForSelector('#f-wto');
       await p.fill('#f-wto', '0x' + '22'.repeat(20)); await p.fill('#f-wamt', '0.000001'); await sleep(500);
+      await p.waitForFunction(() => document.querySelector('.pv-h') || /More than/.test(document.querySelector('#f-rcpt').textContent), null, { timeout: 180e3 }).catch(() => {});
       const rc = await p.textContent('#f-rcpt');
+      if (/Arrives/.test(rc)) ok(/Blends in well|Could blend in better|Easy to link to you/.test(rc) && /hides among \d+ notes from \d+ deposits/.test(rc), `withdraw privacy check: ${(await p.textContent('.pv')).replace(/\s+/g, ' ').trim().slice(0, 160)}`);
       ok((/Arrives/.test(rc) && /Stays private/.test(rc)) || /More than/.test(rc), `withdraw receipt: ${rc.replace(/\s+/g, ' ').trim()}`);
       const link = await getPaidLink(p, '0.01', 'coffee & cake');
       ok(/#pay=bp1[a-z0-9]+&n=[0-9a-f]{64}&amount=0\.01&chain=base&for=coffee/.test(link), `payment link: ${link.slice(0, 60)}…${link.slice(-50)}`);
@@ -245,6 +247,8 @@ try {
     ok(/Sent/.test(await p.textContent('#status')), `private send from the wallet: ${(await p.textContent('#status')).trim()}`);
     await p.click('#tabs [data-tab="withdraw"]');
     await p.fill('#f-wto', '0x' + '33'.repeat(20)); await p.fill('#f-wamt', '0.002'); await sleep(800);
+    await p.waitForSelector('.pv-h', { timeout: 300e3 });
+    ok(/Could blend in better/.test(await p.textContent('.pv')) && /wallet shows as the one sending/.test(await p.textContent('.pv')) && /since yours/.test(await p.textContent('.pv')), `privacy check before a wallet-sent withdrawal: ${(await p.textContent('.pv')).replace(/\s+/g, ' ').trim().slice(0, 140)}`);
     await p.click('#f-go');
     await p.waitForFunction(() => /Withdrew/.test(document.querySelector('#status').textContent) || document.querySelector('#status .err'), null, { timeout: 600e3 });
     ok(/Withdrew/.test(await p.textContent('#status')), `partial withdrawal from the wallet: ${(await p.textContent('#status')).trim()}`);
