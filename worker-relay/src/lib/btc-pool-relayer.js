@@ -269,6 +269,10 @@ export function createRelayer({
   exitSats = 546, batchMs = 60_000, maxPayloads = 16, maxSlots = 8, anchorMargin = 6, anchorHeadroom,
   bumpWithin = 3, maxReplayLag = 12,
   maxFeeRate = 50, dropAfterMs = 6 * 3600_000, maxPending = 256, maxVerify = 2,
+  // How long a carrier may fail to reach the chain before its payloads are handed back. dropAfterMs cannot
+  // serve here: it is measured from broadcastAt, which a carrier that never broadcasts never sets. Set
+  // below the client's own patience so it reads a reason and self-funds, rather than timing out blind.
+  buildGiveUpMs = 4 * 60_000,
   maxQuotes = 1024, maxQuotesPerClient = 8, quoteTtlMs = 600_000, retainMs = 24 * 3600_000,
   rateLimit = null, now = () => Date.now(), log = () => {}, aggregator = null, aggMin = 2,
 } = {}) {
@@ -908,6 +912,22 @@ export function createRelayer({
     for (const b of [...draining]) if (!outstanding(b)) await flush(b);
     for (const c of carriers) {
       try {
+        // A carrier that never reaches the chain had no give-up of its own. `dropAfterMs` is measured from
+        // broadcastAt, so it never applied to these states, and `attempt`/`advance` were retried every tick
+        // forever while the bind stayed reserved. On a wallet with few coins that is terminal rather than
+        // slow: each stuck carrier holds one coin, and once none is free every quote is refused — and the
+        // resume path re-reserves those binds, so restarting does not clear it either. Nothing is on chain
+        // in these two states, so the payloads go back to their owners and the coins go back to the pool.
+        if ((c.state === 'building' || c.state === 'signed') && now() - c.createdAt > buildGiveUpMs) {
+          const why = c.lastError ? `carrier never broadcast: ${c.lastError}` : 'carrier never broadcast';
+          for (const p of c.payloads) if (p.state === 'carried') release(p, 'dropped', why);
+          for (const k of c.utxos || []) reservedUtxos.delete(k);
+          releaseBind(c.bind);
+          c.state = 'dropped';
+          save(c);
+          log(`carrier ${c.id} gave up unbroadcast after ${Math.round((now() - c.createdAt) / 1000)}s — bind and coins released`);
+          continue;
+        }
         if (c.state === 'building') await attempt(c);
         else if (c.state === 'signed' || c.state === 'committed' || c.state === 'cancelling') await advance(c);
         else if (c.state === 'broadcast') {
