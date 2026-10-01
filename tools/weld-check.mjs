@@ -300,6 +300,10 @@ await step('pair', async () => {
   if (await page.$('#pf-connect')) await page.click('#pf-connect');
   await page.waitForSelector('[data-pfm="pair"]', { timeout: 60000 });
   await page.click('[data-pfm="pair"]');
+  // ETH Max with TAC as the limit: the pair is sized from the TAC held, so neither field rounds past a balance.
+  await page.click('#pf-max');
+  await until(page, () => !document.querySelector('#pf-go').disabled || /Not enough|refuse/.test(document.querySelector('#pf-rcpt')?.textContent || ''));
+  ok(!(await page.isDisabled('#pf-go')), `pair: ETH Max with TAC as the limit fills a deposit the TAC covers (${await page.inputValue('#pf-tac')} TAC, ${await page.inputValue('#pf-amt')} ETH)`);
   await page.fill('#pf-amt', '0.002');
   await until(page, () => !document.querySelector('#pf-go').disabled || /\S/.test(document.querySelector('#pf-status')?.textContent || ''));
   if (await page.isDisabled('#pf-go')) throw new Error(`the ETH + TAC deposit stayed disabled: ${await text(page, '#pf-status')} | ${await text(page, '#pf-rcpt')}`);
@@ -413,15 +417,15 @@ await step('sell', async () => {
   const r = await openPage({ account: who, key });
   try {
     await r.page.goto(r.url + '#sell');
-    await r.page.waitForSelector('#sell-connect, #s-amt', { timeout: 60000 });
+    await r.page.waitForSelector('#sell-connect, #sl-amt', { timeout: 60000 });
     if (await r.page.$('#sell-connect')) await r.page.click('#sell-connect');
-    await r.page.waitForSelector('#s-amt');
-    await r.page.fill('#s-amt', '25');
-    await acceptLoss(r.page, '#s-go', '#s-ackv');
+    await r.page.waitForSelector('#sl-amt');
+    await r.page.fill('#sl-amt', '25');
+    await acceptLoss(r.page, '#sl-go', '#sl-ackv');
     const e0 = BigInt(await rpc('eth_getBalance', [who, 'latest'])), n0 = BigInt(await rpc('eth_getTransactionCount', [who, 'latest']));
-    await r.page.click('#s-go');
-    await until(r.page, () => /Sold|class="err"/.test(document.querySelector('#s-status')?.innerHTML || ''), null, 240000);
-    ok((await tacOf(who)) === 75n * 10n ** 18n, `sell: 25 TAC sold ${await text(r.page, '#s-status')}`);
+    await r.page.click('#sl-go');
+    await until(r.page, () => /Sold|class="err"/.test(document.querySelector('#sl-status')?.innerHTML || ''), null, 240000);
+    ok((await tacOf(who)) === 75n * 10n ** 18n, `sell: 25 TAC sold ${await text(r.page, '#sl-status')}`);
     ok(BigInt(await rpc('eth_getTransactionCount', [who, 'latest'])) === n0 + 1n && (await allowanceOf(TAC, who, ZROUTER)) === 0n, 'sell: one transaction, the permit riding inside it, no allowance left');
     ok(BigInt(await rpc('eth_getBalance', [who, 'latest'])) > e0, 'sell: ETH arrives, net of gas');
   } finally { await r.browser.close(); await rpc('anvil_stopImpersonatingAccount', [who]); }
