@@ -44,12 +44,13 @@ export const SEL = {
 export const CHAINS = {
   1: { rpc: ['https://mainnet.gateway.tenderly.co', 'https://ethereum-rpc.publicnode.com', 'https://cloudflare-eth.com', 'https://eth.drpc.org'], bs: 'https://eth.blockscout.com', final: 75, slot: 12 },
   8453: { rpc: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com'], bs: 'https://base.blockscout.com', final: 450, slot: 2 },
-  4663: { rpc: ['https://rpc.mainnet.chain.robinhood.com'], bs: null, final: 3600, slot: 0.25 },
+  4663: { rpc: ['https://rpc.mainnet.chain.robinhood.com'], bs: null, final: 3600, slot: 0.1 },
 };
 export const API = 'https://api.tacit.finance';
 const ESPLORA = ['https://mempool.space/api', 'https://blockstream.info/api'];
 const TX_FINAL = 300;       // an explorer's transaction lists run a little behind the chain; an hour back is re-read
 const BOARD_MAX = 500;      // the points API lists at most this many accounts
+const TIMED_MAX = 300;      // logs from more blocks than this are dated by an estimate rather than asking for each block
 
 // ── words and numbers ────────────────────────────────────────────────────────────────────────────────────────
 const strip = (h) => String(h || '').replace(/^0x/, '');
@@ -73,7 +74,8 @@ export const fromJson = (s) => JSON.parse(s, (_, x) => (x && typeof x === 'objec
 // or amount it is read for.
 function slimLog(l) {
   const t = (l.topics || []).map(lc), t0 = t[0], ts = l.blockTimestamp ?? l.timeStamp;
-  const out = { b: num(l.blockNumber), i: num(l.logIndex || 0), h: lc(l.transactionHash), a: lc(l.address), t, ts: ts == null || ts === '' ? null : num(ts) };
+  // A node that doesn't know a block's time may leave it out or give 0; either way it is dated later.
+  const out = { b: num(l.blockNumber), i: num(l.logIndex || 0), h: lc(l.transactionHash), a: lc(l.address), t, ts: ts == null || ts === '' ? null : num(ts) || null };
   if (t0 === TOPIC.leaves || t0 === TOPIC.spent) out.n = arrayLen(l.data, 0);
   else if (t0 === TOPIC.transact) { out.x = I256(W(l.data, 5)).toString(); out.f = W(l.data, 7).toString(); }
   else if (t0 !== TOPIC.locks) out.d = l.data;
@@ -262,7 +264,7 @@ export function makeStatsReader({ fetchImpl = (...a) => fetch(...a), gapMs = 200
         }
       }
       let all = [...(kept ? kept.items : []), ...fresh.map(slimLog).sort((x, y) => x.b - y.b || x.i - y.i)];
-      if (chain === 1) all = await timed(all);
+      all = await timed(all, chain);
       if (to - final >= start - 1) k.logs[name] = { to: to - final, items: all.filter((l) => l.b <= to - final) };
       return all;
     }
@@ -274,12 +276,24 @@ export function makeStatsReader({ fetchImpl = (...a) => fetch(...a), gapMs = 200
       if (to - TX_FINAL >= start - 1) k.txs[name] = { to: to - TX_FINAL, items: all.filter((t) => t.b <= to - TX_FINAL) };
       return all;
     }
-    // A log without its block's time (not every node gives it) is placed by its block's distance from the head.
-    async function timed(items) {
-      if (!items.some((l) => l.ts == null)) return items;
-      const blk = await rpc(1, 'eth_getBlockByNumber', ['latest', false]);
-      const hb = num(blk.number), ht = num(blk.timestamp);
-      return items.map((l) => (l.ts == null ? { ...l, ts: ht - (hb - l.b) * CHAINS[1].slot } : l));
+    // A log without its block's time (not every node gives it) is dated by its block, all the blocks asked for together;
+    // one no node answers (or when there are too many to ask for) is placed by its distance from the head, and left
+    // undated if even the head can't be had. Undated logs are dated on a later reading.
+    async function timed(items, chain) {
+      const missing = [...new Set(items.filter((l) => !l.ts).map((l) => l.b))];
+      if (!missing.length) return items;
+      const at = new Map();
+      for (let i = 0; missing.length <= TIMED_MAX && i < missing.length; i += 50) {
+        const part = missing.slice(i, i + 50);
+        const blocks = await batch(chain, part.map((b) => ['eth_getBlockByNumber', ['0x' + b.toString(16), false]]));
+        part.forEach((b, j) => { const t = blocks[j]?.timestamp ? num(blocks[j].timestamp) : 0; if (t) at.set(b, t); });
+      }
+      let ref = null;
+      if (missing.some((b) => !at.has(b))) {
+        const blk = await rpc(chain, 'eth_getBlockByNumber', ['latest', false]).catch(() => null);
+        if (blk) ref = [num(blk.number), num(blk.timestamp)];
+      }
+      return items.map((l) => (l.ts ? l : { ...l, ts: at.get(l.b) ?? (ref ? ref[1] - (ref[0] - l.b) * CHAINS[chain].slot : null) }));
     }
     const once = (fn) => { let p = null; return () => (p ||= fn()); };
     const main = once(() => logsOf('1', 1, [A.pool, A.engine, A.airdrop, A.evmPool], FROM.main));
@@ -323,12 +337,23 @@ export function makeStatsReader({ fetchImpl = (...a) => fetch(...a), gapMs = 200
         8453: () => logsOf('8453', 8453, [A.evmPool], FROM.evm[8453]).then(of(A.evmPool, TOPIC.transact)),
         4663: () => logsOf('4663', 4663, [A.evmPool], FROM.evm[4663]).then(of(A.evmPool, TOPIC.transact)),
       };
-      return Promise.all(Object.keys(CHAINS).map(Number).map(async (chain) => {
+      return Promise.all([1, 8453, 4663].map(async (chain) => {
         const [bal, ls] = await Promise.all([rpc(chain, 'eth_getBalance', [A.evmPool, 'latest']).then(BigInt).catch(() => null), src[chain]().catch(() => null)]);
-        // Out is what the pool paid: each withdrawal, and each relayer fee, which it pays on top.
+        // Out is what the pool paid: each withdrawal, and each relayer fee, which it pays on top. What a move does to the
+        // pool's balance is its amount less that fee, deposit or withdrawal.
         let dep = 0n, wd = 0n, nd = 0, nw = 0;
-        for (const l of ls || []) { const x = BigInt(l.x); if (x > 0n) { dep += x; nd++; } else if (x < 0n) { wd -= x; nw++; } wd += BigInt(l.f); }
-        return { chain, bal, dep: ls ? dep : null, wd: ls ? wd : null, nd, nw, moves: ls ? ls.length : null };
+        const ins = [], flows = [];
+        for (const l of ls || []) {
+          const x = BigInt(l.x), f = BigInt(l.f);
+          if (x > 0n) { dep += x; nd++; ins.push([l.ts, x]); } else if (x < 0n) { wd -= x; nw++; }
+          wd += f;
+          flows.push([l.ts, x - f]);
+        }
+        const dated = (xs) => xs.filter(([t]) => t != null);
+        return {
+          chain, bal, dep: ls ? dep : null, wd: ls ? wd : null, nd, nw, moves: ls ? ls.length : null,
+          lastAt: ins.length ? ins.at(-1)[0] : null, series: { ins: dated(ins), flows: dated(flows) },
+        };
       }));
     }
 
@@ -411,6 +436,29 @@ export function makeStatsReader({ fetchImpl = (...a) => fetch(...a), gapMs = 200
   }
 
   return { read, rpc, calls, getLogs };
+}
+
+// Private ETH as the stats page headlines it: the V1 pool and the device pool on each chain together, what was shielded,
+// is held and was withdrawn, and the same over time. `pools` has each one's own figures; a figure a pool's reading lacks
+// is left out of the sums and the pool is named in `unread` (`held` for the balance, `flow` for deposits and withdrawals).
+// Wallets stay the V1 pool's alone: the device pools take deposits through routers and keepers as well as wallets. Either
+// reading may be missing (`null`); the page gives totals only when the V1 pool's is there.
+export function privateEth(eth, dev) {
+  const pools = [
+    ...(eth ? [{ id: 'v1', held: eth.held, inWei: eth.inWei, outWei: eth.outWei, deposits: eth.deposits, withdrawals: null, moves: null }] : []),
+    ...(dev || []).map((d) => ({ id: d.chain, held: d.bal, inWei: d.dep, outWei: d.wd, deposits: d.nd, withdrawals: d.nw, moves: d.moves })),
+  ];
+  const sum = (key, ok) => pools.filter((p) => p[ok] != null).reduce((s, p) => s + BigInt(p[key]), 0n);
+  const times = [eth?.lastAt, ...(dev || []).map((d) => d.lastAt)].filter(Boolean);
+  const series = (key) => [...(eth?.series[key] || []), ...(dev || []).flatMap((d) => d.series?.[key] || [])];
+  return {
+    pools,
+    held: sum('held', 'held'), inWei: sum('inWei', 'inWei'), outWei: sum('outWei', 'outWei'),
+    deposits: pools.filter((p) => p.inWei != null).reduce((s, p) => s + p.deposits, 0),
+    lastAt: times.length ? Math.max(...times) : null,
+    unread: { held: pools.filter((p) => p.held == null).map((p) => p.id), flow: pools.filter((p) => p.inWei == null).map((p) => p.id) },
+    series: { ins: series('ins'), flows: series('flows') },
+  };
 }
 
 // A newer reading over an older one: each part the newer one couldn't read is carried over from the older, which says

@@ -3,7 +3,7 @@
 // answer, and a part that can't be read reported as such while the rest still is.
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { makeStatsReader, A, ID, TOPIC, SEL, toJson, fromJson, mergeReadings } from '../dapp/weld/stats/read.js';
+import { makeStatsReader, privateEth, A, ID, TOPIC, SEL, toJson, fromJson, mergeReadings } from '../dapp/weld/stats/read.js';
 
 const lc = (s) => String(s).toLowerCase();
 const w = (v) => (BigInt(v) < 0n ? (1n << 256n) + BigInt(v) : BigInt(v)).toString(16).padStart(64, '0');
@@ -83,10 +83,16 @@ function world() {
     if (method === 'eth_getBalance') return h(balances[chain === 1 && lc(params[0]) === lc(A.pool) ? lc(A.pool) : `${chain}:${lc(params[0])}`] ?? 0n);
     if (method === 'eth_call') return read(params[0].to, params[0].data);
     if (method === 'eth_getTransactionByHash') return senders[params[0]] ? { hash: params[0], from: senders[params[0]] } : null;
+    if (method === 'eth_getBlockByNumber') {
+      const b = params[0] === 'latest' ? heads[chain] : Number(BigInt(params[0]));
+      return { number: h(b), timestamp: h(T0 + (b - 26_000_000) * 12) };
+    }
     if (method === 'eth_getLogs') {
       const q = params[0], from = Number(BigInt(q.fromBlock)), to = Number(BigInt(q.toBlock)), as = [].concat(q.address).map(lc);
       if (chain === 8453 && to - from + 1 > 2000) return { error: 'eth_getLogs is limited to a 2,000 range' };
-      return logs[chain].filter((l) => as.includes(lc(l.address)) && Number(BigInt(l.blockNumber)) >= from && Number(BigInt(l.blockNumber)) <= to && Number(BigInt(l.blockNumber)) <= heads[chain]);
+      // Robinhood's node gives every log a block time of 0.
+      return logs[chain].filter((l) => as.includes(lc(l.address)) && Number(BigInt(l.blockNumber)) >= from && Number(BigInt(l.blockNumber)) <= to && Number(BigInt(l.blockNumber)) <= heads[chain])
+        .map((l) => (w_.zeroTs?.includes(chain) ? { ...l, blockTimestamp: '0x0' } : l));
     }
     return null;
   };
@@ -224,4 +230,45 @@ test('stats reading: with the explorers down, what the chains alone answer is st
   const merged = mergeReadings({ eth: { inWei: 1n }, link: { tip: 1 } }, r);
   assert.deepEqual(merged.stale.sort(), ['eth', 'link']);
   assert.equal(merged.eth.inWei, 1n);
+});
+
+test('stats reading: private ETH is the V1 pool and the device pools on every chain together', async () => {
+  const x = world();
+  populate(x, 1);
+  const { reading: r } = await makeStatsReader({ fetchImpl: x.fetchImpl, gapMs: 0 }).read({});
+  const t = privateEth(r.eth, r.dev);
+  assert.equal(t.inWei, (18n + 3n + 5n + 2n) * 10n ** 17n, 'shielded: V1 wraps plus each device pool\'s deposits');
+  assert.equal(t.held, 16n * 10n ** 17n + 19n * 10n ** 16n + 5n * 10n ** 17n + 2n * 10n ** 17n, 'held: V1\'s balance plus each device pool\'s');
+  assert.equal(t.outWei, 2n * 10n ** 17n + 11n * 10n ** 16n, 'withdrawn: V1\'s, and the device pool\'s withdrawal with its relayer fee');
+  assert.equal(t.deposits, 6);
+  assert.deepEqual(t.pools.map((p) => p.id), ['v1', 1, 8453, 4663]);
+  assert.deepEqual(t.unread, { held: [], flow: [] });
+  assert.equal(t.series.ins.length, 6); assert.equal(t.series.flows.length, 8);
+  assert.equal(t.series.flows.reduce((s, [, v]) => s + v, 0n), t.held, 'every move in time adds up to what is held');
+  assert.equal(t.series.ins.reduce((s, [, v]) => s + v, 0n), t.inWei);
+  assert.ok(t.series.flows.every(([ts]) => ts > T0 - 1e5), 'every move is dated, none in 1970');
+  assert.equal(t.lastAt, Math.max(...t.series.ins.map(([ts]) => ts)));
+  // A device pool whose logs couldn't be read is left out of what was moved, named, and its balance still counts.
+  const part = privateEth(r.eth, r.dev.map((d) => (d.chain === 8453 ? { ...d, dep: null, wd: null, series: { ins: [], flows: [] } } : d)));
+  assert.deepEqual(part.unread, { held: [], flow: [8453] });
+  assert.equal(part.inWei, t.inWei - 5n * 10n ** 17n); assert.equal(part.held, t.held);
+  // Without the V1 reading only the device pools are summed; with an older reading that had no series, nothing breaks.
+  assert.deepEqual(privateEth(null, r.dev).pools.map((p) => p.id), [1, 8453, 4663]);
+  assert.equal(privateEth(r.eth, r.dev.map(({ series, ...d }) => d)).series.ins.length, 3);
+});
+
+test('stats reading: a node that dates every log 0 gets its logs dated from their blocks', async () => {
+  const x = world(); populate(x, 1);
+  const normal = await makeStatsReader({ fetchImpl: x.fetchImpl, gapMs: 0 }).read({});
+  const z = world(); populate(z, 1); z.zeroTs = [4663];
+  const { reading: r, keep } = await makeStatsReader({ fetchImpl: z.fetchImpl, gapMs: 0 }).read({});
+  const rh = r.dev.find((d) => d.chain === 4663);
+  assert.deepEqual(rh.series.ins, [[T0 + (74_000_000 - 5_000 - 26_000_000) * 12, 2n * 10n ** 17n]], 'dated by its block, not 1970');
+  assert.deepEqual(figures(r), figures(normal.reading), 'the same figures as from a node that gives the time');
+  assert.ok(keep.logs['4663'].items.every((l) => l.ts > T0), 'and kept dated');
+  // A kept log that was undated (an earlier reading kept it as 0) is dated on the next reading.
+  const stale = fromJson(toJson(keep));
+  stale.logs['4663'].items.forEach((l) => { l.ts = 0; });
+  const again = await makeStatsReader({ fetchImpl: z.fetchImpl, gapMs: 0 }).read(stale);
+  assert.deepEqual(again.reading.dev.find((d) => d.chain === 4663).series, rh.series);
 });
