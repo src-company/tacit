@@ -144,7 +144,10 @@ export function openEvmPoolPointsState(db) {
 }
 
 export async function explorerGet(url) {
-  const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (compatible; tacit-points)' } });
+  const res = await fetch(url, {
+    headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (compatible; tacit-points)' },
+    signal: AbortSignal.timeout(15000),
+  });
   if (!res.ok) throw new Error(`explorer ${res.status} ${url}`);
   return res.json();
 }
