@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-mdhwrvKfQc651RHLbgcIv6V4j9P/35GxR5mqpBaDUzY=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-UHSxYOP/pP4V4UVd1pcoEqiGQlLBGL/kNIjSLindFAQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -19,6 +19,36 @@
 <meta name="theme-color" content="#E8E0CC" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#15130E" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<!-- Every module the page loads at once, one round trip instead of five: build/build.mjs expands these roots to their static imports. -->
+<!-- preload-roots: /vendor/tacit-deps.min.js /prf-wallet.js /tacit-wallet-known.js /evm-wallet.js /tacit-address.js /bip352.js /address-id.js /evm-pool-zk.js /evm-pool-wallet.js /evm-pool-gateway.js /evm-pool-zk-prover.js /vendor/tacit-poseidon.min.js -->
+<!-- preload:begin -->
+<link rel="modulepreload" href="/vendor/tacit-deps.min.js" fetchpriority="high">
+<link rel="modulepreload" href="/prf-wallet.js">
+<link rel="modulepreload" href="/tacit-wallet-known.js?cb=49410363">
+<link rel="modulepreload" href="/evm-wallet.js?cb=4f722dd7">
+<link rel="modulepreload" href="/identity-message.js">
+<link rel="modulepreload" href="/tacit-address.js">
+<link rel="modulepreload" href="/bip352.js">
+<link rel="modulepreload" href="/address-id.js?cb=c4fa5a58">
+<link rel="modulepreload" href="/evm-pool-zk.js">
+<link rel="modulepreload" href="/btc-pool-zk.js">
+<link rel="modulepreload" href="/amm-bjj.js">
+<link rel="modulepreload" href="/evm-pool-wallet.js?cb=4d593b60">
+<link rel="modulepreload" href="/btc-shielded-pool.js">
+<link rel="modulepreload" href="/vendor/tacit-poseidon.min.js">
+<link rel="modulepreload" href="/btc-pool-zk-boundary.js">
+<link rel="modulepreload" href="/amm-sigma.js">
+<link rel="modulepreload" href="/bulletproofs.js">
+<link rel="modulepreload" href="/bulletproofs-plus.js">
+<link rel="modulepreload" href="/evm-pool-scan.js">
+<link rel="modulepreload" href="/evm-pool-gateway.js">
+<link rel="modulepreload" href="/evm-pool-zk-prover.js?cb=00ff69c2">
+<!-- preload:end -->
+<!-- The first reads go to these four: their connections open while the modules load. -->
+<link rel="preconnect" href="https://api.tacit.finance" crossorigin>
+<link rel="preconnect" href="https://ethereum-rpc.publicnode.com" crossorigin>
+<link rel="preconnect" href="https://mainnet.base.org" crossorigin>
+<link rel="preconnect" href="https://rpc.mainnet.chain.robinhood.com" crossorigin>
 <style>
 @font-face { font-family: 'IBM Plex Mono'; font-weight: 400; font-display: swap; src: url('/fonts/ibm-plex-mono-400-latin.woff2') format('woff2'); }
 @font-face { font-family: 'IBM Plex Mono'; font-weight: 500; font-display: swap; src: url('/fonts/ibm-plex-mono-500-latin.woff2') format('woff2'); }
@@ -220,6 +250,7 @@ input::placeholder { color: var(--mute); opacity: 1; }
 .opt-m { font-size: 12px; color: var(--mute); padding-left: 30px; }
 .opt[aria-busy="true"] .opt-t::after { content: ''; width: 11px; height: 11px; margin-left: auto; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
 .more { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 18px; margin: 8px 0 0; }
+.opts-err { margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--err); }
 
 /* ── device and recovery ── */
 .meter { height: 3px; margin: 12px 0 4px; background: var(--hair); overflow: hidden; }
@@ -378,7 +409,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <ul class="facts">
       <li>Proved on your device</li>
       <li>Recovered from your key</li>
-      <li>No gas needed</li>
+      <li>No gas to send or withdraw</li>
     </ul>
   </section>
 
@@ -612,6 +643,7 @@ const errText = (e) => {
   if (e?.said) return String(e.message);
   const m = String(e?.shortMessage || e?.message || e || 'Something went wrong');
   if (e?.code === 4001 || /user (rejected|denied)|rejected the request|denied transaction|no wallet selected/i.test(m)) return 'Cancelled in your wallet.';
+  if (/no ethereum wallet detected/i.test(m)) return `No Ethereum wallet found in this browser. Open this page in your wallet's own browser, or install MetaMask, Rabby or Rainbow.${isPasskeyAvailable() ? ' Or use a passkey.' : ''}`;
   const r = revertText(e);
   if (r) return r;
   if (/insufficient funds/i.test(m)) return 'Not enough ETH in your wallet for this and its gas.';
@@ -734,7 +766,8 @@ async function prove(input) {
   PROVER.last = performance.now() - t; PROVER.lastKind = 'payment'; paintDevice();
   return out;
 }
-const warm = () => { prover().catch(() => {}); };
+// Focusing an amount starts the key early; with the browser's Data Saver on it waits for the press, which asks for it anyway.
+const warm = () => { if (!navigator.connection?.saveData) prover().catch(() => {}); };
 // A proving key already saved here loads in the background once a wallet opens, so the first payment starts proving at once.
 const warmIfSaved = () => { if (PROVER.cached) (globalThis.requestIdleCallback || setTimeout)(warm); };
 
@@ -862,7 +895,7 @@ const open = {
     await setKey(await tacitTurn(async () => {
       T.wallet.priv = null; T.wallet.pub = null; T.wallet.mode = null;
       const av = T.extWallet.available();
-      if (!av.satsConnect && !av.unisat) throw new Error('No Bitcoin wallet found in this browser. Install Xverse, Leather or UniSat.');
+      if (!av.satsConnect && !av.unisat) throw new Error(`No Bitcoin wallet found in this browser. Install Xverse, Leather or UniSat${isPasskeyAvailable() ? ', or use a passkey' : ''}.`);
       const st = await T.extWallet.connectDefault();
       mainnetBtc(st.address);
       if (k?.address && st.address !== k.address) { T.extWallet.state = null; throw new Error(`Switch your Bitcoin wallet to ${short(k.address, 6)}, the account this Tacit wallet was opened with.`); }
@@ -898,16 +931,24 @@ const open = {
   },
 };
 
+// A wallet in this browser, told without loading anything: the way in puts what is not here after what is.
+const btcWalletSeen = () => !!(window.btc_providers?.length || window.XverseProviders?.BitcoinProvider || window.LeatherProvider || window.unisat);
+// A way in that fails says so beside the options, not in a toast, which would cover the rows to try next.
+const signInErr = (box, id, e) => { const p = box.querySelector(`#${id}-err`); p.textContent = errText(e); p.hidden = false; };
 function signIn(id) {
   const known = knownWallet(), other = otherWallet(), pk = isPasskeyAvailable();
+  const hasBtc = btcWalletSeen(), hasEth = evm.available(), bare = pk && !known && !other && !hasBtc && !hasEth;
   const opt = (k, title, sub, cls = '') => html`<button class="opt ${cls}" type="button" data-in="${k}"><span class="opt-t">${title}</span><span class="opt-m">${sub}</span></button>`;
   return html`<div class="opts" id="${id}-in">
     ${known ? opt('known', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>Continue with your Tacit wallet`, `Opens with ${viaText(known)}, the same key as on tacit.finance and weld.`, 'main') : ''}
     ${other ? opt('other', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>${other.tacit ? html`Continue as <b>${short(other.tacit, 7)}</b>` : 'Your other Tacit key'}`, html`A different key, opened here before with ${viaText(other)}. Not the one tacit.finance has open.`) : ''}
-    ${opt('eth', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Ethereum wallet`, 'One signature opens your Tacit key (two the first time on this browser). The same wallet pays gas when you send it yourself.')}
-    ${opt('btc', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-btc"/></svg>Bitcoin wallet`, 'Xverse, Leather or UniSat. One signature, two the first time.')}
-    ${pk ? opt('passkey', html`<svg class="tk sm" aria-hidden="true"><use href="#i-key"/></svg>Passkey`, 'Touch ID, Windows Hello or a security key.') : ''}
-    <p class="more">${pk ? html`<button class="link" type="button" data-in="new">New passkey wallet</button>` : ''}${known?.mode !== 'local' && isPub(readJson('tacit-wallet-v1:mainnet')?.pub) ? html`<button class="link" type="button" data-in="local">Saved in this browser</button>` : ''}<button class="link" type="button" data-in="paste">Paste a key</button></p>
+    ${bare ? opt('new', html`<svg class="tk sm" aria-hidden="true"><use href="#i-key"/></svg>Create a wallet`, 'Touch ID, Face ID or Windows Hello. Nothing to install.', 'main') : ''}
+    ${bare ? opt('passkey', html`<svg class="tk sm" aria-hidden="true"><use href="#i-key"/></svg>Open a passkey wallet`, 'One you made before, with a passkey on this device or in your password manager.') : ''}
+    ${opt('eth', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Ethereum wallet`, hasEth || !bare ? 'One signature opens your Tacit key (two the first time on this browser). The same wallet pays gas when you send it yourself.' : 'MetaMask, Rabby, Rainbow or any browser wallet. None found in this browser.')}
+    ${opt('btc', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-btc"/></svg>Bitcoin wallet`, hasBtc || !bare ? 'Xverse, Leather or UniSat. One signature, two the first time.' : 'Xverse, Leather or UniSat. None found in this browser.')}
+    ${pk && !bare ? opt('passkey', html`<svg class="tk sm" aria-hidden="true"><use href="#i-key"/></svg>Passkey`, 'Touch ID, Windows Hello or a security key.') : ''}
+    <p class="opts-err" id="${id}-err" role="alert" hidden></p>
+    <p class="more">${pk && !bare ? html`<button class="link" type="button" data-in="new">New passkey wallet</button>` : ''}${known?.mode !== 'local' && isPub(readJson('tacit-wallet-v1:mainnet')?.pub) ? html`<button class="link" type="button" data-in="local">Saved in this browser</button>` : ''}<button class="link" type="button" data-in="paste">Paste a key</button></p>
     <div class="amt text" id="${id}-paste" hidden><input id="${id}-hex" type="password" placeholder="64-character Tacit key" autocomplete="off" spellcheck="false" aria-label="Tacit key"><button class="link" type="button" data-in="key">Open</button></div>
   </div>`;
 }
@@ -921,6 +962,7 @@ function wireSignIn(root, id, after) {
     const k = b.dataset.in;
     if (k === 'paste') { const p = box.querySelector(`#${id}-paste`); p.hidden = false; p.querySelector('input').focus(); return; }
     if (SIGNING.on) return;
+    box.querySelector(`#${id}-err`).hidden = true;
     SIGNING.on = true;
     $$('[data-in]').forEach((x) => { x.disabled = true; });
     busyBtn(b, async () => {
@@ -932,7 +974,7 @@ function wireSignIn(root, id, after) {
         else if (k === 'local') await open.local({ pubHex: readJson('tacit-wallet-v1:mainnet')?.pub });
         else await open[k]();
         after?.();
-      } catch (e) { if (!/cancel/i.test(e?.message || '') && e?.name !== 'NotAllowedError') toast(errText(e), true); }
+      } catch (e) { if (!/cancel/i.test(e?.message || '') && e?.name !== 'NotAllowedError') signInErr(box, id, e); }
     }).finally(() => { SIGNING.on = false; $$('[data-in]').forEach((x) => { x.disabled = false; }); });
   };
   box.querySelector(`#${id}-hex`)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') box.querySelector('[data-in="key"]').click(); });
@@ -1587,7 +1629,7 @@ function paintBal() {
   }
   const v = st.bal != null ? eth(st.bal) : st.last != null ? html`<span class="stale">${eth(st.last)}</span>` : null;
   mount($('#bal'), html`<span class="pair"><svg class="tk md" aria-hidden="true"><use href="#tk-eth"/></svg><svg class="tk md" aria-hidden="true"><use href="#tk-peth"/></svg></span>
-    <div><div class="v num">${v ?? (st.err ? html`<span class="err">—</span>` : html`<span class="sk" style="--w:8ch"></span>`)}</div><div class="u">ETH, private on ${c.full}</div></div>
+    <div><div class="v num">${v ?? (st.err ? html`<span class="err">—</span>` : html`<span class="sk" style="--w:8ch"></span>`)}</div><div class="u">ETH, private on ${c.full}${st.err && v == null ? html` · <span class="err">${errText(st.err)}</span>` : ''}</div></div>
     <div class="side">${st.err ? html`<button class="link" type="button" id="bal-re">retry</button>` : st.bal != null ? html`<button class="link" type="button" id="bal-re">refresh</button>` : 'reading…'}</div>`);
   const re = $('#bal-re');
   if (re && S.busyChain === c.chainId) re.disabled = true;
@@ -2223,7 +2265,7 @@ function linksList() {
   const all = [...made, ...found].sort((a, b) => b.row?.block - a.row?.block || b.i - a.i);
   if (!all.length) return '';
   return html`<div class="lbl"><span>Your links</span><span>found again from your key</span></div>
-    <ul class="gl">${all.slice(0, 12).map((g) => html`<li><span><b class="num">${fmt(g.v, 18, 6)} ETH</b> · ${g.c.name}${gl.notes[`${g.c.chainId}:${g.i}`] ? ` · “${gl.notes[`${g.c.chainId}:${g.i}`]}”` : ''} · ${g.taken === 'taken' ? 'taken' : g.taken === 'back' ? 'taken back' : 'not taken yet'}</span>
+    <ul class="gl">${all.filter((g, n) => !g.taken || n < 12).map((g) => html`<li><span><b class="num">${fmt(g.v, 18, 6)} ETH</b> · ${g.c.name}${gl.notes[`${g.c.chainId}:${g.i}`] ? ` · “${gl.notes[`${g.c.chainId}:${g.i}`]}”` : ''} · ${g.taken === 'taken' ? 'taken' : g.taken === 'back' ? 'taken back' : 'not taken yet'}</span>
       ${g.taken ? '' : html`<span class="acts"><button class="link" type="button" data-gcopy="${g.i}:${g.c.chainId}">copy link</button><button class="link" type="button" data-gback="${g.i}:${g.c.chainId}">take back</button></span>`}</li>`)}</ul>`;
 }
 function wireLinks(root) {
@@ -2588,6 +2630,8 @@ async function shieldTo(r, a, c) {
 }
 async function payFromWallet(btn) {
   const r = REQ.v;
+  if (r.paying) return;                                 // a redraw can give a second button before the first press has reached the wallet
+  r.paying = true;
   await busyBtn(btn, async () => {
     try {
       const c = S.chain, a = r.amount ?? parseUnits($('#req-amt')?.value);
@@ -2620,6 +2664,7 @@ async function payFromWallet(btn) {
       for (let i = 0; i < 120; i++) { if (await swept()) { r.state = 'in'; paintReq(); return; } await sleep(10_000); }
       r.state = 'later'; paintReq();
     } catch (e) { r.err = errText(e); r.state = r.paid ? r.state : null; r.step = null; paintReq(); }
+    finally { r.paying = false; }
   });
 }
 
@@ -2787,7 +2832,7 @@ function readPoints(force = false) {
     };
     ptsMatch(PTS.v.deposits);
     PTS.at = Date.now();
-  })().catch((e) => { if (PTS.who === who) Object.assign(PTS, { v: null, err: e }); }).finally(() => { PTS.reading = null; paintPoints(); });
+  })().catch((e) => { if (PTS.who === who) Object.assign(PTS, { v: null, err: e, at: Date.now() }); }).finally(() => { PTS.reading = null; paintPoints(); });
   return PTS.reading;
 }
 const ptsFmt = (n) => Math.round(Number(n) || 0).toLocaleString('en-US');
@@ -2939,15 +2984,17 @@ function renderWalletSheet() {
     mount(el, html`<p class="lede-s">Open your Tacit wallet. It is the same key, with the same balances, as on tacit.finance and weld.</p>${signIn('ws')}`);
     return wireSignIn(el, 'ws', () => $('#sheet-wallet').close());
   }
-  const k = S.key;
+  const k = S.key, kept = k.mode === 'ext' || k.mode === 'local';
   mount(el, html`
     <div class="who"><div class="a num">${short(UNIFIED_LIVE ? unifiedAddress() : k.bp, 14)}</div><div class="u">${UNIFIED_LIVE ? 'Your Tacit address' : 'Your pool address'} · opened with ${viaText(k)}</div>
       <div class="u">ID <b class="num nw">${addressId(UNIFIED_LIVE ? unifiedAddress() : k.bp)}</b> · a payer sees it too</div>
       <div class="row2"><button class="btn ghost" type="button" id="w-copy">Copy address</button><button class="btn ghost" type="button" id="w-lock">Lock</button></div></div>
     <div class="kv"><span>Pays gas when you send it yourself</span>${S.wallet ? html`<b>${short(S.wallet, 6)}</b>` : html`<button class="link" type="button" id="w-conn">Connect a wallet</button>`}</div>
     <div id="w-up"></div>
-    <p class="note">Your wallet or passkey is the only way back to these funds: keep it safe. The key stays in this tab, and payments to your pool address reach you here, on weld and on tacit.finance.</p>`);
+    ${kept ? html`<p class="more"><button class="link" type="button" id="w-backup">Copy key to back up</button></p>` : ''}
+    <p class="note">${kept ? 'This key is kept in this browser only, so clearing the browser’s data loses it. Copy it somewhere private: anyone who has it controls these funds, and pasting it back opens them again.' : 'Your wallet or passkey is the only way back to these funds: keep it safe.'} The key stays in this tab, and payments to your pool address reach you here, on weld and on tacit.finance.</p>`);
   $('#w-copy').onclick = () => copy(UNIFIED_LIVE ? unifiedAddress() : k.bp, 'Address copied');
+  $('#w-backup')?.addEventListener('click', () => navigator.clipboard.writeText(k.priv).then(() => toast('Key copied. Keep it somewhere private.'), () => toast('Could not copy the key: the browser refused clipboard access.', true)));
   nameUpgrade().then((plan) => { const el = $('#w-up'); if (plan && el?.isConnected) { mount(el, upgradeView(plan)); wireUpgrade(el, plan, () => mount(el, html``)); } });
   $('#w-lock').onclick = () => { lock(); renderWalletSheet(); };
   $('#w-conn')?.addEventListener('click', () => connectWallet().then(renderWalletSheet).catch((e) => toast(errText(e), true)));

@@ -190,6 +190,51 @@ function pageCacheBust(files, write) {
   return drift;
 }
 
+// A page's module graph is discovered one import statement at a time, so each level of it costs a round trip before
+// the next level starts: the pay pages' unified-address chain was five deep. The page names the modules it loads at
+// once in a `<!-- preload-roots: /a.js /b.js -->` comment; the block after it is every module those reach through static
+// imports, as `modulepreload` links under the exact URL the page (or the module importing it) uses, so the whole graph
+// is fetched in parallel from the first bytes of the HTML. Generated here so it cannot go stale; --verify-only reports
+// a block that no longer matches.
+const PRELOAD_PAGES = ['pay/index.html', 'pay/eth/index.html'];
+const STATIC_IMPORT = /(?:^|[\n;}])\s*(?:import|export)\s*(?:[^'"();]*?\sfrom\s*)?(['"])([^'"]+)\1/g;
+function preloadBlock(page) {
+  const roots = (/<!-- preload-roots:([^>]*?)-->/.exec(page) || [])[1];
+  if (!roots) return null;
+  const code = page.replace(/<!-- preload:begin -->[\s\S]*?<!-- preload:end -->/, '');
+  const urlOf = (path) => {
+    const m = new RegExp(`(["'])(${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\?cb=[A-Za-z0-9_-]+)?)\\1`).exec(code);
+    if (!m) throw new Error(`preload root ${path} is not imported by the page`);
+    return m[2];
+  };
+  const urls = new Map();
+  const walk = (url) => {
+    if (urls.has(url)) return;
+    const path = url.split('?')[0], file = join(DAPP_DIR, path);
+    if (!existsSync(file)) throw new Error(`preload: ${url} is not in dapp/`);
+    urls.set(url, true);
+    for (const m of readFileSync(file, 'utf8').matchAll(STATIC_IMPORT)) {
+      if (/^[./]/.test(m[2])) walk(new URL(m[2], `https://x${path}`).pathname);
+    }
+  };
+  for (const r of roots.trim().split(/\s+/)) walk(urlOf(r));
+  const links = [...urls.keys()].map((u) => `<link rel="modulepreload" href="${u}"${u.startsWith('/vendor/tacit-deps') ? ' fetchpriority="high"' : ''}>`);
+  return `<!-- preload:begin -->\n${links.join('\n')}\n<!-- preload:end -->`;
+}
+function pagePreloads(write) {
+  const drift = [];
+  for (const rel of PRELOAD_PAGES) {
+    const file = join(DAPP_DIR, rel);
+    if (!existsSync(file)) continue;
+    const before = readFileSync(file, 'utf8');
+    const block = preloadBlock(before);
+    if (!block) continue;
+    const after = before.replace(/<!-- preload:begin -->[\s\S]*?<!-- preload:end -->/, () => block);
+    if (after !== before) { drift.push(`${rel} modulepreload links do not match the page's imports`); if (write) writeFileSync(file, after); }
+  }
+  return drift;
+}
+
 // Unlike tacit.js/preboot.js (fingerprinted via their own `?cb=` URL param),
 // vendor/tacit-deps.min.js (the crypto bundle) and prf-wallet.js (passkey/PRF
 // key derivation) are imported by dozens of dapp/*.js files at their bare
@@ -302,8 +347,9 @@ async function main() {
     if (gotPreboot !== wantPreboot) drift.push(`index.html preboot.js ?cb=${gotPreboot} but sha256(dapp/preboot.js)=${wantPreboot}`);
     if (gotSw !== wantSw) drift.push(`sw.js CACHE_VERSION suffix ${gotSw} but sha256(vendor‖prf-wallet)=${wantSw}`);
     drift.push(...pageCacheBust(SATS_CB_FILES, false), ...pageCacheBust(WELD_CB_FILES, false), ...pageCacheBust(TAC_CB_FILES, false), ...pageCacheBust(PAY_CB_FILES, false));
+    drift.push(...pagePreloads(false));
     if (drift.length) {
-      console.error('✗ cache-bust tokens are stale — run `npm run build` and commit the result:');
+      console.error('✗ cache-bust tokens or preload links are stale — run `npm run build` and commit the result:');
       for (const d of drift) console.error(`    ${d}`);
       process.exit(1);
     }
@@ -333,6 +379,8 @@ async function main() {
     console.log(`• tac page cache-bust: ${tacDrift.length ? `${tacDrift.length} token(s) updated` : 'unchanged'}`);
     const payDrift = pageCacheBust(PAY_CB_FILES, true);
     console.log(`• pay page cache-bust: ${payDrift.length ? `${payDrift.length} token(s) updated` : 'unchanged'}`);
+    const preDrift = pagePreloads(true);
+    console.log(`• pay page preloads: ${preDrift.length ? 'updated' : 'unchanged'}`);
 
     for (const page of PINNED_PAGES) {
       if (!existsSync(page.file)) continue;

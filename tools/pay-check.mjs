@@ -9,6 +9,8 @@
 //          /pay/eth/; BTC and TAC balances read; each kind of address routes as it should, a tacit1 from before the pool
 //          lane included (a silent payment in BTC, a shielded transfer in TAC); the receive addresses
 //   btcsend no network: a silent payment through /pay's Send form to a tacit1 (both forms), captured, found by its recipient
+//   firstrun no network: a first visit with no wallet leads with a new passkey wallet, a failed way in is said beside the options, and
+//          every module a page preloads is fetched once
 //   saved  no network: the key saved in this browser, behind a passphrase, opens on /pay/ and /pay/eth/ through the passphrase
 //          dialog (Escape closes it quietly, a wrong passphrase asks again)
 //   anyone the same fork with a real keeper relaying: pay an 0x address now, or hold it until it blends in (after a
@@ -25,7 +27,7 @@ import { extname, join, normalize } from 'node:path';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'live,hub,saved,fork,anyone').split(','));
+const ONLY = new Set((process.argv[2] || 'live,hub,firstrun,saved,fork,anyone').split(','));
 const SHOTS = process.env.SHOTS || null;
 const WEB = 21000 + Math.floor(Math.random() * 2000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -286,6 +288,44 @@ try {
     ok(/\/pay\/eth\//.test(p.url()), 'the ETH chip opens /pay/eth/');
     ok(!errors.length, `no page errors ${errors.join(' | ')}`);
     await ctx.close();
+  }
+
+  if (ONLY.has('firstrun')) {
+    // A first visit, no network: the ways in suit the browser, a way in that fails says so beside the options, and
+    // the module preloads are the URLs the page imports (each module is fetched once).
+    console.log('first run (/pay and /pay/eth, no network)');
+    const origin = new URL(URL_).origin;
+    for (const path of ['/pay/', '/pay/eth/']) {
+      for (const wallet of [false, true]) {
+        const seen = new Map();
+        const { ctx, p, errors } = await page(browser, {
+          viewport: { width: 390, height: 844 },
+          init: wallet ? () => { window.ethereum = { request: async () => { throw Object.assign(new Error('rejected'), { code: 4001 }); }, on() {}, removeListener() {} }; } : null,
+          route: (c) => c.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort()),
+        });
+        p.on('request', (r) => { const u = new URL(r.url()); if (u.origin === origin && /\.js$/.test(u.pathname)) seen.set(u.pathname, (seen.get(u.pathname) || 0) + 1); });
+        await p.goto(origin + path);
+        await p.waitForSelector('#g-in');
+        await sleep(1500);
+        const twice = [...seen].filter(([, n]) => n > 1).map(([u]) => u);
+        ok(!twice.length, `${path}${wallet ? ' (wallet)' : ''}: each module is fetched once ${twice.join(' ')}`);
+        await p.click('#wallet'); await p.waitForSelector('#sheet-wallet[open] .opt');
+        const order = await p.$$eval('#sheet-wallet .opt .opt-t', (x) => x.map((e) => e.textContent.trim()));
+        if (!wallet) {
+          ok(order[0] === 'Create a wallet' && order.includes('Open a passkey wallet'), `${path}: with no wallet in the browser, a new wallet leads: ${order.join(' · ')}`);
+          await p.click('#sheet-wallet [data-in="btc"]');
+          await p.waitForSelector('#sheet-wallet .opts-err:not([hidden])');
+          ok(/No Bitcoin wallet found/.test(await p.textContent('#sheet-wallet .opts-err')) && !(await p.$('.toast')), `${path}: the missing wallet is said beside the options, not in a toast`);
+        } else {
+          ok(!order.includes('Create a wallet'), `${path}: with a wallet in the browser the order is the usual one: ${order.join(' · ')}`);
+          await p.click('#sheet-wallet [data-in="eth"]');
+          await p.waitForSelector('#sheet-wallet .opts-err:not([hidden])');
+          ok(/Cancelled in your wallet/.test(await p.textContent('#sheet-wallet .opts-err')), `${path}: a refused signature is said beside the options`);
+        }
+        ok(!errors.length, `${path}: no page errors ${errors.join(' | ')}`);
+        await ctx.close();
+      }
+    }
   }
 
   if (ONLY.has('saved')) {
