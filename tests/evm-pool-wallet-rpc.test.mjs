@@ -1,6 +1,6 @@
 // jsonRpc over several nodes, and the wallet's log scan against nodes with different eth_getLogs range limits.
 import assert from 'node:assert/strict';
-import { jsonRpc, makeEvmPoolWallet, evmPoolKeys, recipientOf, sealNote, openNote, paymentKey, sealState, openState } from '../dapp/evm-pool-wallet.js';
+import { jsonRpc, makeEvmPoolWallet, evmPoolKeys, recipientOf, logFailure, sealNote, openNote, paymentKey, sealState, openState } from '../dapp/evm-pool-wallet.js';
 import { poolAsset } from '../dapp/evm-pool-zk.js';
 import { makeEvmPoolZk } from '../dapp/evm-pool-zk.js';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7 } from 'poseidon-lite';
@@ -76,6 +76,41 @@ await check('the scan takes the widest limit a node names (in message or data) a
     // Two log streams (pool and router), each ceil(10001 / want) chunks served by that node, plus its refusals.
     assert.ok(served >= 2 * Math.ceil((TIP + 1) / want) && served < 2 * Math.ceil((TIP + 1) / want) + 12, `${urls}: ${served} calls for a ${want}-block step`);
   }
+});
+
+await check('a log query failure is read node by node: a named limit narrows, a result cap shrinks, a rate limit waits', async () => {
+  const fail = (...msgs) => Object.assign(new Error(msgs[0]), { all: msgs.map((m) => ({ message: m })) });
+  const drpcFree = 'ranges over 10000 blocks are not supported on free plan', baseRange = 'eth_getLogs is limited to a 2,000 range';
+  assert.deepEqual(logFailure(fail(baseRange, drpcFree), 2_000_000), { step: 10000 });
+  assert.deepEqual(logFailure(fail(baseRange, drpcFree), 10000), { step: 2000 });
+  assert.deepEqual(logFailure(fail('Block range too large for public access: maximum 1000 blocks'), 2000), { step: 1000 });
+  // One node rate-limited beside one that refuses every historical range: wait, never narrow below the working limit.
+  assert.deepEqual(logFailure(fail('over rate limit', drpcFree), 2000), { busy: true });
+  assert.deepEqual(logFailure(fail('You reached Public endpoint rate limit, please upgrade to paid plan'), 2000), { busy: true });
+  assert.deepEqual(logFailure(fail('query returned more than 10000 results'), 2000), { step: 500 });
+  assert.equal(logFailure(fail('execution reverted'), 2000), null);
+});
+
+await check('a scan through a rate-limited node beside one that refuses every range keeps its window', async () => {
+  const calls = [];
+  let n = 0;
+  const spec = { base: { limit: 2000, err: (l) => ({ code: -32614, message: `eth_getLogs is limited to a ${l.toLocaleString('en-US')} range` }) }, drpc: { limit: 0, err: () => ({ code: 35, message: 'ranges over 10000 blocks are not supported on free plan' }) } };
+  const inner = nodes(spec, calls);
+  const fetchImpl = async (url, init) => {
+    const { method, id } = JSON.parse(init.body);
+    if (url === 'base' && method === 'eth_getLogs' && ++n % 3 === 0) return { json: async () => ({ jsonrpc: '2.0', id, error: { code: -32016, message: 'over rate limit' } }) };
+    return inner(url, init);
+  };
+  const alive = setInterval(() => {}, 1000);
+  try {
+    const w = makeEvmPoolWallet({
+      zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(8)), prove: null,
+      chain: { chainId: 8453, pool: '0x000000c2A20657CE25f2Ba99737933D031AFBEE9', router: '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5', rpc: jsonRpc(['base', 'drpc'], fetchImpl), deployBlock: 0, confirmations: 0, logChunk: 2000 },
+    });
+    await w.sync();
+  } finally { clearInterval(alive); }
+  const windows = calls.filter(([u, m]) => u === 'base' && m === 'eth_getLogs').length;
+  assert.ok(windows < 3 * 2 * Math.ceil((TIP + 1) / 2000) + 6, `${windows} base windows for two 10,001-block streams at 2,000 blocks`);
 });
 
 await check('state saved with every leaf and nullifier loads as a tree of unspent notes only', async () => {

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Lv40idlnFnCWcnrpe7xSbRP3ny8SxvC3B0UiBW53PfQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-8wx/0hfTm5KoICtDaZuIFtSR+l4bop1F4uHdCszBckk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Pay anyone privately: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key, proved on your device, recovered from the key alone.">
@@ -437,7 +437,7 @@ if (forwardOld(location.hash)) await new Promise(() => {});
 const [{ secp, keccak_256, sha256, hmac, bytesToHex, hexToBytes, concatBytes }, { prfBytesToScalar, prfLogin, prfRegister, loadPrfMap, savePrfMap, isPasskeyAvailable }, { knownWallets },
   { makeEvmWallet }, { makeTacitAddress }, { bip352TaggedHash }, { addressId }] = await Promise.all([
   import('/vendor/tacit-deps.min.js'), import('/prf-wallet.js'), import('/tacit-wallet-known.js?cb=49410363'),
-  import('/evm-wallet.js?cb=1c8e8d61'), import('/tacit-address.js'), import('/bip352.js'), import('/address-id.js?cb=c4fa5a58')]);
+  import('/evm-wallet.js?cb=4f722dd7'), import('/tacit-address.js'), import('/bip352.js'), import('/address-id.js?cb=c4fa5a58')]);
 
 if (!secp.etc.hmacSha256Sync) secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, concatBytes(...m));
 
@@ -758,7 +758,7 @@ function wireSignIn(root, id, after) {
   };
   box.querySelector(`#${id}-hex`)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') box.querySelector('[data-in="key"]').click(); });
 }
-function lock() { forget(); writeJson(PAY_ID, null); paintWallet(); render(); }
+function lock() { forget(); writeJson(PAY_ID, null); evm.deselectProvider(); S.provider = S.wallet = null; paintWallet(); render(); }
 // The wallet that opened this key is the proof of it: when it moves to another account, or locks, the key is locked too.
 window.addEventListener('tacit:evm-accounts', (e) => {
   if (S.key?.mode !== 'eth') return;
@@ -1310,6 +1310,18 @@ function applyHash() {
   else if (MODES.includes(h)) S.mode = h;
   try { history.replaceState(null, '', `/pay/#${S.mode}`); } catch {}
 }
+// Arrow keys, Home and End move between the tabs of a tab list, as screen-reader and keyboard users expect.
+document.addEventListener('keydown', (e) => {
+  const t = e.target.closest?.('[role="tab"]'), box = t?.closest('[role="tablist"]');
+  if (!box || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+  const tabs = [...box.querySelectorAll('[role="tab"]:not([disabled])')], i = tabs.indexOf(t);
+  if (i < 0) return;
+  e.preventDefault();
+  const n = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+  const where = box.id ? `#${box.id}` : `[role="tablist"][aria-label="${box.getAttribute('aria-label')}"]`;
+  tabs[n].click();
+  document.querySelector(`${where} [aria-selected="true"]`)?.focus();
+});
 window.addEventListener('hashchange', () => { if (applyHash()) return; render(); if (S.key) { loadMode(); if (FOUND.v && !FOUND.res) checkFound(); } });
 setInterval(() => { if (!document.hidden && S.key) loadMode(); }, 60e3);
 

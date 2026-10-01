@@ -30,6 +30,8 @@ export function makeEvmWallet({ secp, sha256, keccak256, bytesToHex, hexToBytes,
   const available = () => !!currentProvider() || providers.length > 0;
   function listProviders() { return providers.map((p) => ({ uuid: p.info.uuid, name: p.info.name, icon: p.info.icon, rdns: p.info.rdns })); }
   function selectProvider(uuid) { const p = providers.find((x) => x.info.uuid === uuid); if (p) selected = p.provider; return !!p; }
+  // Forgets the chosen wallet, so the next connect asks again which one when several are installed.
+  function deselectProvider() { selected = null; }
   function providerLabel() { const a = providers.find((p) => p.provider === currentProvider()); return a?.info?.name || 'Ethereum wallet'; }
 
   function derivationMsg() { return identityMessage({ netName }); }
@@ -232,5 +234,5 @@ export function makeEvmWallet({ secp, sha256, keccak256, bytesToHex, hexToBytes,
     return { v, r: '0x' + h.slice(0, 64), s: '0x' + h.slice(64, 128) };
   }
 
-  return { available, listProviders, selectProvider, providerLabel, connect, deriveIdentity, signErc2612, fundTx, chainId, derivationMsg };
+  return { available, listProviders, selectProvider, deselectProvider, providerLabel, connect, deriveIdentity, signErc2612, fundTx, chainId, derivationMsg };
 }

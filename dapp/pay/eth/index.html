@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-b4SSMA8cGzoIgtVmr8UJxjTZOnmMy9754bfuOOf1rvA=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-3peHFQGi8/qB2Kwfal7qj7NpTEUMvAYcz5I6gG2FdMY=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -453,7 +453,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
 import { secp, keccak_256, sha256, hmac, bytesToHex, hexToBytes, concatBytes } from '/vendor/tacit-deps.min.js';
 import { prfBytesToScalar, prfLogin, prfRegister, loadPrfMap, savePrfMap, isPasskeyAvailable } from '/prf-wallet.js';
 import { knownWallets } from '/tacit-wallet-known.js?cb=49410363';
-import { makeEvmWallet } from '/evm-wallet.js?cb=1c8e8d61';
+import { makeEvmWallet } from '/evm-wallet.js?cb=4f722dd7';
 import { makeTacitAddress, poolKeysOf } from '/tacit-address.js';
 import { bip352TaggedHash } from '/bip352.js';
 import { addressId } from '/address-id.js?cb=c4fa5a58';
@@ -619,17 +619,30 @@ const errText = (e) => {
 const relayTrouble = (e) => /relay|no relayer|failed to fetch|\b5\d\d\b|\b429\b|timed? ?out/i.test(String(e?.message || e)) && !revertText(e) && !e?.said && e?.feeMoved == null;
 const say = (el, view) => mount(el, view instanceof Raw ? view : html`${view}`);
 const sayErr = (el, e) => say(el, html`<span class="err">${errText(e)}</span>`);
+// A status redrawn as it counts: when only its [data-tick] part (hidden from screen readers) changed, that part alone is
+// updated, so the line is announced once rather than at every tick.
+function sayLive(el, view) {
+  const v = view instanceof Raw ? view : html`${view}`, next = document.createElement('div');
+  next.innerHTML = v.s;
+  const was = el.querySelector('[data-tick]'), now = next.querySelector('[data-tick]');
+  if (was && now) {
+    const text = now.textContent;
+    now.textContent = was.textContent;
+    if (next.innerHTML === el.innerHTML) { was.textContent = text; return; }
+  }
+  mount(el, v);
+}
 
 // ── pool modules, loaded once, right after the page ──────────────────────────────────────────────────────
 const mods = lazy(async () => {
   const [zkm, wm, gw, pm, pos] = await Promise.all([
-    import('/evm-pool-zk.js'), import('/evm-pool-wallet.js?cb=86c52613'), import('/evm-pool-gateway.js'),
+    import('/evm-pool-zk.js'), import('/evm-pool-wallet.js?cb=d2339529'), import('/evm-pool-gateway.js'),
     import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
   ]);
   const PO = { 2: pos.poseidon2, 3: pos.poseidon3, 4: pos.poseidon4, 5: pos.poseidon5, 7: pos.poseidon7 };
   return {
     zk: zkm.makeEvmPoolZk({ poseidon: (xs) => PO[xs.length](xs) }), poolAsset: zkm.poolAsset, extDataHash: zkm.extDataHash,
-    evmPoolKeys: wm.evmPoolKeys, makeEvmPoolWallet: wm.makeEvmPoolWallet, jsonRpc: wm.jsonRpc, openNote: wm.openNote, openNotes: wm.openNotes, sealNote: wm.sealNote, recipientOf: wm.recipientOf, paymentKey: wm.paymentKey, PAYMENT_ATTEMPTS: wm.PAYMENT_ATTEMPTS, verifyPayment: wm.verifyPayment,
+    evmPoolKeys: wm.evmPoolKeys, makeEvmPoolWallet: wm.makeEvmPoolWallet, jsonRpc: wm.jsonRpc, openNote: wm.openNote, openNotes: wm.openNotes, logFailure: wm.logFailure, sealNote: wm.sealNote, recipientOf: wm.recipientOf, paymentKey: wm.paymentKey, PAYMENT_ATTEMPTS: wm.PAYMENT_ATTEMPTS, verifyPayment: wm.verifyPayment,
     receiveKeys: gw.receiveKeys, receiveBoxAddress: gw.receiveBoxAddress, RECEIVE_FEE_BPS: gw.RECEIVE_FEE_BPS, vkHash: pm.vkHash,
   };
 });
@@ -650,12 +663,25 @@ async function artifact(name, sha, onBytes) {
   let bytes;
   if (hit) { bytes = new Uint8Array(await hit.arrayBuffer()); onBytes(bytes.length); }
   else {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
-    const reader = r.body.getReader(), parts = [];
-    let got = 0;
-    for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); got += value.length; onBytes(value.length); }
-    bytes = new Uint8Array(got); let o = 0; for (const c of parts) { bytes.set(c, o); o += c.length; }
+    // A download that stops moving for 45 s is given up, so a dropped connection says so instead of waiting forever.
+    const stop = new AbortController();
+    let quiet = setTimeout(() => stop.abort(), 45e3);
+    try {
+      const r = await fetch(url, { signal: stop.signal });
+      if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
+      const reader = r.body.getReader(), parts = [];
+      let got = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        clearTimeout(quiet); quiet = setTimeout(() => stop.abort(), 45e3);
+        parts.push(value); got += value.length; onBytes(value.length);
+      }
+      bytes = new Uint8Array(got); let o = 0; for (const c of parts) { bytes.set(c, o); o += c.length; }
+    } catch (e) {
+      if (stop.signal.aborted) throw new Error('The proving key stopped downloading. Check your connection and try again.');
+      throw e;
+    } finally { clearTimeout(quiet); }
   }
   if (hexOf(await crypto.subtle.digest('SHA-256', bytes)) !== strip(sha).toLowerCase()) {
     if (hit) await cache.delete(key).catch(() => {});
@@ -680,12 +706,13 @@ function prover() {
     const fail = (e) => { for (const w of waiting.values()) w.reject(e); waiting.clear(); if (proverP === made) proverP = null; worker.terminate(); PROVER.state = 'idle'; paintDevice(); };
     worker.onmessage = ({ data }) => { const w = waiting.get(data.id); if (!w) return; waiting.delete(data.id); data.ok ? w.resolve(data) : w.reject(new Error(data.error)); };
     worker.onerror = (ev) => { ev.preventDefault?.(); fail(new Error('Proving stopped on this device, likely short of memory. Close other tabs and try again, or use a laptop.')); };
-    const call = (msg, ms) => new Promise((resolve, reject) => {
+    const call = (msg, ms, transfer = []) => new Promise((resolve, reject) => {
       const i = ++id, timer = setTimeout(() => fail(new Error('Proving is taking too long on this device. Try again.')), ms);
       waiting.set(i, { resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
-      worker.postMessage({ ...msg, id: i });
+      worker.postMessage({ ...msg, id: i }, transfer);
     });
-    await call({ op: 'init', wasm, zkey, vk }, 5 * 60e3);
+    // The key and the circuit move to the worker rather than being copied, so a phone holds one 33 MB copy, not two.
+    await call({ op: 'init', wasm, zkey, vk }, 5 * 60e3, [wasm.buffer, zkey.buffer]);
     Object.assign(PROVER, { state: 'ready', cached: true }); paintDevice();
     return async (input) => { const r = await call({ op: 'prove', input }, 10 * 60e3); return { proof: r.proof, publicSignals: r.publicSignals }; };
   })().catch((e) => { if (proverP === made) proverP = null; Object.assign(PROVER, { state: 'idle', err: e }); paintDevice(); throw e; });
@@ -786,14 +813,15 @@ async function setKey(k) {
   historyAll();
 }
 function forget() {
-  S.key = null; S.keys = null; BOXQ.for = null; GIFTQ.for = null; LINKSHOW.v = null;
+  // The receive boxes' and links' keys derive from this key, so they go with it.
+  S.key = null; S.keys = null; Object.assign(BOXQ, { for: null, map: null, at: [] }); Object.assign(GIFTQ, { for: null, by: {} }); LINKSHOW.v = null; PLANS.clear();
   for (const c of CHAINS) JUST[c.chainId].length = 0;
   for (const k of Object.keys(DRAFT)) delete DRAFT[k];
   if (REQ.v) { DRAFT['f-to'] = REQ.v.bp; if (REQ.v.amount) DRAFT['f-amt'] = plain(REQ.v.amount); }
   GIFTSEEN.clear();
   for (const st of Object.values(CH)) { clearTimeout(st.histTimer); Object.assign(st, { W: null, for: null, bal: null, notes: [], quote: null, waiting: null, err: null, syncing: null, at: 0, fails: 0, fill: null, hist: null, histing: null, histNext: null, histErr: null, histFails: 0, histTimer: null, histStart: 0, last: null, waitBoxes: [], quoteErr: null, deferred: false }); }
 }
-function lock() { forget(); paintWallet(); renderApp(); paintRecover(); }
+function lock() { forget(); evm.deselectProvider(); paintWallet(); renderApp(); paintRecover(); }
 
 const open = {
   async eth(k) {
@@ -1067,15 +1095,11 @@ async function logs(rpc, address, topics, from, to, onStep, onChunk) {
       const got = await rpc('eth_getLogs', [{ address, topics, fromBlock: '0x' + a.toString(16), toBlock: '0x' + b.toString(16) }]);
       for (const l of got) out.push(l);
       onChunk?.(got, b);
-      a = b + 1; onStep?.((a - from) / Math.max(1, to - from + 1));
+      a = b + 1; busyTries = 0; onStep?.((a - from) / Math.max(1, to - from + 1));
     } catch (e) {
-      const m = (e.all || [e]).map((x) => `${x.message} ${JSON.stringify(x.rpc?.data ?? '')}`).join(' ');
-      if (/rate.?limit|too many requests|\b429\b|over rate/i.test(m) && !/range|blocks?\b/i.test(m) && (busyTries += 1) <= 6) { await sleep(1500 * busyTries); continue; }
-      if (step > 1 && /range|too many (?:results|logs|blocks)|too large|exceed|\d{4,} blocks?|archive|limited to/i.test(m)) {
-        const named = [...m.matchAll(/(\d[\d,]*)\s*(?:blocks?|range)\b/gi)].map((x) => Number(x[1].replace(/,/g, ''))).filter((n) => n > 0 && n < step);
-        step = named.length ? Math.max(...named) : Math.max(1, Math.floor(step / 8));
-        continue;
-      }
+      const f = (await mods()).logFailure(e, step);
+      if (f?.step) { step = f.step; continue; }
+      if (f?.busy && (busyTries += 1) <= 6) { await sleep(1500 * busyTries); continue; }
       throw e;
     }
   }
@@ -1186,7 +1210,7 @@ async function scanHistory(c, onStep) {
         if (Number(r.chainId) !== c.chainId || lc(r.pool) !== lc(POOL)) throw new Error('index for another pool');
         const through = Number(r.through);
         if (through < from) break;
-        got.push(...r.events.filter((e) => e.block >= from && e.block <= through).map(fromFeed));
+        for (const e of r.events) if (e.block >= from && e.block <= through) got.push(fromFeed(e));
         from = through + 1;
         if (through >= tip) break;
       }
@@ -1199,7 +1223,9 @@ async function scanHistory(c, onStep) {
       logs(rpc, POOL, [T_TRANSACT], from, tip, onStep),
       logs(rpc, ROUTER, [T_RECEIVED], from, tip),
     ]);
-    evs.push(...tl.map(decodeTransact), ...rl.map(decodeReceived).filter((r) => boxes.has(lc(r.box))));
+    // Pushed one by one: spreading a whole chain's logs into one call exceeds the engine's argument limit on a busy pool.
+    for (const l of tl) evs.push(decodeTransact(l));
+    for (const l of rl) { const r = decodeReceived(l); if (boxes.has(lc(r.box))) evs.push(r); }
   }
   const ts = evs.filter((e) => e.kind === 'transact').sort((a, b) => a.block - b.block || a.firstIndex - b.firstIndex);
   const leafAt = new Map();
@@ -1693,7 +1719,7 @@ async function act(btn, fn) {
   $$('#form button, #form input').forEach((x) => { x.disabled = true; });
   btn.setAttribute('aria-busy', 'true');
   let t0 = 0, label = '', note = '', timer = null;
-  const show = () => say(status, html`<span class="spin" aria-hidden="true"></span>${label}${t0 ? html` <span class="mute num">${((performance.now() - t0) / 1000).toFixed(1)} s</span>` : ''}${note ? html` <span class="mute">· ${note}</span>` : ''}`);
+  const show = () => sayLive(status, html`<span class="spin" aria-hidden="true"></span>${label}${note ? html` <span class="mute">· ${note}</span>` : ''}<span class="mute num" aria-hidden="true" data-tick>${t0 ? ` ${((performance.now() - t0) / 1000).toFixed(1)} s` : ''}${note ? ` ${Math.floor((PROVER.got / Math.max(1, PROVER.total)) * 100)}%` : ''}</span>`);
   const step = (m) => {
     label = stepWords(m);
     t0 = /^proving/.test(m) ? performance.now() : 0;
@@ -1701,7 +1727,7 @@ async function act(btn, fn) {
     show();
   };
   timer = setInterval(() => {
-    if (PROVER.state === 'loading') note = `getting the proving key once, ${Math.floor((PROVER.got / Math.max(1, PROVER.total)) * 100)}%`;
+    if (PROVER.state === 'loading') note = 'getting the proving key once';
     else if (note.startsWith('getting')) note = '';
     if (t0 || note) show();
   }, 200);
@@ -1782,7 +1808,7 @@ function formDeposit(f) {
       if (raw && !dto) { go.disabled = true; return /\.(g?wei|eth)$/i.test(raw) ? say_(html`<p class="note">Looking up ${raw.toLowerCase()}…</p>`) : undefined; }
       if (raw && dto.error) { go.disabled = true; return say_(html`<p class="note err">${dto.error}</p>`); }
       if (a && wb != null && a > wb) { say_(html`<p class="note err">More than your wallet holds on ${c.full}.</p>`); go.disabled = true; }
-      else if (a && dto?.bp) say_(html`${kvRow('To', `${dto.label ? `${dto.label} → ` : ''}${short(dto.bp, 8)}`)}${kvRow('ID', addressId(dto.bp))}${kvRow('Into their private balance', `${fmt(a, 18, 6)} ETH`)}${kvRow('Fee', 'none · your wallet pays the gas')}${pointsRow(a)}`);
+      else if (a && dto?.bp) say_(html`${kvRow('To', `${dto.label ? `${dto.label} → ` : ''}${short(dto.bp, 8)}`)}${dto.id ? kvRow('ID', dto.id) : ''}${kvRow('Into their private balance', `${fmt(a, 18, 6)} ETH`)}${kvRow('Fee', 'none · your wallet pays the gas')}${pointsRow(a)}`);
       else if (a) say_(html`${kvRow('Into your private balance', `${fmt(a, 18, 6)} ETH`)}${kvRow('Fee', 'none · your wallet pays the gas')}${pointsRow(a)}`);
       go.textContent = !S.wallet ? 'Connect a wallet' : dto?.bp ? 'Deposit to them privately' : 'Deposit privately';
     };
@@ -1834,19 +1860,19 @@ const OLD_TACIT = 'is from before pool payments, so it can’t receive here yet'
 async function resolveRecipient(raw) {
   const s = raw.trim(), lo = s.toLowerCase();
   if (/^0x/.test(lo)) return { error: badSum(s) ? SUM_MSG : 'That is an Ethereum address. Use Withdraw to pay it.' };
-  if (/^bp1/.test(lo)) return (await validPool(s)) ? { bp: s } : { error: 'Not a valid pool address.' };
+  if (/^bp1/.test(lo)) return (await validPool(s)) ? { bp: s, id: addressId(s) } : { error: 'Not a valid pool address.' };
   if (/^tac(it|tt|rt)1/.test(lo)) {
     let d;
     try { d = TADDR.decodeTacitAddress(lo); } catch { return { error: 'Not a valid Tacit address.' }; }
     if (d.network !== 'mainnet') return { error: 'That Tacit address is for a test network.' };
     if (!d.lanes.pool) return { error: `This Tacit address ${OLD_TACIT}. Ask them for their pool address (bp1…), or pay them at tacit.finance.` };
-    return (await validPool(d.lanes.pool.poolAddress)) ? { bp: d.lanes.pool.poolAddress, label: short(lo, 10) } : { error: 'That Tacit address carries an invalid pool key.' };
+    return (await validPool(d.lanes.pool.poolAddress)) ? { bp: d.lanes.pool.poolAddress, label: short(lo, 10), id: addressId(lo) } : { error: 'That Tacit address carries an invalid pool key.' };
   }
   if (/^[^\s]+\.(g?wei|eth)$/.test(lo)) {
     let r;
     try { r = await (await getNames()).resolveName(lo); } catch (e) { return { error: e.message }; }
     if (!r.pool) return { error: `${r.name} points to a Tacit address that ${OLD_TACIT.replace('is from', 'dates from')}. They can upgrade it in one press from their wallet; meanwhile, pay them at tacit.finance.` };
-    return (await validPool(r.pool)) ? { bp: r.pool, label: r.name } : { error: `${r.name}’s record carries an invalid pool key.` };
+    return (await validPool(r.pool)) ? { bp: r.pool, label: r.name, id: addressId(r.address) } : { error: `${r.name}’s record carries an invalid pool key.` };
   }
   return { error: 'Enter a pool address (bp1…), a Tacit address or a .wei name.' };
 }
@@ -1973,7 +1999,7 @@ function formSend(f) {
     if (bal != null && !plan) return bad('More than your private balance covers with the fee.');
     shownFee = fee;
     mount(rc, html`${who ? kvRow('To', `${who} → ${short(okTo.bp || okTo.addr, 8)}`) : ''}
-      ${okTo.bp ? kvRow('ID', addressId(okTo.bp)) : ''}
+      ${okTo.id ? kvRow('ID', okTo.id) : ''}
       ${kvRow(okTo.addr ? 'Arrives' : 'They receive', `${fmt(a, 18, 6)} ETH`)}
       ${fee ? kvRow('Relay fee', `${fmt(fee, 18, 6)} ETH`) : kvRow('Relay fee', 'none · your wallet pays the gas')}
       ${plan?.merges ? kvRow(`Combining notes first (${plan.merges}×)`, `${fmt(fee * BigInt(plan.merges), 18, 6)} ETH`) : ''}
@@ -2378,13 +2404,21 @@ function reqPool(r) {
   if (r.rp || Date.now() - (r.rpAt || 0) < 30e3) return r.rp || Promise.resolve(null);
   r.rpAt = Date.now();
   return r.rp = resolveRecipient(r.bp).then((x) => {
-    r.rbp = x.bp ? lc(x.bp) : null;
+    r.rbp = x.bp ? lc(x.bp) : null; r.rid = x.id || null;
     if (!x.bp) r.rp = null;
     else if (REQ.v === r) paintReq();
     return r.rbp;
   }, () => { r.rp = null; return null; });
 }
 const reqIs = async (r, bp) => lc(r.bp) === lc(bp) || (await reqPool(r)) === lc(bp);
+const isNameReq = (r) => /\.(g?wei|eth)$/i.test(String(r.bp).trim());
+// A request to a name is paid where the name pointed when the card showed it; if it has moved, the card shows where it
+// points now and nothing is paid.
+function pinReq(r, bp) {
+  if (!isNameReq(r) || !r.rbp || lc(bp) === r.rbp) return;
+  r.rp = null; r.rpAt = 0; paintReq();
+  throw new Error('Where that name points changed. Check it and pay again.');
+}
 function paintReq() { keepFocus($('#req'), drawReq); }
 function drawReq() {
   const el = $('#req'), r = REQ.v;
@@ -2398,8 +2432,8 @@ function drawReq() {
   mount(el, html`
     <div class="lbl"><span>Payment request</span><button class="link" type="button" id="req-x">dismiss</button></div>
     <div class="req-a num">${r.amount ? html`${fmt(r.amount, 18, 6)} <small>ETH</small>` : 'Any amount'}</div>
-    <div class="req-m">to <b class="nw">${short(r.bp, 8)}</b> on ${c.full}${r.note ? html` · “${r.note}”` : ''}</div>
-    <div class="req-m">ID <b class="num nw">${addressId(r.bp)}</b> · they see the same ID under their Tacit address</div>
+    <div class="req-m">to <b class="nw">${short(r.bp, 8)}</b>${isNameReq(r) ? html` → ${r.rbp ? html`<b class="nw">${short(r.rbp, 8)}</b>` : 'looking it up…'}` : ''} on ${c.full}${r.note ? html` · “${r.note}”` : ''}</div>
+    ${isNameReq(r) && !r.rid ? '' : html`<div class="req-m">ID <b class="num nw">${r.rid || addressId(r.bp)}</b> · they see the same ID under their Tacit address</div>`}
     ${own ? html`<p class="note">This is your own request. Share its link or QR code from Receive.</p>` : r.paid ? html`
       <p class="status">${{
         mining: html`<span class="spin" aria-hidden="true"></span>Paid ${fmt(r.paid.a, 18, 6)} ETH · waiting for the block`,
@@ -2443,6 +2477,7 @@ async function payerWallet(c) {
 async function shieldTo(r, a, c) {
   const res = await resolveRecipient(r.bp);
   if (res.error) throw new Error(res.error);
+  pinReq(r, res.bp);
   if (!S.wallet || !S.provider) await connectWallet();
   await ensureChain(c.chainId);
   Object.assign(r, { err: null, state: 'proving', step: 'Getting ready' }); paintReq();
@@ -2461,6 +2496,7 @@ async function payFromWallet(btn) {
       if (!r.n) return await shieldTo(r, a, c);
       const m = await mods();
       const dto = await resolveRecipient(r.bp), payee = dto.bp ? m.recipientOf(await spareKeys(), dto.bp) : null;
+      if (dto.bp) pinReq(r, dto.bp);
       if (!r.ns || !payee || !boxSigOk(payee.V, r.n, r.ns)) return await shieldTo(r, a, c);
       const npk = BigInt('0x' + r.n), box = m.receiveBoxAddress(npk, m.RECEIVE_FEE_BPS, ROUTER), rpc = await rpcOn(c);
       const q = await keeperJson(c, '/quote').catch(() => null);
@@ -2802,7 +2838,7 @@ async function loadGift() {
   clearTimeout(GIFT.t);
   if (GIFT.v === g && !GIFT.done && GIFT.bal > 0n && GIFT.fee == null) GIFT.t = setTimeout(loadGift, 10_000);
 }
-const giftStatus = () => (GIFT.busy ? html`<span class="spin" aria-hidden="true"></span>${GIFT.step || 'Getting ready'}${PROVER.state === 'loading' ? html` <span class="mute">· getting the proving key once, ${Math.floor((PROVER.got / Math.max(1, PROVER.total)) * 100)}%</span>` : ''}`
+const giftStatus = () => (GIFT.busy ? html`<span class="spin" aria-hidden="true"></span>${GIFT.step || 'Getting ready'}${PROVER.state === 'loading' ? html` <span class="mute">· getting the proving key once</span><span class="mute num" aria-hidden="true" data-tick> ${Math.floor((PROVER.got / Math.max(1, PROVER.total)) * 100)}%</span>` : ''}`
   : GIFT.err && GIFT.bal != null ? html`<span class="err">${errText(GIFT.err)}</span>` : '');
 function paintGift() { keepFocus($('#gift'), drawGift); }
 function drawGift() {
@@ -2854,7 +2890,7 @@ async function claimGift(to) {
   const maxFee = capOf(GIFT.fee);
   Object.assign(GIFT, { busy: true, err: null, step: 'Getting ready' });
   paintGift();
-  const tick = setInterval(() => { const e = $('#gift-status'); if (e) mount(e, giftStatus()); }, 250);
+  const tick = setInterval(() => { const e = $('#gift-status'); if (e) sayLive(e, giftStatus()); }, 250);
   try {
     const W = GIFT.W || (GIFT.W = await giftWallet(g.seed, g.chain));
     const [st, q] = await Promise.all([W.sync(), W.quote()]);
@@ -2923,7 +2959,7 @@ function applyHash() {
   const h = location.hash.replace(/^#/, '');
   if (!h) return;
   const q = new URLSearchParams(h.includes('=') ? h : '');
-  const words = h.includes('=') ? [] : h.split(/[&,]/);
+  const words = h.split(/[&,]/).filter((w) => w && !w.includes('='));      // #send&chain=base names a tab beside its parameters
   const c = chainOf(q.get('chain') || words.find((w) => chainOf(w)) || '');
   const bp = (q.get('pay') || '').trim(), n = (q.get('n') || '').trim().toLowerCase(), amount = parseUnits(q.get('amount') || '') || null;
   const pfText = (q.get('proof') || '').trim(), pf = /^([a-z0-9]+):(0x[0-9a-f]{64}):([01]):([0-9a-f]{1,64})$/i.exec(pfText);
@@ -2945,6 +2981,18 @@ function applyHash() {
   } else if (tab && TABS.some(([k]) => k === tab)) S.tab = tab;
   if (/(^|&)gift=/.test(h)) try { history.replaceState(null, '', location.pathname); } catch {}
 }
+// Arrow keys, Home and End move between the tabs of a tab list, as screen-reader and keyboard users expect.
+document.addEventListener('keydown', (e) => {
+  const t = e.target.closest?.('[role="tab"]'), box = t?.closest('[role="tablist"]');
+  if (!box || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+  const tabs = [...box.querySelectorAll('[role="tab"]:not([disabled])')], i = tabs.indexOf(t);
+  if (i < 0) return;
+  e.preventDefault();
+  const n = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+  const where = box.id ? `#${box.id}` : `[role="tablist"][aria-label="${box.getAttribute('aria-label')}"]`;
+  tabs[n].click();
+  document.querySelector(`${where} [aria-selected="true"]`)?.focus();
+});
 window.addEventListener('hashchange', () => { applyHash(); renderApp(); if (GIFT.v) $('#gift').scrollIntoView({ block: 'start', behavior: 'smooth' }); else if (REQ.v) $('#req').scrollIntoView({ block: 'start', behavior: 'smooth' }); });
 
 // ── boot ─────────────────────────────────────────────────────────────────────────────────────────────────

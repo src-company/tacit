@@ -219,6 +219,20 @@ export function jsonRpc(urls, fetchImpl = globalThis.fetch.bind(globalThis), { t
 // The text of an RPC error and of every node's error behind it, data included, for reading block limits.
 const errorText = (e) => (e.all || [e]).map((x) => `${x.message} ${JSON.stringify(x.rpc?.data ?? x.data ?? '')}`).join(' ');
 
+// What to do after an eth_getLogs over `step` blocks failed on every node, read node by node, since one node can refuse
+// for its range limit while another is only rate-limited: → { step } a narrower window (the largest limit a node names
+// below the current one, else a quarter for a node that caps its results without naming a size), { busy } wait and ask
+// again, or null when it is neither.
+export function logFailure(e, step) {
+  const each = (e.all || [e]).map((x) => `${x.message} ${JSON.stringify(x.rpc?.data ?? x.data ?? '')}`);
+  const sizes = (t) => [...t.matchAll(/(\d[\d,]*)\s*(?:blocks?|range)\b/gi)].map((x) => Number(x[1].replace(/,/g, ''))).filter((n) => n > 0);
+  const below = each.flatMap(sizes).filter((n) => n < step);
+  if (below.length) return { step: Math.max(...below) };
+  if (step > 1 && each.some((t) => /too many (?:results|logs|blocks)|more than [\d,]+ (?:results|logs)|too large|exceed|response size/i.test(t) && !sizes(t).length)) return { step: Math.max(1, Math.floor(step / 4)) };
+  if (each.some((t) => /rate.?limit|too many requests|\b429\b|over rate|capacity/i.test(t))) return { busy: true };
+  return null;
+}
+
 function decodeTransact(log) {
   const d = unhex(log.data);
   const w = (i) => d.subarray(32 * i, 32 * i + 32);
@@ -272,7 +286,8 @@ const revertData = (e) => { for (let x = e; x; x = x.cause) { const d = x.rpc?.d
 // from chain logs.
 export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store = null, signer = null, feed = true, fetchImpl = globalThis.fetch?.bind(globalThis) }) {
   const asset = poolAsset({ chainId: BigInt(chain.chainId), pool: chain.pool, token: ZERO });
-  const boxOf = (i) => receiveBoxAddress(receiveKeys(zk, keys.zkWallet, i).npk, RECEIVE_FEE_BPS, chain.router);
+  const boxes = new Map();      // an index's address is fixed by the key, so each is derived once
+  const boxOf = (i) => { if (!boxes.has(i)) boxes.set(i, receiveBoxAddress(receiveKeys(zk, keys.zkWallet, i).npk, RECEIVE_FEE_BPS, chain.router)); return boxes.get(i); };
   const box = boxOf(RECEIVE_INDEX);
   const topicOf = (a) => '0x' + a.slice(2).toLowerCase().padStart(64, '0');
   const confirmations = chain.confirmations ?? 12;
@@ -390,21 +405,16 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
 
   async function logs(address, topics, from, to) {
     const out = [];
-    let step = Number(chain.logChunk ?? 5000);
+    let step = Number(chain.logChunk ?? 5000), busy = 0;
     for (let a = from; a <= to;) {
       const b = Math.min(to, a + step - 1);
       try {
-        out.push(...await chain.rpc('eth_getLogs', [{ address, topics, fromBlock: '0x' + a.toString(16), toBlock: '0x' + b.toString(16) }]));
-        a = b + 1;
+        for (const l of await chain.rpc('eth_getLogs', [{ address, topics, fromBlock: '0x' + a.toString(16), toBlock: '0x' + b.toString(16) }])) out.push(l);
+        a = b + 1; busy = 0;
       } catch (e) {
-        const m = errorText(e);
-        if (step > 1 && /range|limit|too many|too large|exceed|10000/i.test(m)) {
-          // Take the largest limit any node names ("maximum 1000 blocks", "limited to a 2,000 range") below the
-          // current step, so the next pass reaches the node that allows it; else shrink.
-          const named = [...m.matchAll(/(\d[\d,]*)\s*(?:blocks?|range)\b/gi)].map((x) => Number(x[1].replace(/,/g, ''))).filter((n) => n > 0 && n < step);
-          step = named.length ? Math.max(...named) : Math.max(1, Math.floor(step / 4));
-          continue;
-        }
+        const f = logFailure(e, step);
+        if (f?.step) { step = f.step; continue; }
+        if (f?.busy && ++busy <= 6) { await sleep(1500 * busy); continue; }
         throw e;
       }
     }
@@ -619,12 +629,16 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   }
   const releaseSlot = (id) => keeperPost('/cancel', { reservation: id }).catch(() => {});
 
-  // true once mined, false if it reverted, true on no answer in time (it may still land; sync will tell).
-  async function landed(hash) {
+  // true once mined, false if it reverted, true on no answer in time (it may still land; sync will tell). A spend counts
+  // only when the receipt carries the pool's Transact for its nullifiers, so a hash for some other transaction is not
+  // taken as this payment.
+  async function landed(hash, nfs = []) {
     for (let i = 0; i < 90; i++) {
       const r = await chain.rpc('eth_getTransactionReceipt', [hash]).catch(() => null);
-      if (r) return r.status === '0x1' || r.status === 1 || r.status === 'success';
-      await sleep(2000);
+      if (!r) { await sleep(2000); continue; }
+      if (!(r.status === '0x1' || r.status === 1 || r.status === 'success')) return false;
+      return !nfs.length || (r.logs || []).some((l) => String(l.address).toLowerCase() === String(chain.pool).toLowerCase()
+        && String(l.topics?.[0]).toLowerCase() === TRANSACT_TOPIC && nfs.every((nf) => [l.topics[1], l.topics[2]].some((t) => t != null && BigInt(t) === BigInt(nf))));
     }
     return true;
   }
@@ -679,7 +693,7 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       }
       for (const n of ins) pending.add(n.nf);
       onStep('waiting for it to be mined');
-      if (await landed(h)) {
+      if (await landed(h, ins.map((n) => n.nf))) {
         // Returns once this wallet sees it (spent notes gone, change in), so the next action can build on it.
         const spent = new Set(ins.map((n) => n.nf));
         await waitFor(() => !state().notes.some((n) => spent.has(n.nf)), 60_000).catch(() => {});
