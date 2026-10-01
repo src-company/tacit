@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-xek0Es4PBAgleJROZVc05IUeoH+6fdg7Qfxm9+2GQnI=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-TxPbb2oIxgKHLER4QtCNDoMS0MnnzLQhppdgnhSDViM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -3940,7 +3940,7 @@ function renderAirdrop(el) {
         <div class="amt text"><input id="air-to-addr" placeholder="0x… recipient" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Recipient address"></div>
         <button class="btn ghost" type="button" id="air-claim-to">Claim to this address</button>
       </div>` : ''}
-    ${s.claimed ? html`<div class="row2"><button class="btn ghost" type="button" id="air-watch">Add TAC to wallet</button><button class="btn ghost" type="button" id="air-farm">Farm it</button></div>` : ''}
+    ${s.claimed ? html`<div class="row2"><button class="btn ghost" type="button" id="air-watch">Add TAC to wallet</button><button class="btn ghost" type="button" id="air-farm">Farm it${FARM.precision?.live && precisionApr(FARM.precision) != null ? ` · ${aprShort(precisionApr(FARM.precision))}` : ''}</button></div>` : ''}
     <div class="status" role="status" id="air-status"></div>`);
   const status = $('#air-status');
   const finish = async (r) => {
@@ -4502,7 +4502,11 @@ async function readFarms(current) {
   const mine = (FARM.positions || []).length;
   if (x && (x.staked > 0n || x.earned > 0n)) setFoot('farm', `Farming · ${fmt(x.earned, 18, 2)} TAC earned`, 'on');
   else if (mine) setFoot('farm', `${mine} shielded position${mine === 1 ? '' : 's'} earning`, 'on');
-  else if (total) { const t = `${total.toLocaleString('en-US')} TAC a day across ${1 + (prog?.pools?.length || 0)} farms`; setFoot('farm', t, 'live'); store.set(FARM_FOOT_KEY, t); }
+  else if (total) {
+    // The public farm's APR leads, read fresh each time; the kept copy shown on the next visit leaves it out.
+    const t = `${total.toLocaleString('en-US')} TAC a day across ${1 + (prog?.pools?.length || 0)} farms`, apr = x?.live ? precisionApr(x) : null;
+    setFoot('farm', apr != null ? `${aprShort(apr)} on TAC/ETH · ${t}` : t, 'live'); store.set(FARM_FOOT_KEY, t);
+  }
   else if (!x && !prog) setFoot('farm', 'Reading farms…');            // both reads failed; a real "between periods" claim needs at least one to answer
   else setFoot('farm', 'Farms are between reward periods');
 }
@@ -4763,13 +4767,17 @@ function renderPrecision(el) {
         loss = ideal > 0 ? Math.max(0, (1 - Number(lp) / ideal) * 100) : 0;
       }
       if (my !== seq || !go.isConnected) return;
-      const share = lp * 10000n / (x.totalStaked + lp);
+      const share = lp * 10000n / (x.totalStaked + lp), day = x.perDay * lp / (x.totalStaked + lp);
+      // A year of what this deposit earns at today's TAC price, over what goes in: counted after it joins the farm.
+      const inEth = Number(wei) + Number(tac) * x.tacEth, myApr = x.live && inEth > 0 ? Number(day) * 365 * x.tacEth / inEth * 100 : null;
       q = { wei, tac, lp, loss, over: wei > (x.bal ?? wei) || tac > x.tac };
       mount(rc, html`
         ${mode === 'pair' ? html`<div class="kv"><span>Deposit</span><b>${fmt(wei, 18, 5)} ETH + ${fmt(tac, 18, 2)} TAC</b></div>` : ''}
         ${lossLine(loss)}
         <div class="kv"><span>Share of the farm</span><b>${(Number(share) / 100).toFixed(2)}%</b></div>
-        <div class="kv"><span>Earns about</span><b>${fmt(x.perDay * lp / (x.totalStaked + lp), 18, 2)} TAC a day</b></div>`);
+        <div class="kv"><span>Earns about</span><b>${fmt(day, 18, 2)} TAC a day${ethOfTac(day, x) > 0n ? ` (${aboutEth(ethOfTac(day, x))})` : ''}</b></div>
+        ${myApr != null ? html`<div class="kv"><span>APR on this deposit</span><b>${aprLong(myApr)}</b></div>
+          <p class="note">At today’s TAC price, while the stream runs to ${dayFmt(x.finish)}. Swap fees come on top.</p>` : ''}`);
       rc.hidden = false;
       mount(ackBox, lossGate('pf-ackv', loss, 'deposit'));
       wireAck(ackBox, 'pf-ackv', loss, gateOk);
@@ -4991,7 +4999,9 @@ function farmJoin(el, p, status, has) {
       mount(rc, html`
         <div class="kv"><span>Adds</span><b>${fmt(a, 8, 6)} tETH + ${fmt(b, 8, dpB)} ${other}</b></div>
         <div class="kv"><span>Share of the farm</span><b>${sharePct(Number(shares) / Number(bonded + shares))}</b></div>
-        ${day ? html`<div class="kv"><span>Earns about</span><b>${day >= 10 ? Math.round(day).toLocaleString('en-US') : day.toFixed(2)} TAC a day</b></div>` : ''}
+        ${day ? html`<div class="kv"><span>Earns about</span><b>${day >= 10 ? Math.round(day).toLocaleString('en-US') : day.toFixed(2)} TAC a day${ethOfTac(BigInt(Math.round(day * 1e18)), FARM.precision) > 0n ? ` (${aboutEth(ethOfTac(BigInt(Math.round(day * 1e18)), FARM.precision))})` : ''}</b></div>` : ''}
+        ${day && aprOf(day, 2 * Number(a) / 1e8) != null ? html`<div class="kv"><span>APR on this deposit</span><b>${aprLong(aprOf(day, 2 * Number(a) / 1e8))}</b></div>
+          <p class="note">At today’s TAC price${FARM.program?.epoch?.periodFinish ? `, while the stream runs to ${dayFmt(FARM.program.epoch.periodFinish)}` : ''}. Swap fees come on top.</p>` : ''}
         ${fA || fB ? html`<div class="kv"><span>Relay fee to cut your notes to size</span><b>${[fA ? `${fmt(fA, 8, 6)} tETH` : '', fB ? `${fmt(fB, 8, dpB)} ${other}` : ''].filter(Boolean).join(' + ')}</b></div>` : ''}
         <div class="kv"><span>Gas, from ${your()}</span><b>about ${fmt(j.gas, 18, 5)} ETH</b></div>`);
       rc.hidden = false;

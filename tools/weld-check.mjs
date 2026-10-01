@@ -6,10 +6,11 @@
 //            every sheet has a copy-link button
 //   ux       the page's shell: a toast over an open sheet can be pressed, a drag ending on the backdrop leaves the sheet open, an
 //            unreadable amount says so, one sheet replacing another keeps its link in the address bar, a hash naming nothing is ignored
-//   apr      every farm row shows its APR now, and the public farm's card spells it out
+//   apr      every farm row shows its APR now, and the public farm's card spells it out; the Farm tile leads with the public farm's APR
 //   pair     with no TAC held, Max fills the ETH side and says TAC is missing; then ETH + TAC staked in one transaction
 //            with an EIP-2612 permit
-//   farm     a one-sided ETH zap waits for its typed loss acceptance, stakes, claims, then withdraws everything; what is
+//   farm     a one-sided ETH zap waits for its typed loss acceptance (its preview's APR never above the farm's APR now),
+//            stakes, claims, then withdraws everything; what is
 //            earned and earned a day also read in ETH, the dashboard says what there is to claim, and a claim then shows
 //            under Claimed so far
 //   reinvest a stake's claim opens the add form on TAC with exactly what was paid, and farming it stakes it again
@@ -339,6 +340,9 @@ await step('apr', async () => {
   console.log('   rows:', rows.join(' | '));
   console.log('   card:', (card.match(/APR now[^.]*\./) || [''])[0]);
   ok(rows.length >= 2 && rows.every((r) => /APR/.test(r)) && /APR now\s*(about [\d,]+%|over 100,000%)/.test(card), 'apr: every farm shows its APR now, the public card in full');
+  await until(page, () => /APR on TAC\/ETH/.test(document.querySelector('[data-foot="farm"]')?.textContent || ''), null, 60000).catch(() => {});
+  const foot = (await text(page, '[data-foot="farm"]')).trim();
+  ok(/^(\d[\d,]*%|1,000%\+) APR on TAC\/ETH · [\d,]+ TAC a day/.test(foot), `apr: the Farm tile leads with the public farm's APR (${foot})`);
 });
 
 await step('pair', async () => {
@@ -356,6 +360,9 @@ await step('pair', async () => {
   await fundTac(A0, 1000n * 10n ** 18n);
   await page.evaluate(() => { location.hash = ''; location.hash = '#farm'; });
   await until(page, () => /[1-9]/.test(document.querySelector('#pf-tmax')?.textContent || ''), null, 120000);
+  // The no-TAC amount kept in the field re-quotes as "Not enough TAC"; clear it so the wait below sees Max's own quote.
+  await page.fill('#pf-amt', '');
+  await until(page, () => document.querySelector('#pf-rcpt')?.hidden, null, 60000);
   // ETH Max with TAC as the limit: the pair is sized from the TAC held, so neither field rounds past a balance.
   await page.click('#pf-max');
   await until(page, () => !document.querySelector('#pf-go').disabled || /Not enough|refuse/.test(document.querySelector('#pf-rcpt')?.textContent || ''));
@@ -394,6 +401,11 @@ await step('farm', async () => {
     if (process.env.DEBUG) console.log('   ', JSON.stringify(await page.evaluate(() => ({ go: document.querySelector('#pf-go')?.disabled, ack: document.querySelector('#pf-ackv')?.value, b: document.querySelector('.ack b')?.textContent, mode: document.querySelector('[data-pfm][aria-selected="true"]')?.dataset.pfm, status: document.querySelector('#pf-status')?.textContent, rcpt: document.querySelector('#pf-rcpt')?.textContent }))));
   }
   ok(!(await page.isDisabled('#pf-go')), 'farm: typing the loss enables the zap');
+  const rcpt = (await text(page, '#pf-rcpt')).replace(/\s+/g, ' '), cardApr = (await text(page, '#farm-precision')).replace(/\s+/g, ' ');
+  const depA = parseFloat(((rcpt.match(/APR on this deposit\s*about ([\d,]+)%/) || [])[1] || '').replace(/,/g, ''));
+  const nowA = parseFloat(((cardApr.match(/APR now\s*about ([\d,]+)%/) || [])[1] || '').replace(/,/g, ''));
+  ok(depA > 0 && /Swap fees come on top/.test(rcpt) && /TAC a day \((≈ [\d.,]+|< 0\.00001) ETH\)/.test(rcpt), `farm: the deposit preview shows the APR for this deposit, in ETH a day too (${depA}%)`);
+  ok(nowA > 0 && depA <= nowA * 1.005, `farm: and it is never above the farm's APR now (${depA}% on this deposit, ${nowA}% now)`);
   await shot(page, 'farm-zap');
   await page.click('#pf-go');
   await page.waitForSelector('#pf-exit', { timeout: 60000 });
@@ -1052,6 +1064,7 @@ await step('farmjoin', async () => {
     await shot(r.page, 'farmjoin');
     const rc = (await text(r.page, '#sj-rcpt-0')).replace(/\s+/g, ' ');
     ok(/Share of the farm/.test(rc) && /Relay fee to cut your notes to size/.test(rc) && /Gas, from your Tacit account/.test(rc), `farmjoin: Max quotes both sides, the split fees and the gas (${rc})`);
+    if (/Earns about/.test(rc)) ok(/APR on this deposit\s*(about [\d,]+%|over 100,000%)/.test(rc) && /Swap fees come on top/.test(rc), 'farmjoin: and the APR for this deposit');
     await r.page.click('#sj-go-0');
     await until(r.page, () => !!window.__join || /err/.test(document.querySelector('#sf-status-0')?.innerHTML || ''), null, 120000);
     const j = await r.page.evaluate(() => window.__join), splits = await r.page.evaluate(() => window.__splits);
