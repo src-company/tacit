@@ -32,15 +32,15 @@ const rnd = (m) => { let x = 0n; while (x === 0n) x = BigInt('0x' + crypto.rando
 const str = (o) => JSON.parse(JSON.stringify(o, (_, v) => (typeof v === 'bigint' ? v.toString() : v)));
 const asset = rnd(P_FR);
 
-function makeNote(v) {
-  const sk = rnd(L_BJJ), nk = rnd(L_BJJ), rho = rnd(P_FR);
+function makeNote(v, nkSmall = false) {
+  const sk = rnd(L_BJJ), nk = nkSmall ? rnd(1n << 200n) : rnd(L_BJJ), rho = rnd(P_FR);
   const Ak = mulB8(sk);
   return { sk, nk, rho, v, Ak, npk: npkOf(Ak, mulB8(nk)) };
 }
 const leafFor = (n) => leafOf(asset, n.v, n.npk, n.rho);
 
 // A pool of eight notes, ours at index 3; three of the others already spent.
-const notes = Array.from({ length: 8 }, (_, i) => makeNote(i === 3 ? 3n * ETH / 2n : BigInt(i + 1) * ETH / 10n));
+const notes = Array.from({ length: 8 }, (_, i) => makeNote(i === 3 ? 3n * ETH / 2n : BigInt(i + 1) * ETH / 10n, i === 4));   // note 4's nk is small enough that nk + l still fits 251 bits
 const MINE = 3;
 const T = tree(notes.map(leafFor));
 const trie = await newMemEmptyTrie();
@@ -61,17 +61,20 @@ async function exclusionWitness(t, nf) {
 }
 
 async function buildInput({ note = notes[MINE], index = MINE, tr = T, t = trie, epoch = 7n, bucketMin = ETH,
-  claimHash = rnd(P_FR), signWith = note.sk, signClaim = claimHash, retOverride = null, nkOverride = null, vOverride = null } = {}) {
-  const nk = nkOverride ?? note.nk;
+  claimHash = rnd(P_FR), signWith = note.sk, signClaim = claimHash, retOverride = null, nkOverride = null, vOverride = null,
+  nkAlt = null, indexAlt = null } = {}) {
+  // nkAlt / indexAlt: a second spelling of the same key or position, with the tag and the spent-set witness computed from it,
+  // so a refusal can only come from the circuit's own range checks.
+  const nk = nkAlt ?? nkOverride ?? note.nk;
   const leaf = leafFor(note);
-  const nf = nullifier(note.nk, leaf, index);
-  const retNf = retOverride ?? H([TAG_RET, note.nk, leaf, epoch]);
+  const nf = nkAlt != null || indexAlt != null ? poseidon([nkAlt ?? note.nk, leaf, indexAlt ?? index]) : nullifier(note.nk, leaf, index);   // the helper itself refuses a non-canonical key
+  const retNf = retOverride ?? H([TAG_RET, nkAlt ?? note.nk, leaf, epoch]);
   const nfRoot = nfRootOf(t);
   const M = H([TAG_SIG, asset, epoch, tr.root, nfRoot, bucketMin, signClaim, retNf]);
   const sig = sign(signWith, M);
   return {
     root: tr.root, nfRoot, asset, epoch, bucketMin, claimHash, retNf,
-    v: vOverride ?? note.v, rho: note.rho, nk, ak: note.Ak, index, path: tr.path(index),
+    v: vOverride ?? note.v, rho: note.rho, nk, ak: note.Ak, index: indexAlt ?? index, path: tr.path(index),
     sigR8: sig.R8, sigS: sig.S, ...(await exclusionWitness(t, nf)),
   };
 }
@@ -118,6 +121,27 @@ await rejects('a claim address changed after signing', await buildInput({ signCl
 await rejects('someone who lacks the spend key', await buildInput({ signWith: rnd(L_BJJ) }));
 await rejects('a note not in the tree', await buildInput({ tr: tree(notes.slice(0, 2).map(leafFor)), index: 1 }));
 await rejects('the wrong nullifier key', await buildInput({ nkOverride: rnd(L_BJJ) }));
+{ // nk and nk + l are the same point nk·Base8, so the note's leaf is unchanged, but each would give its own tag: two claims for one note
+  const altNk = notes[MINE].nk + L_BJJ;
+  assert.equal(mulB8(altNk)[0], mulB8(notes[MINE].nk)[0], 'nk + l is the same key point');
+  assert.notEqual(H([TAG_RET, altNk, leafFor(notes[MINE]), 7n]), H([TAG_RET, notes[MINE].nk, leafFor(notes[MINE]), 7n]), 'and would be a second tag for the note');
+  await rejects('a second spelling of the nullifier key (nk + l) that would mint a second tag for one note', await buildInput({ nkAlt: altNk }));
+}
+{ // a key small enough that nk + l fits in 251 bits reaches the less-than-l comparison, the only check left to refuse it
+  const small = notes[4], altNk = small.nk + L_BJJ;
+  assert.ok(altNk < (1n << 251n) && mulB8(altNk)[0] === mulB8(small.nk)[0]);
+  await snarkjs.wtns.calculate(str(await buildInput({ note: small, index: 4, bucketMin: ETH / 10n })), WASM, { type: 'mem' });
+  await rejects('nk + l for a key where only the less-than-l comparison can refuse it', await buildInput({ note: small, index: 4, bucketMin: ETH / 10n, nkAlt: altNk }));
+}
+await rejects('a second spelling of the position (index + 2^32)', await buildInput({ indexAlt: BigInt(MINE) + (1n << 32n) }));
+{ // the circuit takes any bucket up to the value, including the value itself: the verifier must restrict buckets to fixed denominations
+  const exact = await buildInput({ bucketMin: notes[MINE].v });
+  await snarkjs.wtns.calculate(str(exact), WASM, { type: 'mem' });
+  pass('the circuit accepts bucketMin == v, which would publish the note value: the verifier MUST allow only fixed denominations');
+  const a = await buildInput({ bucketMin: ETH / 2n, epoch: 7n }), b = await buildInput({ bucketMin: ETH, epoch: 7n });
+  assert.equal(a.retNf, b.retNf);
+  pass('one note gets the same tag whatever bucket it claims, so a note can claim once per epoch, not once per bucket');
+}
 { // proving against a nullifier set the verifier does not hold is a pinned-root matter, not a circuit one
   const stale = await newMemEmptyTrie();
   const staleIn = await buildInput({ t: stale });
