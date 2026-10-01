@@ -621,6 +621,11 @@ export const CFG = {
   // Ceiling on TAC per point, as "<from UTC day>:<TAC per point>" entries (see lib/points-rate-cap.js). Empty
   // means no ceiling. Only days at or after an entry's day are affected, so settled days are never re-priced.
   pointsRateCapSchedule: opt('POINTS_RATE_CAP_SCHEDULE', ''),
+  // A UTC day settles once, so it waits until it is over, this margin has passed and every scanner has read past
+  // its end (lib/points-settle-gate.js). A scanner that stays behind no longer holds rewards back after the
+  // maximum wait.
+  pointsSettleGraceSecs: num('POINTS_SETTLE_GRACE_SECS', 1800),
+  pointsSettleMaxWaitSecs: num('POINTS_SETTLE_MAX_WAIT_SECS', 21600),
   // Hot wallet that calls updateRoot daily. Deliberately its own key, not RELAY_KEY/SETTLE_KEY — see
   // PointsDistributor.sol's header: a leak only exposes whatever is currently funded into the distributor,
   // and keeping it separate from the higher-value relay/settle keys keeps that bound meaningful.

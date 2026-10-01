@@ -12,6 +12,7 @@ import { CFG, ADDR } from './lib/config.js';
 import { publicClient, clientForChain } from './lib/chain.js';
 import { withNonceRetry } from './lib/nonce-retry.js';
 import { parseRateCapSchedule, rateCapForDay } from './lib/points-rate-cap.js';
+import { settleThroughDay as gateThroughDay } from './lib/points-settle-gate.js';
 import { dayPot, dayBoard, dayHistory, splitDayBudget } from './lib/points-day-board.js';
 import Database from 'better-sqlite3';
 import { openStore } from './lib/points-store.js';
@@ -1234,19 +1235,50 @@ export function buildRewardTree(rewards) {
   return buildMerkleTree(rewards.map((r) => ({ address: r.address, cumulativeAmountWei: BigInt(r.cumulativeWei) })));
 }
 
+// When each Blockscout-paged scanner last completed a cycle, in epoch seconds taken from before the call began. Their
+// cursors only name the newest log seen, not how far they have looked, so a success time stands in for coverage.
+const scanOkAt = {};
+let lastGateLogSec = 0;
+const PAGED_SCANNERS = () => ['pp', 'ce', 'pm', ...(CFG.weinameEnabled ? ['weiname'] : [])];
+async function ran(name, fn) {
+  const startedAt = Math.floor(Date.now() / 1000);
+  await fn();
+  scanOkAt[name] = startedAt;
+}
+const PAGED_LAG_SECS = 300; // how far behind the chain a freshly read explorer page can be
+
+// The earliest moment any scanner has read up to, or null when that cannot be known. Block-ranged scanners are
+// read from their cursor block's own timestamp; a scanner that has not completed a cycle since start is unknown.
+async function scannersCoveredThrough(store, evmState) {
+  const blockTime = async (client, block) => Number((await client.getBlock({ blockNumber: block })).timestamp);
+  const times = [];
+  const wrap = store.loadCursor();
+  if (wrap) times.push(await blockTime(publicClient, wrap.lastScannedBlock));
+  for (const { chainId, client } of ZROUTER_CHAINS) {
+    const z = store.loadZrouterCursor(chainId);
+    if (z != null) times.push(await blockTime(client, z));
+    const e = evmState.loadCursor(chainId);
+    if (e != null) times.push(await blockTime(client, e));
+  }
+  for (const name of PAGED_SCANNERS()) {
+    if (scanOkAt[name] == null) return null;
+    times.push(scanOkAt[name] - PAGED_LAG_SECS);
+  }
+  return times.length ? Math.min(...times) : null;
+}
+
 // Folds every UTC day-epoch through yesterday into the local reward ledger (always happens, independent of
 // funding), then best-effort publishes a new cumulative root on-chain (only when POINTS_DISTRIBUTOR_ADDR +
 // POINTS_ROOT_SETTER_KEY are set AND the distributor currently holds enough TAC to cover the new declared
 // total). Deliberately decoupled: scoring stays accurate and current even on days the ops multisig hasn't yet
 // topped up the distributor, and a funding shortfall just defers the on-chain publish to a later cycle rather
 // than blocking or losing the day's computed entitlements.
-export async function settleCycle(store) {
+export async function settleCycle(store, coverage = null) {
   if (!CFG.pointsProgramStartSec) return; // reward program not configured yet — informational points still work
 
   const startDay = Math.floor(CFG.pointsProgramStartSec / 86400);
   const lastProgramDay = startDay + CFG.pointsProgramDays - 1;
-  const todayDay = Math.floor(Date.now() / 1000 / 86400);
-  const settleThroughDay = Math.min(todayDay - 1, lastProgramDay); // never settle a day still in progress
+  const nowSec = Math.floor(Date.now() / 1000);
 
   const state = store.loadSettleState() ?? { lastSettledDay: startDay - 1, publishedRoot: null, publishedTotalWei: null, knobs: null };
 
@@ -1277,6 +1309,21 @@ export async function settleCycle(store) {
     return;
   }
   state.knobs = knobs;
+
+  // A day settles once and is never revisited, so hold it until it is over and every scanner has read past its end.
+  // Coverage is only looked up when a day is otherwise ready, and an unreadable answer holds the day back.
+  const gate = { nowSec, lastProgramDay, graceSecs: CFG.pointsSettleGraceSecs, maxWaitSecs: CFG.pointsSettleMaxWaitSecs };
+  const byTime = gateThroughDay({ ...gate, coveredThroughSec: Infinity });
+  let coveredThroughSec = Infinity;
+  if (coverage && state.lastSettledDay < byTime) {
+    try { coveredThroughSec = await coverage(); }
+    catch (err) { coveredThroughSec = null; log('settle: scanner coverage unreadable, holding the day back:', err?.message || err); }
+  }
+  const settleThroughDay = gateThroughDay({ ...gate, coveredThroughSec });
+  if (settleThroughDay < byTime && nowSec - lastGateLogSec > 600) {
+    lastGateLogSec = nowSec;
+    log(`settle: day ${state.lastSettledDay + 1} waits for the scanners (${coveredThroughSec == null ? 'coverage unknown' : `read through ${new Date(coveredThroughSec * 1000).toISOString()}`})`);
+  }
 
   for (let d = state.lastSettledDay + 1; d <= settleThroughDay; d++) {
     const dayIndex = d - startDay;
@@ -1590,23 +1637,23 @@ async function main() {
     // Runs before scanCycle so any Privacy Pools withdrawal that landed this cycle is already cached by the
     // time a same-cycle wrap is scored against it.
     try {
-      await scanPrivacyPoolCycle(store);
+      await ran('pp', () => scanPrivacyPoolCycle(store));
     } catch (err) {
       log('privacy pool scan cycle failed:', err?.message || err);
     }
     try {
-      await scanCollateralEngineCycle(store);
+      await ran('ce', () => scanCollateralEngineCycle(store));
     } catch (err) {
       log('collateral engine scan cycle failed:', err?.message || err);
     }
     try {
-      await scanPmCycle(store);
+      await ran('pm', () => scanPmCycle(store));
     } catch (err) {
       log('PM scan cycle failed:', err?.message || err);
     }
     if (CFG.weinameEnabled) {
       try {
-        await scanWeinameCycle(store);
+        await ran('weiname', () => scanWeinameCycle(store));
       } catch (err) {
         log('weiname scan cycle failed:', err?.message || err);
       }
@@ -1637,7 +1684,7 @@ async function main() {
       log('scan cycle failed:', err?.message || err);
     }
     try {
-      await settleCycle(store);
+      await settleCycle(store, () => scannersCoveredThrough(store, evmState));
     } catch (err) {
       log('settle cycle failed:', err?.message || err);
     }
