@@ -149,6 +149,13 @@ try {
       ok((/Arrives/.test(rc) && /Stays private/.test(rc)) || /More than/.test(rc), `withdraw receipt: ${rc.replace(/\s+/g, ' ').trim()}`);
       const link = await getPaidLink(p, '0.01', 'coffee & cake');
       ok(/#pay=tacit1qzz[a-z0-9]{267}&n=[0-9a-f]{64}&ns=[0-9a-f]{128}&amount=0\.01&chain=base&for=coffee/.test(link), `payment link: ${link.slice(0, 60)}…${link.slice(-50)}`);
+      // A name in the link is used only once it points at this key: a name of someone else's is refused, the link keeps the address.
+      await p.fill('#f-rname', 'z0r0z.wei');
+      await p.waitForFunction(() => /different Tacit address|points to your address|could not|has not/i.test(document.querySelector('#f-rnote')?.textContent || ''), null, { timeout: 60e3 }).catch(() => {});
+      await p.click('#f-link');
+      const keep = await p.evaluate(() => navigator.clipboard.readText());
+      ok(/different Tacit address/.test(await p.textContent('#f-rnote')) && /#pay=tacit1qzz/.test(keep), `a name pointing at another key is refused: ${(await p.textContent('#f-rnote')).trim()}`);
+      await p.fill('#f-rname', '');
       const q = await readQr(p);
       ok(q === null || q === link, q === null ? 'QR present (install jsqr to decode it)' : 'the QR code decodes to the same link');
       const recv = await p.$$eval('.addr code', (x) => x.map((c) => c.textContent));

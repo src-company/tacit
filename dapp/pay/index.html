@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-G2xe9bmhKXYH7ByzYqAWQ5g3wcZHUtoCDLHD4HJwHC4=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-SJtGwYZnwHWrWNr1+o6faSViung+XvwWziKBtFX+32k=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Simple, private payments: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key and one tacit1 address, every payment made on your device, recovered from the key alone.">
@@ -1413,6 +1413,8 @@ const askView = (mode) => html`<div class="blk"><div class="lbl"><span>Ask to be
     <p class="note">Whoever opens it pays you from their own Tacit wallet, ${mode === 'tac' ? 'inside the shielded pool' : 'as a silent payment'}, and finds the amount filled in. A name in the link is checked against your Tacit address now, and again as they pay. What they send shows here on its own.</p></div>`;
 function wireAsk(f, mode) {
   const amtEl = $('#f-qamt', f), forEl = $('#f-qfor', f), nameEl = $('#f-qname', f), err = $('#f-qerr', f), copyB = $('#f-qcopy', f), shareB = $('#f-qshare', f);
+  const NAME_PREF = `tacit-pay-name-v1:${S.key.pubHex}`;          // shared with the ETH page's Receive
+  nameEl.value = nameEl.value || readJson(NAME_PREF) || '';
   const build = async () => {
     const t = amtEl.value.trim(), a = t ? parseUnits(t, 8) : null;
     if (t && !a) throw new Error('Enter the amount as a number, up to 8 decimals.');
@@ -1427,6 +1429,7 @@ function wireAsk(f, mode) {
       if (mode === 'tac' && !r.pool) { try { if (!decodeTacitAddress(lc(r.address)).lanes.pool) throw 0; } catch { throw new Error(`${r.name || n} points to your Tacit address from before pool payments, so TAC paid to it would not stay in the pool. Use your address instead, or update the name on the ETH page.`); } }
       to = r.name || n;
     }
+    writeJson(NAME_PREF, n || null);
     return { url: reqLink(mode, to, a, forEl.value.trim()), a };
   };
   const run = async (fn) => { err.hidden = true; try { await fn(await build()); } catch (e) { err.textContent = errText(e); err.hidden = false; } };

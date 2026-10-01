@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-90Q4O+K5r7KRhufO0uXQIGoI5dZdSarej0syaNmhs2Y=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-mdhwrvKfQc651RHLbgcIv6V4j9P/35GxR5mqpBaDUzY=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -2392,6 +2392,15 @@ function payLink({ bp, n, ns, amount, chain, note }) {
   if (note) q.set('for', note);
   return `${location.origin}/pay/eth/#${q.toString()}`;
 }
+// A name for this key's payment links, checked to point at this key's pool address; the one last used is kept per key.
+const NAME_PREF = 'tacit-pay-name-v1:';
+async function ownName(n) {
+  if (!/^[^\s]+\.(g?wei|eth)$/i.test(n)) throw new Error('Enter a name such as you.wei, or leave it empty.');
+  const d = await resolveRecipient(n);
+  if (d.error) throw new Error(d.error);
+  if (lc(d.bp) !== lc(S.key.bp)) throw new Error(`${d.label || n} points to a different Tacit address.`);
+  return d;
+}
 function formReceive(f) {
   const c = S.chain, W = cur().W, k = linkIndex(), box = k != null ? BOXQ.at[k] : null;
   FORM.needsW = !W;
@@ -2410,6 +2419,9 @@ function formReceive(f) {
       <p class="note err" id="f-rerr" hidden>Enter the amount as a number, up to 18 decimals.</p>
       <div class="lbl"><span>What it’s for (optional)</span></div>
       <div class="amt text"><input id="f-rfor" maxlength="60" placeholder="Dinner, rent, invoice 42…" autocomplete="off" aria-label="What it is for"></div>
+      <div class="lbl"><span>Your name in the link (optional)</span><span>keeps it short</span></div>
+      <div class="amt text"><input id="f-rname" placeholder="you.wei" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Your name in the link"></div>
+      <p class="note" id="f-rnote" hidden></p>
       <div class="qrbox" id="f-qr">${box ? '' : wait}</div>
       <div class="row2"><button class="btn" type="button" id="f-link" ${box ? '' : 'disabled'}>Copy payment link</button><button class="btn ghost" type="button" id="f-share" ${box ? '' : 'disabled'}>Share</button></div>
       <p class="note">Paid from a Tacit wallet, it is private end to end. Paid from any other wallet, it reaches your private balance on ${c.full}, usually within minutes, for at most 0.25%. Each paid link gets a fresh address, so your payments aren’t linked to each other.</p></div>
@@ -2429,7 +2441,28 @@ function formReceive(f) {
   const ns = signBox(S.keys.v, box.npk), amtEl = $('#f-ramt'), forEl = $('#f-rfor'), copyB = $('#f-link'), shareB = $('#f-share'), qr = $('#f-qr');
   // A typed amount that is not a number is not left out of the link: the link, the QR code and the buttons wait for a valid one.
   const amount = () => { const t = amtEl.value.trim(), a = t ? parseUnits(t) : null; return { bad: !!t && a == null, a }; };
-  const link = (a) => payLink({ bp: UNIFIED_LIVE ? unifiedAddress() : S.key.bp, n: box.npk, ns, amount: a, chain: c, note: forEl.value.trim() });
+  // A name in the link, once it is checked to point at this key, stands for the address: a shorter link and QR code.
+  let named = null, nseq = 0, ntimer = 0;
+  const nameEl = $('#f-rname'), nameNote = $('#f-rnote'), pub = S.key.pubHex;
+  const link = (a) => payLink({ bp: named || (UNIFIED_LIVE ? unifiedAddress() : S.key.bp), n: box.npk, ns, amount: a, chain: c, note: forEl.value.trim() });
+  const checkName = async () => {
+    const v = lc(nameEl.value.trim()), my = ++nseq;
+    named = null;
+    if (!v) { nameNote.hidden = true; writeJson(NAME_PREF + pub, null); FORM.check(); return; }
+    nameNote.hidden = false; nameNote.className = 'note'; nameNote.textContent = 'Checking the name…';
+    try {
+      const d = await ownName(v);
+      if (my !== nseq || !nameEl.isConnected) return;
+      named = d.label || v;
+      mount(nameNote, html`<span class="ok">${named} points to your address</span> · ID <b class="num nw">${d.id}</b>`);
+      writeJson(NAME_PREF + pub, named);
+    } catch (e) {
+      if (my !== nseq || !nameEl.isConnected) return;
+      nameNote.className = 'note err'; nameNote.textContent = errText(e);
+    }
+    FORM.check();
+  };
+  nameEl.addEventListener('input', () => { clearTimeout(ntimer); ntimer = setTimeout(checkName, 350); });
   let drawn = null, timer = null;
   const draw = () => {
     if (!amtEl.isConnected) return;
@@ -2449,6 +2482,11 @@ function formReceive(f) {
     if (bad) { drawn = null; mount(qr, html``); } else if (!drawn) draw(); else timer = setTimeout(draw, 150);
   };
   copyB.onclick = () => { const { bad, a } = amount(); if (!bad) copy(link(a), 'Payment link copied'); };
+  // The name kept from before, else the connected wallet's primary name when its record is this key.
+  nameEl.value = nameEl.value || readJson(NAME_PREF + pub) || '';
+  if (nameEl.value) checkName();
+  else if (S.wallet) getNames().then((n) => n.findPrimary(S.wallet)).then(({ primary }) => primary && ownName(primary.name))
+    .then((d) => { if (d && nameEl.isConnected && !nameEl.value) { nameEl.value = d.label; checkName(); } }).catch(() => {});
   if (!navigator.share) { shareB.hidden = true; copyB.style.gridColumn = '1 / -1'; }
   shareB.onclick = () => { const { bad, a } = amount(); if (!bad) navigator.share({ title: 'Pay me', text: `Pay me${a ? ` ${fmt(a, 18, 6)} ETH` : ''} on ${c.full}. Private if you use Tacit.`, url: link(a) }).catch(() => {}); };
 }
