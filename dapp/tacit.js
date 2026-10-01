@@ -17351,9 +17351,15 @@ async function validateOutpoint(rootTxid, rootVout, validatedSet, fetchTx, _dept
   // the per-opcode block in _validateOutpointSingle, not recursive validations.
   const topoList = [];        // [{ txid, vout, key }, ...] in BFS order (root first)
   const enqueued = new Set(); // outpoint keys already in topoList (this call)
+  const parentsOf = new Map(); // outpoint key -> keys of the asset inputs it spends
+  let expanding = null;        // key of the node whose inputs are being enqueued
 
   const enqueue = (txid, vout) => {
     const k = `${txid}:${vout}`;
+    if (expanding !== null) {
+      const deps = parentsOf.get(expanding);
+      if (deps) deps.push(k); else parentsOf.set(expanding, [k]);
+    }
     if (enqueued.has(k) || validatedSet.has(k)) return;
     enqueued.add(k);
     topoList.push({ txid, vout, key: k });
@@ -17388,6 +17394,7 @@ async function validateOutpoint(rootTxid, rootVout, validatedSet, fetchTx, _dept
       }));
     }
     for (const node of slice) {
+      expanding = node.key;
       const { tx, env } = decodedMap.get(node.txid) || { tx: null, env: null };
       if (!tx || !env) continue;
       if (env.opcode === T_CXFER || env.opcode === T_BURN || env.opcode === T_CXFER_BPP || env.opcode === T_CXFER_BOUND) {
@@ -17439,13 +17446,32 @@ async function validateOutpoint(rootTxid, rootVout, validatedSet, fetchTx, _dept
     }
   }
 
-  // ============== Pass 2: validate in reverse-BFS order ==============
-  // BFS appended parents after children, so iterating end → 0 gives us
-  // bottom-up topology: by the time we reach a CXFER/BURN/AXFER/T_MINT
-  // consumer, every (parent_txid, parent_vout) it depends on is already in
-  // validatedSet (set by the prior iteration's _validateOutpointSingle).
-  for (let i = topoList.length - 1; i >= 0; i--) {
-    const { txid, vout, key } = topoList[i];
+  // ============== Pass 2: validate parents before consumers ==============
+  // Discovery order is not a dependency order: an outpoint can be a direct
+  // input of a tx and also an ancestor of that tx's other inputs, so it may be
+  // discovered at the same or a shallower depth than a node that depends on it.
+  // Walking the recorded input edges depth-first, post-order, settles every
+  // parent in validatedSet before the consumer that reads it.
+  const byKey = new Map(topoList.map(n => [n.key, n]));
+  const placed = new Set();
+  const order = [];
+  for (const start of topoList) {
+    if (placed.has(start.key)) continue;
+    placed.add(start.key);
+    const stack = [{ node: start, next: 0 }];
+    while (stack.length) {
+      const top = stack[stack.length - 1];
+      const deps = parentsOf.get(top.node.key) || [];
+      if (top.next < deps.length) {
+        const parent = byKey.get(deps[top.next++]);
+        if (parent && !placed.has(parent.key)) { placed.add(parent.key); stack.push({ node: parent, next: 0 }); }
+      } else {
+        order.push(top.node);
+        stack.pop();
+      }
+    }
+  }
+  for (const { txid, vout, key } of order) {
     if (validatedSet.has(key)) continue;
     await _validateOutpointSingle(txid, vout, validatedSet, fetchTx, metadataOut, rpBatch, pmintStatusOut, validatedReasons);
   }

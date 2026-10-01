@@ -152,8 +152,14 @@ async function validateOutpoint(rootTxid, rootVout, validatedSet, fetchTx, _dept
   // contained and have no parents to enqueue.
   const topoList = [];
   const enqueued = new Set();
+  const parentsOf = new Map();
+  let expanding = null;
   const enqueue = (txid, vout) => {
     const k = `${txid}:${vout}`;
+    if (expanding !== null) {
+      const deps = parentsOf.get(expanding);
+      if (deps) deps.push(k); else parentsOf.set(expanding, [k]);
+    }
     if (enqueued.has(k) || validatedSet.has(k)) return;
     enqueued.add(k);
     topoList.push({ txid, vout, key: k });
@@ -181,6 +187,7 @@ async function validateOutpoint(rootTxid, rootVout, validatedSet, fetchTx, _dept
       }));
     }
     for (const node of slice) {
+      expanding = node.key;
       const { tx: ntx, env: nenv } = decodedMap.get(node.txid) || { tx: null, env: null };
       if (!ntx || !nenv) continue;
       if (nenv.opcode === T_CXFER || nenv.opcode === T_BURN) {
@@ -192,10 +199,30 @@ async function validateOutpoint(rootTxid, rootVout, validatedSet, fetchTx, _dept
     }
   }
 
-  // Pass 2: validate in reverse-BFS order so parents land in validatedSet
-  // before their consumers read them.
-  for (let i = topoList.length - 1; i >= 0; i--) {
-    const { txid, vout, key } = topoList[i];
+  // Pass 2: validate parents before consumers. Discovery order is not a
+  // dependency order (an outpoint can be a direct input of a tx and an
+  // ancestor of its other inputs), so walk the recorded input edges
+  // depth-first, post-order.
+  const byKey = new Map(topoList.map(n => [n.key, n]));
+  const placed = new Set();
+  const order = [];
+  for (const start of topoList) {
+    if (placed.has(start.key)) continue;
+    placed.add(start.key);
+    const stack = [{ node: start, next: 0 }];
+    while (stack.length) {
+      const top = stack[stack.length - 1];
+      const deps = parentsOf.get(top.node.key) || [];
+      if (top.next < deps.length) {
+        const parent = byKey.get(deps[top.next++]);
+        if (parent && !placed.has(parent.key)) { placed.add(parent.key); stack.push({ node: parent, next: 0 }); }
+      } else {
+        order.push(top.node);
+        stack.pop();
+      }
+    }
+  }
+  for (const { txid, vout, key } of order) {
     if (validatedSet.has(key)) continue;
     await _validateOutpointSingle(txid, vout, validatedSet, fetchTx, metadataOut, rpBatch);
   }
