@@ -16,7 +16,8 @@
 //   device   a deposit into the EVM pool, proved in the page's worker
 //   borrow   the Bitcoin deposit address renders; a bond for a lock record posts through the escrow helper
 //   keys     an Ethereum signature opens a key; after locking, "continue" reopens the same tacit1 address; a pasted key opens
-//   saved    a passphrase-locked key saved the way tacit.finance saves it opens through tacit.js's own prompt
+//   saved    a passphrase-locked key saved the way tacit.finance saves it opens through tacit.js's own prompt; the TAC
+//            sheet, reached by link with no key open, offers it too
 //   bitcoin  a (stubbed, deterministic) UniSat wallet opens a key through tacit.js, then funds a lock in one call
 //   passkey  a virtual authenticator with PRF creates a passkey wallet, and signing in again opens the same key
 //   acct     a pasted key and no wallet: its Tacit account (as pool-ux derives it), funded from outside, buys TAC,
@@ -1037,6 +1038,9 @@ await step('saved', async () => {
   await r.page.fill('#pass-input-1', pass); await r.page.fill('#pass-input-2', pass); await r.page.click('#pass-submit');
   ok(await saving, 'saved: a passphrase-locked key is saved in this browser');
   await r.page.evaluate(() => { localStorage.setItem('tacit-active-mode-v1', 'local'); localStorage.removeItem('tacit-lite-id-v1'); });
+  // A link straight to the TAC sheet, with no key open in the tab, offers the same wallet there.
+  await r.page.goto(r.url + '#tac'); await r.page.reload();
+  ok(!!(await r.page.waitForSelector('#tac-bal [data-in="known"]', { timeout: 60000 }).catch(() => null)), 'saved: the TAC sheet offers to open the saved key');
   await r.page.goto(r.url + '#wallet'); await r.page.reload();
   await r.page.waitForSelector('#wallet-body [data-in="known"]', { timeout: 60000 });
   ok(/saved in this browser/.test(await walletText(r.page)), 'saved: the sheet offers the saved key');
