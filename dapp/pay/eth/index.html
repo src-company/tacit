@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-VhCJLjy9ZX7m1KGZ937GunHBtSZdg4481MiFWjRCheM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-OemsqtDmdPQilVjLAPl6Skb5lsG09AeEwBv1aoG2jj8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -1368,7 +1368,7 @@ function readPub() {
   TALLY.p = fetch('https://api.tacit.finance/stats?network=mainnet', { cache: 'no-store' }).then((r) => r.json()).then((d) => {
     const n = (x) => BigInt(x?.$n ?? x ?? 0);
     for (const x of d.dev || []) TALLY[x.chain] = { in: n(x.dep), deposits: Number(x.nd) || 0 };
-  }).catch(() => {}).finally(() => { TALLY.p = null; TALLY.at = Date.now(); paintBal(); });
+  }).catch(() => {}).finally(() => { TALLY.p = null; TALLY.at = Date.now(); paintBal(); FORM.check?.(); });
 }
 const TALLY = {};
 function paintChains() {
@@ -1397,8 +1397,9 @@ function poolLine(c) {
 }
 function totalLine() {
   const known = CHAINS.map((x) => CH[x.chainId].bal).filter((b) => b != null);
-  if (known.length < 2) return '';
-  return html`<div class="u mute">${eth(known.reduce((a, b) => a + b, 0n))} ETH private across ${known.length === CHAINS.length ? 'all three chains' : `${known.length} chains`}</div>`;
+  const total = known.reduce((a, b) => a + b, 0n);
+  if (known.length < 2 || !total || total === cur().bal) return '';   // only when it says more than this chain's own
+  return html`<div class="u mute">${eth(total)} ETH private across ${known.length === CHAINS.length ? 'all three chains' : `${known.length} chains`}</div>`;
 }
 function paintBal() {
   const c = S.chain, st = cur();
@@ -1453,8 +1454,28 @@ const privacyView = (c, amount, to, via) => {
     ${p.round && p.round < amount ? html`<p class="note"><button class="link" type="button" id="pv-round" data-v="${p.round}">Take out ${fmt(p.round, 18, 6)} ETH instead</button></p>` : ''}
     <p class="note mute">${p.crowd}</p></div>`;
 };
-// What a deposit of `a` wei earns the paying wallet, at the least: 1,000 points per ETH before the early bonus and boosts.
-const pointsRow = (a) => html`<div class="kv"><span class="pts-line"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC points</span><b class="num">at least ${ptsFmt(Number(a) / 1e15)}${PTS.v?.pp ? ' · ×1.2 Privacy Pools' : ''}</b></div>`;
+// What a deposit of `a` wei is likely to earn the paying wallet, as the points program scores it now: 1,000 points per
+// ETH, times the early bonus 1 + 4 / (1 + deposits so far / 200) (the pools' public deposit count, which the program
+// counts the same deposits from), times the wallet's TAC-holder tier (100, 1,000, 10,000 TAC: ×1.25, ×1.5, ×2) and the
+// Privacy Pools boost when it has one. Until the count is read it says the floor.
+const TAC_TOKEN = '0xA1313eb9f3A445606D9583bcAc3ebeB56a858279', TACB = { who: null, v: null, p: null };
+function holderBoost() {
+  const who = S.wallet && lc(S.wallet);
+  if (!who) return 1;
+  if (TACB.who !== who && !TACB.p) {
+    Object.assign(TACB, { who, v: null });
+    TACB.p = rpcOn(CHAINS.find((c) => c.chainId === 1)).then((rpc) => rpc('eth_call', [{ to: TAC_TOKEN, data: '0x70a08231' + who.slice(2).padStart(64, '0') }, 'latest']))
+      .then((b) => { if (TACB.who === who) TACB.v = BigInt(b); }).catch(() => {}).finally(() => { TACB.p = null; FORM.check?.(); });
+  }
+  const t = TACB.v == null ? 0 : Number(TACB.v / 10n ** 18n);
+  return t >= 10000 ? 2 : t >= 1000 ? 1.5 : t >= 100 ? 1.25 : 1;
+}
+function pointsRow(a) {
+  const known = CHAINS.every((c) => TALLY[c.chainId]), n = CHAINS.reduce((s, c) => s + (TALLY[c.chainId]?.deposits || 0), 0);
+  const early = known ? 1 + 4 / (1 + n / 200) : 1, hold = holderBoost(), pp = PTS.v?.pp ? 1.2 : 1;
+  const why = [known ? `×${early.toFixed(1)} early` : '', hold > 1 ? `×${hold} TAC holder` : '', pp > 1 ? '×1.2 Privacy Pools' : ''].filter(Boolean).join(' · ');
+  return html`<div class="kv" title="1,000 points per ETH, with an early bonus that shrinks as deposits add up, and more for holding TAC. Points share a daily pot of up to 1,111 TAC."><span class="pts-line"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC points</span><b class="num">${known ? '≈ ' : 'at least '}${ptsFmt((Number(a) / 1e18) * 1000 * early * hold * pp)}${why ? html` <small class="mute">${why}</small>` : ''}</b></div>`;
+}
 const clearDraft = (...ids) => { for (const id of ids) { delete DRAFT[id]; const i = $('#' + id); if (i) i.value = ''; } FORM.check?.(); };
 const amountField = (id, label, extra = '') => html`
   <div class="lbl"><span>${label}</span>${extra}</div>
