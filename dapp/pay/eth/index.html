@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-8I4uq/uYO6sjVaukWyNgNe4Tg0zFb0ajUQMgeMS1zKA=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-90Q4O+K5r7KRhufO0uXQIGoI5dZdSarej0syaNmhs2Y=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -107,6 +107,8 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
   border: 1px solid var(--hair-2); cursor: pointer; white-space: nowrap; }
 .chip:hover { border-color: var(--ink); }
 .chip span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chip .narrow { display: none; }
+@media (max-width: 430px) { .chip .wide { display: none; } .chip .narrow { display: inline; } }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hair-2); flex: none; }
 .dot.on { background: var(--ok); }
 .dot.live { background: var(--orange); }
@@ -495,7 +497,11 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const strip = (h) => String(h).replace(/^0x/, '');
 const lc = (s) => String(s || '').toLowerCase();
-const short = (a, n = 4) => (a && a.length > 2 * n + 4 ? `${a.slice(0, n + 2)}…${a.slice(-n)}` : a || '');
+// A long address as its start and end. A Tacit address starts with 10 characters every one shares (the prefix and its
+// format), so it keeps n of its own after them: what shows is the address's own.
+const short = (a, n = 4) => { if (!a) return ''; const head = /^tacit1/.test(a) ? 10 + n : n + 2; return a.length > head + n + 2 ? `${a.slice(0, head)}…${a.slice(-n)}` : a; };
+// The wallet chip's Tacit address: its short form, and on a narrow screen the prefix and six characters of its own.
+const chipView = (a) => (/^tacit1/.test(a || '') && a.length > 30 ? html`<span class="wide">${short(a, 6)}</span><span class="narrow">tacit1…${a.slice(10, 16)}</span>` : html`${short(a, 6)}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Hands the thread back so queued input, timers and network callbacks run; unlike a timer it is not slowed in a background tab.
 const idle = (() => { const q = [], ch = new MessageChannel(); ch.port1.onmessage = () => q.shift()?.(); return () => new Promise((r) => { q.push(r); ch.port2.postMessage(0); }); })();
@@ -1186,13 +1192,15 @@ async function giftWallet(seed, c) {
 }
 
 // A transaction's receipt and its block's time are fixed once the block is deep enough to stay, so each is asked for once.
-// A call that fails is made once more; a second failure is the caller's.
+// A call that fails is made twice more, 0.6 s and then 2 s later; a third failure is the caller's.
 const SETTLED = new Map();
 async function settled(c, rpc, tip, at, method, params) {
   const key = `${c.chainId}:${method}:${params[0]}`;
   if (SETTLED.has(key)) return SETTLED.get(key);
   let r;
-  try { r = await rpc(method, params); } catch { await sleep(600); r = await rpc(method, params); }
+  for (let i = 0; ; i++) {
+    try { r = await rpc(method, params); break; } catch (e) { if (i === 2) throw e; await sleep(i ? 2000 : 600); }
+  }
   if (r != null && at + c.confirmations <= tip) { if (SETTLED.size >= 4000) SETTLED.delete(SETTLED.keys().next().value); SETTLED.set(key, r); }
   return r;
 }
@@ -1291,21 +1299,23 @@ async function scanHistory(c, onStep) {
   // public, which a withdrawal back to that account would tie to it.
   // A read cut short keeps what it got for the next one.
   const deep = (b) => b + c.confirmations <= tip;
-  await eachLimit(ts.filter((t) => t.ext === undefined || (t.ext > 0n && !t.from)), 4, async (t) => {
-    const known = t.ext !== undefined;
-    const rc = await settled(c, rpc, tip, t.block, 'eth_getTransactionReceipt', [t.tx]).catch((e) => { if (known) return null; throw e; });
+  // A read that fails for another wallet's transaction leaves it out; one of this key's own must succeed.
+  await eachLimit(ts.filter((t) => t.ext === undefined || (t.ext > 0n && !t.from)), 3, async (t) => {
+    const need = t.ext === undefined && byTx.has(t.tx);
+    const rc = await settled(c, rpc, tip, t.block, 'eth_getTransactionReceipt', [t.tx]).catch((e) => { if (need) throw e; return null; });
     const lg = rc?.logs?.find((l) => lc(l.address) === lc(POOL) && l.topics[0] === T_TRANSACT && BigInt(l.topics[1]) === t.nf[0] && BigInt(l.topics[2]) === t.nf[1]);
     if (lg) { const d = decodeTransact(lg); Object.assign(t, { recipient: d.recipient, ext: d.ext, fee: d.fee }); }
     if (rc?.from) t.from = lc(rc.from);
   }).catch((e) => { savePubTx(P, ts, new Map(), deep); throw e; });
   // A withdrawal that ran calls (a bridge move, a swap) names its refund box in its calldata, public from then on, so
   // that box is never handed out as a payment link's address; a canonical bridge in it makes the row a move.
-  await eachLimit(ts.filter((t) => (t.ext ?? 0n) < 0n && t.to === undefined), 4, async (t) => {
-    const tx = await settled(c, rpc, tip, t.block, 'eth_getTransactionByHash', [t.tx]).catch(() => null);
+  // This key's own withdrawals must be read: a refund box named in one is never handed out as a link's address.
+  await eachLimit(ts.filter((t) => (t.ext ?? 0n) < 0n && t.to === undefined), 3, async (t) => {
+    const tx = await settled(c, rpc, tip, t.block, 'eth_getTransactionByHash', [t.tx]).catch((e) => { if (byTx.get(t.tx)?.ins.length) throw e; return null; });
     if (!tx) return;
     t.to = lc(tx.to || '');
     if (t.to === lc(ROUTER)) t.input = lc(tx.input);
-  });
+  }).catch((e) => { savePubTx(P, ts, new Map(), deep); throw e; });
   for (const x of byTx.values()) {
     if (!x.ins.length || !x.t.input) continue;
     for (const [addr, b] of boxes) if (b.i > 0 && x.t.input.includes(strip(addr))) x.t.refund = Math.max(x.t.refund ?? 0, b.i);
@@ -1355,7 +1365,7 @@ async function scanHistory(c, onStep) {
   }
   // The time of every block with a pool event, this key's or not.
   const time = new Map(Object.entries(P.bt).map(([b, s]) => [Number(b), s]));
-  await eachLimit(evBlocks.filter((b) => !time.has(b)), 4, async (b) => { const blk = await settled(c, rpc, tip, b, 'eth_getBlockByNumber', ['0x' + b.toString(16), false]).catch(() => null); if (blk) time.set(b, Number(BigInt(blk.timestamp))); });
+  await eachLimit(evBlocks.filter((b) => !time.has(b)), 3, async (b) => { const blk = await settled(c, rpc, tip, b, 'eth_getBlockByNumber', ['0x' + b.toString(16), false]).catch(() => null); if (blk) time.set(b, Number(BigInt(blk.timestamp))); });
   savePubTx(P, ts, time, deep);
   // A block whose time could not be read has none; it sorts by the time of the nearest block that has one.
   const known = [...time.keys()];
@@ -1455,7 +1465,7 @@ async function eachLimit(items, n, fn) {
 }
 // A fresh read (after an action or a rebuild) starts after any read already running, so it sees what that one missed;
 // unless a read that began after `since` (the moment the change was made) is running or has finished, which saw it. A read
-// that fails is tried again by itself after 20 s, then twice as long after each failure, up to five minutes.
+// that fails is tried again by itself after 8 s, then twice as long after each failure, up to five minutes.
 function historyOf(c, fresh = false, since = Date.now()) {
   const st = CH[c.chainId];
   if (!S.key) return Promise.resolve();
@@ -1469,7 +1479,7 @@ function historyOf(c, fresh = false, since = Date.now()) {
     .catch((e) => {
       if (S.key?.pubHex !== pub) return;
       st.histErr = e;
-      st.histTimer = setTimeout(() => { if (S.key?.pubHex === pub && !st.histing) historyOf(c); }, Math.min(20e3 * 2 ** st.histFails++, 300e3));
+      st.histTimer = setTimeout(() => { if (S.key?.pubHex === pub && !st.histing) historyOf(c); }, Math.min(8e3 * 2 ** st.histFails++, 300e3));
     })
     .finally(() => {
       if (st.histing === p) st.histing = null;
@@ -1503,7 +1513,7 @@ const ethIcon = html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/>
 
 function paintWallet() {
   $('#wallet-dot').className = 'dot' + (S.key ? ' on' : S.wallet ? ' live' : '');
-  $('#wallet-label').textContent = S.key ? short(UNIFIED_LIVE ? unifiedAddress() : S.key.bp, 6) : S.wallet ? short(S.wallet) : knownWallet() ? 'Open wallet' : 'Connect';
+  mount($('#wallet-label'), S.key ? chipView(UNIFIED_LIVE ? unifiedAddress() : S.key.bp) : html`${S.wallet ? short(S.wallet) : knownWallet() ? 'Open wallet' : 'Connect'}`);
   if ($('#sheet-wallet').open) renderWalletSheet();
 }
 // Each pool's public size on its chain, read from the pool itself: the ETH it holds and the notes it has made, the
@@ -2389,8 +2399,11 @@ function formReceive(f) {
   FORM.linkK = k ?? undefined;
   if (k != null && !box) boxMap(k + 1).then(() => { if (FORM.needsLink && !S.busy && S.tab === 'receive') renderForm(); });
   const failed = CHAINS.filter((x) => CH[x.chainId].histErr);
+  // The link waits for every chain's history, as the same address serves every chain and is never handed out twice.
+  const stuck = failed.filter((x) => CH[x.chainId].histFails >= 3), names = (xs) => new Intl.ListFormat('en').format(xs.map((x) => x.name));
   const wait = k != null ? html`<p class="note">Preparing your link…</p>`
-    : html`<p class="note ${failed.length ? 'err' : ''}">Reading your history… ${failed.length ? html`It could not be read on ${new Intl.ListFormat('en').format(failed.map((x) => x.name))} yet, so there is no link. <button class="link" type="button" id="f-hre">Try again</button>` : ''}</p>`;
+    : !failed.length ? html`<p class="note">Reading your history… A link waits for every chain, so it never repeats an address.</p>`
+    : html`<p class="note ${stuck.length ? 'err' : ''}">${stuck.length ? html`Couldn’t read your history on ${names(stuck)} after several tries.` : html`Reading your history on ${names(failed)} again in a moment…`} A link waits for every chain, so it never repeats an address. <button class="link" type="button" id="f-hre">Try now</button></p>`;
   mount(f, html`
     <div class="blk"><div class="lbl"><span>Get paid</span><span>anyone can pay, from any wallet</span></div>
       ${amountField('f-ramt', 'Amount (optional)')}

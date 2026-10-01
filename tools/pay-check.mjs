@@ -136,8 +136,8 @@ try {
       await p.waitForFunction(() => /has not published|could not|refus|no record/i.test(document.querySelector('#f-rcpt').textContent), null, { timeout: 30e3 }).catch(() => {});
       ok(/has not published/i.test(await p.textContent('#f-rcpt')), `send: a name without a record says so: ${(await p.textContent('#f-rcpt')).trim().slice(0, 90)}`);
       await p.fill('#f-amt', '');
-      const own = await p.evaluate(() => document.querySelector('#wallet-label').textContent);
-      ok(/^tacit1qz…/.test(own), `wallet chip shows the unified address: ${own}`);
+      const own = await p.evaluate(() => document.querySelector('#wallet-label .wide').textContent);
+      ok(/^tacit1qzzs[a-z0-9]{6}…[a-z0-9]{6}$/.test(own), `wallet chip shows the unified address, with characters of its own after the shared prefix: ${own}`);
       // Withdraw: a partial amount shows what stays private.
       await p.click('#tabs [data-tab="withdraw"]');
       await p.click('#chains [data-chain="8453"]');

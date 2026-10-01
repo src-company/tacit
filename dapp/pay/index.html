@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-MVwL7prZPOUwsKCpe6czScdWY0JlK5HUpH8JzHplH+Y=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-G2xe9bmhKXYH7ByzYqAWQ5g3wcZHUtoCDLHD4HJwHC4=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Simple, private payments: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key and one tacit1 address, every payment made on your device, recovered from the key alone.">
@@ -107,6 +107,8 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
   border: 1px solid var(--hair-2); cursor: pointer; white-space: nowrap; }
 .chip:hover { border-color: var(--ink); }
 .chip span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chip .narrow { display: none; }
+@media (max-width: 430px) { .chip .wide { display: none; } .chip .narrow { display: inline; } }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hair-2); flex: none; }
 .dot.on { background: var(--ok); }
 .dot.live { background: var(--orange); }
@@ -447,7 +449,11 @@ if (!secp.etc.hmacSha256Sync) secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const lc = (s) => String(s || '').toLowerCase();
-const short = (a, n = 4) => (a && a.length > 2 * n + 4 ? `${a.slice(0, n + 2)}…${a.slice(-n)}` : a || '');
+// A long address as its start and end. A Tacit address starts with 10 characters every one shares (the prefix and its
+// format), so it keeps n of its own after them: what shows is the address's own.
+const short = (a, n = 4) => { if (!a) return ''; const head = /^tacit1/.test(a) ? 10 + n : n + 2; return a.length > head + n + 2 ? `${a.slice(0, head)}…${a.slice(-n)}` : a; };
+// The wallet chip's Tacit address: its short form, and on a narrow screen the prefix and six characters of its own.
+const chipView = (a) => (/^tacit1/.test(a || '') && a.length > 30 ? html`<span class="wide">${short(a, 6)}</span><span class="narrow">tacit1…${a.slice(10, 16)}</span>` : html`${short(a, 6)}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const lazy = (f) => { let p = null; return () => (p ||= f().catch((e) => { p = null; throw e; })); };
 const readJson = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
@@ -1438,7 +1444,7 @@ function paintModes() {
 }
 function paintWallet() {
   $('#wallet-dot').className = 'dot' + (S.key ? ' on' : '');
-  $('#wallet-label').textContent = S.key ? (S.key.tacit ? short(S.key.tacit, 6) : 'Opening…') : knownWallet() ? 'Open wallet' : 'Connect';
+  mount($('#wallet-label'), S.key ? (S.key.tacit ? chipView(S.key.tacit) : html`Opening…`) : html`${knownWallet() ? 'Open wallet' : 'Connect'}`);
   if ($('#sheet-wallet').open) renderWalletSheet();
 }
 function paintBal() {
