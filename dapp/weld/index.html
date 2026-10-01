@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-QQ0caOWlCAXSLNjy0qJyQQKAsizqIFBr07nhmxxgL18=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-4IMkgSb5tQF7NBlkPehmcZC+twOrVCVQHap5Jgm1GwE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -41,6 +41,7 @@
   --lift: 0 22px 44px -28px rgba(26,26,26,.45);
   --skel: rgba(26,26,26,.08);
   --skel-hi: rgba(26,26,26,.02);
+  --bar: #8F8979;
   --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --serif: 'Instrument Serif', Georgia, serif;
   --tap: 44px;
@@ -62,6 +63,7 @@
     --lift: 0 22px 44px -28px rgba(0,0,0,.9);
     --skel: rgba(237,229,207,.07);
     --skel-hi: rgba(237,229,207,.15);
+    --bar: #6F6958;
     color-scheme: dark;
   }
 }
@@ -370,6 +372,18 @@ a.btn { text-decoration: none; white-space: nowrap; }
 .ptl.lb li.gap { justify-content: center; color: var(--mute); padding: 2px 0; border-top: 0; }
 .ptl.lb a { color: inherit; text-underline-offset: 3px; }
 .ptl .rk { display: inline-block; min-width: 3ch; color: var(--mute); }
+.ptl li.day { padding-top: 14px; font-weight: 500; color: var(--ink); }
+.ptl-r { flex: none; display: flex; align-items: baseline; gap: 10px; }
+.ptl-r small { min-width: 5ch; text-align: right; font-size: 11.5px; }
+.pulse { margin: 0 0 14px; padding: 6px 0; border-top: 1px solid var(--hair); border-bottom: 1px solid var(--hair); }
+.ptd { margin: 4px 0 8px; }
+.ptd-bars { display: flex; gap: 2px; height: 56px; }
+.ptd-b { flex: 1 1 0; min-width: 0; padding: 0; border: 0; background: none; cursor: default; display: flex; align-items: flex-end; justify-content: center; }
+.ptd-b i { display: block; width: min(100%, 24px); height: max(2px, calc(var(--h) * 100%)); background: var(--bar); border-radius: 4px 4px 0 0; }
+.ptd-b.now i { background: var(--ink); }
+.ptd-b:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.ptd-x { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; font-size: 11.5px; color: var(--mute); }
+.ptd-x output { text-align: center; color: var(--ink); }
 a.opt { color: inherit; text-decoration: none; }
 .kv.sep { border-top: 1px solid var(--hair); margin-top: 18px; padding-top: 12px; }
 .opt[aria-busy="true"] .opt-t::after { content: ''; width: 11px; height: 11px; margin-left: auto; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
@@ -3971,10 +3985,11 @@ function renderSell(el) {
 
 // ── Points: the live TAC rewards program ─────────────────────────────────────────────────────────────────
 // 100,000 TAC over 90 days; each UTC day's pot (today.dayBudgetWei), up to 1,111 TAC, is split by that day's points. Points and TAC belong to the address
-// that sent each transaction, so the connected wallet and the Tacit account are read, and claimed, on their own.
+// that sent each transaction, so the connected wallet and the Tacit account are read, and claimed, on their own. The board and the day's pot are public
+// and shown to anyone; the figures under them are this key's own.
 const DISTRIBUTOR = '0x000000C918e44A3a443937fA7594eA4f7C95D6b9', ZROUTER = '0x000000000000FB114709235f1ccBFfb925F600e4';
 const WNS = '0x0000000000696760E15f265e828DB644A0c242EB', ZSWAP = 'https://zswap.wei.limo';
-const PTS = { at: 0, key: '', rows: null }, PTS_BOARD = 500;
+const PTS = { at: 0, key: '', rows: null, board: null, day: null, pulse: null, view: 'all' }, PTS_BOARD = 500, PTS_DAYS = 90, PTS_SEEN = 'tacit-weld-pts-seen-v1';
 const PTS_END = Date.UTC(2026, 11, 22) / 1000;                    // the program's last day is Dec 21 (UTC)
 // The holder boost's tiers: the least public TAC an address held through the day before an activity, and its multiplier.
 const BOOST_TIERS = [[100n, 1.25], [1000n, 1.5], [10000n, 2]];
@@ -3985,29 +4000,58 @@ const ptChain = (id) => (Number(id || 1) === 1 ? { name: 'Ethereum', explorer: S
 const dayLeft = () => { const s = 86400 - (now() % 86400), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h} h ${m} min` : `${Math.max(1, m)} min`; };
 const pointsWho = () => [...new Map([[S.acct?.address, 'Tacit account'], [S.wallet, 'Wallet']].filter(([a]) => a).map(([a, l]) => [a.toLowerCase(), l]))];
 const ptsFmt = (n) => Math.round(Number(n) || 0).toLocaleString('en-US');
+const utcDay = (sec) => Math.floor(Number(sec) / 86400);
+const dayShort = (d) => new Date(d * 864e5).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+const dayName = (d) => { const t = utcDay(now()); return d === t ? 'Today' : d === t - 1 ? 'Yesterday' : new Date(d * 864e5).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }); };
+const tacOf = (pot, pts, total) => (total > 0 ? pot * BigInt(Math.round(pts * 1e6)) / BigInt(Math.round(total * 1e6)) : 0n);
 function loadPoints(force = false) {
   const key = pointsWho().map(([a]) => a).join();
   if (!force && PTS.key === key && PTS.rows && Date.now() - PTS.at < 60e3) return Promise.resolve();
   return once(PTS, key, readPoints, force);
 }
+// Where each address stood the first time this browser read it on each UTC day, and on the day before that one: what a
+// later reading is set against ("since 29 Sep"). Kept here only as a convenience; the program's own records are the figures.
+function noteSeen(rows) {
+  const all = store.get(PTS_SEEN) || {}, day = utcDay(now());
+  for (const r of rows) {
+    if (!r.read || r.rank == null) continue;
+    const e = all[r.addr], at = { d: day, p: r.points, k: r.rank };
+    if (!e?.cur) all[r.addr] = { cur: at };
+    else if (e.cur.d < day) all[r.addr] = { prev: e.cur, cur: at };
+    r.since = all[r.addr].prev || null;
+  }
+  for (const k of Object.keys(all)) if (!all[k]?.cur || all[k].cur.d < day - 60) delete all[k];
+  store.set(PTS_SEEN, all);
+}
 async function readPoints(current) {
   const who = pointsWho(), key = who.map(([a]) => a).join();
-  const board = fetch(`${API}/leaderboard?limit=${PTS_BOARD}`, { signal: within(20e3) }).then((r) => (r.ok ? r.json() : null)).then((b) => (Array.isArray(b) ? b : null)).catch(() => null);
+  const get = (path) => fetch(`${API}/${path}`, { signal: within(20e3) }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const board = get(`leaderboard?limit=${PTS_BOARD}`).then((b) => (Array.isArray(b) ? b : null));
+  // The day's board is an object; a service that does not have it yet answers with the all-time array.
+  const dayB = get(`leaderboard?day=today&limit=${PTS_BOARD}`).then((b) => (b && !Array.isArray(b) && Array.isArray(b.rows) ? b : null));
   const rows = await Promise.all(who.map(async ([addr, label]) => {
-    const get = (path) => fetch(`${API}/${path}/${addr}`, { signal: within(20e3) }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    const [p, c, held] = await Promise.all([get('points'), get('claim'), ethCall(ADDR.tac, SEL.balanceOf + addrWord(addr)).then((r) => wordAt(r, 0)).catch(() => null)]);
+    const [p, c, held] = await Promise.all([get(`points/${addr}`), get(`claim/${addr}`), ethCall(ADDR.tac, SEL.balanceOf + addrWord(addr)).then((r) => wordAt(r, 0)).catch(() => null)]);
     // What is claimable comes from the distributor itself, not the service's copy of it.
     const owed = c?.proof && c.cumulativeAmount ? wordAt(await ethCall(DISTRIBUTOR, '787eef2e' + addrWord(addr) + word(BigInt(c.cumulativeAmount))).catch(() => '0x'), 0) : 0n;
-    const t = p?.today, today = t && Number(t.totalPoints) > 0 ? BigInt(t.dayBudgetWei) * BigInt(Math.round(Number(t.points) * 1e6)) / BigInt(Math.round(Number(t.totalPoints) * 1e6)) : 0n;
+    const t = p?.today, today = t && Number(t.totalPoints) > 0 ? tacOf(BigInt(t.dayBudgetWei), Number(t.points), Number(t.totalPoints)) : 0n;
     // The service lists activity by block number, which does not order Base or Robinhood blocks against Ethereum's; time does.
     const recent = [...(p?.deposits || [])].sort((a, b) => Number(b.block_time) - Number(a.block_time));
-    return { addr, label, points: Number(p?.points || 0), todayPts: Number(t?.points || 0), today, share: t && Number(t.totalPoints) > 0 ? Number(t.points) / Number(t.totalPoints) : 0,
-      owed, claim: c?.proof ? c : null, claimed: big(c?.claimedWei) || 0n, held, recent, boost: Number(recent[0]?.tac_boost || 1), read: !!p };
+    return { addr, label, points: Number(p?.points || 0), count: Number(p?.deposit_count || 0), todayPts: Number(t?.points || 0), today, tod: t || null, share: t && Number(t.totalPoints) > 0 ? Number(t.points) / Number(t.totalPoints) : 0,
+      owed, claim: c?.proof ? c : null, claimed: big(c?.claimedWei) || 0n, settled: big(c?.cumulativeAmount) || 0n, held, recent, boost: Number(recent[0]?.tac_boost || 1), read: !!p };
   }));
-  const lb = await board;
-  for (const r of rows) { const i = lb ? lb.findIndex((e) => String(e.address).toLowerCase() === r.addr) : -1; r.rank = i >= 0 ? i + 1 : lb && lb.length >= PTS_BOARD ? 0 : null; }
+  const [lb, day] = await Promise.all([board, dayB]);
+  for (const r of rows) {
+    const i = lb ? lb.findIndex((e) => String(e.address).toLowerCase() === r.addr) : -1, j = day ? day.rows.findIndex((e) => String(e.address).toLowerCase() === r.addr) : -1;
+    r.rank = i >= 0 ? i + 1 : lb && lb.length >= PTS_BOARD ? 0 : null;
+    r.dayRank = j >= 0 ? j + 1 : null;
+  }
+  // The day's pot and points: from its own board, else from any address's reading, else from a reading of nobody (the pot is the same for all).
+  const tod = day || rows.find((r) => r.tod)?.tod || (await get(`points/0x${'0'.repeat(40)}`))?.today || null;
+  const pulse = tod ? { total: Number(tod.totalPoints) || 0, pot: big(tod.dayBudgetWei) || 0n, n: day?.taking ?? null,
+    day: Math.min(PTS_DAYS, day?.programDay ?? Math.floor((now() - (PTS_END - PTS_DAYS * 86400)) / 86400) + 1) } : null;
   if (key !== pointsWho().map(([a]) => a).join() || !current()) return;
-  Object.assign(PTS, { at: Date.now(), key, rows, board: lb });
+  noteSeen(rows);
+  Object.assign(PTS, { at: Date.now(), key, rows, board: lb, day, pulse });
   paintPointsFoot();
 }
 load.pts = () => loadPoints();
@@ -4015,8 +4059,8 @@ RETRY.points = () => loadPoints(true).then(() => rerender('pts')).catch(() => {}
 function paintPointsFoot() {
   const rows = PTS.key && PTS.key === pointsWho().map(([a]) => a).join() ? PTS.rows : null;
   if (!rows || !rows.some((r) => r.read)) { setFoot('pts', '100,000 TAC over 90 days'); return; }
-  const pts = rows.reduce((s, r) => s + r.points, 0), owed = rows.reduce((s, r) => s + r.owed, 0n);
-  setFoot('pts', owed > 0n ? `${fmt(owed, 18, 2)} TAC to claim` : `${ptsFmt(pts)} points`, owed > 0n ? 'live' : pts ? 'on' : '');
+  const pts = rows.reduce((s, r) => s + r.points, 0), owed = rows.reduce((s, r) => s + r.owed, 0n), rank = Math.min(...rows.map((r) => r.rank || Infinity));
+  setFoot('pts', owed > 0n ? `${fmt(owed, 18, 2)} TAC to claim` : `${rank < Infinity ? `#${rank} · ` : ''}${ptsFmt(pts)} points`, owed > 0n ? 'live' : pts ? 'on' : '');
 }
 // claim(uint256 cumulativeAmount, bytes32[] proof): the running total less what the address already claimed, to itself.
 async function claimPoints(r) {
@@ -4031,46 +4075,102 @@ const EARN = [
   ['borrow', 'cbtc', 'Post a bond toward cBTC', '1,000 per wstETH'],
   ['borrow', 'cusd', 'Borrow cUSD', '2 per dollar, when you send the loan yourself'],
 ];
-// The program's leaderboard: the top five, whoever is looking wherever they stand, and the top 25 on request.
-function leaderboard(rows) {
-  const lb = rows && PTS.board;
-  if (!lb?.length) return '';
-  const mine = new Set(rows.map((r) => r.addr)), line = (e, i) => { const me = mine.has(String(e.address).toLowerCase()); return html`
-    <li class="${me ? 'me' : ''}"><span class="ptl-w"><span class="rk num">${i + 1}</span><a href="${ETHERSCAN(e.address)}" target="_blank" rel="noopener">${short(e.address)}</a>${me ? ' · you' : ''}</span><b class="num">${ptsFmt(e.points)}</b></li>`; };
-  const you = rows.filter((r) => r.rank > 5).sort((a, b) => a.rank - b.rank);
+// Today's pot and how it is being split: the same for everyone, so shown before anyone connects.
+function pulse() {
+  const p = PTS.pulse;
+  if (!p) return '';
+  const per = p.total > 0 ? Number(p.pot / 10n ** 12n) / 1e6 / p.total * 1000 : null;
+  return html`<div class="pulse">
+    <div class="kv"><span>Today’s pot</span><b>${fmt(p.pot, 18, p.pot >= 100n * 10n ** 18n ? 0 : 2)} TAC · day ${p.day} of ${PTS_DAYS}</b></div>
+    <div class="kv"><span>Points so far today</span><b>${ptsFmt(p.total)}${p.n ? ` · ${p.n.toLocaleString('en-US')} taking part` : ''}</b></div>
+    <div class="kv"><span>So far, each 1,000 points earn</span><b>${per == null ? 'nothing yet' : `${per.toLocaleString('en-US', { maximumFractionDigits: per < 10 ? 2 : 1 })} TAC`}</b></div></div>`;
+}
+// The program's leaderboard, all-time or the day so far: the top five, then the rows around each of this key's addresses, and the whole board with a
+// way to find an address in it.
+function leaderboard(connected) {
+  if (PTS.rows == null) return '';
+  const day = PTS.view === 'day' && PTS.day ? PTS.day : null, lb = day ? day.rows : PTS.board;
+  if (!lb) return html`<div class="lbl"><span>Leaderboard</span></div><p class="note err">The leaderboard could not be read. <button class="link" type="button" data-retry="points">Try again</button></p>`;
+  const mine = new Set(connected ? pointsWho().map(([a]) => a) : []), whole = !day && lb.length < PTS_BOARD ? lb.reduce((s, e) => s + e.points, 0) : 0;
+  const line = (e, i) => {
+    const a = String(e.address).toLowerCase(), me = mine.has(a);
+    const sub = day ? `${fmt(tacOf(PTS.pulse?.pot || 0n, e.points, day.totalPoints), 18, 2)} TAC` : whole ? sharePct(e.points / whole) : '';
+    return html`<li class="${me ? 'me' : ''}" data-a="${a}"><span class="ptl-w"><span class="rk num">${i + 1}</span><a href="${ETHERSCAN(a)}" target="_blank" rel="noopener">${short(a)}</a>${me ? ' · you' : ''}</span><span class="ptl-r"><b class="num">${ptsFmt(e.points)}</b>${sub ? html`<small class="mute">${sub}</small>` : ''}</span></li>`;
+  };
+  const at = new Set([0, 1, 2, 3, 4].filter((i) => i < lb.length));
+  lb.forEach((e, i) => { if (mine.has(String(e.address).toLowerCase())) for (const j of [i - 1, i, i + 1]) if (j >= 0 && j < lb.length) at.add(j); });
+  const idx = [...at].sort((a, b) => a - b);
+  const taking = day ? day.taking : lb.length >= PTS_BOARD ? `${PTS_BOARD}+` : lb.length;
   return html`
-    <div class="lbl"><span>Leaderboard</span><span>${lb.length >= PTS_BOARD ? `${PTS_BOARD}+` : lb.length} taking part</span></div>
-    <ol class="ptl lb">${lb.slice(0, 5).map(line)}${you.map((r) => html`<li class="gap" aria-hidden="true">⋯</li>${line(lb[r.rank - 1], r.rank - 1)}`)}</ol>
-    ${lb.length > 5 ? html`<details class="lockmore ptlog"><summary>The top ${Math.min(25, lb.length)}</summary><ol class="ptl lb">${lb.slice(0, 25).map(line)}</ol></details>` : ''}`;
+    <div class="lbl"><span>Leaderboard</span><span>${typeof taking === 'number' ? taking.toLocaleString('en-US') : taking} ${day ? 'taking part today' : 'taking part'}</span></div>
+    ${PTS.day ? segSub('plv', day ? 'day' : 'all', [['all', 'All time'], ['day', 'Today']]) : ''}
+    ${lb.length ? html`<ol class="ptl lb">${idx.map((i, k) => html`${k && i - idx[k - 1] > 1 ? html`<li class="gap" aria-hidden="true">⋯</li>` : ''}${line(lb[i], i)}`)}</ol>
+    ${lb.length > idx.length ? html`<details class="lockmore ptlog"><summary>The whole board</summary>
+      <div class="amt text"><input id="pl-q" placeholder="Find an address" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Find an address in the board"></div>
+      <ol class="ptl lb" id="pl-all">${lb.map(line)}</ol><p class="note" id="pl-none" hidden>No address on the board matches.</p></details>` : ''}`
+      : html`<p class="note">Nobody has points ${day ? 'yet today' : 'yet'}.</p>`}
+    <p class="note">${day ? 'Each address’s share of today’s pot, as it stands. ' : ''}Read ${ago(PTS.at)}. <button class="link" type="button" data-retry="points">Refresh</button></p>`;
+}
+// Points on each of the last days, from the address's own activity: drawn only when the service has sent all of it (it sends the latest 100).
+function dayStrip(r) {
+  if (!r.read || !r.recent.length || r.count > r.recent.length) return '';
+  const today = utcDay(now()), from = Math.max(today - 13, utcDay(PTS_END) - PTS_DAYS), by = new Map();
+  for (const d of r.recent) by.set(utcDay(d.block_time), (by.get(utcDay(d.block_time)) || 0) + Number(d.points || 0));
+  const days = Array.from({ length: today - from + 1 }, (_, i) => ({ d: from + i, p: by.get(from + i) || 0 })), max = Math.max(...days.map((x) => x.p), 1);
+  if (days.length < 2 || !days.some((x) => x.p > 0)) return '';
+  const best = days.reduce((a, x) => (x.p > a.p ? x : a));
+  return html`<div class="ptd" role="group" aria-label="Points on each of the last ${days.length} days">
+    <div class="ptd-bars">${days.map((x) => html`<button type="button" class="ptd-b${x.d === today ? ' now' : ''}" data-ptd="${dayName(x.d)} · ${ptsFmt(x.p)} points" aria-label="${dayName(x.d)}: ${ptsFmt(x.p)} points"><i style="--h:${x.p / max}"></i></button>`)}</div>
+    <div class="ptd-x"><span>${dayShort(days[0].d)}</span><output class="ptd-r" data-d="Best day ${dayShort(best.d)} · ${ptsFmt(best.p)}">Best day ${dayShort(best.d)} · ${ptsFmt(best.p)}</output><span>Today</span></div></div>`;
 }
 render.pts = () => {
-  const el = $('#pts-body');
-  if (!S.wallet && !S.key) { mount(el, gate('Points go to the address that made each transaction. Connect it to see yours, or open your Tacit wallet.', 'Connect wallet', 'pts-connect')); return wireConnect('pts-connect', () => rerender('pts')); }
-  const rows = PTS.key === pointsWho().map(([a]) => a).join() ? PTS.rows : null;
+  const el = $('#pts-body'), connected = !!(S.wallet || S.key), on = now() < PTS_END;
+  const rows = PTS.rows && PTS.key === pointsWho().map(([a]) => a).join() ? PTS.rows : null;
   if (!rows) loadPoints().then(() => rerender('pts')).catch(() => {});
-  const on = now() < PTS_END;
   // The next holder tier this address could reach from what it holds now; it counts once held through a day.
   const nextTier = (r) => {
     const n = r.held == null ? null : BOOST_TIERS.find(([min]) => r.held < min * 10n ** 18n);
     return !n ? '' : html`<p class="note">${r.held > 0n ? `${fmt(r.held, 18, 2)} public TAC here. ` : ''}Hold ${n[0].toLocaleString('en-US')} public TAC here through a day and what it does next earns ${n[1]}×. <button class="link" type="button" data-earn="buy">Buy TAC</button></p>`;
   };
+  // How far this address is from the one above it, and what has changed since this browser last looked on an earlier day.
+  const standing = (r) => {
+    const lb = PTS.board, i = r.rank - 1, out = [];
+    if (r.rank > 0 && lb && lb[i]) {
+      if (i === 0 && lb[1]) out.push(html`<div class="kv"><span>Ahead of #2 by</span><b>${ptsFmt(r.points - lb[1].points)} points</b></div>`);
+      else if (i > 0) out.push(html`<div class="kv"><span>To reach #${r.rank - 1}</span><b>${ptsFmt(Math.max(1, Math.ceil(lb[i - 1].points - r.points)))} points</b></div>`);
+    }
+    const s = r.since;
+    if (s) {
+      const dp = r.points - s.p, dk = s.k > 0 && r.rank > 0 ? s.k - r.rank : 0;
+      if (dp >= 0.5 || dk) out.push(html`<div class="kv"><span>Since ${dayShort(s.d)}</span><b>${dp >= 0.5 ? `+${ptsFmt(dp)} points` : 'no new points'}${dk ? ` · ${dk > 0 ? 'up' : 'down'} ${Math.abs(dk)} place${Math.abs(dk) === 1 ? '' : 's'}` : ''}</b></div>`);
+    }
+    return out;
+  };
+  // The day's rows, newest first, under each day's total.
   const history = (r) => {
-    const list = r.recent.slice(0, 8);
-    if (!list.length) return '';
-    return html`<details class="lockmore ptlog"><summary>Recent points</summary><ul class="ptl">${list.map((d) => {
-      const [what, unit] = PT_ACTS[d.activity] || ['Activity'], c = ptChain(d.chain_id), amt = unit && big(d.amount_wei);
-      return html`<li><span class="ptl-w">${what}${c && c.name !== 'Ethereum' ? ` on ${c.name}` : ''}<span class="ptl-m">${amt ? `${fmt(amt, 18, 4)} ${unit} · ` : ''}${ago(Number(d.block_time) * 1000)}${d.tac_boost > 1 ? ` · ${d.tac_boost}× holder` : ''}${c && d.tx_hash ? html` · ${txLink(d.tx_hash, c.explorer)}` : ''}</span></span><b class="num">+${ptsFmt(d.points)}</b></li>`;
-    })}</ul></details>`;
+    if (!r.recent.length) return '';
+    const days = new Map();
+    for (const d of r.recent) { const k = utcDay(d.block_time); if (!days.has(k)) days.set(k, []); days.get(k).push(d); }
+    return html`<details class="lockmore ptlog"><summary>Points by day</summary><ul class="ptl">${[...days].map(([k, list]) => html`
+      <li class="day"><span>${dayName(k)}</span><b class="num">+${ptsFmt(list.reduce((s, d) => s + Number(d.points || 0), 0))}</b></li>${list.map((d) => {
+        const [what, unit] = PT_ACTS[d.activity] || ['Activity'], c = ptChain(d.chain_id), amt = unit && big(d.amount_wei);
+        return html`<li><span class="ptl-w">${what}${c && c.name !== 'Ethereum' ? ` on ${c.name}` : ''}<span class="ptl-m">${amt ? `${fmt(amt, 18, 4)} ${unit} · ` : ''}${ago(Number(d.block_time) * 1000)}${d.tac_boost > 1 ? ` · ${d.tac_boost}× holder` : ''}${c && d.tx_hash ? html` · ${txLink(d.tx_hash, c.explorer)}` : ''}</span></span><b class="num">+${ptsFmt(d.points)}</b></li>`;
+      })}`)}</ul>${r.count > r.recent.length ? html`<p class="note">The latest ${r.recent.length} of ${r.count.toLocaleString('en-US')} are listed.</p>` : ''}</details>`;
   };
   mount(el, html`
     <p class="lede-s">Every day through Dec 21 (UTC), up to 1,111 TAC is split by that day’s points, at most 0.03 TAC per point from Oct 3.${on ? ` Today’s split closes in ${dayLeft()}; its TAC is yours to claim once the day is settled.` : ' Claim any time.'}</p>
-    ${rows ? rows.map((r, i) => html`
+    ${on ? pulse() : ''}
+    ${!connected ? gate('Points go to the address that made each transaction. Connect it to see yours, or open your Tacit wallet.', 'Connect wallet', 'pts-connect')
+      : rows ? rows.map((r, i) => html`
       <div class="pt">
         <div class="bal"><div><div class="v num">${ptsFmt(r.points)}</div><div class="u">points · ${r.label} ${short(r.addr)}</div></div>
           <div class="side">${!r.read ? html`<span class="err">unavailable</span><br><button class="link" type="button" data-retry="points">Try again</button>`
-            : r.rank ? html`rank<br><b class="num">#${r.rank.toLocaleString('en-US')}</b>` : r.rank === 0 && r.points > 0 ? html`outside the<br>top ${PTS_BOARD}` : r.points ? '' : 'none yet'}</div></div>
+            : r.rank ? html`rank<br><b class="num">#${r.rank.toLocaleString('en-US')}</b>${r.dayRank ? html`<br>#${r.dayRank} today` : ''}` : r.rank === 0 && r.points > 0 ? html`outside the<br>top ${PTS_BOARD}` : r.points ? '' : 'none yet'}</div></div>
+        ${dayStrip(r)}
         ${r.read && on ? html`<div class="kv"><span>Today</span><b>${r.todayPts > 0 ? `${ptsFmt(r.todayPts)} points · ${sharePct(r.share)} · about ${fmt(r.today, 18, 2)} TAC` : 'nothing yet'}</b></div>` : ''}
+        ${r.read ? standing(r) : ''}
         ${r.boost > 1 ? html`<div class="kv"><span>Holder boost at last activity</span><b>${r.boost}×</b></div>` : ''}
+        ${r.settled > 0n ? html`<div class="kv"><span>Earned on settled days</span><b>${fmt(r.settled, 18, 2)} TAC</b></div>` : ''}
         ${r.claimed > 0n ? html`<div class="kv"><span>Claimed so far</span><b>${fmt(r.claimed, 18, 2)} TAC</b></div>` : ''}
         ${r.read && on ? nextTier(r) : ''}
         ${r.owed > 0n ? html`<button class="btn" type="button" data-claim="${i}">Claim ${fmt(r.owed, 18, 2)} TAC</button>` : ''}
@@ -4078,16 +4178,35 @@ render.pts = () => {
       </div>`) : pointsWho().map(([, label]) => html`
       <div class="pt"><div class="bal"><div><div class="v"><span class="sk" style="--w:5ch"></span></div><div class="u">points · ${label}</div></div>
         <div class="side"><span class="sk" style="--w:8ch"></span><br><span class="sk" style="--w:11ch"></span></div></div></div>`)}
-    ${leaderboard(rows)}
+    ${leaderboard(connected)}
     <div class="lbl"><span>Earn more</span></div>
     <div class="opts">${EARN.map(([go, ic, t, m]) => html`<button class="opt" type="button" data-earn="${go}"><span class="opt-t"><svg class="tk sm" aria-hidden="true"><use href="#tk-${ic}"/></svg>${t}</span><span class="opt-m">${m}</span></button>`)}
       <a class="opt" href="${ZSWAP}" target="_blank" rel="noopener"><span class="opt-t"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Swap or bet with ETH on zSwap ↗</span><span class="opt-m">1,000 per ETH</span></a></div>
-    <div class="lbl"><span>Get a .wei name</span></div>
-    <div id="wei-form"></div>
+    ${connected ? html`<div class="lbl"><span>Get a .wei name</span></div>
+    <div id="wei-form"></div>` : ''}
     <p class="note">Early activity counts up to five times over. Holding 100, 1,000 or 10,000 public TAC at the same address through the past day multiplies its points by 1.25, 1.5 or 2. <a href="https://github.com/src-company/tacit#points-and-farms" target="_blank" rel="noopener">The program ↗</a></p>
     <div class="status" role="status" id="pts-status"></div>`);
   const status = $('#pts-status');
+  wireConnect('pts-connect', () => rerender('pts'));
+  wireSub(el, 'plv', (v) => { PTS.view = v; rerender('pts'); });
   $$('[data-earn]', el).forEach((b) => b.onclick = () => openSheet(b.dataset.earn));
+  const q = $('#pl-q', el);
+  if (q) q.oninput = () => {
+    const t = q.value.trim().toLowerCase();
+    let n = 0;
+    for (const li of $$('#pl-all li', el)) { const hit = !t || li.dataset.a.includes(t); li.hidden = !hit; n += hit; }
+    $('#pl-none', el).hidden = n > 0;
+  };
+  // A bar says its day and points where the pointer is over it, or when it is pressed or focused (a touch has no hover).
+  for (const box of $$('.ptd', el)) {
+    const out = $('.ptd-r', box), reset = () => { out.textContent = out.dataset.d; };
+    for (const b of $$('.ptd-b', box)) {
+      const set = () => { out.textContent = b.dataset.ptd; };
+      b.addEventListener('focus', set); b.addEventListener('click', set); b.addEventListener('blur', reset);
+      b.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') set(); });
+      b.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse' && document.activeElement !== b) reset(); });
+    }
+  }
   $$('[data-claim]', el).forEach((b) => b.onclick = () => busy(b, async () => {
     try {
       const hash = await claimPoints(rows[Number(b.dataset.claim)]);
@@ -4096,7 +4215,7 @@ render.pts = () => {
       await loadPoints(true); rerender('pts'); say($('#pts-status'), html`<span class="ok">Claimed.</span> ${txLink(hash)}`); toast('TAC claimed');
     } catch (e) { sayErr(status, e); }
   }));
-  weiForm($('#wei-form'), status);
+  if (connected) weiForm($('#wei-form'), status);
 };
 
 // ── .wei names: commit, a minute's wait, then reveal through zRouter, so the fee counts toward points ────────────

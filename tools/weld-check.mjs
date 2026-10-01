@@ -29,8 +29,10 @@
 //            V1 through a keeper-relayed withdrawToV1 whose note settle is then submitted, and asks to bridge to Base
 //   pts      a listed address claims its points reward; a pasted key's Tacit account registers a .wei name through
 //            zRouter's commit and reveal and publishes its tacit1 address on it
-//   ptsview  the points sheet from a stubbed service: recent activity in time order across chains, each linked to its
-//            chain's explorer, the newest activity's holder boost, rank, claimed so far, today's share and countdown
+//   ptsview  the points sheet from a stubbed service: recent activity in time order across chains grouped by day, each
+//            linked to its chain's explorer, the newest activity's holder boost, rank, claimed so far, today's share and
+//            countdown; the day's pot and rate, the gap to the rank above, the change since an earlier day, the points-per-day
+//            bars, the all-time and Today boards; and, with nobody connected, the public board and finding an address in it
 //   csend    the Borrow sheet's Send: private cUSD/cBTC (notes stubbed into the balance) go privately to a tacit1 address
 //            or out as tacUSD to an 0x… address, with fees shown first and an amount over the balance refused
 //   tacsend  the TAC sheet's own Send, private-only: a stubbed cTAC note goes privately to a tacit1 address, shown as
@@ -1700,33 +1702,72 @@ await step('pts', async () => {
   await w.browser.close();
 });
 // The points sheet from a stubbed service: activity across chains in time order (Base's larger block numbers do not put
-// an older Base deposit first), the holder boost of the newest, the rank, what was claimed, and today's countdown.
+// an older Base deposit first), the holder boost of the newest, the rank, what was claimed, and today's countdown; the day's
+// pot, the all-time and today's boards, the gap to the next rank, what changed since an earlier day, and the points-per-day
+// bars; and, without anyone connected, the same public board with a way to find an address in it.
 await step('ptsview', async () => {
-  const r = await openPage({ account: A0 });
-  const t0 = Math.floor(Date.now() / 1000);
+  const t0 = Math.floor(Date.now() / 1000), today = Math.floor(t0 / 86400);
+  const seen = JSON.stringify({ [A0.toLowerCase()]: { cur: { d: today - 3, p: 1000, k: 5 } } });
+  const r = await openPage({ account: A0, init: { fn: (s) => { if (!localStorage.getItem('tacit-weld-pts-seen-v1')) localStorage.setItem('tacit-weld-pts-seen-v1', s); }, arg: seen } });
   const dep = (h, chain, block, ago, activity, pts, boost) => ({ tx_hash: '0x' + h.repeat(64), block_number: block, block_time: t0 - ago, amount_wei: '100000000000000000', points: pts, activity, tac_boost: boost, chain_id: chain, pp_boosted: false });
+  const hex = (c) => '0x' + c.repeat(40);
   await r.ctx.route(/api\.tacit\.finance\/points\/0x/, (route) => json(route, { address: A0.toLowerCase(), points: 1234.5, deposit_count: 3,
     today: { points: 100, totalPoints: 1000, dayBudgetWei: '1111111111111111111111' },
     deposits: [dep('b', 8453, 52000000, 7200, 'evmpooldeposit', 90, 1), dep('a', 1, 26090000, 60, 'wrap', 125, 1.5), dep('c', 1, 26080000, 90000, 'zswapeth', 100, 1)] }));
-  await r.ctx.route(/api\.tacit\.finance\/claim\/0x/, (route) => json(route, { cumulativeAmount: '0', claimedWei: '5000000000000000000', unclaimedWei: '0', proof: null }));
-  await r.ctx.route(/api\.tacit\.finance\/leaderboard/, (route) => json(route, [{ address: '0x' + '1'.repeat(40), points: 9e9 }, { address: A0.toLowerCase(), points: 1234.5 }]));
+  await r.ctx.route(/api\.tacit\.finance\/claim\/0x/, (route) => json(route, { cumulativeAmount: '8000000000000000000', claimedWei: '5000000000000000000', unclaimedWei: '3000000000000000000', proof: null }));
+  await r.ctx.route(/api\.tacit\.finance\/leaderboard/, (route) => json(route, /day=today/.test(route.request().url())
+    ? { day: today, programDay: 9, programDays: 90, totalPoints: 1000, dayBudgetWei: '1111111111111111111111', taking: 2, rows: [{ address: A0.toLowerCase(), points: 100 }, { address: hex('2'), points: 50 }] }
+    : [{ address: hex('1'), points: 9e9 }, { address: A0.toLowerCase(), points: 1234.5 }]));
   await r.page.goto(r.url + '#pts');
   await r.page.click('#pts-connect');
-  await until(r.page, () => !!document.querySelector('#pts-body .ptl'), null, 60000);
+  await until(r.page, () => !!document.querySelector('#pts-body .pt .ptl, #pts-body .pt .ptd'), null, 60000);
   await r.page.click('#pts-body .ptlog summary');
   await shot(r.page, 'ptsview');
   const v = await r.page.evaluate(() => ({ body: document.querySelector('#pts-body').textContent.replace(/\s+/g, ' '),
-    items: [...document.querySelectorAll('#pts-body .ptl li')].map((li) => li.textContent.replace(/\s+/g, ' ').trim()),
+    items: [...document.querySelectorAll('#pts-body .pt .ptl li:not(.day)')].map((li) => li.textContent.replace(/\s+/g, ' ').trim()),
+    days: [...document.querySelectorAll('#pts-body .pt .ptl li.day')].map((li) => li.textContent.replace(/\s+/g, ' ').trim()),
+    bars: document.querySelectorAll('#pts-body .ptd-b').length,
     links: [...document.querySelectorAll('#pts-body .ptl a')].map((a) => a.href) }));
   ok(/^Wrapped ETH/.test(v.items[0] || '') && /^Deposited ETH on Base/.test(v.items[1] || '') && /^Swapped ETH/.test(v.items[2] || ''), `ptsview: recent points in time order across chains (${v.items.join(' | ')})`);
+  ok(v.days.length >= 2 && /^Today\s*\+(125|215)$/.test(v.days[0]), `ptsview: the activity is grouped under each day's total (${v.days.join(' | ')})`);
   ok(/Holder boost at last activity\s*1\.5×/.test(v.body), 'ptsview: the holder boost is the newest activity\'s');
-  ok(/rank\s*#2/.test(v.body) && /Claimed so far\s*5 TAC/.test(v.body) && /10% · about 111\.11 TAC/.test(v.body) && /closes in \d/.test(v.body), `ptsview: rank, claimed, today's share and the countdown (${v.body.slice(0, 400)})`);
+  ok(/rank\s*#2/.test(v.body) && /#1 today/.test(v.body) && /Claimed so far\s*5 TAC/.test(v.body) && /10% · about 111\.11 TAC/.test(v.body) && /closes in \d/.test(v.body), `ptsview: rank, claimed, today's share and the countdown (${v.body.slice(0, 500)})`);
+  ok(/Earned on settled days\s*8 TAC/.test(v.body) && /To reach #1\s*8,999,998,766 points/.test(v.body), `ptsview: settled TAC and the gap to the rank above (${v.body.slice(0, 700)})`);
+  ok(/Since \d+ \w+\s*\+235 points · up 3 places/.test(v.body), `ptsview: the change since an earlier day this browser saw (${v.body.slice(0, 700)})`);
+  ok(/Today’s pot\s*1,111 TAC · day 9 of 90/.test(v.body) && /Points so far today\s*1,000 · 2 taking part/.test(v.body) && /each 1,000 points earn\s*1,111\.1 TAC/.test(v.body), `ptsview: the day's pot, points and rate (${v.body.slice(0, 500)})`);
+  ok(v.bars >= 2, `ptsview: points per day are drawn as bars (${v.bars})`);
+  await r.page.click('.ptd-b:last-child');
+  const said = (await r.page.textContent('.ptd-r')).trim();
+  ok(/^Today · (125|215) points$/.test(said), `ptsview: pressing a bar names its day (${said})`);
   const board = await r.page.$$eval('#pts-body ol.lb:not(details ol) li', (l) => l.map((li) => li.textContent.replace(/\s+/g, ' ').trim()));
   ok(board.length === 2 && /^1\s*0x1111…1111/.test(board[0]) && /^2\s*0xf39f…2266 · you/.test(board[1]) && /2 taking part/.test(v.body), `ptsview: the leaderboard marks this address (${board.join(' | ')})`);
+  await r.page.click('[data-plv="day"]');
+  const day = await r.page.$$eval('#pts-body ol.lb:not(details ol) li', (l) => l.map((li) => li.textContent.replace(/\s+/g, ' ').trim()));
+  await r.page.evaluate(() => document.querySelector('#pts-body .seg.sub').scrollIntoView({ block: 'start' }));
+  await shot(r.page, 'ptsview-board');
+  ok(day.length === 2 && /^1\s*0xf39f…2266 · you\s*100\s*111\.11 TAC/.test(day[0]) && /^2\s*0x2222…2222\s*50\s*55\.56 TAC/.test(day[1]), `ptsview: today's board ranks the day's points with each share of the pot (${day.join(' | ')})`);
   ok(v.links.some((h) => h.startsWith('https://basescan.org/tx/0x' + 'b'.repeat(64))) && v.links.some((h) => h.startsWith('https://etherscan.io/tx/0x' + 'a'.repeat(64))), 'ptsview: each activity links to its own chain\'s explorer');
   ok(!(await r.page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), 'ptsview: no sideways scroll');
   if (r.errors.length) { fails++; console.log('FAIL ptsview page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   await r.browser.close();
+  // Nobody connected: the pot and the board are public. A service without the day's board is told by its array: no Today switch.
+  const n = await openPage({ account: A0, viewport: { width: 390, height: 900 } });
+  const many = Array.from({ length: 12 }, (_, i) => ({ address: '0x' + (i + 1).toString(16).repeat(40).slice(0, 40), points: 1000 - i * 10 }));
+  await n.ctx.route(/api\.tacit\.finance\/points\/0x/, (route) => json(route, { address: hex('0'), points: 0, deposit_count: 0, today: { points: 0, totalPoints: 500, dayBudgetWei: '1111111111111111111111' }, deposits: [] }));
+  await n.ctx.route(/api\.tacit\.finance\/leaderboard/, (route) => json(route, many));
+  await n.page.goto(n.url + '#pts');
+  await until(n.page, () => !!document.querySelector('#pts-body ol.lb'), null, 60000);
+  await n.page.click('#pts-body .ptlog summary');
+  await n.page.fill('#pl-q', '0x3333');
+  await n.page.evaluate(() => document.querySelector('#pts-body .lbl:has(+ ol.lb)')?.scrollIntoView({ block: 'start' }));
+  await shot(n.page, 'ptsview-phone');
+  const f = await n.page.evaluate(() => ({ body: document.querySelector('#pts-body').textContent.replace(/\s+/g, ' '), gate: !!document.querySelector('#pts-connect'), toggle: !!document.querySelector('[data-plv]'),
+    shown: [...document.querySelectorAll('#pl-all li')].filter((li) => !li.hidden).map((li) => li.dataset.a), top: document.querySelectorAll('#pts-body ol.lb:not(details ol) li').length }));
+  ok(f.gate && f.top === 5 && !f.toggle && /Today’s pot\s*1,111 TAC/.test(f.body) && /12 taking part/.test(f.body), `ptsview: the pot and the top five show without a wallet, with no Today switch while the service lacks it (${f.body.slice(0, 300)})`);
+  ok(f.shown.length === 1 && f.shown[0].startsWith('0x3333'), `ptsview: typing in the whole board narrows it to the matching address (${f.shown.join(',')})`);
+  ok(!(await n.page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), 'ptsview: no sideways scroll at phone width');
+  if (n.errors.length) { fails++; console.log('FAIL ptsview page errors: ' + n.errors.slice(0, 3).join(' | ')); }
+  await n.browser.close();
 });
 // Relayed jobs reach the page as tacit:job events; here they are dispatched the way the relay client dispatches them, and
 // /confidential/status answers from `served`, so a reload can find settled a job that had failed. Notification records

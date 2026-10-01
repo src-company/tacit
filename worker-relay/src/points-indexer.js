@@ -12,6 +12,7 @@ import { CFG, ADDR } from './lib/config.js';
 import { publicClient, clientForChain } from './lib/chain.js';
 import { withNonceRetry } from './lib/nonce-retry.js';
 import { POINTS_SCALE, parseRateCapSchedule, rateCapForDay, applyRateCeiling } from './lib/points-rate-cap.js';
+import { dayPot, dayBoard } from './lib/points-day-board.js';
 import Database from 'better-sqlite3';
 import { openStore } from './lib/points-store.js';
 import { parseBoostTiers, openTacBoost, scanTacTransfers } from './lib/tac-holder-boost.js';
@@ -1425,6 +1426,19 @@ function startHttp(store, evmState) {
       }
       if (url.pathname === '/leaderboard') {
         const limit = Math.min(Number(url.searchParams.get('limit')) || 100, 500);
+        // ?day=today ranks the UTC day so far instead of the whole program, with the pot those points split. It is
+        // an object where the default is an array, so a service that predates it is told apart by its array.
+        if (url.searchParams.get('day') === 'today') {
+          if (!CFG.pointsProgramStartSec) { res.statusCode = 404; res.end(JSON.stringify({ error: 'no reward program' })); return; }
+          const startDay = Math.floor(CFG.pointsProgramStartSec / 86400);
+          const todayDay = Math.floor(Date.now() / 1000 / 86400);
+          const dayStart = todayDay * 86400;
+          res.end(JSON.stringify({
+            day: todayDay, programDay: todayDay - startDay + 1, programDays: CFG.pointsProgramDays,
+            ...dayBoard(store.dayPointsByAddress(dayStart, dayStart + 86400), { budgetWei: dayBudgetWei(todayDay - startDay), maxWeiPerPoint: rateCapForDay(rateCapSchedule, todayDay), limit }),
+          }));
+          return;
+        }
         res.end(JSON.stringify(store.leaderboard(limit)));
         return;
       }
@@ -1444,11 +1458,10 @@ function startHttp(store, evmState) {
           const dayRows = store.dayPointsByAddress(dayStart, dayStart + 86400);
           const row = dayRows.find((r) => r.address.toLowerCase() === address.toLowerCase());
           // The running total as of THIS request, not a settled end-of-day figure — it moves as more
-          // addresses deposit today, same as `row`'s own count does.
-          const totalPoints = dayRows.reduce((s, r) => s + r.dayPoints, 0);
-          // The pot as it would split right now: the day's budget, or less where the TAC-per-point ceiling
-          // binds, so a client's "share of today's pot" estimate matches what settlement will pay.
-          const pot = applyRateCeiling(dayBudgetWei(todayDay - startDay), BigInt(Math.round(totalPoints * POINTS_SCALE)), rateCapForDay(rateCapSchedule, todayDay));
+          // addresses deposit today, same as `row`'s own count does. The pot is the day's budget as it would split
+          // right now, or less where the TAC-per-point ceiling binds, so a client's "share of today's pot" estimate
+          // matches what settlement will pay.
+          const { totalPoints, pot } = dayPot(dayRows, dayBudgetWei(todayDay - startDay), rateCapForDay(rateCapSchedule, todayDay));
           today = { points: row ? row.dayPoints : 0, totalPoints, dayBudgetWei: pot.toString() };
         }
         res.end(JSON.stringify({ ...total, today, deposits }));
