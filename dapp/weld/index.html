@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-YJlrfAnZfV2LRpZM/ag1cAlEyVC/lgK0UaEnd45AXoc=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-9ZjXKFVG360I0rRc4KGk1lWrk49Fl/D79I4ipNdU+wM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -469,7 +469,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
       <button class="chip act" id="act" type="button" aria-haspopup="dialog" aria-label="Activity" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="num" id="act-n" hidden></span>
       </button>
-      <button class="chip" id="wallet" type="button"><span class="dot" id="wallet-dot"></span><span id="wallet-label">Connect wallet</span></button>
+      <button class="chip" id="wallet" type="button"><span class="dot" id="wallet-dot"></span><span id="wallet-label">Sign in</span></button>
     </div>
   </header>
 
@@ -1950,7 +1950,7 @@ function signIn(id) {
   return html`<div class="opts" id="${id}-in">
     ${known ? opt('known', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>${known.tacit ? html`Continue as <b>${short(known.tacit, 7)}</b>` : 'Continue with your Tacit wallet'}`, html`Opens with ${viaText(known)}, as on tacit.finance. The same key handles Bitcoin, TAC and ETH here.`, 'main') : ''}
     ${other ? opt('other', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>${other.tacit ? html`Continue as <b>${short(other.tacit, 7)}</b>` : 'Your other Tacit key'}`, html`A different key, opened here before with ${viaText(other)}. Not the one tacit.finance has open.`) : ''}
-    ${opt('eth', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Ethereum wallet`, 'MetaMask, Rabby, Rainbow or any browser wallet. One signature.')}
+    ${opt('eth', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Ethereum wallet`, 'MetaMask, Rabby, Rainbow or any browser wallet. A free message signature, two the first time.')}
     ${opt('btc', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-btc"/></svg>Bitcoin wallet`, 'Xverse, Leather or UniSat. One signature, two the first time.')}
     ${pk ? opt('passkey', html`<svg class="tk sm" aria-hidden="true"><use href="#i-key"/></svg>Passkey`, 'Already made one? Touch ID, Windows Hello or a security key.') : ''}
     ${pk && !known ? opt('new', html`<svg class="tk sm" aria-hidden="true"><use href="#i-key"/></svg>No wallet yet? Create one`, 'With Face ID, Touch ID or Windows Hello. Nothing to install.') : ''}
@@ -2119,7 +2119,7 @@ function btcSend(to, sats) {
 function paintWallet() {
   $('#start').hidden = !!(S.key || S.address || knownWallet());           // shown only to someone who has never opened a wallet here
   $('#wallet-dot').className = 'dot' + (S.key ? ' on' : S.address ? ' live' : '');
-  $('#wallet-label').textContent = S.key ? short(S.key.tacit, 6) : S.address ? short(S.address) : knownWallet() ? 'Open wallet' : 'Connect wallet';
+  $('#wallet-label').textContent = S.key ? short(S.key.tacit, 6) : S.address ? short(S.address) : knownWallet() ? 'Open wallet' : 'Sign in';
 }
 $('#wallet').onclick = () => openSheet('wallet');
 $('#start-go').onclick = () => openSheet('wallet');
@@ -2137,7 +2137,7 @@ function l2Balances(who) {
 render.wallet = () => {
   const el = $('#wallet-body');
   if (!S.key) {
-    mount(el, html`<p class="lede-s">Open your Tacit wallet. It is the same wallet, with the same balances, as on tacit.finance.</p>${signIn('ws')}
+    mount(el, html`<p class="lede-s">Open your Tacit wallet. It is the same wallet, with the same balances, as on tacit.finance. Signing in with an Ethereum wallet sends nothing and costs no gas, and the same account always opens the same wallet.</p>${signIn('ws')}
       ${S.wallet ? html`<div class="kv"><span>Ethereum</span><b>${S.wallet}</b></div>` : ''}`);
     return wireSignIn(el, 'ws', () => $('#sheet-wallet').close());
   }
@@ -5869,7 +5869,7 @@ function refreshAll() {
   for (const n of SHEETS) if ($(`#sheet-${n}`)?.open) load[n]?.().then(() => rerender(n)).catch(() => {});
   dashSoon();
 }
-paintWallet();          // a returning visitor's chip says "Open wallet", not the default "Connect wallet", before any action runs
+paintWallet();          // a returning visitor's chip says "Open wallet", not the default "Sign in", before any action runs
 // The farms' last public rate stands in on the tile until the fresh one is read.
 const farmFoot = store.get(FARM_FOOT_KEY);
 if (typeof farmFoot === 'string' && farmFoot) setFoot('farm', farmFoot, 'live');
