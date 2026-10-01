@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-UQdC6lGjzcaahngFhAufwTg1/jJhSVcsvyzdP5Z4rgQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-QaaOlVYDC5KQ3aCOHevPd0pA1aiRbCeXKNnIts4Yaq0=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -703,6 +703,7 @@ import { makeEvmTx } from '/evm-tx.js';
 import { makeTacAirdrop, makeRpcCall } from '/tac-airdrop.js?cb=02ef61b4';
 import { makeEvmTradeVenues, encErc20Approve } from '/evm-trade-venues.js?cb=38171d17';
 import { parseRecipient } from '/confidential-payout.js?cb=c27b4853';
+import { addressId } from '/address-id.js?cb=c4fa5a58';
 
 if (!secp.etc.hmacSha256Sync) secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, concatBytes(...m));
 
@@ -893,7 +894,7 @@ const errText = (e) => {
   return m.replace(/^Error:\s*/, '').slice(0, 240);
 };
 // A keeper that could not take a send (unreachable, busy, or not taking sends right now), not a send that failed.
-const keeperTrouble = (e) => /relay|keeper|failed to fetch|\b5\d\d\b|\b429\b|timed? ?out|capacity/i.test(String(e?.message || e)) && !revertText(e);
+const keeperTrouble = (e) => /relay|keeper|failed to fetch|\b5\d\d\b|\b429\b|timed? ?out|capacity/i.test(String(e?.message || e)) && !revertText(e) && !e?.said && e?.feeMoved == null;
 // A reason without its "try again": said of a deposit already made, that would ask for the deposit a second time.
 const noRetry = (t) => String(t).split(/(?<=[.!?])\s+/).filter((s) => !/\btry(ing)? again\b/i.test(s)).join(' ');
 // A wrap that stopped once its deposit was sent: the deposit waits in the pool for Finish, and is never asked for again.
@@ -915,6 +916,23 @@ document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-
 // Quote-time notes live in the receipt; the status line only reports actions.
 const warn = (rc, view) => { rc.insertAdjacentHTML('beforeend', html`<p class="note err">${view}</p>`.s); rc.hidden = false; };
 const quoteErr = (rc, e) => { mount(rc, html``); warn(rc, errText(e)); };
+// A status redrawn as it counts: when only its [data-tick] part (hidden from screen readers) changed, that part alone is
+// updated, so the line is announced once rather than at every step.
+function sayLive(el, view) {
+  if (!el) return;
+  const v = view instanceof Raw ? view : html`${view}`, next = document.createElement('div');
+  next.innerHTML = v.s;
+  const was = el.querySelector('[data-tick]'), now = next.querySelector('[data-tick]');
+  if (was && now) {
+    const text = now.textContent;
+    now.textContent = was.textContent;
+    if (next.innerHTML === el.innerHTML) { was.textContent = text; return; }
+  }
+  say(el, v);
+}
+// The whole address's ID, the one its owner's page shows beside it: a lookalike sharing the first and last characters
+// does not pass. Given the address as typed, or as a name publishes it.
+const idRow = (a) => (/^(tacit1|bp1|sp1|bc1)/i.test(a || '') ? html`<div class="kv"><span>ID</span><b class="num">${addressId(a)}</b></div>` : '');
 
 // While an action runs, its sheet is not re-rendered underneath it: a fresh form would offer the same action again
 // beside a status line that no longer updates. Re-renders asked for meanwhile (tab switches and reopening included)
@@ -966,6 +984,26 @@ function keep(root, fn) {
   else if (byData) { try { const i = root.querySelector(byData); if (i && i !== document.activeElement) i.focus(); } catch {} }
 }
 const lazy = (f) => { let p = null; return () => (p ||= f().catch((e) => { p = null; throw e; })); };
+// A recipient resolves to the same answer while its text is unchanged and under 15 s old: a name is three lookups, and
+// every redraw and amount edit checks the form again. `fresh` asks again.
+function memoRoute(fn) {
+  let last = null;
+  return (raw, arg = null, fresh = false) => {
+    const k = `${arg?.id ?? ''}|${String(raw || '').replace(/\s/g, '')}`;
+    if (!fresh && last?.k === k && Date.now() - last.at < 15e3) return last.p;
+    const e = last = { k, at: Date.now(), p: fn(raw, arg) };
+    e.p.catch(() => { if (last === e) last = null; });
+    return e.p;
+  };
+}
+// A name is looked up again as the money goes, and refused when its record moved since the preview, which is checked again.
+async function pinned(r, again, field) {
+  if (!r?.name) return;
+  const n = await again();
+  if (['kind', 'to', 'stealthAddress', 'pubHex'].every((k) => n[k] === r[k])) return;
+  field.dispatchEvent(new Event('input'));
+  throw new Error('Where that name points changed. Check it and send again.');
+}
 // One read of a thing at a time. A call joins a read of the same key begun in the last three seconds (the render and the
 // load of one sheet opening); a later call begins afresh, since what it reads may have changed since, and so does `force`
 // (after an action). The read is handed current(), false once a newer read has finished, so an older one landing late
@@ -1810,28 +1848,30 @@ const viaText = (k) => {
   })[k.mode] || 'your wallet';
 };
 
-// The address this page shows and publishes: the unified one (with the pool lane, so every pool pays it too) once its
-// module has loaded, which starts as soon as a way in is on screen; the one without the pool lane until then.
+// The address this page shows and publishes: the unified one (with the pool lane, so every pool pays it too). Its module
+// starts loading as soon as a way in is on screen; until it has, an opened key has no address to show, copy or publish
+// (key.tacit is null), and if it cannot load, the one without the pool lane stands in.
 let UNI = null;
 const loadUnified = lazy(async () => (UNI = await import('/tacit-unified.js?cb=a5b3a042')));
 const addressFor = (privHex) => { try { if (UNI) return UNI.unifiedAddress(privHex).address; } catch {} return tacitAddress(privHex); };
-const rememberKey = (key) => { const { priv, ...pub } = key; try { if (key.mode === 'key') localStorage.removeItem(LITE_ID); else localStorage.setItem(LITE_ID, JSON.stringify(pub)); } catch {} };
+const rememberKey = (key) => { const { priv, tacit, ...pub } = key; try { if (key.mode === 'key') localStorage.removeItem(LITE_ID); else localStorage.setItem(LITE_ID, JSON.stringify(tacit ? { ...pub, tacit } : pub)); } catch {} };
 function setKey(k) {
   const pubHex = String(k.pubHex || pubOf(k.priv)).replace(/^0x/, '').toLowerCase();
   if (pubOf(k.priv) !== pubHex) throw new Error('That wallet opened a different key than expected. Nothing was changed.');
-  const key = S.key = { ...k, pubHex, tacit: addressFor(k.priv) };
+  const key = S.key = { ...k, pubHex, tacit: UNI ? addressFor(k.priv) : null };
   rememberKey(key);
   S.pay = store.get(PAY)?.[pubHex] || null;
   syncAccount(); resetPrivate(); paintWallet(); refreshAll();
   const opened = () => { if (S.key === key) toast(`Opened ${short(key.tacit, 8)}`); };
   if (UNI) return opened();
-  loadUnified().then(() => {
+  loadUnified().catch(() => {}).then(() => {
     if (S.key !== key) return;
     key.tacit = addressFor(key.priv);
     rememberKey(key);
     paintWallet();
     for (const n of SHEETS) rerender(n);
-  }).catch(() => {}).finally(opened);
+    opened();
+  });
 }
 
 // tacit.js opens the passphrase-locked and Bitcoin-signed keys exactly as tacit.finance does. It loads only for
@@ -1852,10 +1892,16 @@ window.addEventListener('pagehide', () => {
   if (!T) return;
   try { const p = sessionStorage.getItem(PREV_NET); if (p !== null) { p === '' ? localStorage.removeItem(SHARED_NET) : localStorage.setItem(SHARED_NET, p); sessionStorage.removeItem(PREV_NET); } } catch {}
 });
+// A record another tab writes while the turn runs is theirs: it is left as they wrote it.
 async function keepShared(fn) {
   let snap = [];
   try { snap = SHARED_WALLET_KEYS.map((k) => [k, localStorage.getItem(k)]); } catch {}
-  try { return await fn(); } finally { for (const [k, v] of snap) { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } }
+  const theirs = new Set(), seen = (e) => { if (e.storageArea === localStorage) theirs.add(e.key); };
+  window.addEventListener('storage', seen);
+  try { return await fn(); } finally {
+    window.removeEventListener('storage', seen);
+    for (const [k, v] of snap) { if (theirs.has(k) || theirs.has(null)) continue; try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} }
+  }
 }
 // tacit.js holds one key at a time, and its holdings caches follow that key. Every use of it takes a turn, so the
 // key changes only between turns, never under a scan or a send.
@@ -1871,9 +1917,7 @@ const tPriv = () => { const h = bytesToHex(T.wallet.priv); T.wallet.priv.fill(0)
 // The ways in, each ending in setKey.
 const open = {
   async eth(k) {
-    const id = await evm.deriveIdentity({ pick: pickWallet });
-    const bare = (a) => String(a || '').replace(/^0x/i, '').toLowerCase();
-    if (k?.address && bare(id.address) !== bare(k.address)) throw new Error(`Switch your wallet to ${short(k.address)}, the account this Tacit wallet was opened with.`);
+    const id = await evm.deriveIdentity({ pick: pickWallet, expect: k?.address });   // another account is refused before it signs
     S.provider = id.provider; S.wallet = '0x' + id.address;
     setKey({ mode: 'eth', priv: id.priv, pubHex: k?.pubHex || id.pubHex, address: S.wallet });   // a known wallet must open its known key
   },
@@ -1882,7 +1926,7 @@ const open = {
     const r = await prfLogin({ credentialId: k?.credentialId });
     const pubHex = bytesToHex(r.pub), m = loadPrfMap();
     const label = k?.label || Object.keys(m).find((l) => m[l]?.credentialId === r.credentialId) || `passkey-${pubHex.slice(0, 6)}`;
-    m[label] = { credentialId: r.credentialId, pubkey: pubHex, createdAt: m[label]?.createdAt || Date.now(), lastUsed: Date.now() };
+    m[label] = { credentialId: r.credentialId, pubkey: pubHex, createdAt: m[label]?.createdAt || Date.now(), lastUsed: m[label]?.lastUsed ?? Date.now() };
     savePrfMap(m);
     const priv = bytesToHex(r.priv); r.priv.fill(0);
     setKey({ mode: 'passkey', priv, pubHex, label, credentialId: r.credentialId });
@@ -1959,6 +2003,7 @@ function signIn(id) {
     <div class="amt text" id="${id}-paste" hidden><input id="${id}-hex" type="password" placeholder="64-character Tacit key" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Tacit key"><button class="link" type="button" data-in="key">Open</button></div>
   </div>`;
 }
+let signing = false;                                    // one way in at a time: two wallet prompts must not race
 function wireSignIn(root, id, after) {
   loadUnified().catch(() => {});
   const box = root.querySelector(`#${id}-in`);
@@ -1967,7 +2012,11 @@ function wireSignIn(root, id, after) {
   for (const b of box.querySelectorAll('[data-in]')) b.onclick = () => {
     const k = b.dataset.in;
     if (k === 'paste') { const p = box.querySelector(`#${id}-paste`); p.hidden = false; p.querySelector('input').focus(); return; }
+    if (signing) return;
     busy(b, async () => {
+      signing = true;
+      const rest = $$('[data-in]').filter((x) => x !== b && !x.disabled);
+      rest.forEach((x) => { x.disabled = true; });
       try {
         if (k === 'known') await open[known.mode](known);
         else if (k === 'other') await open[other.mode](other);
@@ -1977,6 +2026,7 @@ function wireSignIn(root, id, after) {
         else await open[k]();
         after?.();
       } catch (e) { if (!/cancel/i.test(e?.message || '') && e?.name !== 'NotAllowedError' && !e?.unlockCancelled) toast(errText(e), true); }
+      finally { signing = false; rest.forEach((x) => { x.disabled = false; }); }
     });
   };
 }
@@ -2003,7 +2053,7 @@ async function connect() {
 window.addEventListener('tacit:evm-accounts', (e) => {
   const a = (e.detail?.accounts || [])[0];
   S.wallet = a ? String(a).toLowerCase() : null;
-  if (S.key?.mode === 'eth' && S.key.address !== S.wallet) { S.key = null; resetPrivate(); toast('Your wallet changed accounts, so the Tacit key opened with it was locked. Open it again to continue.'); }   // that key belongs to the old account
+  if (S.key?.mode === 'eth' && S.key.address !== S.wallet) { S.key = null; resetPrivate(); toast(`Your wallet ${a ? 'changed accounts' : 'locked'}, so the Tacit key opened with it was locked. Open it again to continue.`); }   // that key belongs to the old account
   syncAccount(); paintWallet(); refreshAll();
 });
 const CHAIN_META = {
@@ -2119,7 +2169,7 @@ function btcSend(to, sats) {
 function paintWallet() {
   $('#start').hidden = !!(S.key || S.address || knownWallet());           // shown only to someone who has never opened a wallet here
   $('#wallet-dot').className = 'dot' + (S.key ? ' on' : S.address ? ' live' : '');
-  $('#wallet-label').textContent = S.key ? short(S.key.tacit, 6) : S.address ? short(S.address) : knownWallet() ? 'Open wallet' : 'Sign in';
+  $('#wallet-label').textContent = S.key ? (S.key.tacit ? short(S.key.tacit, 6) : 'Opening…') : S.address ? short(S.address) : knownWallet() ? 'Open wallet' : 'Sign in';
 }
 $('#wallet').onclick = () => openSheet('wallet');
 $('#start-go').onclick = () => openSheet('wallet');
@@ -2144,8 +2194,9 @@ render.wallet = () => {
   const k = S.key, a = S.acct, pays = payer(), btcAddr = T?.extWallet?.state?.address || (k.mode === 'btc' || k.mode === 'ext' ? k.address : null);
   const eth = html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>`;
   mount(el, html`
-    <div class="who"><div class="addr num">${short(k.tacit, 12)}</div><div class="u">Your Tacit address · opened with ${viaText(k)}</div>
-      <div class="row2"><button class="btn ghost" type="button" id="w-copy">Copy address</button><button class="btn ghost" type="button" id="w-lock">Lock</button></div></div>
+    <div class="who"><div class="addr num">${k.tacit ? short(k.tacit, 12) : '…'}</div><div class="u">Your Tacit address · opened with ${viaText(k)}</div>
+      ${k.tacit ? html`<div class="u">ID <b class="num">${addressId(k.tacit)}</b> · a payer sees the same ID</div>` : ''}
+      <div class="row2"><button class="btn ghost" type="button" id="w-copy" ${k.tacit ? '' : 'disabled'}>Copy address</button><button class="btn ghost" type="button" id="w-lock">Lock</button></div></div>
     <div class="lbl" id="pay-h"><span>Public transactions come from</span></div>
     <div class="opts" role="radiogroup" aria-labelledby="pay-h">
       <button class="opt${pays === 'tacit' ? ' main' : ''}" type="button" role="radio" aria-checked="${pays === 'tacit'}" data-pay="tacit"><span class="opt-t">${eth}Tacit account${pays === 'tacit' ? html`<span class="tag">pays</span>` : ''}<span class="num w-bal" id="ac-abal"><span class="sk" style="--w:5ch"></span></span></span><span class="opt-m">${short(a.address, 8)} · this key's own, signs here with no popup</span></button>
@@ -2157,8 +2208,8 @@ render.wallet = () => {
     <div class="status" role="status" id="ac-status"></div>
     <div class="kv sep"><span>Bitcoin</span>${btcAddr ? html`<b>${short(btcAddr, 8)}</b>` : html`<span class="mute">connects when you lock BTC to borrow</span>`}</div>
     <p class="note">The key stays in this tab, and whoever holds it holds the Tacit account too. Private payments to your Tacit address reach you here and on tacit.finance.</p>`);
-  $('#w-copy').onclick = () => copy(k.tacit, 'Tacit address copied');
-  $('#w-lock').onclick = () => { S.key = null; syncAccount(); resetPrivate(); paintWallet(); refreshAll(); rerender('wallet'); };
+  $('#w-copy').onclick = () => k.tacit && copy(k.tacit, 'Tacit address copied');
+  $('#w-lock').onclick = () => { evm.deselectProvider(); S.key = null; syncAccount(); resetPrivate(); paintWallet(); refreshAll(); rerender('wallet'); };
   const bal = (id, who) => who && rpc('eth_getBalance', [who, 'latest']).then((b) => { const e = $('#' + id); if (e) e.textContent = `${fmt(BigInt(b), 18, 4)} ETH`; }, () => { const e = $('#' + id); if (e) e.textContent = '—'; });
   bal('ac-abal', a.address); bal('ac-wbal', S.wallet);
   // The balance above is Ethereum's; ETH the Tacit account holds on Base or Robinhood Chain is said too, where it pays.
@@ -2371,7 +2422,7 @@ const getUx = lazy(async () => {
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
 });
 const P = { scan: null, scanning: null, err: null };           // this identity's shielded notes, from ux.balance
-function resetPrivate() { P.scan = null; P.scanning = null; P.err = null; DEV.W = null; DEV.bal = null; DEV.key = null; DEV.quote = null; DEV.err = null; Object.assign(LOCK, { rec: null, state: null, lm: null, bonds: [], list: [], pick: null, found: null, repayOver: null, q: null }); Object.assign(LK, { at: 0, pub: null, mine: [], back: [], scanning: null }); Object.assign(BTC, { pub: null, at: 0, err: null, share: null, sp: null, held: [] }); dropTacitKey(); }
+function resetPrivate() { P.scan = null; P.scanning = null; P.err = null; DEV.W = null; DEV.bal = null; DEV.key = null; DEV.quote = null; DEV.err = null; Object.assign(LOCK, { rec: null, state: null, lm: null, bonds: [], list: [], pick: null, found: null, repayOver: null, q: null }); Object.assign(LK, { at: 0, pub: null, mine: [], back: [], scanning: null }); Object.assign(BTC, { pub: null, at: 0, err: null, share: null, sp: null, held: [], got: 0, part: false }); dropTacitKey(); }
 // A forced scan starts after any scan already running, so what it returns is newer than the call.
 async function scanPrivate(force = false) {
   if (!S.key) return null;
@@ -2835,6 +2886,7 @@ const heldLabel = (k, dec, dp, unit) => P.scan ? html`Private ${fmt(spendable(k)
 // A balance held in several notes pays a relay fee to cut or join one, so the most that can go is what is left after it.
 const feeRoom = (units, fee, held, notes, show) => (units <= held && held > fee ? `The most you can use is ${show(held - fee)}: the relay fee to ${freeNotes(notes).some((n) => BigInt(n.value) >= units) ? 'split a note' : 'combine notes'} comes out of it.` : null);
 const overBalance = () => P.scan ? 'More than your private balance.' : P.err ? 'Your private balance could not be read: press retry above.' : 'Still reading your private balance.';
+const resolveToM = memoRoute(resolveTo);
 function v1Send(el, status) {
   const held = spendable('eth');
   mount(el, html`
@@ -2856,7 +2908,7 @@ function v1Send(el, status) {
     if (tooFine(rc, amt.value, units, 8)) return;
     if (!raw) { rc.hidden = true; return; }
     try {
-      const r = await resolveTo(raw);
+      const r = await resolveToM(raw);
       if (my !== seq || !amt.isConnected) return;
       if (String(r.pubHex).replace(/^0x/, '').toLowerCase() === S.key.pubHex) throw new Error('That is your own Tacit address.');
       const t = await getUx();
@@ -2866,7 +2918,7 @@ function v1Send(el, status) {
       if (my !== seq || !amt.isConnected) return;
       who = r;
       mount(rc, html`
-        ${r.name ? html`<div class="kv"><span>${r.name}</span><b>${short(r.address || '', 10)}</b></div>` : html`<div class="kv"><span>Recipient</span><b>${short(raw, 10)}</b></div>`}
+        ${r.name ? html`<div class="kv"><span>${r.name}</span><b>${short(r.address || '', 10)}</b></div>` : html`<div class="kv"><span>Recipient</span><b>${short(raw, 10)}</b></div>`}${idRow(r.address || raw)}
         ${split && units + split <= held ? html`<div class="kv"><span>Relay fee to ${freeNotes(P.scan?.eth.notes).some((n) => BigInt(n.value) >= units + split) ? 'split a note' : 'combine notes'}</span><b>${fmt(split, 8, 8)} tETH</b></div>` : ''}
         ${units ? html`<div class="kv"><span>They get about</span><b>${fmt(units > claim ? units - claim : 0n, 8, 8)} tETH</b></div>` : ''}`);
       rc.hidden = false;
@@ -2882,6 +2934,7 @@ function v1Send(el, status) {
     if (!w || !units) return;
     run.go({ label: `Send ${fmt(units, 8, 6)} tETH privately to ${w.name || short(raw, 8)}`, status: () => $('#v1-status'), clear: () => { clearField(to); clearField(amt); } });
     try {
+      await pinned(w, () => resolveToM(raw, null, true), to);
       const t = await getUx(), priv = walletPriv();
       const note = await noteFor(run, t, priv, units, (n) => BigInt(n.value) === units, status);          // a lock spends a note of its exact size
       run.say(status, 'Locking it to a one-time address only they can open…');
@@ -3029,7 +3082,7 @@ function prover(onProgress) {
   })().catch((e) => { if (proverP === made) proverP = null; throw e; });
   return made;
 }
-const provingNote = (name, got, total) => say($('#d-status'), `Getting the proving key once (about 33 MB): ${name} ${total ? Math.floor((got / total) * 100) + '%' : ''}`);
+const provingNote = (name, got, total) => sayLive($('#d-status'), html`Getting the proving key once (about 33 MB)<span aria-hidden="true" data-tick>: ${name} ${total ? Math.floor((got / total) * 100) + '%' : ''}</span>`);
 async function deviceWallet() {
   if (DEV.W && DEV.key === S.key.pubHex + DEV.chain.chainId) return DEV.W;
   const m = await getDeviceMods(), c = DEV.chain;
@@ -3126,11 +3179,11 @@ async function devResolve(raw) {
     let d;
     try { d = decodeTacitAddress(lo); } catch { return { error: 'Not a valid Tacit address.' }; }
     if (d.network !== 'mainnet') return { error: 'That Tacit address is for a test network.' };
-    return d.lanes.pool ? { bp: d.lanes.pool.poolAddress, label: short(lo, 8) } : { error: 'This Tacit address is from before pool payments, so it can’t receive in this pool yet. Pay it from the Tacit pool tab instead.' };
+    return d.lanes.pool ? { bp: d.lanes.pool.poolAddress, label: short(lo, 8), id: lo } : { error: 'This Tacit address is from before pool payments, so it can’t receive in this pool yet. Pay it from the Tacit pool tab instead.' };
   }
   let r;
   try { r = await (await getNames()).resolveName(lo); } catch (e) { return { error: e.message }; }
-  return r.pool ? { bp: r.pool, label: r.name } : { error: `${r.name} points to a Tacit address from before pool payments, so it can’t receive in this pool yet. Pay it from the Tacit pool tab instead.` };
+  return r.pool ? { bp: r.pool, label: r.name, id: r.address } : { error: `${r.name} points to a Tacit address from before pool payments, so it can’t receive in this pool yet. Pay it from the Tacit pool tab instead.` };
 }
 
 function renderDevice(el) {
@@ -3177,6 +3230,14 @@ function renderDevice(el) {
   // The wallet route covers a send, a withdrawal and a move into the Tacit pool; a move to another chain is the keeper's.
   const walletRoute = () => DEV.self && !(DEV.mode === 'out' && c.chainId === 1 && DEV.dest !== 'addr' && DEV.dest !== 'v1');
   const relayFeeNow = () => (walletRoute() ? 0n : BigInt(DEV.quote?.fee || 0));
+  // The most a relayed spend may cost: a quarter more than the fee its preview showed. The wallet refuses a dearer quote,
+  // which replaces the one shown, and the form is drawn again with it.
+  const capOf = (fee) => (fee ? (fee * 5n) / 4n : null);
+  const feeMoved = async (e) => {
+    DEV.quote = (await DEV.W?.quote().catch(() => null)) || { ...DEV.quote, fee: String(e.feeMoved) };
+    rerender('eth');
+    say($('#d-status'), html`<span class="err">The relay fee changed to ${fmt(e.feeMoved, 18, 6)} ETH. Check it and press again.</span>`);
+  };
   const selfNote = () => (DEV.self ? html`<p class="note">From ${your()}: no relay fee; it pays the gas, and its address shows as the sender. <button class="link" type="button" id="d-relay">Use the relay</button></p>` : '');
   const wireRoute = () => $('#d-relay')?.addEventListener('click', () => { DEV.self = false; rerender('eth'); });
   const failed = (e) => {
@@ -3214,7 +3275,7 @@ function renderDevice(el) {
       const over = wb != null && amount > wb;
       go.disabled = over;
       if (over) warn(rc, 'More than your wallet balance.');
-      else { mount(rc, html`${raw ? html`<div class="kv"><span>To</span><b>${dsv.r.label ? `${dsv.r.label} → ` : ''}${short(dsv.r.bp, 8)}</b></div>` : ''}${pointsRow(amount, 'dev')}`); rc.hidden = false; }
+      else { mount(rc, html`${raw ? html`<div class="kv"><span>To</span><b>${dsv.r.label ? `${dsv.r.label} → ` : ''}${short(dsv.r.bp, 8)}</b></div>${idRow(dsv.r.id || dsv.r.bp)}` : ''}${pointsRow(amount, 'dev')}`); rc.hidden = false; }
     };
     toEl.addEventListener('input', check);
     $('#d-max').onclick = () => { if (wb != null) { const v = wb > 3n * 10n ** 15n ? wb - 3n * 10n ** 15n : 0n; amt.value = v ? plain(v, 18) : ''; amt.dispatchEvent(new Event('input')); } };
@@ -3245,6 +3306,7 @@ function renderDevice(el) {
     // address from before the pool lane cannot be paid in this pool, only from the Tacit pool tab.
     const kind = (v) => (/^0x[0-9a-fA-F]{40}$/.test(v) ? 'addr' : /^bp1/i.test(v) ? 'pool' : /^tacit1/i.test(v) || /^[^\s]+\.(g?wei|eth)$/i.test(v) ? 'uni' : '');
     const rsv = { raw: '', r: null };
+    let shown = 0n;                                                                 // the relay fee the preview shows
     const resolve = devResolve;
     mount(f, html`<div class="lbl"><span>To</span></div>
       <div class="amt text"><input id="d-to" placeholder="bp1…, tacit1…, name.wei or 0x…" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Recipient"></div>
@@ -3267,22 +3329,24 @@ function renderDevice(el) {
       if (!raw || !amount) return;
       let bad = null;
       if (k === 'addr') { try { recipientOf(raw); } catch (x) { bad = x; } }
-      if (k === 'uni') mount(rc, html`<div class="kv"><span>To</span><b>${rsv.r.label} → ${short(rsv.r.bp, 8)}</b></div>`);
+      if (k === 'uni') mount(rc, html`<div class="kv"><span>To</span><b>${rsv.r.label} → ${short(rsv.r.bp, 8)}</b></div>${idRow(rsv.r.id)}`);
+      if (k === 'pool') mount(rc, idRow(raw));
       const relayFee = k ? relayFeeNow() : 0n;
+      shown = relayFee;
       if (relayFee) rc.insertAdjacentHTML('beforeend', html`<div class="kv"><span>Relay fee, from your private balance</span><b>${fmt(relayFee, 18, 6)} ETH</b></div><div class="kv"><span>Arrives</span><b>${fmt(amount, 18, 6)} ETH</b></div>`.s);
       const over = DEV.bal != null && amount + relayFee > DEV.bal;
       go.disabled = !k || !!bad || over;
       if (!k) { if (!/^(0x[0-9a-fA-F]{0,39}|bp1[a-z0-9]*)$/i.test(raw)) warn(rc, 'Not a bp1 pool address or an 0x address.'); }        // not while one is still being typed
       else if (bad) warn(rc, bad.message);
       else if (over) warn(rc, 'More than your private balance.');
-      else rc.hidden = !relayFee && k !== 'uni';
+      else rc.hidden = !relayFee && k === 'addr';
     };
     for (const el of [toEl, amt]) el.addEventListener('input', check);          // synchronous: no network in this check
     check();
     for (const id of ['d-to', 'd-amt']) $('#' + id).addEventListener('focus', warm, { once: true });
     go.onclick = () => busy(go, async () => {
       try {
-        const amount = parseUnits(amt.value), raw = toEl.value.trim(), k = kind(raw);
+        const amount = parseUnits(amt.value), raw = toEl.value.trim(), k = kind(raw), maxFee = capOf(shown);
         if (!amount) throw new Error('Enter an amount.');
         let to = raw;
         if (k === 'uni') {                                                          // looked up again as it is sent, and must still point where it was shown
@@ -3293,11 +3357,16 @@ function renderDevice(el) {
         }
         const W2 = await deviceWallet(), via = DEV.self ? 'self' : null, label = `Send ${fmt(amount, 18, 6)} ETH ${k === 'addr' ? 'out' : 'privately'} from this device${c.chainId === 1 ? '' : `, on ${c.name}`}`;
         if (via) { await payingAccount(); W2.connect(payFrom(c.chainId, label)); }
-        const sent = k === 'addr' ? await W2.withdraw({ to: recipientOf(to), amount, via, onStep: step }) : await W2.send({ to, amount, via, onStep: step });
+        const sent = k === 'addr' ? await W2.withdraw({ to: recipientOf(to), amount, via, maxFee, onStep: step }) : await W2.send({ to, amount, via, maxFee, onStep: step });
         const h = via ? sent : keeperTx(sent, c.chainId, label);
         clearField(amt); rc.hidden = true;
         afterAction(html`<span class="ok">${k === 'addr' ? 'Sent to the address.' : 'Sent privately.'}</span> ${explorer(h)}`);
-      } catch (e) { failed(e); }
+      } catch (e) {
+        // A relay that did not answer may still have sent it: the field empties and the balance is read again.
+        if (e?.said) { clearField(amt); rc.hidden = true; afterAction(html`<span class="err">${errText(e)}</span>`); }
+        else if (e?.feeMoved != null) await feeMoved(e);
+        else failed(e);
+      }
     });
   } else if (DEV.mode === 'out') {
     // From Ethereum, pool ETH also moves privately: into the Tacit pool as tETH, or to this key's balance on an L2.
@@ -3313,6 +3382,7 @@ function renderDevice(el) {
     wireMax();
     wireSub(f, 'dest', (d) => { DEV.dest = d; keep($('#sheet-eth'), render.eth); });
     const toEl = $('#d-to'), amt = $('#d-amt'), go = $('#d-go'), rc = $('#d-rcpt');
+    let shown = 0n;
     $('#d-me')?.addEventListener('click', () => { toEl.value = S.address; toEl.dispatchEvent(new Event('input')); });
     for (const id of ['d-to', 'd-amt']) $('#' + id)?.addEventListener('focus', warm, { once: true });
     const check = () => {
@@ -3324,6 +3394,7 @@ function renderDevice(el) {
         let bad = null;
         if (raw) { try { recipientOf(raw); } catch (x) { bad = x; } }
         const relayFee = relayFeeNow();
+        shown = relayFee;
         if (relayFee) mount(rc, html`<div class="kv"><span>Relay fee, from your private balance</span><b>${fmt(relayFee, 18, 6)} ETH</b></div><div class="kv"><span>Arrives</span><b>${fmt(amount, 18, 6)} ETH</b></div>`);
         const over = DEV.bal != null && amount + relayFee > DEV.bal;
         go.disabled = !raw || !!bad || over;
@@ -3342,14 +3413,14 @@ function renderDevice(el) {
     check();
     go.onclick = () => busy(go, async (run) => {
       try {
-        const amount = parseUnits(amt.value);
+        const amount = parseUnits(amt.value), maxFee = capOf(shown);
         if (!amount) throw new Error('Enter an amount.');
         const W2 = await deviceWallet(), via = walletRoute() ? 'self' : null;
         let h, done;
         if (dest === 'addr') {
           const label = `Withdraw ${fmt(amount, 18, 6)} ETH from this device${c.chainId === 1 ? '' : `, on ${c.name}`}`;
           if (via) { await payingAccount(); W2.connect(payFrom(c.chainId, label)); }
-          const sent = await W2.withdraw({ to: recipientOf(toEl.value), amount, via, onStep: step });
+          const sent = await W2.withdraw({ to: recipientOf(toEl.value), amount, via, maxFee, onStep: step });
           h = via ? sent : keeperTx(sent, c.chainId, label); done = 'Withdrawn.';
         }
         else if (dest === 'v1') { h = await moveToV1(run, W2, amount, step, via); done = 'Moved into the Tacit pool as tETH.'; }
@@ -3363,6 +3434,7 @@ function renderDevice(el) {
       } catch (e) {
         // A move that landed but has not settled has left this device: the field empties and the balance is read again.
         if (e?.said || waitRanOut(e)) { clearField(amt); rc.hidden = true; afterAction(html`<span class="err">${errText(e)}</span>`); }
+        else if (e?.feeMoved != null) await feeMoved(e);
         else if (dest === 'addr' || dest === 'v1') failed(e);
         else sayErr(status, e);
       }
@@ -3371,6 +3443,7 @@ function renderDevice(el) {
     const min = DEV.quote?.receiveMin ? BigInt(DEV.quote.receiveMin) : null;
     mount(f, W ? html`
       <div class="blk"><div class="kv"><span>Pool address</span><b class="mono">${short(W.address, 10)}</b><button class="link" type="button" data-copy="${W.address}">copy</button></div>
+        ${idRow(W.address)}
         <p class="note">For private sends within this pool, from another Tacit user’s device. Nothing on chain links a payment to it.</p></div>
       <div class="blk"><div class="kv"><span>Deposit address</span><b class="mono">${short(W.receiveBox, 8)}</b><button class="link" type="button" data-copy="${W.receiveBox}">copy</button></div>
         <p class="note">Send ETH here from any wallet or exchange on ${c.name}. It moves into your private balance within minutes, less at most 0.25%${min ? html`; send at least ${fmt(min, 18, 4)} ETH at a time` : ''}.</p></div>
@@ -3397,7 +3470,10 @@ function renderDevice(el) {
 // tacit.js does the work, as Secret Sats uses it: coin selection that never spends an asset note or a live cBTC lock,
 // BIP-352 silent payments, and shielded asset sends. A tacit1 address carries its owner's silent-payment keys, so BTC sent
 // to it is a silent payment and TAC sent to it is shielded; neither leaves an address on chain that points at them.
-const BTC = { mode: 'send', asset: 'btc', pub: null, at: 0, loading: null, err: null, share: null, check: null, sp: null, held: [] };
+// got: how much of this key's read is in (1 sats, 2 held assets, 3 silent payments); part: a read is still filling it in.
+const BTC = { mode: 'send', asset: 'btc', pub: null, at: 0, loading: null, err: null, share: null, check: null, sp: null, held: [], got: 0, part: false };
+// Silent-payment outputs seen spent and confirmed, and each other one's last answer: a failed lookup keeps the last one.
+const SPENT = new Set(), SPENT_LAST = new Map();
 const SATS_DUST = 546n, ASSET_SEND_SATS = 3000n, TAC_BTC_ID = 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
 // This page's key, put into tacit.js for one turn of Bitcoin reads or sends, and only the key that asked for it: a
 // turn queued before a key change does nothing. A different key clears tacit.js's holdings caches first, since they
@@ -3422,28 +3498,47 @@ function loadBtc(force = false) {
   if (!S.key) return Promise.resolve();
   if (BTC.loading) return force ? BTC.loading.catch(() => {}).then(() => loadBtc(true)) : BTC.loading;
   if (!force && BTC.pub === S.key.pubHex && Date.now() - BTC.at < 60e3) return Promise.resolve();
-  const pub = S.key.pubHex;
+  const pub = S.key.pubHex, live = () => S.key?.pubHex === pub, drawn = (tac) => { paintBtcFoot(); rerender('btc'); if (tac) rerender('tac'); };
   return (BTC.loading = withKey(async (t) => {
-    const addr = t.wallet.address();
-    const [utxos, h] = await Promise.all([t.getUtxos(addr), t.scanHoldings(force)]);
+    const addr = t.wallet.address(), scan = t.scanHoldings(force);
+    scan.catch(() => {});
+    const utxos = await t.getUtxos(addr);
     let sats = 0n, pending = 0n, silent = 0n;
     // At or below dust an output is a Tacit asset note: it counts with the assets, never as BTC.
     for (const u of utxos || []) { const v = BigInt(u.value || 0); if (v <= SATS_DUST) continue; if (u.status?.confirmed) sats += v; else pending += v; }
-    // Silent payments found for this key, still unspent: asked about six at a time.
-    const credits = Object.entries(t.loadSpCredits() || {}).filter(([, c]) => !c.coinClass);
-    for (let i = 0; i < credits.length; i += 6) {
-      const outs = await Promise.all(credits.slice(i, i + 6).map(([k]) => { const [txid, vout] = k.split(':'); return esplora(`/tx/${txid}/outspend/${vout}`).catch(() => null); }));
-      outs.forEach((o, j) => { if (!o?.spent) silent += BigInt(credits[i + j][1].sats || 0); });
-    }
+    if (!live()) return;
+    // The plain balance shows as soon as it is read; the assets and the silent payments fill in as the scan finishes.
+    const same = BTC.pub === pub;
+    Object.assign(BTC, { pub, addr, sats, pending, err: null, part: true, got: Math.max(same ? BTC.got : 0, 1), silent: same ? BTC.silent : 0n, held: same ? BTC.held : [] });
+    drawn();
+    const h = await scan;
     // An asset whose metadata did not load has unknown decimals: shown in base units and not offered for sending.
     const held = [...(h instanceof Map ? h.entries() : [])].map(([id, x]) => {
       const aid = String(x.assetIdHex || id).toLowerCase(), dec = Number.isInteger(x.decimals) ? x.decimals : aid === TAC_BTC_ID ? 8 : null;
       return { id: aid, ticker: aid === TAC_BTC_ID ? 'TAC' : x.ticker && x.ticker !== '???' ? x.ticker : short(aid, 4), decimals: dec ?? 0, known: dec != null, balance: typeof x.balance === 'bigint' ? x.balance : 0n };
     }).filter((a) => a.balance > 0n);
-    if (S.key?.pubHex !== pub) return;
-    Object.assign(BTC, { pub, at: Date.now(), addr, sats, pending, silent, held, err: null });
-    paintBtcFoot();
-  }, pub).catch((e) => { if (S.key?.pubHex === pub) BTC.err = e; }).finally(() => { BTC.loading = null; }));
+    if (!live()) return;
+    Object.assign(BTC, { held, got: Math.max(BTC.got, 2) });
+    drawn(true);
+    // Silent payments found for this key, still unspent, asked about six at a time. One seen spent and confirmed leaves
+    // the list, as tacit.js's own coin selection drops it.
+    const todo = [];
+    for (const e of Object.entries(t.loadSpCredits() || {}).filter(([, c]) => !c.coinClass)) {
+      const [txid, vout] = e[0].split(':');
+      if (SPENT.has(e[0])) t.removeSpCredit(txid, Number(vout)); else todo.push(e);
+    }
+    for (let i = 0; i < todo.length; i += 6) {
+      const outs = await Promise.all(todo.slice(i, i + 6).map(([k]) => { const [txid, vout] = k.split(':'); return esplora(`/tx/${txid}/outspend/${vout}`).catch(() => null); }));
+      outs.forEach((o, j) => {
+        const [k, c] = todo[i + j], [txid, vout] = k.split(':');
+        if (o) SPENT_LAST.set(k, !!o.spent);
+        if (o?.spent && o.status?.confirmed) { SPENT.add(k); t.removeSpCredit(txid, Number(vout)); }
+        if (!SPENT_LAST.get(k)) silent += BigInt(c.sats || 0);
+      });
+    }
+    if (!live()) return;
+    Object.assign(BTC, { at: Date.now(), silent, got: 3 });
+  }, pub).catch((e) => { if (live()) BTC.err = e; }).finally(() => { BTC.loading = null; if (live()) { BTC.part = false; paintBtcFoot(); } }));
 }
 load.btc = () => loadBtc();
 function paintBtcFoot() {
@@ -3457,7 +3552,7 @@ async function scanShielded(status) {
   const ids = [...new Set([TAC_BTC_ID, ...BTC.held.map((a) => a.id)])];
   const found = await withKey(async (t) => {
     let n = 0;
-    for (const id of ids) n += (await t.scanAssetForStealthReceipts(id, { pageLimit: 200, maxPages: 8, onProgress: (p) => say(status, `Looking for shielded payments: ${(p.txsScanned + p.txsSkipped).toLocaleString('en-US')} transfers checked…`) })).discovered.length;
+    for (const id of ids) n += (await t.scanAssetForStealthReceipts(id, { pageLimit: 200, maxPages: 8, onProgress: (p) => sayLive(status, html`Looking for shielded payments<span aria-hidden="true" data-tick>: ${(p.txsScanned + p.txsSkipped).toLocaleString('en-US')} transfers checked</span>…`) })).discovered.length;
     if (n) try { t.invalidateHoldingsCache?.(); } catch {}
     return n;
   });
@@ -3473,7 +3568,7 @@ render.btc = () => {
     <div class="bal">
       <svg class="tk md" aria-hidden="true"><use href="#tk-btc"/></svg>
       <div><div class="v num">${b ? fmt(b.sats + b.silent, 8, 8) : BTC.err ? html`<span class="err">—</span>` : last != null ? html`<span class="stale">${fmt(last, 8, 8)}</span>` : html`<span class="sk" style="--w:10ch"></span>`}</div>
-        <div class="u">BTC${b?.pending ? ` · ${fmt(b.pending, 8, 8)} arriving` : ''}</div></div>
+        <div class="u">BTC${b?.pending ? ` · ${fmt(b.pending, 8, 8)} arriving` : ''}${!b || b.got === 3 ? '' : b.part ? ' · checking silent payments…' : ' · couldn’t check silent payments'}</div></div>
       <div class="side">${b || BTC.err ? html`<button class="link" type="button" id="btc-re">${BTC.err || !b ? 'retry' : 'refresh'}</button>` : 'updating…'}</div>
     </div>
     ${(b?.held || []).map((a) => html`<div class="kv"><span>${a.ticker} on Bitcoin</span><b class="num">${fmt(a.balance, a.decimals, 4)}</b></div>`)}
@@ -3492,31 +3587,32 @@ render.btc = () => {
 async function btcRoute(raw, token) {
   let s = String(raw || '').trim().replace(/\s/g, ''), name = null;
   if (/\.(g?wei|eth)$/i.test(s)) { const r = await (await getNames()).resolveName(s.toLowerCase()); name = r.name; s = r.address; }
-  const lo = s.toLowerCase(), t = await loadTacit(), shown = short(lo, 10);                   // address codecs only: no key needed
+  const lo = s.toLowerCase(), t = await loadTacit(), shown = short(lo, 10), address = lo;     // address codecs only: no key needed
   if (/^0x[0-9a-f]{40}$/.test(lo)) throw new Error('That is an Ethereum address. Send to a Tacit address, or to a Bitcoin address for BTC.');
   if (/^tacit1/.test(lo)) {
     const d = decodeTacitAddress(lo);
     if (d.network !== 'mainnet') throw new Error('That Tacit address is for a test network.');
     const { spendPub, scanPub } = d.lanes.btc;
     return token
-      ? { kind: 'stealth', stealthAddress: t.encodeStealthAddress({ network: 'mainnet', recipientPub: spendPub }), name, shown }
-      : { kind: 'sp', to: t.encodeSilentPaymentAddress({ scanPub, spendPub, network: 'mainnet' }), name, shown };
+      ? { kind: 'stealth', stealthAddress: t.encodeStealthAddress({ network: 'mainnet', recipientPub: spendPub }), name, shown, address }
+      : { kind: 'sp', to: t.encodeSilentPaymentAddress({ scanPub, spendPub, network: 'mainnet' }), name, shown, address };
   }
   if (token) {
     if (t.decodeSilentPaymentAddress(lo) || t.decodeP2wpkhAddress(lo) || t.decodeP2trAddress(lo)) throw new Error('TAC goes to a Tacit address (tacit1…) or a shielded tcs1… address. Silent and plain addresses take BTC.');
     const r = t.parseRecipientInput(lo);
     if (r.kind === 'error') throw new Error(r.message.charAt(0).toUpperCase() + r.message.slice(1) + '.');
-    if (r.kind === 'stealth') return { kind: 'stealth', stealthAddress: r.stealthAddress, name, shown };
-    if (r.kind === 'pubkey') return { kind: 'pubkey', pubHex: r.pubHex, name, shown };
+    if (r.kind === 'stealth') return { kind: 'stealth', stealthAddress: r.stealthAddress, name, shown, address };
+    if (r.kind === 'pubkey') return { kind: 'pubkey', pubHex: r.pubHex, name, shown, address };
     throw new Error('Enter a Tacit address, a shielded address or a public key.');
   }
   const sp = t.decodeSilentPaymentAddress(lo);
-  if (sp) { if (sp.network !== 'mainnet') throw new Error('That silent-payment address is for a test network.'); return { kind: 'sp', to: lo, name, shown }; }
+  if (sp) { if (sp.network !== 'mainnet') throw new Error('That silent-payment address is for a test network.'); return { kind: 'sp', to: lo, name, shown, address }; }
   const a = t.decodeP2wpkhAddress(lo) || t.decodeP2trAddress(lo);
-  if (a) { if (a.hrp !== 'bc') throw new Error('That address is for a test network.'); return { kind: 'addr', to: lo, name, shown }; }
+  if (a) { if (a.hrp !== 'bc') throw new Error('That address is for a test network.'); return { kind: 'addr', to: lo, name, shown, address }; }
   if (/^tcs1/.test(lo)) throw new Error('A shielded address takes Tacit assets. Send BTC to a tacit1…, sp1… or bc1… address.');
   throw new Error('Enter a tacit1…, sp1… or bc1… address, or a name.');
 }
+const btcRouteM = memoRoute(btcRoute);
 function btcSendForm(f, status, b) {
   const held = (b?.held || []).filter((a) => a.known);                            // amounts of an asset with unknown decimals cannot be typed
   if (BTC.asset !== 'btc' && !held.some((a) => a.id === BTC.asset)) BTC.asset = 'btc';
@@ -3541,13 +3637,13 @@ function btcSendForm(f, status, b) {
     const raw = to.value.trim(), v = parseUnits(amt.value, dec);
     if (!raw) { rc.hidden = true; return; }
     try {
-      const r = await btcRoute(raw, token);
+      const r = await btcRouteM(raw, token);
       if (my !== seq || !to.isConnected) return;
       route = r;
       const how = { sp: 'Silent payment · to a one-time address only they can find', addr: 'Plain payment · public on chain', stealth: 'Shielded · the recipient stays hidden', pubkey: 'Private amount · their key is visible' }[r.kind];
-      mount(rc, html`<div class="kv"><span>${r.name || 'To'}</span><b>${r.shown}</b></div><div class="kv"><span>How</span><b>${how}</b></div>`);
+      mount(rc, html`<div class="kv"><span>${r.name || 'To'}</span><b>${r.shown}</b></div>${idRow(r.address)}<div class="kv"><span>How</span><b>${how}</b></div>`);
       rc.hidden = false;
-      const avail = token ? token.balance : b ? b.sats + b.silent : null;
+      const avail = token ? (b?.got >= 2 ? token.balance : null) : b?.got === 3 ? b.sats + b.silent : null;
       go.disabled = !v || (avail != null && v > avail) || (!token && v <= SATS_DUST);
       if (avail != null && v > avail) warn(rc, 'More than you hold.');
       else if (!token && v && v <= SATS_DUST) warn(rc, 'Send more than 546 sats.');
@@ -3558,6 +3654,7 @@ function btcSendForm(f, status, b) {
     const r = route, v = parseUnits(amt.value, dec), pub = S.key?.pubHex;      // what was checked, whatever is typed meanwhile
     if (!r || !v || !pub) return;
     try {
+      await pinned(r, () => btcRouteM(to.value, token, true), to);
       say(status, 'Checking which of your outputs are cBTC locks…');
       await (await getUx()).syncCbtcLockReservations(walletPriv());                  // a live lock is never spent as change
       const txid = await withKey(async (t) => {
@@ -3579,7 +3676,7 @@ function btcSendForm(f, status, b) {
   });
 }
 function btcReceive(f, status, b) {
-  const row = (label, v, note) => html`<div class="blk"><div class="kv"><span>${label}</span><b class="mono">${v ? short(v, 10) : '…'}</b>${v ? html`<button class="link" type="button" data-copy="${v}">copy</button>` : ''}</div><p class="note">${note}</p></div>`;
+  const row = (label, v, note) => html`<div class="blk"><div class="kv"><span>${label}</span><b class="mono">${v ? short(v, 10) : '…'}</b>${v ? html`<button class="link" type="button" data-copy="${v}">copy</button>` : ''}</div>${idRow(v)}<p class="note">${note}</p></div>`;
   mount(f, html`
     ${row('Tacit address', S.key.tacit, 'From any Tacit wallet: BTC arrives as a silent payment, and TAC with its amount hidden.')}
     ${row('Silent payments', BTC.sp, 'From any wallet that sends silent payments (BIP‑352).')}
@@ -3656,15 +3753,17 @@ load.tac = () => Promise.all([TAB.tac === 'air' ? loadAirdrop() : loadPrecision(
 // the key, not a connected wallet), so it needs that figure on its own, not the two homes added together.
 const TACB = { who: null, erc: null, acct: null, err: null };
 const PUBX = { who: null, tacbtc: 0n, tacusd: 0n };                  // cBTC and cUSD held in public, as tacBTC and tacUSD
+// The private balance shows when its scan lands, never after the Bitcoin read; loadBtc redraws the sheet as its parts arrive.
+const tacMore = () => { if (!S.key) return; refreshScan().catch(() => {}).then(() => rerender('tac')); loadBtc().catch(() => {}); };
 async function loadTacHoldings() {
   const who = [...new Set([S.wallet, S.acct?.address].filter(Boolean).map((a) => a.toLowerCase()))];
   let out = [];
   try { out = who.length ? await multicall(who.map((a) => ({ to: ADDR.tac, data: SEL.balanceOf + addrWord(a) }))) : []; TACB.err = null; }
-  catch (e) { TACB.err = e; if (S.key) Promise.allSettled([refreshScan(), loadBtc()]).then(() => rerender('tac')); return; }
+  catch (e) { TACB.err = e; tacMore(); return; }
   const acctAt = who.indexOf(String(S.acct?.address || '').toLowerCase());
   Object.assign(TACB, { who: who.join(), erc: out.reduce((sum, r) => sum + (r ? wordAt(r, 0) : 0n), 0n),
     acct: acctAt >= 0 && out[acctAt] ? wordAt(out[acctAt], 0) : S.acct ? 0n : null });
-  if (S.key) Promise.allSettled([refreshScan(), loadBtc()]).then(() => rerender('tac'));
+  tacMore();
 }
 function renderTacBal(el) {
   const who = [...new Set([S.wallet, S.acct?.address].filter(Boolean).map((a) => a.toLowerCase()))].join();
@@ -3678,7 +3777,7 @@ function renderTacBal(el) {
   if (!who) { mount(el, html``); return; }
   const k = S.key?.pubHex, btcTac = k && BTC.pub === k ? BTC.held.find((a) => a.id === TAC_BTC_ID) : null;
   const parts = [
-    ...(k ? [['On Bitcoin', BTC.pub === k ? (btcTac ? btcTac.balance * 10n ** BigInt(18 - btcTac.decimals) : 0n) : null]] : []),
+    ...(k ? [['On Bitcoin', BTC.pub === k && BTC.got >= 2 ? (btcTac ? btcTac.balance * 10n ** BigInt(18 - btcTac.decimals) : 0n) : null]] : []),
     ['On Ethereum', TACB.who === who ? TACB.erc : null],
     ...(k ? [['Private', P.scan?.tac ? P.scan.tac.value * E10 : null]] : []),
   ];
@@ -4287,8 +4386,9 @@ function weiForm(f, status) {
     try {
       // The account and key of the press, through the minute between the steps: the name goes to that account and
       // publishes that key's Tacit address, and another key opened meanwhile stops it before its next step.
-      const tacit = S.key?.tacit, { label } = x;
-      if (!tacit) throw new Error('Open your Tacit wallet first.');
+      if (S.key && !UNI) await loadUnified().catch(() => {});          // a name publishes the address with the pool lane, never the one without
+      const tacit = UNI && S.key ? addressFor(S.key.priv) : null, { label } = x;
+      if (!tacit) throw new Error(S.key ? 'Your Tacit address did not load. Reload the page and try again.' : 'Open your Tacit wallet first.');
       const to = await payingAccount(), via = payer();
       if (!x.mine) {
         const { secret, commitment } = weiCommit(label, to);
@@ -5568,7 +5668,7 @@ function assetSendForm(el, status, { prefix, sheet, statusId, sources, pick }) {
         if (src.pub && units > src.held) { q = null; warn(rc, `More than the ${a.out} in ${your()}.`); }
         else if (bad && !/^0(x[0-9a-fA-F]{0,39})?$/.test(raw)) warn(rc, bad.message);           // not while an address is still being typed
       } else {
-        const r = await resolveTo(raw);
+        const r = await resolveToM(raw);
         if (stale()) return;
         if (String(r.pubHex).replace(/^0x/, '').toLowerCase() === S.key.pubHex) throw new Error('That is your own Tacit address.');
         const t = await getUx(), tk = a.tk;
@@ -5577,7 +5677,7 @@ function assetSendForm(el, status, { prefix, sheet, statusId, sources, pick }) {
         const [split, claim] = await Promise.all([exact ? 0n : t.quoteOpFee(tk, 'transfer').then(BigInt), t.quoteOpFee(tk, 'stealthclaim').then(BigInt)]);
         if (stale()) return;
         mount(rc, html`
-          ${r.name ? html`<div class="kv"><span>${r.name}</span><b>${short(r.address || '', 10)}</b></div>` : html`<div class="kv"><span>Recipient</span><b>${short(raw, 10)}</b></div>`}
+          ${r.name ? html`<div class="kv"><span>${r.name}</span><b>${short(r.address || '', 10)}</b></div>` : html`<div class="kv"><span>Recipient</span><b>${short(raw, 10)}</b></div>`}${idRow(r.address || raw)}
           ${split ? html`<div class="kv"><span>Relay fee to ${freeNotes(P.scan[k].notes).some((n) => BigInt(n.value) >= units + split) ? 'split a note' : 'combine notes'}</span><b>${show(split)} ${dtk}</b></div>` : ''}
           <div class="kv"><span>They get about</span><b>${show(units > claim ? units - claim : 0n)} ${dtk}</b></div>`);
         rc.hidden = false;
@@ -5593,6 +5693,7 @@ function assetSendForm(el, status, { prefix, sheet, statusId, sources, pick }) {
     const x = q, raw = to.value.trim();                           // the quote shown when pressed, whatever is typed after
     if (!x) return;
     try {
+      if (x.who) await pinned(x.who, () => resolveToM(raw, null, true), to);
       if (src.pub) {
         const hash = await sendTx({ to: a.token, data: SEL.transfer + addrWord(x.recipient) + word(x.units), label: `Send ${show(x.units)} ${a.out}` });
         say(status, html`Sent ${txLink(hash)}. Waiting for it to land…`);
@@ -5746,7 +5847,7 @@ function dashItems() {
     meta: !k ? 'on Ethereum' : pubTac != null && privTac != null ? `${fmt(privTac, 18, 2)} private · ${fmt(pubTac, 18, 2)} public` : '' });
   if (k) {
     const b = BTC.pub === k ? BTC : null, tacB = b?.held.find((a) => a.id === TAC_BTC_ID), lk = LOCKNOTE.pub === k ? LOCKNOTE : null;
-    out.push({ key: 'btc', icon: 'tk-btc', label: 'BTC', dec: 8, max: 6, v: b ? b.sats + b.silent : null, lazy: true, open: 'btc', show: !!b && (b.sats + b.silent > 0n || !!tacB),
+    out.push({ key: 'btc', icon: 'tk-btc', label: 'BTC', dec: 8, max: 6, v: b?.got === 3 ? b.sats + b.silent : null, lazy: true, open: 'btc', show: !!b && (b.sats + b.silent > 0n || !!tacB),
       meta: tacB ? `and ${fmt(tacB.balance, tacB.decimals, 2)} TAC on Bitcoin` : b ? 'at your Bitcoin address' : 'open to read' });
     // Secret Sats: each asset this key holds in the Bitcoin pool, opening the page that spends it.
     const sats = HELD.pub === k ? HELD.sats : null;
