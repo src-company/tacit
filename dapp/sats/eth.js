@@ -9,6 +9,7 @@
 import { makeEvmPoolZk } from '/evm-pool-zk.js?cb=2f062779';
 import { evmPoolKeys, makeEvmPoolWallet, jsonRpc } from '/evm-pool-wallet.js?cb=86c52613';
 import { vkHash } from '/evm-pool-zk-prover.js?cb=00ff69c2';
+import { poolRecipient } from '/pool-recipient.js?cb=a9311fc4';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7 } from '../vendor/tacit-poseidon.min.js';
 
 const WORKER_URL = '/evm-pool-prove-worker.js?cb=7f41e5e0';
@@ -259,7 +260,7 @@ export async function mount(root, ctx) {
       relayer ? null : el('p', { class: 'note' }, `Sending and withdrawing open on ${chain.name} when its relayer is announced.`),
       el('p', { class: 'note small', id: 'eth-fee', hidden: true }),
       el('h3', {}, 'Send privately'),
-      field('eth-to', 'To: a Secret Sats address (bp1…)', 'bp1…'),
+      field('eth-to', 'To: a Tacit address (tacit1…) or Secret Sats address (bp1…)', 'tacit1… or bp1…'),
       field('eth-amt', 'Amount (ETH)', '0.01', 'decimal'),
       el('div', { class: 'row' }, sendBtn),
       el('h3', {}, 'Withdraw'),
@@ -285,7 +286,7 @@ export async function mount(root, ctx) {
     });
     checkBtn.onclick = () => action(checkBtn, async () => { await w.watchReceive(); say('Asked the relayer to check your private ETH address.'); await refresh(); });
     sendBtn.onclick = () => action(sendBtn, async () => {
-      const h = await w.send({ to: root.querySelector('#eth-to').value, amount: parseEth(root.querySelector('#eth-amt').value), onStep: step });
+      const h = await w.send({ to: poolRecipient(root.querySelector('#eth-to').value, 'mainnet'), amount: parseEth(root.querySelector('#eth-amt').value), onStep: step });
       status.replaceChildren('Sent privately in ', explorer(h), '.');
       refresh();
     });

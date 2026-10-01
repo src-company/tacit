@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-APvQNHmdiQEJPyNylgh6IOEJVw6q9VGMq6Gqx/fnbv0=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-17LjWyNvps1ilVLffbMr0ZAWiYxhD+QprwH9TvBjk/E=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Pay anyone privately: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key, proved on your device, recovered from the key alone.">
@@ -970,7 +970,7 @@ function btcReceive(f) {
 // publishing either is paid inside the pool; an older tacit1 address is paid a shielded transfer from the TAC at this
 // key's Bitcoin address instead, which hides who received it.
 const TAC = { pub: null, at: 0, loading: null, err: null, pool: null, notes: null, pw: null, fee: null, relay: false, share: null };
-const getSecret = lazy(() => import('/sats/secret.js?cb=696162eb'));
+const getSecret = lazy(() => import('/sats/secret.js?cb=67968b57'));
 function loadTac(force = false) {
   if (!S.key) return Promise.resolve();
   if (TAC.loading) return TAC.loading;

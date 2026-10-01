@@ -19,6 +19,7 @@ import { secp, sha256, keccak_256, hmac, bytesToHex, hexToBytes } from '../vendo
 import { makeBtcShieldedPool } from '../btc-shielded-pool.js';
 import { makeBtcPoolZap } from '../btc-pool-zap.js';
 import { makePoolClient } from '../btc-pool-client.js';
+import { poolRecipient } from '../pool-recipient.js';
 
 export const FAUCET_URL = (globalThis.__SATS_FAUCET_URL__ || 'https://tacit-sats-faucet.onrender.com').replace(/\/$/, '');
 export const WORKER_BASE = (globalThis.__TACIT_WORKER_BASE__ || 'https://api.tacit.finance').replace(/\/$/, '');
@@ -295,11 +296,12 @@ async function prepare(poolWallet, asset, need, anchor) {
   return { ...a, total };
 }
 
-// Pays `amount` of `asset` to a pool address. Relayed when the replay service runs a relayer that quotes the
-// asset (fee paid as an extra pool output); otherwise this wallet posts the carrier from its own sats.
-// `noRelay` forces the self-funded path. Used by the fallback below, so a relayer that quotes and then
+// Pays `amount` of `asset` to a pool address, or to the pool lane of a tacit1… address. Relayed when the replay service
+// runs a relayer that quotes the asset (fee paid as an extra pool output); otherwise this wallet posts the carrier from
+// its own sats. `noRelay` forces the self-funded path. Used by the fallback below, so a relayer that quotes and then
 // cannot deliver does not leave the payment stranded.
 export async function payPrivately(tacit, { poolWallet, to, amount, asset, anchor = null, noRelay = false, say = () => {} }) {
+  to = poolRecipient(to, poolWallet.network);
   pool.decodeAddress(to, poolWallet.network);
   const client = poolClientFor(poolWallet.network);
   const info = noRelay ? null : await client.relayInfo().catch(() => null);
@@ -1154,7 +1156,7 @@ export function mountMainnet(root, ctx) {
   const payStatus = el('span', { class: 'small muted' });
   const exitStatus = el('span', { class: 'small muted' });
 
-  const toField = el('input', { type: 'text', id: 'mn-pay-to', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', placeholder: 'bp1…' });
+  const toField = el('input', { type: 'text', id: 'mn-pay-to', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', placeholder: 'tacit1… or bp1…' });
   const payAmtField = el('input', { type: 'text', id: 'mn-pay-amt', inputmode: 'decimal', autocomplete: 'off', placeholder: '0.0001' });
   const exitAmtField = el('input', { type: 'text', id: 'mn-exit-amt', inputmode: 'decimal', autocomplete: 'off', placeholder: '0.0001' });
 
@@ -1275,7 +1277,7 @@ export function mountMainnet(root, ctx) {
     if (lastPay) items.push(el('div', {}, `Paid ${fmt(lastPay.value)} ${sel.ticker} to ${lastPay.to} in `, txLink(lastPay.txid), lastPay.relayed ? ' (relayed).' : ' (self-funded).'));
     if (pending.pay) items.push(waitBoxFor('pay', pending.pay, doPay));
     else items.push(
-      el('div', { class: 'field' }, el('label', { for: 'mn-pay-to' }, 'To: a pool address (bp1…)'), toField),
+      el('div', { class: 'field' }, el('label', { for: 'mn-pay-to' }, 'To: a Tacit address (tacit1…) or pool address (bp1…)'), toField),
       el('div', { class: 'field' }, el('label', { for: 'mn-pay-amt' }, `Amount (${sel.ticker})`), payAmtField),
       el('div', { class: 'row' }, button('Pay privately', () => run('pay', () => doPay())), running === 'pay' ? payStatus : null));
     items.push(errLine('pay'));

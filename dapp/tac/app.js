@@ -11,6 +11,7 @@
 const SATS_URL = '/tac/sats.js?cb=6655b51b';     // tokens rewritten by build/build.mjs (TAC_CB_FILES)
 const MARKET_URL = '/tac/market.js?cb=b5a39c64';
 const CLAIM_URL = '/tac/claim.js?cb=25c5f1f4';
+const UNIFIED_URL = '/tacit-unified.js?cb=a5b3a042';
 const WORKER = 'https://api.tacit.finance';
 const ASSET = 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
 
@@ -20,6 +21,7 @@ let T = null;          // dapp/tacit.js
 let S = null;          // dapp/sats/secret.js
 let prf = null;        // dapp/prf-wallet.js
 let poolWallet = null;
+let tacitAddress = null;   // the unified tacit1… address of the open key: null until its module has loaded, false if it could not
 let pub = { loading: false, notes: [], decimals: 8 };
 let shielded = { loading: false, notes: [] };
 let relayLive = null;
@@ -234,7 +236,8 @@ function afterUnlock() {
   // so a 30s-stale Map from the previous identity could otherwise be read as this one's holdings.
   try { T.invalidateHoldingsCache?.(); } catch {}
   poolWallet = S.poolWalletFor(T.wallet.priv, 'mainnet');
-  $('recv-addr').value = poolWallet.addressString;
+  tacitAddress = null;
+  paintReceive(); loadTacitAddress();
   refreshChip(); renderKnownLine();
   // One quiet pass so a stealth payment shows up without the owner knowing to go looking for it.
   if (!stealthScanned) {
@@ -242,13 +245,46 @@ function afterUnlock() {
   }
 }
 
+// The passphrase prompt is a plain div, which the modal Wallet sheet covers and makes inert: the sheet steps aside while
+// the prompt is up and comes back when it closes, so a cancel shows its message there.
+function watchPassphrase() {
+  const modal = $('pass-modal'), sheet = $('connect-sheet');
+  let aside = false;
+  new MutationObserver(() => {
+    const up = modal.style.display === 'grid';
+    if (up && sheet.open) { sheet.close(); aside = true; }
+    else if (!up && aside) { aside = false; if (!sheet.open) sheet.showModal(); }
+  }).observe(modal, { attributes: true, attributeFilter: ['style'] });
+}
+
+function paintReceive() {
+  $('recv-addr').value = poolWallet ? poolWallet.addressString : 'Unlock to see your pool address';
+  $('recv-tacit').value = !poolWallet ? 'Unlock to see your Tacit address'
+    : tacitAddress === false ? 'Not available here: use the pool address below.' : tacitAddress || 'Deriving your Tacit address…';
+}
+// Receive leads with the unified Tacit address, which the pool pays, and keeps the pool address beneath it.
+async function loadTacitAddress() {
+  const pw = poolWallet;
+  try {
+    const { unifiedAddress } = await import(UNIFIED_URL);
+    if (poolWallet !== pw || !T.wallet.priv) return;
+    tacitAddress = unifiedAddress(T.wallet.priv).address;
+  } catch (e) {
+    console.warn('[tac] tacit address', e);
+    if (poolWallet !== pw) return;
+    tacitAddress = false;
+  }
+  paintReceive();
+}
+
 function lock() {
   if (T) T.wallet.priv = null;
   try { T.invalidateHoldingsCache?.(); } catch {}
   poolWallet = null;
+  tacitAddress = null;
   shielded = { loading: false, notes: [] };
   pub = { loading: false, notes: [], decimals: DECIMALS };
-  $('recv-addr').value = 'Unlock to see your pool address';
+  paintReceive();
   refreshChip(); renderBalances(); renderShieldPicker(); renderKnownLine();
   say('st-connect', 'Locked. The key stays saved in this browser.');
 }
@@ -446,7 +482,7 @@ async function doShield() {
 async function doSend(anchor = null) {
   await ensureKey();
   const to = $('send-to').value.trim();
-  if (!to) throw new Error('Paste the pool address you are paying.');
+  if (!to) throw new Error('Paste the Tacit or pool address you are paying.');
   const amount = parseUnits($('send-amt').value);
   if (amount <= 0n) throw new Error('Enter an amount above zero.');
   if (!shielded.notes.length) await loadShielded();   // a cold unlock has not scanned the pool yet
@@ -558,11 +594,12 @@ async function scanEverything(statusId = 'st-recv') {
   tabs(['tab-shield', 'tab-send', 'tab-withdraw', 'tab-receive', 'tab-market'],
     ['pane-shield', 'pane-send', 'pane-withdraw', 'pane-receive', 'pane-market'],
     (i) => {
-      if (i === 3 && poolWallet) $('recv-addr').value = poolWallet.addressString;
+      if (i === 3) paintReceive();
       if (i === 4) renderMarket();
     });
   tabs(['wtab-self', 'wtab-sats'], ['wpane-self', 'wpane-sats'], (i) => { if (i === 1) renderSats(); });
 
+  watchPassphrase();
   $('wallet-chip').onclick = async () => {
     await loadTacit();
     known = known || knownWallet();
@@ -599,7 +636,13 @@ async function scanEverything(statusId = 'st-recv') {
   $('btn-copy').onclick = () => {
     if (!poolWallet) return say('st-recv', 'Unlock the wallet first — your pool address is derived from its key.');
     navigator.clipboard?.writeText(poolWallet.addressString);
-    say('st-recv', 'Address copied.');
+    say('st-recv', 'Pool address copied.');
+  };
+  $('btn-copy-tacit').onclick = () => {
+    if (!poolWallet) return say('st-recv', 'Unlock the wallet first — your Tacit address is derived from its key.');
+    if (!tacitAddress) return say('st-recv', tacitAddress === false ? 'Your Tacit address could not be derived here. Copy the pool address instead.' : 'Still deriving your Tacit address. Try again in a moment, or copy the pool address.');
+    navigator.clipboard?.writeText(tacitAddress);
+    say('st-recv', 'Tacit address copied.');
   };
   $('btn-claim-make').onclick = (e) => busy(e.currentTarget, 'st-claim-make', makeClaimLink);
   $('claim-amt').addEventListener('input', () => {
