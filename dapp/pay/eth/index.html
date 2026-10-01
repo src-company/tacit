@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-I3GjhhJynoGVSq01GTwJWtnt03JJNQqsJzXuoxlPfbU=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-z/X6L/8vOLld/9WZMwotg5ZuBMCO2q2AJC8fSyQXgqc=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -194,6 +194,7 @@ input::placeholder { color: var(--mute); opacity: 1; }
 .status a { color: var(--ink); }
 .note { font-size: 12.5px; color: var(--mute); margin: 12px 0 0; }
 .note.err { color: var(--err); }
+.note.warn { color: var(--warn); }
 .note.lead { margin: 0 0 4px; }
 .rcpt .note { margin: 6px 0 2px; }
 .gate-p { color: var(--mute); font-size: 13px; text-align: center; max-width: 42ch; margin: 8px auto 14px; }
@@ -1772,13 +1773,16 @@ function formDeposit(f) {
     FORM.waitShown = st.waiting;
     const min = st.quote?.receiveMin ? ((BigInt(st.quote.receiveMin) + 10n ** 12n - 1n) / 10n ** 12n) * 10n ** 12n : null;
     mount(f, html`${seg}
-      <div class="blk"><div class="lbl"><span>Your deposit address</span><span>same on every chain</span></div>
+      <div class="blk"><div class="lbl"><span>Your deposit address</span><span>ETH only · three chains</span></div>
         <div class="addr"><code>${W?.receiveBox || '…'}</code>${W ? html`<button class="link" type="button" data-copy="${W.receiveBox}">copy</button>` : ''}</div>
-        <p class="note">Send ETH here from an exchange or any wallet, on Ethereum, Base or Robinhood Chain. It moves into your private balance on that chain, usually within minutes, for at most 0.25%${min ? html`; on ${c.full}, send at least ${fmt(min, 18, 6)} ETH` : ''}. Only send ETH: tokens sent here are lost. Everything sent here is visibly sent to this one address; to be paid by others, share a link from Receive.</p></div>
+        <p class="note">Send ETH here from an exchange or any wallet. It moves into your private balance on the chain it was sent on, usually within minutes, for at most 0.25%.</p>
+        <p class="note warn">Choose Ethereum, Base or Robinhood Chain as the network, and send only ETH. Sent on any other network, or as a token, it can’t be collected.</p>
+        ${min ? html`<p class="note">On ${c.full} the relay takes it in from ${fmt(min, 18, 6)} ETH, a floor that moves with gas prices${c.chainId === 1 ? '; for less, choose Base' : ''}. Less waits here until more arrives, or you take it in yourself.</p>` : ''}
+        <p class="note">Everything sent here shows as paid to this one address. To be paid by others, share a link from Receive.</p></div>
       <p class="note mute">Points go to the address that sent the ETH to this address, so ETH sent from an exchange earns none for you.</p>
       ${(st.waitBoxes || []).map(([i, v]) => {
         const self = (min && v < min) || !relayUp();
-        return html`<div class="callout"><span>${fmt(v, 18, 6)} ETH is ${self ? 'waiting' : 'on its way in'} at ${i ? 'a payment link’s address' : 'your deposit address'}${self ? (relayUp() ? ': below the relay’s minimum, so take it in yourself.' : ': the relay is unavailable, so take it in yourself.') : '. The relay collects it shortly.'}</span>${self ? html`<button class="btn ghost sm" type="button" data-sweep="${i}">Take it in</button>` : ''}</div>`;
+        return html`<div class="callout"><span>${fmt(v, 18, 6)} ETH is ${self ? 'waiting' : 'on its way in'} at ${i ? 'a payment link’s address' : 'your deposit address'}${self ? (relayUp() ? ': below the relay’s floor, so it waits for more, or you take it in now.' : ': the relay is unavailable, so take it in yourself.') : '. The relay collects it shortly.'}</span>${self ? html`<button class="btn ghost sm" type="button" data-sweep="${i}">Take it in</button>` : ''}</div>`;
       })}
       ${(st.waitBoxes || []).some(([, v]) => (min && v < min) || !relayUp()) ? html`<p class="note">Taking it in yourself costs no fee; your wallet pays the gas, and its address shows as the one collecting it.</p>` : ''}
       <p class="more"><button class="link" type="button" id="f-check">Check for arrivals now</button></p>`);
