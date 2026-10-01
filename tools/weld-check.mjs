@@ -7,9 +7,11 @@
 //   ux       the page's shell: a toast over an open sheet can be pressed, a drag ending on the backdrop leaves the sheet open, an
 //            unreadable amount says so, one sheet replacing another keeps its link in the address bar, a hash naming nothing is ignored
 //   apr      every farm row shows its APR now, and the public farm's card spells it out
-//   pair     ETH + TAC staked in one transaction with an EIP-2612 permit
+//   pair     with no TAC held, Max fills the ETH side and says TAC is missing; then ETH + TAC staked in one transaction
+//            with an EIP-2612 permit
 //   farm     a one-sided ETH zap waits for its typed loss acceptance, stakes, claims, then withdraws everything; what is
-//            earned and earned a day also read in ETH, and a claim then shows under Claimed so far
+//            earned and earned a day also read in ETH, the dashboard says what there is to claim, and a claim then shows
+//            under Claimed so far
 //   reinvest a stake's claim opens the add form on TAC with exactly what was paid, and farming it stakes it again
 //   buy      TAC bought with ETH through zRouter
 //   tacfarm  TAC alone zapped in with a permit; half withdrawn as ETH; LP held staked again; the rest withdrawn as TAC
@@ -340,11 +342,20 @@ await step('apr', async () => {
 });
 
 await step('pair', async () => {
+  // The account starts with no TAC, whatever mainnet holds for it at the fork block, so Max says what is missing.
+  const held = await tacOf(A0);
+  if (held > 0n) await rpc('eth_sendTransaction', [{ from: A0, to: TAC, data: '0xa9059cbb' + addrWord(RESERVE) + word(held) }]);
   await page.goto(url + '#farm');
   await page.waitForSelector('#pf-connect, [data-pfm]', { timeout: 60000 });
   if (await page.$('#pf-connect')) await page.click('#pf-connect');
   await page.waitForSelector('[data-pfm="pair"]', { timeout: 60000 });
   await page.click('[data-pfm="pair"]');
+  await page.click('#pf-max');
+  await until(page, () => /Not enough TAC/.test(document.querySelector('#pf-rcpt')?.textContent || ''), null, 240000);
+  ok(parseFloat(await page.inputValue('#pf-amt')) > 0 && await page.isDisabled('#pf-go'), `pair: with no TAC held, Max fills the ETH side and says TAC is missing (${await page.inputValue('#pf-amt')} ETH)`);
+  await fundTac(A0, 1000n * 10n ** 18n);
+  await page.evaluate(() => { location.hash = ''; location.hash = '#farm'; });
+  await until(page, () => /[1-9]/.test(document.querySelector('#pf-tmax')?.textContent || ''), null, 120000);
   // ETH Max with TAC as the limit: the pair is sized from the TAC held, so neither field rounds past a balance.
   await page.click('#pf-max');
   await until(page, () => !document.querySelector('#pf-go').disabled || /Not enough|refuse/.test(document.querySelector('#pf-rcpt')?.textContent || ''));
@@ -394,11 +405,14 @@ await step('farm', async () => {
   const eth0 = (await text(page, '#pf-earned-eth')).trim();
   ok(/^(< )?[\d.,]+ ETH$/.test(eth0), `farm: what it has earned also reads in ETH (${eth0} for ${e1.trim()})`);
   ok(/Swap fees stay in the pool/.test(await text(page, '#farm-precision')), 'farm: the stake says its swap fees are already in its value');
-  ok(/TAC a day \(≈ (< )?[\d.,]+ ETH\)/.test(await text(page, '#farm-precision')), 'farm: and what it earns a day');
+  ok(/TAC a day \((≈ [\d.,]+|< 0\.00001) ETH\)/.test(await text(page, '#farm-precision')), 'farm: and what it earns a day');
   ok(!/Claimed so far/.test(await text(page, '#farm-precision')), 'farm: nothing is under Claimed so far before a first claim');
   await rpc('evm_increaseTime', [60]); await rpc('evm_mine', []);
   await page.evaluate(() => { location.hash = ''; location.hash = '#farm'; });
   await until(page, () => { const b = document.querySelector('#pf-claim'); return b && !b.disabled; });
+  await until(page, () => /to claim/.test(document.querySelector('[data-dash-open="farm"] .di-m')?.textContent || ''), null, 60000).catch(() => {});
+  const dm = (await text(page, '[data-dash-open="farm"] .di-m')).trim();
+  ok(/^(≈ [\d.,]+|< 0\.00001) ETH to claim$/.test(dm), `farm: the dashboard's farm rewards say what there is to claim, in ETH (${dm})`);
   const before = await tacOf(A0);
   await page.click('#pf-claim');
   await until(page, () => /TAC claimed/.test(document.querySelector('#toast-container')?.textContent || ''));

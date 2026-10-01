@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-41JphulmJQUxmwBlpDLn6M34XYvqdm0DIxsxcgXT9Hk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-xek0Es4PBAgleJROZVc05IUeoH+6fdg7Qfxm9+2GQnI=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -4657,6 +4657,10 @@ function earnedNow(y) {
   FARM.hi = { who: y.who, base: y.earned, v: out };
   return out;
 }
+// TAC in ETH at the public pool's price (`p` a read of it), and how such a figure reads.
+const ethOfTac = (tac, p) => (p?.tacEth > 0 ? BigInt(Math.round(Number(tac) * p.tacEth)) : 0n);
+const ethText = (e) => `${e < 10n ** 13n ? '< 0.00001' : fmt(e, 18, 5)} ETH`;
+const aboutEth = (e) => (e < 10n ** 13n ? '< 0.00001 ETH' : `≈ ${fmt(e, 18, 5)} ETH`);
 
 // The public farm, whole: add from ETH, TAC or both (a permit stands in for any approval), stake LP already held, and
 // see, claim and withdraw a position — part or all of it, as both assets or swapped into one.
@@ -4669,8 +4673,7 @@ function renderPrecision(el) {
   if (!FARM.mode) FARM.mode = x.tac >= 10n ** 18n ? 'pair' : 'eth';
   const has = x.staked > 0n, mode = FARM.mode, withEth = mode !== 'tac', withTac = mode !== 'eth';
   const myDay = has && x.totalStaked ? x.perDay * x.staked / x.totalStaked : 0n;
-  const ethOf = (tac, p = x) => (p.tacEth > 0 ? BigInt(Math.round(Number(tac) * p.tacEth)) : 0n);   // at the pool's price
-  const ethText = (e) => `${e < 10n ** 13n ? '< 0.00001' : fmt(e, 18, 5)} ETH`;
+  const ethOf = (tac, p = x) => ethOfTac(tac, p);
   const paid = FARM.paid?.who === x.who ? FARM.paid.v : null;
   mount(el, html`
     <div class="kv"><span>${x.live ? 'Stream ends' : 'Stream'}</span><b>${x.live ? dayFmt(x.finish) : 'between reward periods'}</b></div>
@@ -4679,10 +4682,10 @@ function renderPrecision(el) {
     ${has ? html`
       <div class="kv"><span>Your stake</span><b>${fmt(x.mine.eth, 18, 4)} ETH + ${fmt(x.mine.tac, 18, 2)} TAC</b></div>
       <p class="note">Swap fees stay in the pool, so they are already counted in this value.</p>
-      <div class="kv"><span>Earning</span><b>${fmt(myDay, 18, 2)} TAC a day${ethOf(myDay) > 0n ? ` (≈ ${ethText(ethOf(myDay))})` : ''} · ${pctFmt(Number(x.staked * 10000n / x.totalStaked) / 100)} of the farm</b></div>
+      <div class="kv"><span>Earning</span><b>${fmt(myDay, 18, 2)} TAC a day${ethOf(myDay) > 0n ? ` (${aboutEth(ethOf(myDay))})` : ''} · ${pctFmt(Number(x.staked * 10000n / x.totalStaked) / 100)} of the farm</b></div>
       <div class="kv"><span>Earned</span><b class="num" id="pf-earned">${fmt(earnedNow(x), 18, 4)} TAC</b></div>
       ${ethOf(earnedNow(x)) > 0n ? html`<div class="kv"><span>Worth about</span><b class="num" id="pf-earned-eth">${ethText(ethOf(earnedNow(x)))}</b></div>` : ''}
-      ${paid > 0n ? html`<div class="kv"><span>Claimed so far</span><b>${fmt(paid, 18, 2)} TAC${ethOf(paid) > 0n ? ` (≈ ${ethText(ethOf(paid))})` : ''}</b></div>` : ''}
+      ${paid > 0n ? html`<div class="kv"><span>Claimed so far</span><b>${fmt(paid, 18, 2)} TAC${ethOf(paid) > 0n ? ` (${aboutEth(ethOf(paid))})` : ''}</b></div>` : ''}
       <button class="btn ghost" type="button" id="pf-claim" ${earnedNow(x) === 0n ? 'disabled' : ''}>Claim ${fmt(earnedNow(x), 18, 2)} TAC</button>
       <button class="link" type="button" id="pf-reinvest" ${earnedNow(x) === 0n ? 'disabled' : ''}>Claim and add to the farm</button>
       <div class="lbl"><span>Withdraw</span></div>
@@ -4780,7 +4783,8 @@ function renderPrecision(el) {
   };
   onEdit([ethIn, tacIn].filter(Boolean), go, requote);
   const fill = (input, v) => { input.value = v > 0n ? plain(v, 18) : ''; requote({ target: input }); };
-  $('#pf-max')?.addEventListener('click', () => (mode === 'pair' && ethFor(x.tac) < spendable ? fill(tacIn, x.tac) : fill(ethIn, spendable)));
+  // With no TAC held, the ETH side is filled so the quote says what is missing, rather than filling nothing.
+  $('#pf-max')?.addEventListener('click', () => (mode === 'pair' && x.tac > 0n && ethFor(x.tac) < spendable ? fill(tacIn, x.tac) : fill(ethIn, spendable)));
   $('#pf-tmax')?.addEventListener('click', () => fill(tacIn, mode === 'pair' ? (tacFor(spendable) < x.tac ? tacFor(spendable) : x.tac) : x.tac));
   if (FARM.fill === 'tac' && tacIn) { FARM.fill = null; $('#pf-tmax').click(); }
   if (FARM.reinvest && tacIn) {
@@ -5914,7 +5918,7 @@ function dashItems() {
     const scale = big(FARM.program?.unitScale) || E10, earned = (x ? earnedNow(x) : 0n) + pos.reduce((a, p) => a + (big(p.pendingUnits) || 0n) * scale, 0n);
     const myDay = x?.staked > 0n && x.totalStaked ? x.perDay * x.staked / x.totalStaked : 0n, apr = x?.staked > 0n && x.live ? precisionApr(x) : null;
     out.push({ key: 'farm', icon: 'tk-tac', label: 'Farm rewards', unit: 'TAC', dec: 18, max: 2, v: earned, live: earned > 0n, open: 'farm', show: true,
-      meta: apr != null ? `${aprShort(apr)} · ${fmt(myDay, 18, 2)} a day` : pos.length ? `${pos.length} private position${pos.length === 1 ? '' : 's'}` : x?.staked > 0n ? 'staked in the public farm' : 'rewards to claim' });
+      meta: ethOfTac(earned, FARM.precision) > 0n ? `${aboutEth(ethOfTac(earned, FARM.precision))} to claim` : apr != null ? `${aprShort(apr)} · ${fmt(myDay, 18, 2)} a day` : pos.length ? `${pos.length} private position${pos.length === 1 ? '' : 's'}` : x?.staked > 0n ? 'staked in the public farm' : 'rewards to claim' });
   }
   if (S.wallet && AIR && !AIR.error && (AIR.claimable || AIR.claimed)) out.push({ key: 'air', icon: 'tk-tac', label: 'Airdrop', unit: 'TAC', dec: 18, max: 2, v: BigInt(AIR.amountWei || 0),
     noDelta: true, live: !!AIR.claimable, open: 'airdrop', show: true, meta: AIR.claimed ? 'claimed' : `claim by ${dayFmt(AIR.deadline)}` });
