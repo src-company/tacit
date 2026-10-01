@@ -221,14 +221,17 @@ export function openStore(dbPath, { excluded = [] } = {}) {
       (tx_hash, block_number, block_time, depositor, amount_wei, prior_deposit_count, points, tip_wei, tip_recipient, pp_boosted, activity, tac_boost, z_share_boost, chain_id)
     VALUES (@txHash, @blockNumber, @blockTime, @depositor, @amountWei, @priorDepositCount, @points, @tipWei, @tipRecipient, @ppBoosted, @activity, @tacBoost, @zShareBoost, @chainId)
   `);
+  // `amountWei` here is the address's NEW cumulative total, summed as a BigInt by the caller: SQLite's INTEGER
+  // is 64-bit (about 9.2 ETH in wei), which one busy address's running total can pass.
   const bumpTotals = db.prepare(`
     INSERT INTO totals (address, points, deposit_count, amount_wei)
     VALUES (@address, @points, 1, @amountWei)
     ON CONFLICT(address) DO UPDATE SET
       points = points + excluded.points,
       deposit_count = deposit_count + 1,
-      amount_wei = CAST(CAST(amount_wei AS INTEGER) + CAST(excluded.amount_wei AS INTEGER) AS TEXT)
+      amount_wei = excluded.amount_wei
   `);
+  const totalAmountStmt = db.prepare(`SELECT amount_wei FROM totals WHERE address = ?`);
   const saveCursorStmt = db.prepare(`
     INSERT INTO cursor (id, last_scanned_block, eth_deposit_count)
     VALUES (1, @lastScannedBlock, @ethDepositCount)
@@ -314,9 +317,9 @@ export function openStore(dbPath, { excluded = [] } = {}) {
   const getPmMarketStmt = db.prepare(`SELECT is_eth, creator, created_tx_hash, creator_awarded FROM pm_markets WHERE market_id = ?`);
   const markPmCreatorAwardedStmt = db.prepare(`UPDATE pm_markets SET creator_awarded = 1 WHERE market_id = ?`);
 
-  // amount_wei stays a TEXT decimal string throughout (SQLite integers are 64-bit and wei amounts for a
-  // single ETH wrap never approach that, so CAST...AS INTEGER above is safe; this is not meant to survive
-  // a value near 2^63 wei, which is not a real deposit size).
+  // amount_wei stays a TEXT decimal string throughout, and is only ever added as a BigInt (never CAST to
+  // SQLite's 64-bit INTEGER): one address's cumulative total can pass 2^63 wei even though no single deposit
+  // does.
   //
   // tipWei/tipRecipient default null here (not in the SQL) so every existing caller — including a direct
   // wrap with no WrapTipForwarder involved at all — stays valid without knowing these fields exist; points-
@@ -327,9 +330,27 @@ export function openStore(dbPath, { excluded = [] } = {}) {
     if (never.has(String(dep.depositor).toLowerCase())) return false;
     const wrote = insertDeposit.run({ tipWei: null, tipRecipient: null, ppBoosted: 0, activity: 'wrap', tacBoost: 1, zShareBoost: 1, chainId: 1, ...dep });
     if (wrote.changes === 0) return false; // already recorded (safe to re-scan a chunk after a crash)
-    bumpTotals.run({ address: dep.depositor, points: dep.points, amountWei: dep.amountWei });
+    const prior = BigInt(totalAmountStmt.get(dep.depositor)?.amount_wei ?? '0');
+    bumpTotals.run({ address: dep.depositor, points: dep.points, amountWei: (prior + BigInt(dep.amountWei)).toString() });
     return true;
   });
+
+  // Totals written before the sum was exact (it went through a 64-bit CAST) can be wrong for any address past
+  // ~9.2 ETH. The deposits table is the source of truth, so recompute each address's total from it and fix only
+  // what differs. Idempotent and cheap, so it simply runs at every open. A malformed row is skipped, never fatal.
+  function repairTotalAmounts() {
+    const sums = new Map();
+    for (const r of db.prepare('SELECT depositor, amount_wei FROM deposits').iterate()) {
+      try { sums.set(r.depositor, (sums.get(r.depositor) ?? 0n) + BigInt(r.amount_wei)); } catch { /* skip */ }
+    }
+    const fix = db.prepare('UPDATE totals SET amount_wei = ? WHERE address = ? AND amount_wei != ?');
+    return db.transaction(() => {
+      let fixed = 0;
+      for (const [address, sum] of sums) fixed += fix.run(sum.toString(), address, sum.toString()).changes;
+      return fixed;
+    })();
+  }
+  repairTotalAmounts();
 
   // `ethDepositCount` is DERIVED from the deposits table, not trusted from the cursor row.
   //

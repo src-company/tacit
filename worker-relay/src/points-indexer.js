@@ -1386,7 +1386,7 @@ export async function settleCycle(store) {
   }
 
   store.savePublishedClaims(tree.claims);
-  store.saveSettleState({ lastSettledDay: state.lastSettledDay, publishedRoot: tree.root, publishedTotalWei: tree.totalWei });
+  store.saveSettleState({ ...state, publishedRoot: tree.root, publishedTotalWei: tree.totalWei });
   log(`published points root ${tree.root} (${formatTac(totalWei)} TAC across ${tree.count} addresses), tx ${hash}`);
 }
 

@@ -559,11 +559,8 @@ export const CFG = {
   // immediately with no gaming mitigation needed. A free .id.wei name costs 0 and so earns 0 automatically.
   pointsBasePerWeiname: num('POINTS_BASE_PER_WEINAME', 1000),
   weinameDeployBlock: num('WEINAME_DEPLOY_BLOCK', 24360416),
-  // Off by default (WEINAME_ENABLED=0) after a real incident: its own historical backfill never saved a
-  // cursor across several attempts, and a restart mid-backfill (a redeploy shipping yet another fix) meant
-  // main()'s loop never reached anything scheduled after it — zRouter and the ETH-wrap scanner both froze.
-  // Re-enable once the backfill is confirmed to actually complete and save its cursor.
-  weinameEnabled: opt('WEINAME_ENABLED', '0') === '1',
+  // On by default; WEINAME_ENABLED=0 turns the scan off.
+  weinameEnabled: opt('WEINAME_ENABLED', '1') === '1',
 
   // ── Bitcoin shielded pool shields (src/points-indexer.js's scanBtcPoolCycle) ──
   // A seventh way to earn: moving TAC into the Bitcoin-native shielded pool (SPEC §3.10, tacit.finance/tac).
