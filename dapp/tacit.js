@@ -22535,7 +22535,14 @@ async function _renderHoldingsUnifiedStrip(force = false) {
   };
   if (wallet && wallet.priv && !box.dataset.painted) {
     box.style.display = '';
-    box.innerHTML = `<div class="section" style="padding:12px 14px;"><div class="muted" style="font-size:11px;">⏳ Reading your Ethereum-lane holdings from the chain…</div></div>`;
+    box.innerHTML = `<div class="section" style="padding:12px 14px;" aria-busy="true">
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:8px;">
+        <span style="width:8px;height:8px;border-radius:50%;background:var(--eth,#627eea);animation:pulse 1.2s ease-in-out infinite;flex:0 0 auto;"></span>
+        <span>Checking Ethereum for your private notes…</span>
+      </div>
+      <div class="skeleton compact" style="border-style:solid;"><div class="skeleton-row medium"></div><div class="skeleton-row short"></div></div>
+      <div class="muted" style="font-size:10px;margin-top:6px;">Found from your key alone, so the first look takes 10 to 20 seconds.</div>
+    </div>`;
   }
   let unified;
   try { unified = await scanHoldingsCrossChain(force); }
@@ -22569,12 +22576,24 @@ async function _renderHoldingsUnifiedStrip(force = false) {
     if (btc > 0n) badges.push(badge('btc', 'BTC', btc));
     if (eth > 0n) badges.push(badge('eth', 'ETH', eth));
     const spanCls = (btc > 0n && eth > 0n) ? 'both' : 'eth';
+    // Private (pool notes) vs public (the ERC20) on Ethereum, and where each is acted on: weld's TAC and ETH sheets
+    // open on this same key with send, make-public and make-private; other notes send from the Send tab.
+    const sumOf = (src) => (e.byLane || []).filter((x) => x.source === src).reduce((a, x) => a + x.balance, 0n);
+    const priv = sumOf('eth-confidential'), pub = sumOf('eth-canonical');
+    const flow = /^c?TAC$/i.test(ticker) ? '/weld/#tac' : /^[ct]?ETH$/i.test(ticker) ? '/weld/#eth' : '#tab=csend';
+    const split = [priv > 0n ? `${fmtAssetAmount(priv, decs)} private` : '', pub > 0n ? `${fmtAssetAmount(pub, decs)} public` : ''].filter(Boolean).join(' · ');
+    const act = (label, title) => `<a href="${flow}" class="btn-go" style="font-size:11px;padding:4px 10px;text-decoration:none;" title="${escapeHtml(title)}">${label}</a>`;
+    const acts = [];
+    if (priv > 0n) acts.push(act('Send', `Send ${ticker} privately to a Tacit address`));
+    if (priv > 0n && flow !== '#tab=csend') acts.push(act('Make public', `Move private ${ticker} out to the public ERC20 in your Ethereum account`));
+    if (pub > 0n && flow !== '#tab=csend') acts.push(act('Make private', `Shield public ${ticker} into a private note`));
     rows.push(`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--hairline,#eee);">
       ${assetImageFallback(e.assetId, ticker, 28)}
       <div style="flex:1;min-width:0;">
         <div><strong>${escapeHtml(ticker)}</strong>
           <span class="chain-badge ${spanCls}" style="margin-left:6px;"><span class="dot"></span>${spanCls === 'both' ? 'both chains' : 'ethereum'}</span></div>
-        <div class="muted" style="font-size:11px;margin-top:2px;">${escapeHtml(fmtAssetAmount(e.total, decs))} ${escapeHtml(ticker)} total</div>
+        <div class="muted" style="font-size:11px;margin-top:2px;">${escapeHtml(fmtAssetAmount(e.total, decs))} ${escapeHtml(ticker)} total${split ? ` · ${escapeHtml(split)} on Ethereum` : ''}</div>
+        ${acts.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">${acts.join('')}</div>${flow.startsWith('/weld/') ? '<div class="muted" style="font-size:10px;margin-top:4px;">Opens Tacit weld on this same key.</div>' : ''}` : ''}
       </div>
       <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;">${badges.join('')}</div>
     </div>`);
@@ -60313,13 +60332,24 @@ async function renderHoldings() {
         } catch { /* indexer down — fall through to "actually empty" copy */ }
       }
       const hadAssetsBefore = sessionHadAssets || persistedHadAssets || chainHasActivity;
-      if (hadAssetsBefore) {
+      // A wallet that bridged or holds its balance on Ethereum can be genuinely empty on Bitcoin; say that plainly
+      // instead of calling it an indexer hiccup under a balance the strip above is already showing.
+      const ethHeld = _ethLaneEverSeenAssets || _loadEthLaneSeenFlag();
+      if (hadAssetsBefore && ethHeld) {
+        list.innerHTML = `
+          <div class="empty" style="padding:12px 14px;text-align:left;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <div class="muted" style="font-size:11px;line-height:1.6;flex:1;min-width:200px;">Nothing on the Bitcoin side at your address right now. Balances held on Ethereum show above. If you expected Bitcoin-side assets, rescan.</div>
+            <button type="button" id="btn-holdings-rescan-empty" class="btn-go" style="font-size:11px;padding:5px 12px;">↻ Rescan</button>
+          </div>`;
+      } else if (hadAssetsBefore) {
         list.innerHTML = `
           <div class="empty" style="padding:24px;text-align:center;">
             <div style="font-weight:bold;margin-bottom:6px;">⏳ Scan returned zero UTXOs at your address.</div>
             <div class="muted" style="font-size:11px;line-height:1.6;margin-bottom:10px;">Likely a transient indexer hiccup — your wallet had assets on the previous scan, so the chain state hasn't actually changed. Click Retry; if the indexer is genuinely down across multiple retries, your assets are still on chain and recoverable.</div>
             <button type="button" id="btn-holdings-rescan-empty" class="btn-go" style="font-size:11px;padding:5px 12px;">↻ Retry scan</button>
           </div>`;
+      }
+      if (hadAssetsBefore) {
         const btn = document.getElementById('btn-holdings-rescan-empty');
         if (btn) btn.onclick = async () => {
           btn.disabled = true;
@@ -60330,7 +60360,7 @@ async function renderHoldings() {
         };
         try { _renderHoldingsTethBridgeNotes(list); } catch {}
         try { _renderHoldingsBurndepBridges(list); } catch {}
-        setStatus('#holdings-status', 'scan returned zero · likely transient');
+        setStatus('#holdings-status', ethHeld ? 'nothing on bitcoin' : 'scan returned zero · likely transient');
         setTabBadge('holdings', 0);
         _holdingsLastRenderOk = true;
         return;
