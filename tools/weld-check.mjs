@@ -16,6 +16,7 @@
 //   device   a deposit into the EVM pool, proved in the page's worker
 //   borrow   the Bitcoin deposit address renders; a bond for a lock record posts through the escrow helper
 //   keys     an Ethereum signature opens a key; after locking, "continue" reopens the same tacit1 address; a pasted key opens
+//   tacopen  a key opened from inside the TAC sheet (reached by link): the sheet's balance reads again for it at once
 //   saved    a passphrase-locked key saved the way tacit.finance saves it opens through tacit.js's own prompt; the TAC
 //            sheet, reached by link with no key open, offers it too
 //   bitcoin  a (stubbed, deterministic) UniSat wallet opens a key through tacit.js, then funds a lock in one call
@@ -63,7 +64,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,farmjoin,shield,keys,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,farmjoin,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -1024,6 +1025,31 @@ await step('keys', async () => {
   const t1 = shownAddress(hex);
   ok((await shown(r.page)).includes(`${t1.slice(0, 14)}…${t1.slice(-12)}`), `keys: a pasted key opens its own unified tacit1 address ${t1.slice(0, 14)}…`);
   if (r.errors.length) { fails++; console.log('FAIL keys page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  await r.browser.close();
+});
+
+await step('tacopen', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  await r.page.goto(r.url);
+  await r.page.waitForSelector('#toast-container', { state: 'attached' });
+  const hex = 'abcdef'.padEnd(64, '3'), pass = 'correct horse battery staple';
+  const saving = r.page.evaluate(async (h) => { globalThis.__TACIT_NO_INIT__ = true; const T = await import('/tacit.js'); await T.wallet.setPriv(h); return !!localStorage.getItem('tacit-wallet-v1:mainnet'); }, hex);
+  await r.page.waitForSelector('#pass-dialog[open] #pass-input-1', { timeout: 120000 });
+  await r.page.fill('#pass-input-1', pass); await r.page.fill('#pass-input-2', pass); await r.page.click('#pass-submit');
+  ok(await saving, 'tacopen: a key is saved the way tacit.finance saves it');
+  await r.page.evaluate(() => { localStorage.setItem('tacit-active-mode-v1', 'local'); localStorage.removeItem('tacit-lite-id-v1'); });
+  await r.page.goto(r.url + '#tac'); await r.page.reload();
+  await r.page.waitForSelector('#tac-bal [data-in="known"]', { timeout: 60000 });
+  await r.page.click('#tac-bal [data-in="known"]');
+  await r.page.waitForSelector('#pass-dialog[open] #pass-input-1', { timeout: 120000 });
+  await r.page.fill('#pass-input-1', pass); await r.page.click('#pass-submit');
+  await until(r.page, () => !!document.querySelector('#wallet-dot.on'), null, 120000);
+  // Opened from inside the open sheet: its balance reads again for the key at once, not at the next minute's refresh.
+  const t0 = Date.now();
+  const done = await until(r.page, () => { const t = document.querySelector('#tac-bal')?.textContent || ''; return /TAC/.test(t) && !/still reading/.test(t); }, null, 45000).then(() => true, () => false);
+  ok(done, `tacopen: the TAC balance finishes reading after the key opens in the sheet (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  if (!done) console.log('     tac-bal:', (await r.page.evaluate(() => [...document.querySelectorAll('#tac-bal .parts span')].map((e) => e.textContent.replace(/\s+/g, ' ').trim() + (e.querySelector('.sk') ? ' [skeleton]' : '')).join(' | '))));
+  if (r.errors.length) { fails++; console.log('FAIL tacopen page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   await r.browser.close();
 });
 

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-BFsY+KlPX7ehVE6XAvG2R8w6mVX6sV8rWgw3rRD4z9c=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Z+pDkZPekrZHnfVsu1qB6zFpXs5OmphHXGRmFUQOYz4=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -5466,6 +5466,10 @@ function refreshAll() {
   if (T && S.key) loadBtc().then(() => rerender('btc')).catch(() => {});
   if (S.key) loadHeld().catch(() => {});
   for (const n of SHEETS) rerender(n);
+  // A sheet open while the key or wallet changes reads again now, for the new key; its reads from before the change would
+  // otherwise show until the minute's refresh. Even a busy one: a key opened from inside the sheet keeps it busy until the
+  // key is open, and the repaint waits for the action anyway.
+  for (const n of SHEETS) if ($(`#sheet-${n}`)?.open) load[n]?.().then(() => rerender(n)).catch(() => {});
   dashSoon();
 }
 paintWallet();          // a returning visitor's chip says "Open wallet", not the default "Connect wallet", before any action runs
