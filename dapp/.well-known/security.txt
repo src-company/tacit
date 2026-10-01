@@ -1,0 +1,6 @@
+Contact: mailto:security@tacit.finance
+Expires: 2027-09-30T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://tacit.finance/.well-known/security.txt
+Policy: https://github.com/z0r0z/tacit/blob/main/SECURITY.md
+Acknowledgments: https://github.com/z0r0z/tacit/blob/main/audit/AUDITS.md
