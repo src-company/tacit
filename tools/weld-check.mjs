@@ -535,6 +535,16 @@ await step('v1refuse', async () => {
       await until(r.page, () => !!document.querySelector('[data-act="job:stub-inline"] .actr-f.err'), null, 600000).catch(() => {});
       ok(walletTxs.slice(t2).some((x) => String(x.to).toLowerCase() === '0x000000000ed1eabd231be41d93b719056f7febfc'), `v1refuse: pressed, it proves and sends from the wallet, and a refusal shows on the receipt (${(await inline()).slice(0, 160)})`);
     }
+    if (offered) {
+      // From an account that cannot pay the network fee, the receipt says so before the relay is asked to prove anything.
+      await rpc('anvil_setBalance', [A0, '0x0']);
+      try {
+        const n3 = submits.length, btn = await r.page.$('[data-act="job:stub-inline"] [data-self]');
+        if (btn) await btn.click();
+        const said = btn ? await until(r.page, () => /pays the network fee/.test(document.querySelector('[data-act="job:stub-inline"]')?.textContent || ''), null, 60000).then(() => true, () => false) : false;
+        ok(!!btn && said && submits.length === n3, `v1refuse: an account that cannot pay the network fee is told so before the relay is asked to prove (${(await inline()).slice(0, 120)})`);
+      } finally { await rpc('anvil_setBalance', [A0, '0x' + (10000n * 10n ** 18n).toString(16)]); }
+    }
     if (r.errors.length) { fails++; console.log('FAIL v1refuse page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   } finally { refuseSubmits = 0; proveStub = false; await r.browser.close(); }
 });

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ooTZrS7JV8//khXBMt75oPLZ38X6pT15IAfMtDJHD7g=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-eJXlbFygoPSoFeWkIkRx/X9GMKFVmKyMM+IFDNycG38=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -928,8 +928,9 @@ async function busy(btn, fn) {
 // opt-ins (.pick) are kept: a loss gate is always ticked again for the loss it shows.
 const KEPT = {}, TICKED = {};
 const clearField = (i) => { i.value = ''; delete KEPT[i.id]; };
+const dataSel = (el) => { const [k, v] = Object.entries(el.dataset || {})[0] || []; return k ? `[data-${k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}="${String(v).replace(/["\\]/g, '\\$&')}"]` : null; };
 function keep(root, fn) {
-  const a = document.activeElement, focus = a?.id && root.contains(a) ? { id: a.id, s: a.selectionStart, e: a.selectionEnd } : null;
+  const a = document.activeElement, inRoot = !!a && root.contains(a), focus = inRoot && a.id ? { id: a.id, s: a.selectionStart, e: a.selectionEnd } : null, byData = inRoot && !a.id ? dataSel(a) : null;
   const secret = {};
   const opened = new Set([...root.querySelectorAll('details[open] > summary')].map((x) => x.textContent.trim()));
   for (const i of root.querySelectorAll('input[id]')) {
@@ -947,6 +948,7 @@ function keep(root, fn) {
     i.value = v; i.closest('[hidden]')?.removeAttribute('hidden'); i.dispatchEvent(new Event('input'));
   }
   if (focus) { const i = root.querySelector('#' + CSS.escape(focus.id)); if (i && i !== document.activeElement) { i.focus(); if (focus.s != null) try { i.setSelectionRange(focus.s, focus.e); } catch {} } }
+  else if (byData) { try { const i = root.querySelector(byData); if (i && i !== document.activeElement) i.focus(); } catch {} }
 }
 const lazy = (f) => { let p = null; return () => (p ||= f().catch((e) => { p = null; throw e; })); };
 // One read of a thing at a time. A call joins a read of the same key begun in the last three seconds (the render and the
@@ -1576,6 +1578,7 @@ async function selfFinish(id) {
   let hash = null;
   try {
     await payingAccount();
+    await selfGasCheck();
     const t = await getUx(), priv = walletPriv();
     if (w.ps) {
       for (const p of w.ps) {
@@ -1605,6 +1608,11 @@ let selfxSeq = 0;
 async function selfGasWei() {
   const gas = BigInt(await rpc('eth_gasPrice', []).catch(() => '0x0') || 0);
   return 700000n * (gas > 0n ? gas * 3n / 2n : 2000000000n);                  // a settle's gas, at a price that can move
+}
+// Sending a settle from the paying account costs its network fee: asked before the relay spends a minute proving for it.
+async function selfGasCheck() {
+  const need = await selfGasWei(), have = await ethBalance();
+  if (have != null && have < need) throw Object.assign(new Error(`Sending it yourself pays the network fee, about ${fmt(need, 18, 4)} ETH, from ${your()} (${short(S.address, 6)}). It holds ${fmt(have, 18, 4)}. Add a little ETH there, then press the button again.`), { said: true });
 }
 function offerSelfExit(spec, e) {
   const id = String(++selfxSeq);
@@ -1980,6 +1988,7 @@ async function ensureChain(id) {
     if (e?.code !== 4902 && !/unrecognized|not been added|unknown chain/i.test(e?.message || '')) throw e;
     const m = CHAIN_META[id];
     await S.provider.request({ method: 'wallet_addEthereumChain', params: [{ chainId: want, chainName: m.chainName, nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: m.rpcUrls, blockExplorerUrls: m.blockExplorerUrls }] });
+    if (parseInt(await S.provider.request({ method: 'eth_chainId' }), 16) !== id) throw new Error(`Switch your wallet to ${m.chainName}, then try again.`);
   }
 }
 // A public transaction goes out from the paying account: the connected wallet, or the Tacit account signing here. The
@@ -2414,7 +2423,7 @@ async function finishDeposits(run, sheet, status, { self = false } = {}) {
   let err = null, done = 0;
   const miss = (e) => { if (run.away) run.fail(status, e); else err ||= e; };
   try {
-    if (self) await payingAccount();
+    if (self) { await payingAccount(); await selfGasCheck(); }
     const t = await getUx(), priv = walletPriv();
     for (const p of ps) {
       if (run.switched()) { miss(new Error('Another Tacit key was opened, so the rest stopped.')); break; }
@@ -3358,7 +3367,7 @@ function dropTacitKey() {
 }
 function loadBtc(force = false) {
   if (!S.key) return Promise.resolve();
-  if (BTC.loading) return BTC.loading;
+  if (BTC.loading) return force ? BTC.loading.catch(() => {}).then(() => loadBtc(true)) : BTC.loading;
   if (!force && BTC.pub === S.key.pubHex && Date.now() - BTC.at < 60e3) return Promise.resolve();
   const pub = S.key.pubHex;
   return (BTC.loading = withKey(async (t) => {
@@ -3493,8 +3502,8 @@ function btcSendForm(f, status, b) {
     } catch (err) { if (my === seq) quoteErr(rc, err); }
   });
   go.onclick = () => busy(go, async () => {
-    const r = route, v = parseUnits(amt.value, dec);                            // what was checked, whatever is typed meanwhile
-    if (!r || !v) return;
+    const r = route, v = parseUnits(amt.value, dec), pub = S.key?.pubHex;      // what was checked, whatever is typed meanwhile
+    if (!r || !v || !pub) return;
     try {
       say(status, 'Checking which of your outputs are cBTC locks…');
       await (await getUx()).syncCbtcLockReservations(walletPriv());                  // a live lock is never spent as change
@@ -3505,7 +3514,7 @@ function btcSendForm(f, status, b) {
         const id = (await t.buildAndBroadcastCXfer({ assetIdHex: token.id, amount: v, ...(r.kind === 'stealth' ? { stealthAddress: r.stealthAddress } : { recipientPubHex: r.pubHex }), onProgress: (x) => { if (stage[x]) say(status, stage[x]); } })).revealTxid;
         try { t.invalidateHoldingsCache?.(); } catch {}
         return id;
-      });
+      }, pub);
       actBtc(txid, `Send ${fmt(v, dec, 8)} ${unit}${token ? ' on Bitcoin' : ''}`);
       const kind = r.kind === 'sp' ? 'sp' : r.kind === 'stealth' ? 'st' : null;
       BTC.share = kind ? { kind, url: `${location.origin}/weld/#${kind}=${txid}` } : null;
