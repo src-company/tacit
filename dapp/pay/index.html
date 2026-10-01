@@ -5,15 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-8wx/0hfTm5KoICtDaZuIFtSR+l4bop1F4uHdCszBckk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-LRetDTexxXe2raa6Jvrgdej9WBCIHLIy/4cnHx9VWTo=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
-<meta name="description" content="Pay anyone privately: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key, proved on your device, recovered from the key alone.">
+<meta name="description" content="Simple, private payments: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key and one tacit1 address, every payment made on your device, recovered from the key alone.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="tacit">
 <meta property="og:url" content="https://tacit.finance/pay/">
-<meta property="og:title" content="tacit pay">
-<meta property="og:description" content="Bitcoin by silent payment, TAC shielded, ETH on three chains. One key, proved on your device.">
+<meta property="og:title" content="tacit pay · simple, private payments">
+<meta property="og:description" content="Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key, one tacit1 address, every payment made on your device.">
 <meta property="og:image" content="https://tacit.finance/tacit-card.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#E8E0CC" media="(prefers-color-scheme: light)">
@@ -368,11 +368,11 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
   </header>
 
   <section class="hero" aria-labelledby="hero-h">
-    <h1 id="hero-h">Pay anyone,<br><em>privately</em>.</h1>
-    <p>Bitcoin as a silent payment, TAC shielded, and ETH on Ethereum, Base and Robinhood Chain. One key holds all three, makes every payment on your device, and recovers everything on its own.</p>
+    <h1 id="hero-h">Simple, private<br><em>payments</em>.</h1>
+    <p>Bitcoin as a silent payment, TAC shielded, and ETH privately on Ethereum, Base and Robinhood Chain. One key and one tacit1 address hold all three; every payment is made on your device, and everything recovers from that key.</p>
     <ul class="facts">
-      <li>No address reuse</li>
-      <li>Proved on your device</li>
+      <li>One key, one tacit1 address</li>
+      <li>Made on your device</li>
       <li>Recovered from your key</li>
     </ul>
   </section>
@@ -394,9 +394,9 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <section class="card" id="how" aria-labelledby="how-h">
       <div class="card-h"><h2 id="how-h">How each one stays private</h2></div>
       <div class="how">
-        <div><b><svg class="tk sm" aria-hidden="true"><use href="#tk-btc"/></svg>BTC</b><p>Sent as a silent payment (BIP‑352): each payment lands at a fresh address that only the recipient’s key can find, so nothing on chain ties it to their published address.</p></div>
-        <div><b><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</b><p>Paid inside the shielded pool on Bitcoin: amounts and parties are hidden behind a zero-knowledge proof made on this device, then posted by the relay for a fee in TAC, or from your own Bitcoin address.</p></div>
-        <div><b><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</b><p>Paid inside the private pool on Ethereum, Base or Robinhood Chain, proved on this device and sent by a relay, so no gas and no link between payer and payee.</p></div>
+        <div><b><svg class="tk sm" aria-hidden="true"><use href="#tk-btc"/></svg>BTC</b><p>Sent as a silent payment (BIP‑352): each payment lands at a fresh address that only the recipient’s key can find, so nothing on chain ties it to their published address. The amount and your own Bitcoin address show.</p></div>
+        <div><b><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</b><p>Paid inside the shielded pool on Bitcoin, with a zero-knowledge proof made on this device. Posted by the relay for a fee in TAC, it hides who paid, who was paid and how much; posted from your own Bitcoin address, that address shows as the sender.</p></div>
+        <div><b><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</b><p>Paid inside the shielded pool on Ethereum, Base or Robinhood Chain, proved on this device and sent by a relay: no gas, and nothing on chain links payer and payee. Deposits and withdrawals show.</p></div>
       </div>
     </section>
   </main>
@@ -1047,7 +1047,9 @@ function tacSend(f) {
     <div class="rcpt" id="f-rcpt" hidden></div>
     <button class="btn" type="button" id="f-go" disabled>Send TAC privately</button>
     ${TAC.share ? shareView(TAC.share) : ''}
-    <p class="note">Proved on this device${fee != null ? `, then posted by the relay for ${fmt(fee, 8, 4)} TAC, so you need no BTC for it` : ', then posted from your Bitcoin address, which pays its network fee'}. Who paid, who was paid and how much stay hidden.</p>`);
+    <p class="note">${fee != null
+      ? `Proved on this device, then posted by the relay for ${fmt(fee, 8, 4)} TAC, so you need no BTC for it. Who paid, who was paid and how much stay hidden. If the relay can’t post it, your Bitcoin address does, and shows as the sender.`
+      : 'Proved on this device, then posted from your Bitcoin address, which pays its network fee and shows as the sender. Who was paid and how much stay hidden.'}</p>`);
   wireShare(f);
   const to = $('#f-to'), amt = $('#f-amt'), go = $('#f-go'), rc = $('#f-rcpt');
   $('#f-paste').onclick = async () => { try { to.value = (await navigator.clipboard.readText()).trim(); to.dispatchEvent(new Event('input')); } catch { to.focus(); } };
@@ -1063,7 +1065,9 @@ function tacSend(f) {
       route = r;
       // What the Bitcoin address holds is read beside the pool: until it has been, nothing is refused against it.
       const pub = tacOnBtc(), seen = btcHeld(), avail = r.kind === 'pool' ? (ok ? TAC.pool - (fee || 0n) : null) : seen ? (pub ? pub.balance : 0n) : null;
-      const how = r.kind === 'pool' ? 'Inside the shielded pool · sender, recipient and amount hidden' : 'Shielded transfer from your Bitcoin address · the recipient stays hidden';
+      const how = r.kind === 'pool'
+        ? (fee != null ? 'Inside the shielded pool · sender, recipient and amount hidden' : 'Inside the shielded pool · recipient and amount hidden; your Bitcoin address posts it')
+        : 'Shielded transfer from your Bitcoin address · the recipient stays hidden';
       mount(rc, html`<div class="kv"><span>${r.name || 'To'}</span><b>${r.shown}</b></div>${idRow(r)}<div class="kv"><span>How</span><b>${how}</b></div>
         ${r.kind === 'pool' && fee != null && v ? html`<div class="kv"><span>Relay fee</span><b class="num">${fmt(fee, 8, 4)} TAC</b></div>` : ''}
         ${r.kind === 'stealth' ? html`<p class="note">This address is from before pool payments, so the TAC goes from your Bitcoin address, not the pool${seen && !pub ? ', which holds none' : ''}.</p>` : ''}
