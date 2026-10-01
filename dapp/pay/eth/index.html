@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Vn+TUog9dqnarO/gxZceQxGIjOn8ExoQRNDVgFWD4X0=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-XK3zCQgx9WT4FLulEpS6ieHYZRvvXT5aO6IB7QhfkMY=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -642,6 +642,7 @@ const errText = (e) => {
   if (/does not match the ceremony|verification key does not match/i.test(m)) return 'The proving key did not match its published hash, so it was not used. Reload and try again.';
   if (/short of gas|can.t take this one/i.test(m)) return 'The relay can’t take this one right now.';
   if (/^the relay is busy with other sends/i.test(m)) return m.charAt(0).toUpperCase() + m.slice(1);
+  if (/\bHTTP 5\d\d\b/.test(m)) return 'The service is busy right now. Try again in a moment.';
   if (/failed to fetch|networkerror|load failed/i.test(m)) return 'Could not reach the network. Check your connection and try again.';
   if (/rate.?limit|too many requests|\b429\b/i.test(m)) return 'That network is busy right now. Try again in a moment.';
   if (/timed? ?out|timeout/i.test(m)) return 'The network took too long to answer. Try again.';
@@ -1097,6 +1098,15 @@ setInterval(() => {
     const st = CH[c.chainId];
     if (S.busyChain === c.chainId) continue;
     if (Date.now() - st.at > pollAfter(st, c === S.chain ? POLL_MS : POLL_OTHER_MS)) syncChain(c);
+  }
+  // A payment held until it blends in waits on deposits made after this tab read the pool, so the pool is read again, from
+  // where the last read ended, while one is held: every two minutes, whether or not the last read worked.
+  const held = new Set(dues().map((d) => d.chain));
+  for (const c of CHAINS) {
+    const q = POOLQ[c.chainId];
+    if (!held.has(c.chainId) || !q?.v || q.p || Date.now() < (q.next || 0)) continue;
+    q.next = Date.now() + 120_000;
+    poolStats(c).then(() => { FORM.check?.(); paintDue(); }, () => {});
   }
 }, 5_000);
 
@@ -2391,10 +2401,12 @@ function formWithdraw(f) {
   }); };
   if (l2 && BRIDGE_Q.fee?.[S.dest] == null) bridgeQuote(S.dest);
 }
-const BRIDGE_Q = { fee: {}, prepay: {} };
+const BRIDGE_Q = { fee: {}, prepay: {}, busy: {}, failed: {} };
 // The relay's fee for the move and, for Robinhood Chain, the retryable's prepay as bridgeOut prices it: the submission
 // fee at twice Ethereum's base fee plus up to 450k L2 gas at eight times its price (floor 0.1 gwei), with 20% room.
 async function bridgeQuote(dest) {
+  if (BRIDGE_Q.busy[dest]) return;
+  BRIDGE_Q.busy[dest] = true;
   try {
     const q = await keeperJson(CHAINS[0], `/quote?gas=${BRIDGE_GAS[dest]}`);
     let prepay = 0n;
@@ -2403,8 +2415,14 @@ async function bridgeQuote(dest) {
       const maxFee = BigInt(gp) * 8n > 10n ** 8n ? BigInt(gp) * 8n : 10n ** 8n;
       prepay = ((1400n * 2n * BigInt(blk.baseFeePerGas) + 450_000n * maxFee) * 6n) / 5n;
     }
-    BRIDGE_Q.fee[dest] = BigInt(q.fee); BRIDGE_Q.prepay[dest] = prepay; FORM.check?.();
-  } catch (e) { sayErr($('#status'), e); }
+    BRIDGE_Q.fee[dest] = BigInt(q.fee); BRIDGE_Q.prepay[dest] = prepay;
+    if (BRIDGE_Q.failed[dest]) { BRIDGE_Q.failed[dest] = false; say($('#status'), ''); }
+    FORM.check?.();
+  } catch (e) {
+    // The form reads "Reading the relay's fee…" until this arrives, so a failed read is asked again, not left standing.
+    BRIDGE_Q.failed[dest] = true; sayErr($('#status'), e);
+    setTimeout(() => { if (String(S.dest) === String(dest) && BRIDGE_Q.fee[dest] == null) bridgeQuote(dest); }, 10_000);
+  } finally { BRIDGE_Q.busy[dest] = false; }
 }
 
 // ── getting paid: a link (and its QR code) anyone can pay, from a Tacit wallet or any other ─────────────────
