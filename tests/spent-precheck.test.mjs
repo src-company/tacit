@@ -78,12 +78,14 @@ await okAsync('a deposit the pool never recorded is named; pending, consumed and
   assert.deepEqual(await unlandedDeposits(unwrapJob, { client: chain({ absent: [depWrap] }), pool: POOL }), []);
 });
 
-ok('a gone input acks the job settled when its own settle, or any settle of its deposit, is found; a spent note otherwise fails it', () => {
+ok('a gone input acks the job settled when its own settle, or any settle of a wrap\'s deposit, is found; anything else says what happened', () => {
   const dep = { kind: 'deposit', id: '0x01' }, nu = { kind: 'nullifier', id: '0x02' };
   assert.deepEqual(consumedAck(dep, { own: '0xaa' }), { txHash: '0xaa' });
   assert.deepEqual(consumedAck(nu, { own: '0xaa' }), { txHash: '0xaa' });
-  assert.deepEqual(consumedAck(dep, { by: '0xbb' }), { txHash: '0xbb', settledBy: '0xbb' }, 'a deposit settled from the page itself is this job done');
-  assert.match(consumedAck(nu, { by: '0xbb' }).error, /already spent in 0xbb; if that was this same request, it went through/);
+  assert.deepEqual(consumedAck(dep, { by: '0xbb', type: 'wrap' }), { txHash: '0xbb', settledBy: '0xbb' }, 'a wrap settled from the page itself is this job done');
+  assert.match(consumedAck(dep, { by: '0xbb', type: 'wraptransfer' }).error, /already settled into a private note in 0xbb$/, 'a send whose deposit became a plain note is not done');
+  assert.match(consumedAck(dep, { by: '0xbb', type: 'wrapswap' }).error, /private note in 0xbb/);
+  assert.match(consumedAck(nu, { by: '0xbb', type: 'wrap' }).error, /already spent in 0xbb; if that was this same request, it went through/);
   assert.match(consumedAck(dep, {}).error, /already settled into a private note$/);
   assert.match(consumedAck(nu, {}).error, /already spent;/);
 });

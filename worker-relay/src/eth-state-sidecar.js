@@ -184,7 +184,7 @@ async function cycle() {
     if (e.code !== 'ENOENT') throw e; // no committed file: eth_prove would start from zero
   }
   let mismatch = resumeMismatch({ committed, confirmed: state.confirmed });
-  if (mismatch && await healResume(committed, state.confirmed)) mismatch = null;
+  if (mismatch && !CFG.ethStateDryRun && await healResume(committed, state.confirmed)) mismatch = null;
   if (mismatch) {
     const msg = `STALE RESUME STATE: ${mismatch}. A candidate built from here would not continue the Bitcoin `
       + "guest's digest chain, so none is built until the committed file is rebuilt from the confirmed candidate "

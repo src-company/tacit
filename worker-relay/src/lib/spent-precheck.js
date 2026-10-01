@@ -78,12 +78,14 @@ export async function consumedInput({ type, op }, { client, pool }) {
 }
 
 // How a job whose input is already gone is acked, given the transaction found carrying its own memos (`own`) or else
-// the one that consumed the input (`by`). Its own settle landing is the job settled. So is its deposit consumed by any
-// settle: a deposit's id commits to the note it becomes and only its owner can open it, so whoever sent that settle
-// (the page itself, another settler), the job is done. A spent note is another matter: a different op may have spent it.
-export function consumedAck(gone, { own = null, by = null } = {}) {
+// the one that consumed the input (`by`). Its own settle landing is the job settled. So is a plain wrap's deposit
+// consumed by any settle: a deposit's id commits to the note it becomes and only its owner can open it, so whoever
+// sent that settle (the page itself, another settler), a wrap is done. A job that was to do more with its deposit
+// (send, swap, add liquidity) is not: the deposit went into a plain note instead, which the error says. A spent note
+// is another matter too: a different op may have spent it.
+export function consumedAck(gone, { own = null, by = null, type = null } = {}) {
   if (own) return { txHash: own };
-  if (gone.kind === 'deposit' && by) return { txHash: by, settledBy: by };
+  if (gone.kind === 'deposit' && by && type === 'wrap') return { txHash: by, settledBy: by };
   const where = by ? ` in ${by}` : '';
   return { error: gone.kind === 'deposit' ? `this deposit was already settled into a private note${where}`
     : `this note was already spent${where}; if that was this same request, it went through` };

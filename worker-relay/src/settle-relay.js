@@ -399,7 +399,7 @@ async function skipConsumed(job) {
   const memos = (Array.isArray(job.memos) ? job.memos : []).filter((m) => String(m || '').replace(/^0x/i, '').length >= 64);
   const own = (job.mode || 'settle') === 'settle' && memos.length ? await find(memos) : null;
   const by = own ? null : await find([gone.id]);
-  const ack = consumedAck(gone, { own, by });
+  const ack = consumedAck(gone, { own, by, type: job.type });
   log(`job ${job.jobId} type=${job.type} ${ack.txHash ? `already settled in ${ack.txHash}` : `not proved: ${gone.reason}${by ? ` in ${by}` : ''}`}`);
   await confidentialAck({ jobId: job.jobId, ...ack });
   return true;
@@ -557,9 +557,8 @@ async function fundsShort() {
   if (!shortSince) shortSince = Date.now();
   if (Date.now() - shortNotedAt >= 60_000) {
     shortNotedAt = Date.now();
-    const why = `settle wallet holds ${eth(have)} ETH, under the ${eth(need)} ETH a settle can cost at today's gas — proving only jobs a page settles itself; the rest wait until it is topped up`;
-    log(why);
-    await heartbeat('settle', why);
+    log(`settle wallet holds ${eth(have)} ETH, under the ${eth(need)} ETH a settle can cost at today's gas — proving only jobs a page settles itself; the rest wait`);
+    await heartbeat('settle', 'settle: proving only jobs a page settles itself; the rest are held for now');   // public, so no balances
   }
   return true;
 }
