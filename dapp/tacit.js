@@ -22957,9 +22957,10 @@ function _renderHoldingsBurndepBridges(listEl) {
   // link style already used elsewhere in this panel.
   const resumeBoxHtml = `
     <details style="${records.length ? 'margin-top:10px;padding-top:8px;border-top:1px solid var(--ink-faint);' : ''}">
-      <summary class="muted" style="cursor:pointer;font-size:11px;">${records.length ? "Don't see a bridge you expect? " : ''}Recover a bridge from its transaction id →</summary>
+      <summary class="muted" style="cursor:pointer;font-size:11px;">${records.length ? "Don't see a bridge you expect? " : ''}Recover a bridge from its transaction id or amount →</summary>
+      <div class="muted" style="font-size:10px;margin-top:6px;line-height:1.5;">With the burn transaction id, a bridge still in progress is picked up again. With the amount alone, your Ethereum notes are searched for a finished one; this browser remembers the amount.</div>
       <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
-        <input type="text" data-burndep-resume-txid placeholder="Burn transaction id" style="flex:1;min-width:160px;font-size:11px;">
+        <input type="text" data-burndep-resume-txid placeholder="Burn transaction id (optional)" style="flex:1;min-width:160px;font-size:11px;">
         <input type="text" data-burndep-resume-amount placeholder="Amount (e.g. 250)" style="width:100px;font-size:11px;">
         <button data-burndep-resume-btn style="font-size:11px;padding:5px 10px;white-space:nowrap;">Recover</button>
       </div>
@@ -23059,16 +23060,38 @@ function _renderHoldingsBurndepBridges(listEl) {
       const statusEl = section.querySelector('[data-burndep-resume-status]');
       const txid = (txidInput?.value || '').trim().toLowerCase();
       const amountStr = (amountInput?.value || '').trim();
-      if (!/^[0-9a-f]{64}$/.test(txid)) { if (statusEl) statusEl.textContent = 'Enter a valid 64-character burn transaction id.'; return; }
-      const amountTac = Number(amountStr);
-      if (!Number.isFinite(amountTac) || amountTac <= 0) { if (statusEl) statusEl.textContent = 'Enter the TAC amount this bridge carries.'; return; }
+      if (txid && !/^[0-9a-f]{64}$/.test(txid)) { if (statusEl) statusEl.textContent = 'A burn transaction id is 64 hex characters. Leave it empty to search by amount alone.'; return; }
+      const meta = getAssetMeta('0x' + CANONICAL_TAC_ASSET_ID_HEX) || {};
+      const decimals = Number.isInteger(meta.decimals) ? meta.decimals : 8;
+      let amountRaw = 0n;
+      try { amountRaw = parseAssetAmount(amountStr, decimals); } catch { amountRaw = 0n; }
+      if (amountRaw <= 0n) { if (statusEl) statusEl.textContent = 'Enter the TAC amount this bridge carries, for example 250 or 1234.5.'; return; }
+      const amountText = `${fmtAssetAmount(amountRaw, decimals)} TAC`;
       resumeBtn.disabled = true;
+      // Amount alone: a finished bridge's note is on Ethereum with its value hidden; remember the amount for this key
+      // (every page on this site reads it) and search for it now.
+      if (!txid) {
+        if (statusEl) statusEl.textContent = `Searching your Ethereum notes for a ${amountText} bridge…`;
+        try {
+          await ensurePrivkey();
+          const pux = _poolUxSingleton();
+          pux.addBridgeAmountHint(wallet.priv, amountRaw);
+          const { notes } = await pux.balance(wallet.priv, { bridgeAmounts: [amountRaw] });
+          const hit = (notes || []).some((n) => n.source === 'bridge-mint' && BigInt(n.value) === amountRaw);
+          if (statusEl) statusEl.textContent = hit
+            ? `Found it: ${amountText} shows above, on Ethereum.`
+            : `No bridged note of exactly ${amountText} for this key on Ethereum yet. If the bridge is still in progress, add its burn transaction id.`;
+          if (hit) toast(`Found your ${amountText} bridge`, 'success');
+          _renderHoldingsUnifiedStrip(true);
+        } catch (e) {
+          if (statusEl) statusEl.textContent = `Could not search: ${_burndepFriendlyError(e)}`;
+        }
+        resumeBtn.disabled = false;
+        return;
+      }
       if (statusEl) statusEl.textContent = 'Checking the burn and rebuilding this bridge from chain data…';
       try {
         await ensurePrivkey();
-        const meta = getAssetMeta('0x' + CANONICAL_TAC_ASSET_ID_HEX) || {};
-        const decimals = Number.isInteger(meta.decimals) ? meta.decimals : 8;
-        const amountRaw = BigInt(Math.round(amountTac * 10 ** decimals));
         await ux.recoverFromTxid(txid, wallet.priv, { amount: amountRaw });
         toast('Bridge recovered from its transaction id', 'success');
         renderHoldings();

@@ -339,12 +339,40 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     bpp: { H: bppGens().H, G: BPP_G },
   }));
   const _rev = (h) => (String(h).replace(/^0x/, '').match(/../g) || []).reverse().join('');
-  // Bridge-mint walk memo, all keyed `${wallet}:${leaf}` (a leaf's answer for one key never changes, and a second wallet in
-  // the same tab must search afresh): notes already recovered, which a rescan re-adds without searching, and leaves the
-  // cheap balance-read pass / the full pass already searched without a match.
+  // Bridge-mint walk memo. Recovered notes are keyed `${wallet}:${leaf}` and re-added on a rescan without searching; leaves
+  // the cheap balance-read pass / the full pass searched without a match are keyed `${wallet}:${amounts}:${leaf}`, so a
+  // second wallet in the same tab, or a newly known amount, searches afresh.
   const _bridgeFound = new Map();
   const _bridgeFastTried = new Set();
   const _bridgeTried = new Set();
+  // Amounts a bridge-mint search tries besides the round ones, per key: what this browser's bridge journal recorded
+  // (burndep-ux; every page on this origin shares it) and amounts added by hand (addBridgeAmountHint). The value is hidden
+  // in the minted commitment, so an amount like 1,234.5 TAC is found only once it is tried; a wrong one costs a hash.
+  const _netName = network || activeNetwork();
+  const _bridgeHintKeys = (pubHex) => {
+    const p = lc(pubHex).replace(/^0x/, '');
+    return { journal: `tacit-burndep-bridge-v1:${_netName}:${p}`, own: `tacit-bridge-amounts-v1:${_netName}:${p}` };
+  };
+  function _storedBridgeAmounts(pubHex) {
+    if (typeof localStorage === 'undefined') return [];
+    const k = _bridgeHintKeys(pubHex), out = [];
+    const num = (v) => { const x = v && typeof v === 'object' ? v.__big : v; return /^\d+$/.test(String(x ?? '')) ? String(x) : null; };
+    try { for (const r of JSON.parse(localStorage.getItem(k.journal) || '[]') || []) for (const v of [r?.source?.amount, r?.dest?.value]) { const x = num(v); if (x) out.push(x); } } catch {}
+    try { for (const v of JSON.parse(localStorage.getItem(k.own) || '[]') || []) { const x = num(v); if (x) out.push(x); } } catch {}
+    return out;
+  }
+  // Remember an amount (in-system base units) to try for this key's bridged notes, on this browser. Returns false when
+  // there is no storage to keep it in (the caller can still pass it as `bridgeAmounts` for one scan).
+  function addBridgeAmountHint(walletPriv, amount) {
+    const v = BigInt(amount);
+    if (v <= 0n) throw new Error('addBridgeAmountHint: amount must be positive');
+    if (typeof localStorage === 'undefined') return false;
+    const k = _bridgeHintKeys(identity(walletPriv).pubHex).own;
+    let list = [];
+    try { list = JSON.parse(localStorage.getItem(k) || '[]') || []; } catch {}
+    if (!list.includes(v.toString())) list.push(v.toString());
+    try { localStorage.setItem(k, JSON.stringify(list.slice(-32))); return true; } catch { return false; }
+  }
   const _btcHistoryCache = new Map();
   const BTC_HISTORY_TTL_MS = 10 * 60 * 1000;
   function _defaultBtcHistory(priv) {
@@ -600,20 +628,23 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
 
     // (d) bridge-mint destination notes
     diag.bridge = { attempted: false, found: 0, unexplainedLeaves: 0, candidatesTried: 0 };
-    const hints = (bridgeAmounts || []).length > 0;
     // A balance read (not the deep recover) tries only the cheapest case — the TAC asset's default destination index, the
     // one every burn-deposit uses — because the full search hashes ~900k candidates (about a minute) and would hold the
-    // page. A leaf it misses stays unsearched, so recover()'s full pass still covers other assets and indexes.
-    const fast = !deep && !hints;
+    // page. A leaf it misses stays unsearched, so recover()'s full pass still covers other assets and indexes. Known
+    // amounts (the caller's and the stored ones) are tried in either pass.
+    const fast = !deep;
+    const amounts = [...new Set([...(bridgeAmounts || []), ..._storedBridgeAmounts(id.pubHex)].map((v) => { try { return BigInt(v); } catch { return 0n; } }).filter((v) => v > 0n).map(String))].sort();
+    diag.bridge.amountsTried = amounts.length;
     if (bridge) {
       const todo = new Map();
       const wk = _hex(privBytes(id.priv));
       const triedSet = fast ? _bridgeFastTried : _bridgeTried;
+      const triedKey = (lf) => `${wk}:${amounts.join(',')}:${lf}`;
       for (const l of unexplained()) {
         const lf = lc(l.leaf);
         const kept = _bridgeFound.get(wk + ':' + lf);
         if (kept) { if (addDerived(kept, 'bridge-mint', { burnNullifier: kept.burnNullifier })) diag.bridge.found++; continue; }
-        if (!hints && triedSet.has(wk + ':' + lf)) continue;
+        if (triedSet.has(triedKey(lf))) continue;
         const t = tx.txOfLeaf.get(lf);
         if (!t || !(tx.nullifiersOfTx.get(t) || []).length) continue;
         if (!todo.has(t)) todo.set(t, []);
@@ -623,11 +654,11 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       if (todo.size) {
         diag.bridge.attempted = true;
         try {
-          const r = await R.walkBridgeMints({ priv: id.priv, tx, unexplained: todo, assets: [...new Map(_poolAssets.filter((a) => a.bitcoinLink && (!fast || a.ticker === 'TAC' || a.ticker === 'cTAC')).map((a) => [lc(a.assetId), { assetId: a.assetId }])).values()], values: bridgeAmounts || [], destIndexes: fast ? 1 : 8, maxExp: fast ? 15 : 18, maxNullifiers: fast ? 4096 : 16 });
+          const r = await R.walkBridgeMints({ priv: id.priv, tx, unexplained: todo, assets: [...new Map(_poolAssets.filter((a) => a.bitcoinLink && (!fast || a.ticker === 'TAC' || a.ticker === 'cTAC')).map((a) => [lc(a.assetId), { assetId: a.assetId }])).values()], values: amounts.map((v) => BigInt(v)), destIndexes: fast ? 1 : 8, maxExp: fast ? 15 : 18, maxNullifiers: fast ? 4096 : 16 });
           diag.bridge.candidatesTried = r.tried;
           for (const n of r.found) { _bridgeFound.set(wk + ':' + lc(n.leaf), n); if (addDerived(n, 'bridge-mint', { burnNullifier: n.burnNullifier })) diag.bridge.found++; }
           // Only transactions the walk fully tried are settled; ones past its cap stay open for the next pass.
-          if (!hints) for (const [t, lfs] of todo) if (!r.searched || r.searched.has(t)) for (const lf of lfs) triedSet.add(wk + ':' + lf);
+          for (const [t, lfs] of todo) if (!r.searched || r.searched.has(t)) for (const lf of lfs) triedSet.add(triedKey(lf));
         } catch (e) { diag.errors.bridge = String(e && e.message || e); }
       }
     }
@@ -3721,7 +3752,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   });
 
   return { cfg, assets: _poolAssets, assetByTicker, account, identity, rpc, ethCall, fetchEvents, balance, poolStatsFromEvents, tickerOf,
-    deriveOutput, buildWrap, nextWrapIndex, wrap, submitWrapSettle, buildRouterWrap, routerWrap, routerConfigured, buildWrapTransferOp, wrapAndSend, resumeWrapAndSend, sendPreparedTx, buildTransferOp, transfer, stealthSend, scanStealthLocks, stealthClaim, stealthRefund, stealthLockPosition, crossOut, payInvoice, quoteUnwrapFee, holderFeeBps, setPublicTacHeld, quoteTransferFee, quoteOpFee: gasAwareMinFee, feeUsdFor, relayFeeEligible, buildUnwrap, unwrap, sendUnwrap, buildAttestMeta, chainBindingHex,
+    deriveOutput, buildWrap, nextWrapIndex, wrap, submitWrapSettle, buildRouterWrap, routerWrap, routerConfigured, buildWrapTransferOp, wrapAndSend, resumeWrapAndSend, sendPreparedTx, buildTransferOp, transfer, stealthSend, scanStealthLocks, stealthClaim, stealthRefund, stealthLockPosition, crossOut, payInvoice, quoteUnwrapFee, holderFeeBps, setPublicTacHeld, quoteTransferFee, quoteOpFee: gasAwareMinFee, feeUsdFor, relayFeeEligible, buildUnwrap, unwrap, sendUnwrap, addBridgeAmountHint, buildAttestMeta, chainBindingHex,
     erc2612Nonce: _erc2612Nonce, waitReceipt: _waitReceipt, poolReserves, poolCurrentRoot, sameRoot, routePoolId, quoteRoute, route, swapBatched, swapBatchPending, swapBatchFlush, lpBondPosition, buildLpBondOp, lpBond, farmProgram, farmBond, farmPositions, importFarmPosition, recover, recoverCdpPositions, scanSentLocks, farmHarvest, farmUnbond, farmRedeem, buildFastlaneExitOp, fastlaneExit, lpAdd, lpRemove, quoteLpAdd, wrapLp, wrapSwap, ensureExactNote, mintCbtc, defiActions, cdp: _cdp, cdpPositionTree, submitSettle, settleCalldata,
     cbtcLockState, syncCbtcLockReservations, cbtcBonds,
     relay, indexer, evmLog, evmTx, pool, memo, router: _router, stealth: _stealth, bridgeMint: _bridgeMint, bridgeBurn: _bridgeBurn, bridgeBurnToPool, airdrop: _airdrop, tacAirdrop: _tacAirdrop, lockScan: _lockScan };

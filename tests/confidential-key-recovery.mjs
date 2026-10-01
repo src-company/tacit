@@ -258,6 +258,43 @@ test('balance: a bridge-mint note behind more than 16 older empty-memo spends is
   assert.equal(BigInt(again.byAsset[TAC.toLowerCase()].value), VALUE);
 });
 
+test('balance: a non-round bridged amount is found once this browser knows it, from the bridge journal or added by hand', async () => {
+  // In-memory storage for this test only (the pool UX reads its hints and saved memos from localStorage).
+  const mem = new Map();
+  const had = globalThis.localStorage;
+  globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k), get length() { return mem.size; }, key: (i) => [...mem.keys()][i] ?? null };
+  try {
+    const ux = mkUx();
+    const TAC = ux.assetByTicker.TAC.assetId;
+    const rec = makeBridgeMintRecovery({ hmac, sha256: nobleSha256, curveOrder: secp.CURVE.n });
+    const id = ux.identity(walletPriv);
+    const mint = (nu, value) => {
+      const blinding = '0x' + rec.deriveBridgeMintBlinding({ privkey: id.priv, nullifier: nu }).toString(16).padStart(64, '0');
+      const owner = ux.pool.nkToOwner(ux.pool.deriveNote(id.priv, TAC, 0).secret);
+      const c = ux.pool.commitXY(value, blinding);
+      return ux.pool.leaf(TAC, c.cx, c.cy, owner);
+    };
+    const A = 123450000000n, B = 98765432100n; // 1,234.5 TAC and 987.654321 TAC: neither is m·10^k with m < 100
+    const nuA = '0x' + 'a1'.repeat(32), nuB = '0x' + 'b2'.repeat(32);
+    const events = [leavesEv(0, [mint(nuA, A)], null, tx(31)), nullifiersEv([nuA], tx(31)), leavesEv(1, [mint(nuB, B)], null, tx(32)), nullifiersEv([nuB], tx(32))];
+    const ux2 = mkUx(chainHandler(events));
+    assert.equal((await ux2.balance(walletPriv, { cbtc: false })).notes.length, 0, 'not round, not known: not found');
+    // The bridge journal burndep-ux keeps for this key, as it serializes it.
+    const pub = id.pubHex.replace(/^0x/, '').toLowerCase();
+    localStorage.setItem(`tacit-burndep-bridge-v1:mainnet:${pub}`, JSON.stringify([{ stage: 'minted', source: { amount: { __big: A.toString() } }, dest: { value: { __big: A.toString() } } }]));
+    const j = await ux2.balance(walletPriv, { cbtc: false });
+    assert.equal(j.notes.length, 1); assert.equal(BigInt(j.notes[0].value), A);
+    // An amount added by hand (another device, no journal).
+    assert.equal(ux2.addBridgeAmountHint(walletPriv, B), true);
+    const h = await ux2.balance(walletPriv, { cbtc: false });
+    assert.deepEqual(h.notes.map((n) => BigInt(n.value)).sort((x, y) => (x < y ? -1 : x > y ? 1 : 0)), [B, A]);
+    // Another key's hints are its own.
+    assert.equal((await ux2.balance(otherPriv, { cbtc: false })).notes.length, 0);
+  } finally {
+    if (had === undefined) delete globalThis.localStorage; else globalThis.localStorage = had;
+  }
+});
+
 // ── cBTC bearer notes ──
 test('balance: a cBTC bearer note is found from the wallet key, its funding prevout and the pool lock record', async () => {
   const ux0 = mkUx();
