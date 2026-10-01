@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-dd6GU7kMfaTaOwNiSoCJQKLHnF62PgUR0Zj/NEh0pgM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-6LkEDfertXubDMXdUZ0X1jAv8dY3zEaJ19isFcsmdE0=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -30,11 +30,12 @@
   --card: #F2EBD4;
   --field: #FAF6EA;
   --ink: #1A1A1A;
-  --mute: #6B6557;
+  --mute: #645E50;
   --hair: rgba(26,26,26,.12);
   --hair-2: rgba(26,26,26,.28);
   --orange: #f7931a;
-  --ok: #0a7d3a;
+  --ok: #0a7234;
+  --warn: #9a4f00;
   --err: #b8341d;
   --scrim: rgba(26,26,26,.36);
   --lift: 0 22px 44px -28px rgba(26,26,26,.45);
@@ -55,6 +56,7 @@
     --hair: rgba(237,229,207,.12);
     --hair-2: rgba(237,229,207,.28);
     --ok: #8fcf9a;
+    --warn: #f7931a;
     --err: #f08a6c;
     --scrim: rgba(0,0,0,.6);
     --lift: 0 22px 44px -28px rgba(0,0,0,.9);
@@ -112,7 +114,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .top-r { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .chip.act { position: relative; flex: none; justify-content: center; width: 40px; padding: 0; color: var(--mute); }
 .chip.act svg { width: 18px; height: 18px; flex: none; }
-.chip.act.busy { color: var(--orange); }
+.chip.act.busy { color: var(--warn); }
 .chip.act #act-n { position: absolute; top: -8px; right: -8px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
   font: 500 10.5px/18px var(--mono); letter-spacing: 0; text-align: center; color: var(--card); background: var(--ink); }
 
@@ -204,7 +206,7 @@ footer a { color: var(--mute); }
 footer a:hover { color: var(--ink); }
 
 /* ── sheets ── */
-dialog.sheet { width: min(560px, calc(100vw - 32px)); max-height: min(90vh, 900px); padding: 0; overflow: auto;
+dialog.sheet { width: min(560px, calc(100vw - 32px)); max-height: min(90vh, 900px); max-height: min(90dvh, 900px); padding: 0; overflow: auto; overscroll-behavior: contain;
   color: var(--ink); background: var(--card); border: 1px solid var(--ink); box-shadow: 0 40px 90px -40px rgba(0,0,0,.6); }
 dialog.sheet[open] { animation: rise .22s cubic-bezier(.2,.8,.2,1); }
 dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
@@ -242,12 +244,13 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 .amt input { flex: 1; min-width: 0; font: 500 24px/1.2 var(--mono); letter-spacing: -.02em; color: var(--ink); background: none; border: 0; padding: 12px 14px; outline: none; }
 .amt .u { display: inline-flex; align-items: center; gap: 8px; padding: 0 14px 0 4px; color: var(--mute); white-space: nowrap; }
 .amt.text input { font: 400 14px/1.4 var(--mono); padding: 14px; }
+@media (pointer: coarse) { .amt.text input { font-size: 16px; } }
 input::placeholder { color: var(--mute); opacity: .7; }
 
 .kv { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--mute); padding: 5px 0; }
 .kv b { font-weight: 400; color: var(--ink); text-align: right; overflow-wrap: anywhere; }
 .kv b.err { color: var(--err); }
-.kv b.warn { color: var(--orange); }
+.kv b.warn { color: var(--warn); }
 .pts-line { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .pts-line .tk { width: 14px; height: 14px; }
 .kv b small { font-size: 11px; }
@@ -332,7 +335,7 @@ a.btn { text-decoration: none; white-space: nowrap; }
 .lbl.sep { border-top: 1px solid var(--hair); margin-top: 20px; padding-top: 14px; }
 .blk + .blk { margin-top: 16px; }
 .blk .note { margin-top: 4px; }
-.warn { color: var(--orange); }
+.warn { color: var(--warn); }
 .amt.act { margin-top: 12px; }
 .steps .btn { margin-top: 12px; }
 .steps .kv { padding: 3px 0; }
@@ -406,7 +409,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
   .tile h2 { grid-area: title; font-size: 26px; }
   .tile p { grid-area: text; }
   .tile-foot { grid-area: foot; margin-top: 10px; padding-top: 12px; }
-  dialog.sheet { width: 100vw; max-width: 100vw; margin: auto 0 0; max-height: 92vh; border-width: 1px 0 0; }
+  dialog.sheet { width: 100vw; max-width: 100vw; margin: auto 0 0; max-height: 92vh; max-height: 92dvh; border-width: 1px 0 0; }
   .sheet-in { padding: 20px 16px calc(24px + env(safe-area-inset-bottom)); }
   .big { font-size: 46px; }
   .dash { margin: -6px 0 24px; }
@@ -1878,7 +1881,7 @@ function signIn(id) {
     ${pk && !known ? opt('new', html`<svg class="tk sm" aria-hidden="true"><use href="#i-key"/></svg>No wallet yet? Create one`, 'With Face ID, Touch ID or Windows Hello. Nothing to install.') : ''}
     <p class="more">${saved ? html`<button class="link" type="button" data-in="local">Saved in this browser</button>` : ''}
       <button class="link" type="button" data-in="paste">Paste a key</button>${pk && known ? html`<button class="link" type="button" data-in="new">New passkey wallet</button>` : ''}</p>
-    <div class="amt text" id="${id}-paste" hidden><input id="${id}-hex" type="password" placeholder="64-character Tacit key" autocomplete="off" spellcheck="false" aria-label="Tacit key"><button class="link" type="button" data-in="key">Open</button></div>
+    <div class="amt text" id="${id}-paste" hidden><input id="${id}-hex" type="password" placeholder="64-character Tacit key" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Tacit key"><button class="link" type="button" data-in="key">Open</button></div>
   </div>`;
 }
 function wireSignIn(root, id, after) {
@@ -2109,7 +2112,7 @@ render.wallet = () => {
       ${segSub('wala', WAL.asset, [['eth', 'ETH'], ['tac', 'TAC']])}
       ${tac ? '' : segSub('walc', String(chain), DEVICE_CHAINS.map((x) => [String(x.chainId), x.name]))}
       <div class="lbl"><span>To</span>${S.wallet ? html`<button type="button" id="ac-me">My wallet</button>` : ''}</div>
-      <div class="amt text"><input id="ac-to" placeholder="0x…" autocomplete="off" spellcheck="false" aria-label="Recipient address"></div>
+      <div class="amt text"><input id="ac-to" placeholder="0x…" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Recipient address"></div>
       ${tac ? html`<div class="lbl"><span>Amount</span><button type="button" id="ac-max">Max</button></div>
         <div class="amt"><input id="ac-mv" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="TAC"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</span></div>`
         : amountField(html`<button type="button" id="ac-max">Max</button>`)}
@@ -2722,7 +2725,7 @@ function v1Send(el, status) {
   const held = spendable('eth');
   mount(el, html`
     <div class="lbl"><span>To</span></div>
-    <div class="amt text"><input id="s-to" placeholder="tacit1… or name.wei" autocomplete="off" spellcheck="false" aria-label="Recipient"></div>
+    <div class="amt text"><input id="s-to" placeholder="tacit1… or name.wei" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Recipient"></div>
     <div class="lbl"><span>Amount</span><button type="button" id="s-max">Private ${fmt(held, 8, 6)} tETH${inUse('eth', 8, 6, 'tETH')}</button></div>
     <div class="amt"><input id="s-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="tETH to send"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-teth"/></svg>tETH</span></div>
     <div class="rcpt" id="s-rcpt" hidden></div>
@@ -2791,7 +2794,7 @@ function v1Out(el, status) {
   const held = spendable('eth');
   mount(el, html`
     <div class="lbl"><span>To</span><span><button type="button" id="o-dev">On this device</button> · <button type="button" id="o-me">${mine()}</button></span></div>
-    <div class="amt text"><input id="o-to" placeholder="0x… (a fresh address keeps it unlinked)" autocomplete="off" spellcheck="false" aria-label="Recipient address"></div>
+    <div class="amt text"><input id="o-to" placeholder="0x… (a fresh address keeps it unlinked)" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Recipient address"></div>
     <div class="lbl"><span>Amount</span><button type="button" id="o-max">Private ${fmt(held, 8, 6)} tETH${inUse('eth', 8, 6, 'tETH')}</button></div>
     <div class="amt"><input id="o-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="tETH to withdraw"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-teth"/></svg>tETH</span></div>
     <div class="rcpt" id="o-rcpt" hidden></div>
@@ -3074,7 +3077,7 @@ function renderDevice(el) {
   if (DEV.mode === 'deposit') {
     mount(f, html`${amountField('d-amt', 'Amount', html`<button type="button" id="d-max">${payName()} <span id="d-wb"><span class="sk" style="--w:5ch"></span></span> ETH</button>`)}
       <div class="lbl"><span>To</span><span>yourself, unless you name someone</span></div>
-      <div class="amt text"><input id="d-dto" placeholder="Yourself · or bp1…, tacit1… or name.wei" autocomplete="off" spellcheck="false" aria-label="Deposit to"></div>
+      <div class="amt text"><input id="d-dto" placeholder="Yourself · or bp1…, tacit1… or name.wei" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Deposit to"></div>
       <div class="rcpt" id="d-rcpt" hidden></div>
       <button class="btn" type="button" id="d-go" disabled>Deposit privately</button>
       <p class="note">Proved on this device, then sent from ${your()}: you pay the gas, no fee. The deposit shows on chain; whose private balance it lands in does not.</p>
@@ -3131,7 +3134,7 @@ function renderDevice(el) {
     const rsv = { raw: '', r: null };
     const resolve = devResolve;
     mount(f, html`<div class="lbl"><span>To</span></div>
-      <div class="amt text"><input id="d-to" placeholder="bp1…, tacit1…, name.wei or 0x…" autocomplete="off" spellcheck="false" aria-label="Recipient"></div>
+      <div class="amt text"><input id="d-to" placeholder="bp1…, tacit1…, name.wei or 0x…" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Recipient"></div>
       <p class="note" id="d-to-note"></p>
       ${amountField('d-amt', 'Amount', maxPriv)}
       <div class="rcpt" id="d-rcpt" hidden></div>
@@ -3188,7 +3191,7 @@ function renderDevice(el) {
     const dest = c.chainId === 1 ? DEV.dest : 'addr', l2 = DEVICE_CHAINS.find((x) => String(x.chainId) === dest);
     mount(f, html`${c.chainId === 1 ? segSub('dest', dest, [['addr', 'Address'], ['v1', 'Tacit pool'], ...DEVICE_CHAINS.slice(1).map((x) => [String(x.chainId), x.name])]) : ''}
       ${dest === 'addr' ? html`<div class="lbl"><span>To</span><button type="button" id="d-me">${mine()}</button></div>
-        <div class="amt text"><input id="d-to" placeholder="0x… (a fresh address keeps it unlinked)" autocomplete="off" spellcheck="false" aria-label="Recipient address"></div>` : ''}
+        <div class="amt text"><input id="d-to" placeholder="0x… (a fresh address keeps it unlinked)" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Recipient address"></div>` : ''}
       ${amountField('d-amt', 'Amount', maxPriv)}
       <div class="rcpt" id="d-rcpt" hidden></div>
       <button class="btn" type="button" id="d-go" disabled>${dest === 'addr' ? 'Withdraw' : dest === 'v1' ? 'Move to the Tacit pool' : `Move to ${l2.name}`}</button>
@@ -3407,7 +3410,7 @@ function btcSendForm(f, status, b) {
   mount(f, html`
     ${held.length ? segSub('btca', BTC.asset, [['btc', 'BTC'], ...held.map((a) => [a.id, a.ticker])]) : ''}
     <div class="lbl"><span>To</span></div>
-    <div class="amt text"><input id="bt-to" placeholder="${token ? 'tacit1…, tcs1… or a name' : 'tacit1…, sp1…, bc1… or a name'}" autocomplete="off" spellcheck="false" aria-label="Recipient"></div>
+    <div class="amt text"><input id="bt-to" placeholder="${token ? 'tacit1…, tcs1… or a name' : 'tacit1…, sp1…, bc1… or a name'}" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Recipient"></div>
     <div class="lbl"><span>Amount</span>${token ? html`<button type="button" id="bt-max">${fmt(token.balance, dec, 8)} ${unit}</button>` : b ? html`<span>${fmt(b.sats + b.silent, 8, 8)} BTC</span>` : ''}</div>
     <div class="amt"><input id="bt-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="Amount"><span class="u">${token ? unit : html`<svg class="tk sm" aria-hidden="true"><use href="#tk-btc"/></svg>BTC`}</span></div>
     <div class="rcpt" id="bt-rcpt" hidden></div>
@@ -3468,7 +3471,7 @@ function btcReceive(f, status, b) {
     ${row('Silent payments', BTC.sp, 'From any wallet that sends silent payments (BIP‑352).')}
     ${row('Bitcoin address', b?.addr, 'From any wallet or exchange. What arrives here is public.')}
     <div class="lbl sep"><span>Got a payment link?</span></div>
-    <div class="amt text"><input id="bt-chk" placeholder="Payment link or transaction id" autocomplete="off" spellcheck="false" aria-label="Payment link"><button class="link" type="button" id="bt-chk-go">Check</button></div>
+    <div class="amt text"><input id="bt-chk" placeholder="Payment link or transaction id" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Payment link"><button class="link" type="button" id="bt-chk-go">Check</button></div>
     <p class="note">Silent and shielded payments are found from the link their sender shares. Shielded TAC is also found by a scan. <button class="link" type="button" id="bt-scan">Scan now</button></p>`);
   $$('[data-copy]', f).forEach((x) => x.onclick = () => copy(x.dataset.copy));
   const pub = S.key.pubHex;
@@ -3711,7 +3714,7 @@ function renderAirdrop(el) {
       <div class="lbl" style="justify-content:center"><button type="button" id="air-to-show">Send it to another address</button></div>
       <div id="air-to" hidden>
         ${S.key ? html`<div class="lbl"><span>To</span><button type="button" id="air-to-me">My Tacit account</button></div>` : ''}
-        <div class="amt text"><input id="air-to-addr" placeholder="0x… recipient" autocomplete="off" spellcheck="false" aria-label="Recipient address"></div>
+        <div class="amt text"><input id="air-to-addr" placeholder="0x… recipient" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Recipient address"></div>
         <button class="btn ghost" type="button" id="air-claim-to">Claim to this address</button>
       </div>` : ''}
     ${s.claimed ? html`<div class="row2"><button class="btn ghost" type="button" id="air-watch">Add TAC to wallet</button><button class="btn ghost" type="button" id="air-farm">Farm it</button></div>` : ''}
@@ -4013,7 +4016,7 @@ async function weiPrice(label) {
 function weiForm(f, status) {
   if (!S.key) { mount(f, html`<p class="note">Open your Tacit wallet to register a name people can pay privately.</p>`); return; }
   mount(f, html`
-    <div class="amt text"><input id="wei-name" placeholder="yourname" autocomplete="off" spellcheck="false" aria-label="Name" value="${WEI.label}"><span class="u">.wei</span></div>
+    <div class="amt text"><input id="wei-name" placeholder="yourname" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Name" value="${WEI.label}"><span class="u">.wei</span></div>
     <div class="rcpt" id="wei-rcpt" hidden></div>
     <button class="btn" type="button" id="wei-go" disabled>Register</button>
     <p class="note">The name, the account that registers it and the Tacit address it publishes are all public, and linked to each other.</p>`);
@@ -5264,7 +5267,7 @@ function assetSendForm(el, status, { prefix, sheet, statusId, sources, pick }) {
   mount(el, html`
     <div class="lbl"><span>Send</span>${sources.length > 1 ? html`<span>${sources.map((x, i) => html`${i ? ' · ' : ''}<button type="button" data-${prefix}="${x.id}" aria-pressed="${x.id === src.id}">${x.unit}</button>`)}</span>` : ''}</div>
     <div class="lbl"><span>To</span>${!src.pub && S.address ? html`<button type="button" id="${prefix}-me">${mine()}, as ${a.out}</button>` : ''}</div>
-    <div class="amt text"><input id="${prefix}-to" placeholder="${src.pub ? '0x…' : 'tacit1…, name.wei or 0x…'}" autocomplete="off" spellcheck="false" aria-label="Recipient"></div>
+    <div class="amt text"><input id="${prefix}-to" placeholder="${src.pub ? '0x…' : 'tacit1…, name.wei or 0x…'}" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Recipient"></div>
     <div class="lbl"><span>Amount</span><button type="button" id="${prefix}-max">${src.pub ? `Public in ${your()}` : 'Private'} ${show(src.held)} ${src.unit}${src.pub ? '' : inUse(k, 8, a.dp, src.unit)}</button></div>
     <div class="amt"><input id="${prefix}-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="${src.unit} to send"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-${src.pub ? a.pubIcon : a.icon}"/></svg>${src.unit}</span></div>
     <div class="rcpt" id="${prefix}-rcpt" hidden></div>
