@@ -3,11 +3,12 @@
 //          history rebuilt from the key alone matches each chain's balance, forms refuse what they should, a payment
 //          link fills Send, and a sample payment is proved and verified in the page's worker
 //   relay  (opt-in, spends funds) KEY pays KEY2 privately on mainnet through the relay; KEY2's key alone finds it
-//   fork   an anvil fork of Base: deposit from a wallet, send privately and withdraw part, all proved in the page and
+//   fork   an anvil fork of Base (CHAIN=ethereum or robinhood for those): deposit from a wallet, send privately and withdraw part, all proved in the page and
 //          sent by the wallet (no relay), then the history rebuilt from chain logs names all three
 //   hub    tacit.finance/pay read-only against mainnet with KEY: links made for the ETH page before it moved open on
 //          /pay/eth/; BTC and TAC balances read; each kind of address routes as it should, a tacit1 from before the pool
 //          lane included (a silent payment in BTC, a shielded transfer in TAC); the receive addresses
+//   btcsend no network: a silent payment through /pay's Send form to a tacit1 (both forms), captured, found by its recipient
 //   saved  no network: the key saved in this browser, behind a passphrase, opens on /pay/ and /pay/eth/ through the passphrase
 //          dialog (Escape closes it quietly, a wrong passphrase asks again)
 //   anyone the same fork with a real keeper relaying: pay an 0x address now, or hold it until it blends in (after a
@@ -309,10 +310,104 @@ try {
     }
   }
 
+  if (ONLY.has('btcsend')) {
+    // A Bitcoin payment through /pay's own Send form, from a pasted key to another key's tacit1 address, both address forms;
+    // the explorer is stubbed and the broadcast captured, never sent. The recipient's key alone then finds the payment in
+    // that transaction, and the key it derives for it is the output's, so it can spend it.
+    console.log('btcsend (/pay: a silent payment to a tacit1, captured, found by its recipient)');
+    const { createHash, randomBytes } = await import('node:crypto');
+    const h = (b) => Buffer.from(b).toString('hex'), sha = (b) => createHash('sha256').update(b).digest();
+    const parseTx = (raw) => {
+      const b = Buffer.from(raw, 'hex'); let o = 0;
+      const u8 = () => b[o++], u32 = () => { const v = b.readUInt32LE(o); o += 4; return v; };
+      const vi = () => { const f = u8(); if (f < 0xfd) return f; if (f === 0xfd) { const v = b.readUInt16LE(o); o += 2; return v; } return u32(); };
+      const bytes = (n) => { const x = b.subarray(o, o + n); o += n; return x; };
+      const version = u32(), segwit = b[o] === 0 && b[o + 1] === 1; if (segwit) o += 2;
+      const vin = []; for (let i = vi(); i > 0; i--) vin.push({ txid: h(Buffer.from(bytes(32)).reverse()), vout: u32(), scriptsig: h(bytes(vi())), sequence: u32() });
+      const vout = []; for (let i = vi(); i > 0; i--) { const value = Number(b.readBigUInt64LE(o)); o += 8; vout.push({ value, scriptpubkey: h(bytes(vi())) }); }
+      if (segwit) for (const x of vin) { x.witness = []; for (let i = vi(); i > 0; i--) x.witness.push(h(bytes(vi()))); }
+      const locktime = u32(), n = (k) => Buffer.from([k]), le = (v, w) => { const x = Buffer.alloc(w); w === 8 ? x.writeBigUInt64LE(BigInt(v)) : x.writeUInt32LE(v); return x; };
+      const plain = Buffer.concat([le(version, 4), n(vin.length), ...vin.flatMap((x) => [Buffer.from(x.txid, 'hex').reverse(), le(x.vout, 4), n(x.scriptsig.length / 2), Buffer.from(x.scriptsig, 'hex'), le(x.sequence, 4)]),
+        n(vout.length), ...vout.flatMap((y) => [le(y.value, 8), n(y.scriptpubkey.length / 2), Buffer.from(y.scriptpubkey, 'hex')]), le(locktime, 4)]);
+      return { raw, txid: h(sha(sha(plain)).reverse()), version, locktime, vin, vout };
+    };
+    const keyOf = () => { let k; do { k = randomBytes(32); } while (k[0] === 0 || k[0] > 0xf0); return h(k); };
+    const FUND = '11'.repeat(32), sent = [];
+    let scriptA = null, current = null;
+    const json = (r, v) => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(v) });
+    const now = () => Math.floor(Date.now() / 1000);
+    const explorer = async (r) => {
+      const u = new URL(r.request().url()), path = u.pathname.replace(/^\/(signet\/)?api/, '');
+      if (r.request().method() === 'POST' && /\/tx$/.test(path)) { const t = parseTx(r.request().postData().trim()); sent.push(t); return r.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: t.txid }); }
+      if (/\/address\/[^/]+\/utxo$/.test(path)) return json(r, [{ txid: FUND, vout: 0, value: 200000, status: { confirmed: true, block_height: 900000, block_time: now() - 3600 } }]);
+      if (/\/(address|scripthash)\/[^/]+\/txs/.test(path)) return json(r, []);
+      if (/fees\/recommended/.test(path)) return json(r, { fastestFee: 3, halfHourFee: 2, hourFee: 2, economyFee: 1, minimumFee: 1 });
+      if (/fee-estimates/.test(path)) return json(r, { 1: 3, 3: 2, 6: 2, 144: 1 });
+      if (/blocks\/tip\/height/.test(path)) return r.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: '900010' });
+      if (path === `/tx/${FUND}`) return json(r, { txid: FUND, version: 2, locktime: 0, status: { confirmed: true, block_height: 900000, block_time: now() - 3600 },
+        vin: [{ txid: '22'.repeat(32), vout: 0, is_coinbase: false, scriptsig: '', witness: [], sequence: 4294967295, prevout: { scriptpubkey: '0014' + '33'.repeat(20), value: 250000 } }],
+        vout: [{ scriptpubkey: scriptA, value: 200000 }, { scriptpubkey: '0014' + '33'.repeat(20), value: 49000 }] });
+      if (path === `/tx/${FUND}/outspends`) return json(r, [{ spent: false }, { spent: false }]);
+      const m = path.match(/\/tx\/([0-9a-f]{64})(\/.*)?$/);
+      if (m && current && m[1] === current.txid) {
+        if (m[2] === '/hex') return r.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: current.raw });
+        if (m[2]?.startsWith('/outspend')) return json(r, { spent: false });
+        return json(r, { txid: current.txid, version: current.version, locktime: current.locktime, status: { confirmed: true, block_height: 900011, block_time: now() },
+          vin: current.vin.map((x) => ({ ...x, is_coinbase: false, prevout: x.txid === FUND ? { scriptpubkey: scriptA, value: 200000 } : null })), vout: current.vout });
+      }
+      return r.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: 'not found' });
+    };
+    const route = async (c) => {
+      await c.route(/mempool\.space|blockstream\.info|mempool\.emzy\.de|mempool\.bitaroo\.net/, explorer);
+      await c.route(/api\.tacit\.finance|onrender\.com|workers\.dev/, (r) => json(r, []));
+    };
+    for (const form of ['unified', 'legacy']) {
+      const { ctx, p, errors } = await page(browser, { route });
+      sent.length = 0; current = null;
+      const A = keyOf(), B = keyOf();
+      await p.goto(new URL(URL_).origin + '/pay/');
+      const pubA = await p.evaluate(async (k) => { const d = await import('/vendor/tacit-deps.min.js'); return d.bytesToHex(d.secp.getPublicKey(d.hexToBytes(k), true)); }, A);
+      scriptA = '0014' + h(createHash('ripemd160').update(sha(Buffer.from(pubA, 'hex'))).digest());
+      // B's address as its own page shows it, or the form from before the pool lane.
+      const to = await p.evaluate(async ({ B, form }) => {
+        if (form === 'unified') return (await import('/tacit-unified.js')).unifiedAddress(B).address;
+        const d = await import('/vendor/tacit-deps.min.js'), ta = await import('/tacit-address.js'), bip = await import('/bip352.js');
+        const spend = d.hexToBytes(B), pub = d.secp.getPublicKey(spend, true), scan = BigInt('0x' + d.bytesToHex(bip.bip352TaggedHash('BIP0352/ScanKey', spend))) % d.secp.CURVE.n;
+        return ta.makeTacitAddress({ secp: d.secp }).encodeTacitAddress({ network: 'mainnet', btcSpendPub: pub, btcScanPub: d.secp.getPublicKey(d.hexToBytes(scan.toString(16).padStart(64, '0')), true), evmOwnerPub: pub });
+      }, { B, form });
+      await openKey(p, A);
+      await p.waitForFunction(() => /0\.002/.test(document.querySelector('#bal .v')?.textContent || ''), null, { timeout: 120e3 }).catch(() => {});
+      await p.fill('#f-to', to); await p.fill('#f-amt', '0.0005');
+      await p.waitForFunction(() => /Silent payment/.test(document.querySelector('#f-rcpt')?.textContent || '') && !document.querySelector('#f-go').disabled, null, { timeout: 60e3 }).catch(() => {});
+      ok(/Silent payment/.test(await p.textContent('#f-rcpt')) && /ID/.test(await p.textContent('#f-rcpt')), `${form} tacit1 (${to.length} chars): routed as a silent payment, with its ID`);
+      await p.click('#f-go');
+      await p.waitForFunction(() => /Sent 0\.0005 BTC/.test(document.querySelector('#status')?.textContent || '') || document.querySelector('#status .err'), null, { timeout: 120e3 }).catch(() => {});
+      const tx = sent.at(-1);
+      ok(/Sent 0\.0005 BTC/.test(await p.textContent('#status')) && tx?.vout.some((y) => y.value === 50000 && /^5120/.test(y.scriptpubkey)), `${form}: the page signed it, to a fresh taproot output (captured, not broadcast)`);
+      current = tx;
+      const found = await p.evaluate(async ({ B, txid }) => {
+        const t = await import('/tacit.js'), d = await import('/vendor/tacit-deps.min.js');
+        t.wallet.priv = d.hexToBytes(B); t.wallet.pub = d.secp.getPublicKey(t.wallet.priv, true);
+        try { t.invalidateHoldingsCache?.({ fromPoll: true }); } catch {}
+        return (await t.discoverSilentPaymentFromTxid(txid)).map((g) => ({ vout: g.vout, sats: g.sats, xonly: d.bytesToHex(d.secp.getPublicKey(t.spCreditSpendingKey({ tweakHex: g.tweakHex, keyVersion: g.keyVersion }, t.wallet.priv), true).slice(1)) }));
+      }, { B, txid: tx?.txid });
+      ok(found.length === 1 && found[0].sats === 50000 && tx.vout[found[0].vout].scriptpubkey === '5120' + found[0].xonly, `${form}: the recipient's key alone finds it, and derives the key that spends it`);
+      ok(!errors.length, `${form}: no page errors ${errors.join(' | ').slice(0, 160)}`);
+      await ctx.close();
+    }
+  }
+
   if (ONLY.has('fork')) {
-    console.log('fork (Base)');
+    // CHAIN=ethereum|base|robinhood picks the chain forked (Base by default); every host the page reads that chain from
+    // is routed to the fork.
+    const F = {
+      ethereum: { id: 1, name: 'Ethereum', key: 'ethereum', other: 8453, row: 1, rpc: process.env.ETH_RPC || 'https://mainnet.gateway.tenderly.co', url: 'https://ethereum-rpc.publicnode.com', hosts: /ethereum-rpc\.publicnode\.com|mainnet\.gateway\.tenderly\.co|eth\.drpc\.org|rpc\.flashbots\.net|1rpc\.io/ },
+      base: { id: 8453, name: 'Base', key: 'base', other: 1, row: 2, rpc: process.env.BASE_RPC || 'https://mainnet.base.org', url: 'https://mainnet.base.org', hosts: /mainnet\.base\.org|base\.drpc\.org/ },
+      robinhood: { id: 4663, name: 'Robinhood Chain', key: 'robinhood', other: 8453, row: 3, rpc: process.env.RH_RPC || 'https://rpc.mainnet.chain.robinhood.com', url: 'https://rpc.mainnet.chain.robinhood.com', hosts: /rpc\.mainnet\.chain\.robinhood\.com|robinhood\.drpc\.org/ },
+    }[process.env.CHAIN || 'base'];
+    console.log(`fork (${F.name})`);
     const PORT = WEB + 1, ANVIL = `http://127.0.0.1:${PORT}`;
-    const anvil = spawn('anvil', ['--port', String(PORT), '--fork-url', process.env.BASE_RPC || 'https://mainnet.base.org', '--chain-id', '8453', '--silent', '--no-rate-limit'], { stdio: 'ignore' });
+    const anvil = spawn('anvil', ['--port', String(PORT), '--fork-url', F.rpc, '--chain-id', String(F.id), '--silent', '--no-rate-limit'], { stdio: 'ignore' });
     process.on('exit', () => anvil.kill('SIGKILL'));
     const rpc = async (method, params = []) => { const r = await (await fetch(ANVIL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })).json(); if (r.error) throw new Error(r.error.message); return r.result; };
     for (let i = 0; ; i++) { try { await rpc('eth_chainId'); break; } catch { if (i > 120) throw new Error('anvil did not start'); await sleep(500); } }
@@ -322,7 +417,7 @@ try {
     await rpc('anvil_setBalance', [ACCT, '0x' + (10n ** 18n).toString(16)]);
     await rpc('anvil_autoImpersonateAccount', [true]);
     const route = async (ctx) => {
-      await ctx.route(/mainnet\.base\.org|base\.drpc\.org/, async (r) => {
+      await ctx.route(F.hosts, async (r) => {
         const body = r.request().postData();
         let text;
         try { text = await (await fetch(ANVIL, { method: 'POST', headers: { 'content-type': 'application/json' }, body })).text(); }
@@ -330,10 +425,17 @@ try {
         await r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: text }).catch(() => {});
       });
       await ctx.route(/tacit-evm-pool-keeper/, (r) => r.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"error":"stubbed"}' }));
+      // The points service, stubbed: it lists what PTSAPI holds, as the program would once it counts a deposit.
+      await ctx.route(/api\.tacit\.finance\/(points|claim)\//, (r) => {
+        const claim = /\/claim\//.test(r.request().url());
+        const body = claim ? {} : { address: ACCT, points: PTSAPI.deposits.reduce((a, d) => a + d.points, 0), deposit_count: PTSAPI.deposits.length, amount_wei: '0', today: { points: PTSAPI.deposits.reduce((a, d) => a + d.points, 0), totalPoints: 50000, dayBudgetWei: '1111111111111111111112' }, deposits: PTSAPI.deposits };
+        return r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
+      });
     };
+    const PTSAPI = { deposits: [] };
     const init = `(() => {
-      const ANVIL = 'https://mainnet.base.org', ACCT = ${JSON.stringify(ACCT)};   // routed to the fork; the page's CSP allows only its own hosts
-      let chain = '0x2105';
+      const ANVIL = ${JSON.stringify(F.url)}, ACCT = ${JSON.stringify(ACCT)};   // routed to the fork; the page's CSP allows only its own hosts
+      let chain = ${JSON.stringify('0x' + F.id.toString(16))};
       const call = async (method, params) => { const r = await (await fetch(ANVIL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })).json(); if (r.error) throw Object.assign(new Error(r.error.message), r.error); return r.result; };
       window.ethereum = { isMetaMask: true, on() {}, removeListener() {}, request: async ({ method, params }) => {
         if (method === 'eth_requestAccounts' || method === 'eth_accounts') return [ACCT];
@@ -342,7 +444,7 @@ try {
         if (method === 'eth_sendTransaction') { const h = await call('eth_sendTransaction', [{ ...params[0], from: ACCT }]); return h; }
         return call(method, params || []);
       } };
-      localStorage.setItem('tacit-pay-chain-v1', '8453');
+      localStorage.setItem('tacit-pay-chain-v1', ${JSON.stringify(String(F.id))});
       localStorage.setItem('tacit-pay-route-v1', JSON.stringify({ send: 'wallet', withdraw: 'wallet' }));
     })();`;
     const { ctx, p, errors } = await page(browser, { init, route });
@@ -360,12 +462,22 @@ try {
     await p.evaluate(() => { const d = document.querySelector('details.adv'); d.open = true; d.dispatchEvent(new Event('toggle')); });
     await p.click('#rc-chain');
     await p.evaluate(() => document.querySelector('#wallet-label').click()); await p.click('#w-conn'); await p.click('#sheet-wallet [data-close]');
+    // Points: allowed once for this tab, then they follow the wallet's deposit: counting at once, credited when counted.
+    await p.click('#pts-show');
+    await p.waitForFunction(() => /your points/.test(document.querySelector('#points-body').textContent), null, { timeout: 60e3 }).catch(() => {});
     await p.click('#tabs [data-tab="deposit"]');
     await p.fill('#f-damt', '0.01');
     const t0 = Date.now();
     await p.click('#f-go');
     await p.waitForFunction(() => /Deposited/.test(document.querySelector('#status').textContent) || document.querySelector('#status .err'), null, { timeout: 600e3 });
     ok(/Deposited/.test(await p.textContent('#status')), `deposit from the wallet, proved here (${Math.round((Date.now() - t0) / 1000)} s): ${(await p.textContent('#status')).trim()}`);
+    const counting = (await p.textContent('#points-body')).replace(/\s+/g, ' ');
+    ok(/0\.01 ETH on .*≈ [\d,]+ points · counting…/.test(counting), `points: the deposit shows at once, counting (${(counting.match(/0\.01 ETH on[^·]*· counting…/) || [''])[0]})`);
+    PTSAPI.deposits.push({ tx_hash: '0x' + 'ab'.repeat(32), block_number: 1, block_time: Math.floor(Date.now() / 1000), amount_wei: '10000000000000000', points: 41234.5, activity: 'evmpooldeposit', chain_id: F.id, pp_boosted: false, tac_boost: 1 });
+    await p.waitForFunction(() => /\+41,235 points/.test(document.querySelector('#points-body').textContent), null, { timeout: 60e3 }).catch(() => {});
+    const counted = (await p.textContent('#points-body')).replace(/\s+/g, ' ');
+    ok(/\+41,235 points/.test(counted) && /41,235/.test(counted.match(/[\d,]+ ?your points/)?.[0] || ''), `points: once the program counts it, the card shows what it earned and the total (${(counted.match(/\+[\d,]+ points/) || [''])[0]}, ${(counted.match(/[\d,]+ ?your points/) || [''])[0]})`);
+    ok(/shared out in \d/.test(counted), `points: today's share counts down to midnight UTC (${(counted.match(/shared out in [^;]*/) || [''])[0]})`);
     await p.waitForFunction(() => /0\.01/.test(document.querySelector('#bal .v').textContent), null, { timeout: 120e3 }).catch(() => {});
     ok(/0\.01/.test(await p.textContent('#bal .v')), `private balance: ${await p.textContent('#bal .v')}`);
     await p.click('#tabs [data-tab="send"]');
@@ -399,8 +511,8 @@ try {
     console.log('    ' + rows.join('\n    '));
     ok(rows.some((r) => /^Shielded in ?\+0\.01 ETH/.test(r)) && rows.some((r) => /^Sent privately ?−0\.004 ETH.*kept 0\.006/.test(r)) && rows.some((r) => /^Withdrew to 0x3333…3333 ?−0\.002 ETH.*kept 0\.004/.test(r)), 'rebuilt history names the deposit, the private payment and the withdrawal');
     // The balance is read again beside the history; the two agree once both are in.
-    await p.waitForFunction(() => /matches/.test(document.querySelector('.chainsum li:nth-child(2)')?.textContent || ''), null, { timeout: 180e3 }).catch(() => {});
-    ok(/matches/.test(await p.$eval('.chainsum li:nth-child(2)', (e) => e.textContent)), 'rebuilt balance matches');
+    await p.waitForFunction((n) => /matches/.test(document.querySelector(`.chainsum li:nth-child(${n})`)?.textContent || ''), F.row, { timeout: 180e3 }).catch(() => {});
+    ok(/matches/.test(await p.$eval(`.chainsum li:nth-child(${F.row})`, (e) => e.textContent)), 'rebuilt balance matches');
     // The sender proves the private payment; anyone with the recipient's address can check it, and only against that address.
     await p.click('[data-proof]');
     const proofLink = await p.evaluate(() => navigator.clipboard.readText());
@@ -427,12 +539,12 @@ try {
     await p.click('#req-wallet');
     await p.waitForFunction(() => /Moving into their private balance|now in their/.test(document.querySelector('#req').textContent) || document.querySelector('#req .err'), null, { timeout: 180e3 });
     ok(/Paid 0\.003 ETH/.test(await p.textContent('#req')), `paid from a wallet, no Tacit key: ${(await p.textContent('#req')).replace(/\s+/g, ' ').trim()}`);
-    await p.click('#chains [data-chain="1"]'); await p.click('#chains [data-chain="8453"]');
+    await p.click(`#chains [data-chain="${F.other}"]`); await p.click(`#chains [data-chain="${F.id}"]`);
     ok(!(await p.$('#req-wallet')) && /Paid 0\.003 ETH/.test(await p.textContent('#req')), 'a paid request stays paid across redraws (no second pay button)');
     await p.click('#req-x');
     // A request with no one-time address (a link to a pool or Tacit address, or a name), paid with no Tacit key at all:
     // proved on the page with a throwaway key, straight into their private balance.
-    await p.goto(new URL(URL_).origin + `/pay/#pay=${otherBp}&amount=0.0015&chain=base`);
+    await p.goto(new URL(URL_).origin + `/pay/#pay=${otherBp}&amount=0.0015&chain=${F.key}`);
     await p.waitForSelector('#req-wallet');
     await p.click('#req-wallet');
     await p.waitForFunction(() => /now in their private balance/.test(document.querySelector('#req').textContent) || document.querySelector('#req .err'), null, { timeout: 900e3 });
