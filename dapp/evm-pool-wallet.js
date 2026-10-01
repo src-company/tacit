@@ -221,15 +221,15 @@ const errorText = (e) => (e.all || [e]).map((x) => `${x.message} ${JSON.stringif
 
 // What to do after an eth_getLogs over `step` blocks failed on every node, read node by node, since one node can refuse
 // for its range limit while another is only rate-limited: → { step } a narrower window (the largest limit a node names
-// below the current one, else a quarter for a node that caps its results without naming a size), { busy } wait and ask
-// again, or null when it is neither.
+// below the current one; else a quarter when any answer speaks of ranges, sizes or limits, as an upstream timeout on a
+// wide range often does), { busy } wait and ask again when a node is rate-limited, or null when it is none of these.
 export function logFailure(e, step) {
   const each = (e.all || [e]).map((x) => `${x.message} ${JSON.stringify(x.rpc?.data ?? x.data ?? '')}`);
   const sizes = (t) => [...t.matchAll(/(\d[\d,]*)\s*(?:blocks?|range)\b/gi)].map((x) => Number(x[1].replace(/,/g, ''))).filter((n) => n > 0);
   const below = each.flatMap(sizes).filter((n) => n < step);
   if (below.length) return { step: Math.max(...below) };
-  if (step > 1 && each.some((t) => /too many (?:results|logs|blocks)|more than [\d,]+ (?:results|logs)|too large|exceed|response size/i.test(t) && !sizes(t).length)) return { step: Math.max(1, Math.floor(step / 4)) };
   if (each.some((t) => /rate.?limit|too many requests|\b429\b|over rate|capacity/i.test(t))) return { busy: true };
+  if (step > 1 && each.some((t) => /range|limit|too many|too large|exceed|response size|10000/i.test(t))) return { step: Math.max(1, Math.floor(step / 4)) };
   return null;
 }
 

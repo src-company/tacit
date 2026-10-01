@@ -89,6 +89,9 @@ await check('a log query failure is read node by node: a named limit narrows, a 
   assert.deepEqual(logFailure(fail('You reached Public endpoint rate limit, please upgrade to paid plan'), 2000), { busy: true });
   assert.deepEqual(logFailure(fail('query returned more than 10000 results'), 2000), { step: 500 });
   assert.equal(logFailure(fail('execution reverted'), 2000), null);
+  // A node that refuses every historical range beside one that failed for some other reason: narrow, as before.
+  assert.deepEqual(logFailure(fail('upstream request timed out', drpcFree), 5000), { step: 1250 });
+  assert.deepEqual(logFailure(fail('Bad Gateway', drpcFree), 5000), { step: 1250 });
 });
 
 await check('a scan through a rate-limited node beside one that refuses every range keeps its window', async () => {
