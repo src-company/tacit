@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-S/S84/mZj7cDf7xEmJtcRDOmRc/ziruQBa5WHkCCcr8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-I3GjhhJynoGVSq01GTwJWtnt03JJNQqsJzXuoxlPfbU=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -1643,11 +1643,17 @@ document.addEventListener('click', (e) => {
   for (const x of $$('[data-ptsinfo]')) x.setAttribute('aria-expanded', String(PTSINFO));
   for (const n of $$('[data-ptsnote]')) n.hidden = !PTSINFO;
 });
-function pointsRow(a) {
+// What a deposit of `a` wei is likely to earn now: 1,000 points per ETH, the early bonus, the TAC holder tier held a day
+// and the Privacy Pools boost. → { pts, known (the pools' deposit counts are in), why }
+function pointsEst(a) {
   const known = CHAINS.every((c) => TALLY[c.chainId]), n = CHAINS.reduce((s, c) => s + (TALLY[c.chainId]?.deposits || 0), 0);
   const early = known ? 1 + 4 / (1 + n / 200) : 1, tier = holderBoost(), hold = tier.held, pp = PTS.v?.pp ? 1.2 : 1;
   const why = [known ? `×${early.toFixed(1)} early` : '', hold > 1 ? `×${hold} TAC holder` : '', tier.now > hold ? `×${tier.now} once your TAC is held a day` : '', pp > 1 ? '×1.2 Privacy Pools' : ''].filter(Boolean).join(' · ');
-  return html`<div class="kv"><span class="pts-line"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC points <button class="link" type="button" data-ptsinfo aria-expanded="${PTSINFO}">how?</button></span><b class="num">${known ? '≈ ' : 'at least '}${ptsFmt((Number(a) / 1e18) * 1000 * early * hold * pp)}${why ? html` <small class="mute">${why}</small>` : ''}</b></div>
+  return { pts: (Number(a) / 1e18) * 1000 * early * hold * pp, known, why };
+}
+function pointsRow(a) {
+  const e = pointsEst(a);
+  return html`<div class="kv"><span class="pts-line"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC points <button class="link" type="button" data-ptsinfo aria-expanded="${PTSINFO}">how?</button></span><b class="num">${e.known ? '≈ ' : 'at least '}${ptsFmt(e.pts)}${e.why ? html` <small class="mute">${e.why}</small>` : ''}</b></div>
     <p class="note mute" data-ptsnote ${PTSINFO ? '' : 'hidden'}>${PTS_WHY}</p>`;
 }
 const clearDraft = (...ids) => { for (const id of ids) { delete DRAFT[id]; const i = $('#' + id); if (i) i.value = ''; } FORM.check?.(); };
@@ -1829,10 +1835,12 @@ function formDeposit(f) {
         await signerFor(c).ready();
         if (to) {
           const h = await W2.depositTo({ to, amount: a, onStep: step });
+          ptsExpect(c, a);
           clearDraft('f-damt', 'f-dto');
           return done(c, h, `Deposited ${fmt(a, 18, 6)} ETH into their private balance.`);
         }
         const h = await W2.deposit({ amount: a, onStep: step });
+        ptsExpect(c, a);
         justDid(c, { kind: 'dep', v: a, from: lc(S.wallet), tx: h });
         clearDraft('f-damt');
         done(c, h, `Deposited ${fmt(a, 18, 6)} ETH.`);
@@ -2030,6 +2038,7 @@ function formSend(f) {
         if (deposit) {
           await signerFor(c).ready();
           const h = await W.deposit({ amount: deposit, onStep: step });
+          ptsExpect(c, deposit);
           justDid(c, { kind: 'dep', v: deposit, from: lc(S.wallet), tx: h });
           addDue({ to: raw, amount: a, chain: c.chainId });
           clearDraft('f-amt', 'f-to');
@@ -2132,6 +2141,7 @@ function formLink(f) {
       if (deposit) {
         await signerFor(c).ready();
         const h0 = await W.deposit({ amount: deposit, onStep: step });
+        ptsExpect(c, deposit);
         justDid(c, { kind: 'dep', v: deposit, from: lc(S.wallet), tx: h0 });
       }
       const via = viaFor(tab);
@@ -2483,6 +2493,7 @@ async function shieldTo(r, a, c) {
   Object.assign(r, { err: null, state: 'proving', step: 'Getting ready' }); paintReq();
   const W = S.key ? await walletOn(c) : await payerWallet(c);
   const h = await W.depositTo({ to: res.bp, amount: a, onStep: (m) => { r.step = stepWords(m); paintReq(); } });
+  ptsExpect(c, a);
   Object.assign(r, { paid: { h, c, a }, state: 'in' }); paintReq();
   toast(`Paid ${fmt(a, 18, 6)} ETH.`);
   if (S.key) syncChain(c, true);
@@ -2508,6 +2519,7 @@ async function payFromWallet(btn) {
       r.err = null; r.state = 'confirm'; paintReq();
       const h = await S.provider.request({ method: 'eth_sendTransaction', params: [{ from: S.wallet, to: box, value: '0x' + a.toString(16) }] });
       Object.assign(r, { paid: { h, c, a }, state: 'mining' }); paintReq();
+      ptsExpect(c, a);
       toast(`Paid ${fmt(a, 18, 6)} ETH.`);
       let rc = null;
       for (let i = 0; i < 180 && !rc; i++) { rc = await rpc('eth_getTransactionReceipt', [h]).catch(() => null); if (!rc) await sleep(5_000); }
@@ -2636,7 +2648,32 @@ function qrSvg(text, width = 0) {
 // ── TAC points: public ETH deposited into the pool earns them for the wallet that deposits (or that pays a link or
 // deposit address), up to 1,111 TAC a day split by points; tacit-points is the source (api.tacit.finance) ───────────────
 const API = 'https://api.tacit.finance', DISTRIBUTOR = '0x000000C918e44A3a443937fA7594eA4f7C95D6b9';
-const PTS = { who: null, at: 0, v: null, reading: null, err: null };
+const PTS = { who: null, at: 0, v: null, reading: null, err: null, expect: [] };
+// Looking points up sends the wallet's address to Tacit, so it starts with a press; after it, this tab reads them again on
+// its own: every minute, and every 15 s while an action of this wallet is being counted.
+const PTS_OK = 'tacit-pay-pts-ok-v1';
+const ptsOk = (who) => { try { return !!who && sessionStorage.getItem(PTS_OK) === who; } catch { return false; } };
+const ptsAllow = (who) => { try { sessionStorage.setItem(PTS_OK, who); } catch {} };
+// An action of the connected wallet that earns points (a deposit, to itself or to someone, or a payment to a link):
+// shown at once with what it should earn, then with what the program credits once it counts it.
+function ptsExpect(c, a) {
+  if (!S.wallet || !a) return;
+  const who = lc(S.wallet);
+  PTS.expect = [{ who, c, a: BigInt(a), est: pointsEst(a).pts, at: Date.now(), seen: new Set((PTS.v?.deposits || []).map((d) => d.tx_hash)), pts: null }, ...PTS.expect].slice(0, 6);
+  if (ptsOk(who)) readPoints(true);
+  paintPoints();
+}
+// A deposit the program lists that this wallet did not have when the action was made, on its chain, made after it.
+function ptsMatch(deposits) {
+  for (const e of PTS.expect) {
+    if (e.pts != null || e.who !== PTS.who) continue;
+    const d = deposits.find((x) => Number(x.chain_id) === e.c.chainId && x.activity === 'evmpooldeposit' && !e.seen.has(x.tx_hash) && Number(x.block_time) * 1000 >= e.at - 120e3);
+    if (d) { e.pts = Number(d.points) || 0; e.seen.add(d.tx_hash); }
+  }
+}
+const ptsCounting = () => PTS.expect.some((e) => e.who === PTS.who && e.pts == null && Date.now() - e.at < 30 * 60e3);
+// The day's TAC is shared out at midnight UTC.
+const dayLeft = () => { const s = 86400 - (Math.floor(Date.now() / 1000) % 86400), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return `${h ? `${h} h ` : ''}${m} min`; };
 const TAC_WEI = 10n ** 18n;
 function readPoints(force = false) {
   const who = S.wallet ? lc(S.wallet) : null;
@@ -2658,7 +2695,9 @@ function readPoints(force = false) {
     PTS.v = {
       points: Number(p?.points || 0), pool: pool.reduce((a, d) => a + Number(d.points || 0), 0), share,
       today: t ? BigInt(t.dayBudgetWei) * BigInt(Math.round(share * 1e9)) / 10n ** 9n : 0n, owed, pp: pool.some((d) => d.pp_boosted),
+      deposits: p?.deposits || [],
     };
+    ptsMatch(PTS.v.deposits);
     PTS.at = Date.now();
   })().catch((e) => { if (PTS.who === who) Object.assign(PTS, { v: null, err: e }); }).finally(() => { PTS.reading = null; paintPoints(); });
   return PTS.reading;
@@ -2678,15 +2717,28 @@ function paintPoints() {
         <div><b class="num">${fmt(v.today, 18, 2)}</b><span>TAC today${v.share ? ` · ${v.share * 100 < 0.1 ? 'under 0.1' : (v.share * 100).toFixed(1)}%` : ''}</span></div>
         <div><b class="num">${fmt(v.owed, 18, 2)}</b><span>TAC to claim</span></div>
       </div>
+      <p class="note mute">Today’s TAC is shared out in <span id="pts-clock">${dayLeft()}</span>; your share moves as deposits land. Read ${ago(Math.floor(PTS.at / 1000))}.</p>
       ${v.pp ? html`<p class="note ok">Your Privacy Pools boost is on.</p>` : ''}`
       : PTS.reading ? html`<p class="note"><span class="sk" style="--w:14ch"></span></p>`
       : PTS.err ? html`<p class="note err">Couldn’t read your points. <button class="link" type="button" id="pts-show">Try again.</button></p>`
       : html`<p class="note">Looking up points sends your wallet address to Tacit from this connection, so it is not done automatically. <button class="link" type="button" id="pts-show">Show my points</button></p>`)
     : html`<p class="note">Connect the wallet you deposit from to see its points.</p>`}
+    ${(() => { const mine = PTS.expect.filter((e) => S.wallet && e.who === lc(S.wallet)), ok = ptsOk(lc(S.wallet || ''));
+      return mine.length ? html`<div class="lbl"><span>Your latest</span><span>${ptsCounting() ? 'counting' : 'counted'}</span></div>${mine.map((e) => kvRow(`${fmt(e.a, 18, 6)} ETH on ${e.c.name}`, e.pts != null ? `+${ptsFmt(e.pts)} points` : `≈ ${ptsFmt(e.est)} points · ${ok ? 'counting…' : 'show your points to see it counted'}`, e.pts != null ? 'ok' : ''))}
+        <p class="note mute">The program counts a deposit once it is final on its chain, and a payment to a link once it moves into the payee’s balance.</p>` : ''; })()}
     <div class="foot-a"><a class="link" href="/weld/#points">${v?.owed > 0n ? 'Claim your TAC on weld ↗' : 'Track and claim on weld ↗'}</a>${S.wallet ? '' : html`<button class="link" type="button" id="pts-conn">Connect a wallet</button>`}</div>`);
-  $('#pts-show')?.addEventListener('click', () => { readPoints(true); paintPoints(); });
+  $('#pts-show')?.addEventListener('click', () => { ptsAllow(lc(S.wallet)); readPoints(true); paintPoints(); });
+  if (S.wallet && ptsOk(lc(S.wallet)) && !v && !PTS.reading && !PTS.err) readPoints();
   $('#pts-conn')?.addEventListener('click', () => connectWallet().then(() => paintPoints()).catch((e) => toast(errText(e), true)));
 }
+// The day's countdown stays current, and points are read again while this tab may look them up.
+setInterval(() => {
+  if (document.hidden) return;
+  const clock = $('#pts-clock');
+  if (clock) clock.textContent = dayLeft();
+  const who = S.wallet && lc(S.wallet);
+  if (who && ptsOk(who) && !PTS.reading && Date.now() - PTS.at > (ptsCounting() ? 15e3 : 60e3)) readPoints(true);
+}, 5_000);
 
 // ── the device card ──────────────────────────────────────────────────────────────────────────────────────
 function paintMeter() {
