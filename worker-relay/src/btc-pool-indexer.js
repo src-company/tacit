@@ -1,6 +1,6 @@
 // Replay service for the Bitcoin-native shielded pool (contracts/sp1/confidential/DESIGN-btc-shielded-pool.md §5).
 // Follows Bitcoin from BTC_POOL_START_HEIGHT, replays 0x6C/0x6D envelopes in block and input order, persists one SQLite
-// transaction per block, rolls back on reorgs, and serves roots, paths, the note feed, nullifier and exit
+// transaction per block, rolls back on reorgs, and serves roots, paths, the note feed, nullifiers and exit
 // status over read-only HTTP. Proofs are verified natively against the pinned key (lib/btc-pool-verify.js). The
 // replay signs nothing and holds no keys; the optional relayer, mounted only when BTC_POOL_RELAYER_* keys are
 // set, does.
@@ -356,6 +356,16 @@ export function createHandler(ix, store) {
         const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit')) || 200));
         const rows = store.notes(from, limit).map(noteRow);
         return send(200, { height: st.tip, from, notes: rows, next: rows.length ? rows[rows.length - 1].leafIndex + 1 : from });
+      }
+      if (p === '/btc-pool/nullifiers') {
+        // Every spend's nullifier from block `from` on, in (height, nf) order, `limit` at a time; `next` continues.
+        // A wallet checks its notes against the whole list.
+        const from = Math.max(0, Number(url.searchParams.get('from')) || 0);
+        const after = String(url.searchParams.get('after') || '').replace(/^0x/, '').toLowerCase();
+        if (after && !/^[0-9a-f]{64}$/.test(after)) return send(400, { error: 'after must be a nullifier' });
+        const limit = Math.min(5000, Math.max(1, Number(url.searchParams.get('limit')) || 2000));
+        const rows = store.nullifiersFrom(from, after, limit), last = rows[rows.length - 1];
+        return send(200, { height: st.tip, nullifiers: rows.map((r) => [pre(r.nf), r.height]), next: rows.length === limit ? { from: last.height, after: pre(last.nf) } : null });
       }
       if ((m = p.match(/^\/btc-pool\/nullifier\/(?:0x)?([0-9a-fA-F]{64})$/))) {
         const r = store.nullifier(m[1].toLowerCase());

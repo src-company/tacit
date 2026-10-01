@@ -258,6 +258,20 @@ try {
     await p.waitForFunction(() => [...document.querySelectorAll('.addr code')].some((c) => /^bp1/.test(c.textContent)), null, { timeout: 60e3 }).catch(() => {});
     const tacAddrs = await p.$$eval('.addr code', (x) => x.map((c) => c.textContent));
     ok(/^tacit1qzz/.test(tacAddrs[0]) && /^bp1/.test(tacAddrs[1]) && /inside the shielded pool/.test(await p.textContent('#form')), 'TAC receive shows the unified address, which the pool pays, and the pool address alone');
+    // Ask to be paid: a link that names this key's Tacit address and the amount; opened, it fills in Send.
+    await p.fill('#f-qamt', '1.5'); await p.fill('#f-qfor', 'hub test'); await p.click('#f-qcopy');
+    const ask = await p.evaluate(() => navigator.clipboard.readText());
+    ok(new RegExp(`/pay/#tac&pay=${tacAddrs[0]}&amount=1\\.5&for=hub\\+test$`).test(ask), `a TAC payment link from Receive: ${ask.slice(0, 40)}…${ask.slice(-30)}`);
+    await p.goto(ask.replace(/^https?:\/\/[^/]+/, origin));
+    await p.waitForFunction(() => /1\.5 TAC/.test(document.querySelector('#hreq')?.textContent || '') && document.querySelector('#f-to')?.value, null, { timeout: 60e3 }).catch(() => {});
+    await p.waitForFunction(() => /shielded pool|err/.test(document.querySelector('#f-rcpt')?.textContent || ''), null, { timeout: 60e3 }).catch(() => {});
+    ok(/Payment request/.test(await text('#hreq')) && /1\.5 TAC/.test(await text('#hreq')) && /hub test/.test(await text('#hreq')) && (await p.inputValue('#f-to')) === tacAddrs[0] && (await p.inputValue('#f-amt')) === '1.5' && /Inside the shielded pool/.test(await text('#f-rcpt')), `a TAC request opens with Send filled in: ${(await text('#hreq')).slice(0, 90)}`);
+    await p.goto(`${origin}/pay/#btc&pay=${UNI}&amount=0.0001`);
+    await p.waitForFunction((u) => document.querySelector('#f-to')?.value === u && /Silent payment|err/.test(document.querySelector('#f-rcpt')?.textContent || ''), UNI, { timeout: 60e3 }).catch(() => {});
+    ok((await p.$eval('#modes [data-mode="btc"]', (a) => a.getAttribute('aria-current'))) === 'page' && /0\.0001 BTC/.test(await text('#hreq')) && (await p.inputValue('#f-amt')) === '0.0001' && /Silent payment/.test(await text('#f-rcpt')), `a BTC request opens on BTC with Send filled in: ${(await text('#f-rcpt')).slice(0, 60)}`);
+    await p.click('#rq-x');
+    ok(await p.$eval('#hreq', (e) => e.hidden) && /\/pay\/#btc$/.test(p.url()), 'dismissing a request clears it and its link');
+    await p.click('#modes [data-mode="tac"]');
     await p.setViewportSize({ width: 390, height: 900 });
     ok((await p.evaluate(() => document.documentElement.scrollWidth)) <= 390, 'no sideways scroll at 390px');
     await p.click('#modes [data-mode="eth"]');
@@ -645,6 +659,17 @@ try {
     await press(p, '#f-go', /Deposited/);
     ok(/Deposited/.test(await p.textContent('#status')), `deposit: ${await text(p, '#status')}`);
     await p.waitForFunction(() => /0\.01/.test(document.querySelector('#bal .v').textContent), null, { timeout: 120e3 }).catch(() => {});
+
+    // Max leaves room for the relay's fee, and fills in again when the route changes: all of it from the wallet.
+    await p.click('#tabs [data-tab="withdraw"]');
+    await p.waitForFunction(() => { document.querySelector('#f-max')?.click(); return !!document.querySelector('#f-wamt')?.value; }, null, { timeout: 120e3, polling: 1000 });
+    const viaRelay = await p.inputValue('#f-wamt');
+    await p.click('[data-route="wallet"]');
+    const viaWallet = await p.inputValue('#f-wamt');
+    await p.click('[data-route="relay"]');
+    const back = await p.inputValue('#f-wamt');
+    ok(Number(viaRelay) < 0.01 && viaWallet === '0.01' && back === viaRelay, `Max follows the route: relay ${viaRelay}, wallet ${viaWallet}, relay again ${back}`);
+    await p.fill('#f-wamt', '');
 
     // An 0x address in Send, with a name saved for it; just after a deposit the payment can wait until it blends in.
     const ALICE = '0x' + '44'.repeat(20), alice0 = await balOf(ALICE);

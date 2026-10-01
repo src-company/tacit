@@ -153,9 +153,13 @@ await test('sellForSats: quote for the amount, a spend the maker validates, want
   assert.equal(mine.reduce((t, x) => t + x.value, 0n), 20_000n, 'the change stays in the pool');
   assert.ok(mine.every((x) => x.internal));
   assert.ok(says.some((m) => /faucet/.test(m)));
-  // A second sale takes the next key.
+  // The sale's notes are not picked again before the replay counts the spend.
+  await assert.rejects(secret.sellForSats({}, { poolWallet: pw, amount: 4_000n, asset: ASSET, anchor: 1006, usedScripts: used, faucetUrl: FAUCET, prove: (built) => bp.prove(built, standIn) }), /no spendable notes/);
+  // Once it has (here, the record of it dropped), a second sale takes the next key.
+  localStorage.removeItem('tacit-pool-pending-v1');
   const r2 = await secret.sellForSats({}, { poolWallet: pw, amount: 4_000n, asset: ASSET, anchor: 1006, usedScripts: used, faucetUrl: FAUCET, prove: (built) => bp.prove(built, standIn) });
   assert.equal(r2.payout.counter, 1);
+  localStorage.removeItem('tacit-pool-pending-v1');
 });
 
 await test('sellForSats: faucet errors surface as one line', async () => {

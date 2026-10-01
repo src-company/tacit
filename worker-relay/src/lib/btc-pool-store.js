@@ -70,6 +70,7 @@ export function openBtcPoolStore(dbPath) {
     insEnv: db.prepare('INSERT INTO envelopes (height, tx_index, vin, txid, opcode, accepted, reason) VALUES (?, ?, ?, ?, ?, ?, ?)'),
     notes: db.prepare('SELECT * FROM leaves WHERE idx >= ? ORDER BY idx LIMIT ?'),
     nf: db.prepare('SELECT nf, height, txid FROM nullifiers WHERE nf = ?'),
+    nfFrom: db.prepare('SELECT nf, height FROM nullifiers WHERE height > ? OR (height = ? AND nf > ?) ORDER BY height, nf LIMIT ?'),
     exit: db.prepare('SELECT * FROM exits WHERE txid = ? AND vout = ?'),
     rootsFrom: db.prepare('SELECT height, root FROM blocks WHERE height >= ? ORDER BY height'),
     allLeaves: db.prepare('SELECT idx, height, leaf FROM leaves ORDER BY idx'),
@@ -121,6 +122,8 @@ export function openBtcPoolStore(dbPath) {
     wipe,
     notes: (from, limit) => st.notes.all(from, limit),
     nullifier: (nf) => st.nf.get(nf) || null,
+    // Nullifiers from block `from` on in (height, nf) order; `after` continues within block `from`.
+    nullifiersFrom: (from, after, limit) => st.nfFrom.all(after ? from : from - 1, from, after || '', limit),
     exit: (txid, vout) => st.exit.get(txid, vout) || null,
     rootsFrom: (height) => st.rootsFrom.all(height),
     // Rows for BtcPoolState.restore.

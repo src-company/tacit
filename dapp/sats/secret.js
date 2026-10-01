@@ -168,7 +168,7 @@ export async function broadcastCarrier(tacit, { payload, inputs = [], outputs })
     commitFee = tacit.feeFor(tacit.estCommitVb(picked.length), feeRate);
     if (total >= commitValue + commitFee + tacit.DUST) break;
   }
-  if (total < commitValue + commitFee) throw new Error(`not enough signet sats: need ${commitValue + commitFee}, have ${total}`);
+  if (total < commitValue + commitFee) throw new Error(`not enough sats at your Bitcoin address: need ${commitValue + commitFee}, have ${total}`);
   const change = total - commitValue - commitFee;
   const commitTx = {
     version: 2, locktime: 0,
@@ -287,10 +287,40 @@ export async function poolNotes(poolWallet, asset) {
   return asset ? all.filter((x) => eqAsset(x.asset, asset)) : all;
 }
 
+// Notes this browser has spent, by nullifier, until the replay counts the spend (it does after three confirmations),
+// so a second spend made in between never picks them again; and each spend's change, shown as settling until the
+// change note is read back. Kept six hours.
+const PENDING_KEY = 'tacit-pool-pending-v1', PENDING_MS = 6 * 3600e3;
+const nfKey = (nf) => String(nf).replace(/^0x/, '').toLowerCase();
+function pendingRead() {
+  let v = null;
+  try { v = typeof localStorage === 'undefined' ? null : JSON.parse(localStorage.getItem(PENDING_KEY) || 'null'); } catch {}
+  const out = { spent: {}, change: {} }, now = Date.now();
+  for (const [k, x] of Object.entries(v?.spent || {})) if (now - x.at < PENDING_MS) out.spent[k] = x;
+  for (const [k, x] of Object.entries(v?.change || {})) if (now - x.at < PENDING_MS) out.change[k] = x;
+  return out;
+}
+function pendingMark(notes, txid, change, asset) {
+  const p = pendingRead(), at = Date.now();
+  for (const n of notes) if (n.nf) p.spent[nfKey(n.nf)] = { at, txid };
+  if (change > 0n) p.change[txid] = { at, v: change.toString(), asset: String(asset).replace(/^0x/, '').toLowerCase() };
+  try { if (typeof localStorage !== 'undefined') localStorage.setItem(PENDING_KEY, JSON.stringify(p)); } catch {}
+}
+// The notes of `notes` this browser has not spent, and how much of `asset` is settling as change not yet read back.
+export function pendingView(notes, asset) {
+  const p = pendingRead(), seen = new Set(notes.map((n) => n.txid));
+  const live = notes.filter((n) => !n.spent && !(n.nf && p.spent[nfKey(n.nf)]));
+  let settling = 0n;
+  for (const [txid, c] of Object.entries(p.change)) if (!seen.has(txid) && (!asset || eqAsset(c.asset, asset))) settling += BigInt(c.v);
+  return { live, settling };
+}
+// A relayer that refused a payment because its notes are already being spent: posting it again would only conflict.
+const spentElsewhere = (m) => /nullifier|conflict|replayed|already spent|double/i.test(String(m || ''));
+
 // Inputs covering `need`, with the anchor, root and paths. { wait } when the wallet's anchor policy has not
 // reached the newest input yet; `anchor` overrides the policy with a retained height.
 async function prepare(poolWallet, asset, need, anchor) {
-  const unspent = (await poolNotes(poolWallet, asset)).filter((x) => !x.spent);
+  const unspent = pendingView(await poolNotes(poolWallet, asset)).live;
   const { inputs, total } = pool.selectInputs(unspent, need, { asset: '0x' + String(asset).replace(/^0x/, '') });
   const a = await poolClientFor(poolWallet.network).anchorAndPaths(inputs, anchor != null ? { anchor } : {});
   return { ...a, total };
@@ -299,8 +329,9 @@ async function prepare(poolWallet, asset, need, anchor) {
 // Pays `amount` of `asset` to a pool address, or to the pool lane of a tacit1… address. Relayed when the replay service
 // runs a relayer that quotes the asset (fee paid as an extra pool output); otherwise this wallet posts the carrier from
 // its own sats. `noRelay` forces the self-funded path. Used by the fallback below, so a relayer that quotes and then
-// cannot deliver does not leave the payment stranded.
-export async function payPrivately(tacit, { poolWallet, to, amount, asset, anchor = null, noRelay = false, say = () => {} }) {
+// cannot deliver does not leave the payment stranded. `maxFee` (base units) refuses a relayer quote above it, with the
+// quote on the error as `feeMoved`.
+export async function payPrivately(tacit, { poolWallet, to, amount, asset, anchor = null, noRelay = false, maxFee = null, say = () => {} }) {
   to = poolRecipient(to, poolWallet.network);
   pool.decodeAddress(to, poolWallet.network);
   const client = poolClientFor(poolWallet.network);
@@ -310,6 +341,7 @@ export async function payPrivately(tacit, { poolWallet, to, amount, asset, ancho
   // path below needs no relayer, so every refusal it can give here — no free coin to bind, quote table full,
   // rate limited — means "not now", not "impossible". relayInfo() is already caught for the same reason.
   const q = fee != null ? await client.quote({ asset: '0x' + String(asset).replace(/^0x/, '') }).catch(() => null) : null;
+  if (q && maxFee != null && BigInt(q.fee) > BigInt(maxFee)) throw Object.assign(new Error('the relayer’s fee changed'), { feeMoved: BigInt(q.fee) });
   say('finding your notes…');
   const a = await prepare(poolWallet, asset, amount + (q ? BigInt(q.fee) : 0n), anchor);
   if (a.wait) return { wait: a.wait, tip: a.tip };
@@ -330,19 +362,21 @@ export async function payPrivately(tacit, { poolWallet, to, amount, asset, ancho
       const sub = await client.submit({ payload: payloadHex, quoteId: q.quoteId });
       for (let i = 0; i < 60 && !reason; i++) {
         const stt = await client.relayStatus(sub.id).catch(() => null);
-        if (stt?.carrier) return { revealTxid: stt.carrier, relayed: true, anchor: a.hAnchor };
-        if (stt && ['dropped', 'rejected'].includes(stt.state)) { reason = stt.reason || stt.state; break; }
+        if (stt?.carrier) { pendingMark(a.notes, stt.carrier, a.total - amount - BigInt(q.fee), asset); return { revealTxid: stt.carrier, relayed: true, anchor: a.hAnchor }; }
+        if (stt && (['dropped', 'rejected'].includes(stt.state) || spentElsewhere(stt.state))) { reason = stt.reason || stt.state; break; }
         say('waiting for the relayer’s batch…');
         await new Promise((r) => setTimeout(r, 5000));
       }
       reason = reason || 'it did not post in time';
     } catch (e) { reason = e?.message || String(e); }
+    if (spentElsewhere(reason)) throw new Error('Those notes are already being spent by another payment. Wait for it to settle, then try again.');
     say(`the relayer could not post it (${reason}) — sending it from this wallet instead…`);
     return payPrivately(tacit, { poolWallet, to, amount, asset, anchor, noRelay: true, say });
   }
   say('sending…');
   const own = tacit.p2wpkhScript(tacit.wallet.pub);
   const r = await broadcastCarrier(tacit, { payload, outputs: [{ value: tacit.DUST, script: own }] });
+  pendingMark(a.notes, r.revealTxid, a.total - amount, asset);
   return { ...r, relayed: false, anchor: a.hAnchor };
 }
 
@@ -364,6 +398,7 @@ export async function exitToWallet(tacit, { poolWallet, amount, asset, anchor = 
   const { payload } = await proveHere(built, say);
   say('sending…');
   const r = await broadcastCarrier(tacit, { payload, outputs: [{ value: Math.max(tacit.DUST, DUST_SATS), script: own }] });
+  pendingMark(a.notes, r.revealTxid, change, asset);
   return { ...r, exit: { vout: 0, value: amount.toString(), blinding: built.exit.blinding, cx: built.exit.cx, cy: built.exit.cy }, anchor: a.hAnchor };
 }
 
@@ -423,6 +458,7 @@ export async function sellForSats(tacit, { poolWallet, amount, asset, anchor = n
     f = await findFill(faucetUrl, q.quoteId, say);
     if (!f) throw new Error('The faucet did not answer. If the swap went out it shows in your activity within a few minutes.');
   }
+  pendingMark(a.notes, f.txid, 0n, assetHex);
   return {
     revealTxid: f.txid, commitTxid: f.commitTxid, sats: Number(f.sats), units: BigInt(amount),
     payout: { counter: r.payout.counter, scriptPubKey: r.payout.scriptPubKey, vout: q.wantVout }, anchor: a.hAnchor,
@@ -626,7 +662,7 @@ function stepError(e, ctx) {
   const m = String(e?.message || e || '');
   if (/locked at [0-9a-f]{64}/.test(m)) return 'Your payment went out but the claim did not finish. The sats are recoverable from the main Tacit app (Holdings, stranded commits).';
   let x;
-  if ((x = m.match(/insufficient sats for (?:commit|reveal) \(need ~?(\d+), have (\d+)\)/)) || (x = m.match(/not enough signet sats: need (\d+), have (\d+)/))) {
+  if ((x = m.match(/insufficient sats for (?:commit|reveal) \(need ~?(\d+), have (\d+)\)/)) || (x = m.match(/not enough (?:signet )?sats(?: at your Bitcoin address)?: need (\d+), have (\d+)/))) {
     return `Not enough signet sats: this needs about ${Number(x[1]).toLocaleString('en-US')}, you have ${Number(x[2]).toLocaleString('en-US')}. Get more in step 1.`;
   }
   if (/already spent|race lost|no open faucet sale/.test(m)) return 'Someone took that lot first. Try again; the faucet keeps a few listed.';

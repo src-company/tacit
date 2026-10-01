@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-z/X6L/8vOLld/9WZMwotg5ZuBMCO2q2AJC8fSyQXgqc=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-8I4uq/uYO6sjVaukWyNgNe4Tg0zFb0ajUQMgeMS1zKA=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -164,6 +164,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .amt input { flex: 1; min-width: 0; font: 500 24px/1.2 var(--mono); letter-spacing: -.02em; color: var(--ink); background: none; border: 0; padding: 12px 14px; outline: none; }
 .amt .u { display: inline-flex; align-items: center; gap: 8px; padding: 0 14px 0 4px; color: var(--mute); white-space: nowrap; }
 .amt.text input { font: 400 14px/1.4 var(--mono); padding: 14px; }
+@media (max-width: 640px) { .amt.text input, .save input { font-size: 16px; } }
 .amt .link { flex: none; padding: 0 14px; }
 input::placeholder { color: var(--mute); opacity: 1; }
 
@@ -1195,6 +1196,17 @@ async function settled(c, rpc, tip, at, method, params) {
   if (r != null && at + c.confirmations <= tip) { if (SETTLED.size >= 4000) SETTLED.delete(SETTLED.keys().next().value); SETTLED.set(key, r); }
   return r;
 }
+// Public facts about the pool's transactions on a chain, by hash: the event's recipient, amount and fee, the sender, and a
+// router call's data; and the time of each block with a pool event. Only settled ones are kept.
+const pubTx = (c) => { const k = `tacit-pay-pooltx-v1:${c.chainId}:${lc(POOL)}`, v = readJson(k); return { k, tx: v?.tx || {}, bt: v?.bt || {} }; };
+function savePubTx(P, ts, time, deep) {
+  for (const t of ts) {
+    if (!deep(t.block) || t.ext === undefined) continue;
+    P.tx[t.tx] = { r: t.recipient, e: t.ext.toString(), f: (t.fee ?? 0n).toString(), fr: t.from, to: t.to, in: t.input };
+  }
+  for (const [b, s] of time) if (deep(b)) P.bt[b] = s;
+  writeJson(P.k, { tx: P.tx, bt: P.bt });
+}
 async function scanHistory(c, onStep) {
   const m = await mods(), keys = S.keys, rpc = await rpcOn(c), boxes = await boxMap();
   const asset = m.poolAsset({ chainId: BigInt(c.chainId), pool: POOL, token: ZERO });
@@ -1226,9 +1238,10 @@ async function scanHistory(c, onStep) {
     ]);
     // Pushed one by one: spreading a whole chain's logs into one call exceeds the engine's argument limit on a busy pool.
     for (const l of tl) evs.push(decodeTransact(l));
-    for (const l of rl) { const r = decodeReceived(l); if (boxes.has(lc(r.box))) evs.push(r); }
+    for (const l of rl) { const r = decodeReceived(l); evs.push(boxes.has(lc(r.box)) ? r : { kind: 'other', block: r.block }); }
   }
   const ts = evs.filter((e) => e.kind === 'transact').sort((a, b) => a.block - b.block || a.firstIndex - b.firstIndex);
+  const evBlocks = [...new Set(evs.map((e) => e.block))];
   const leafAt = new Map();
   for (const t of ts) for (let k = 0; k < 2; k++) if (t.outLeaf[k] !== 0n) leafAt.set(t.firstIndex + k, t.outLeaf[k]);
   const mine = new Map(), byTx = new Map();
@@ -1266,26 +1279,38 @@ async function scanHistory(c, onStep) {
   if (top >= boxes.size - 20) { await boxMap(top + BOXES); return scanHistory(c, onStep); }
   const spent = new Set();
   for (const t of ts) for (const nf of t.nf) { const n = mine.get(nf.toString()); if (n) { rec(t).ins.push(n.v); spent.add(nf.toString()); } }
-  const need = [...byTx.values()].filter((x) => x.t.ext === undefined);
-  await eachLimit(need, 4, async (x) => {
-    const rc = await settled(c, rpc, tip, x.t.block, 'eth_getTransactionReceipt', [x.t.tx]);
-    const lg = rc?.logs?.find((l) => lc(l.address) === lc(POOL) && l.topics[0] === T_TRANSACT && BigInt(l.topics[1]) === x.t.nf[0] && BigInt(l.topics[2]) === x.t.nf[1]);
-    if (lg) { const d = decodeTransact(lg); Object.assign(x.t, { recipient: d.recipient, ext: d.ext, fee: d.fee }); }
-    if (rc?.from) x.t.from = lc(rc.from);
-  });
-  // The account behind each deposit of this key's is public; a withdrawal back to it undoes the deposit's privacy.
-  const deposits = [...byTx.values()].filter((x) => !x.ins.length && (x.t.ext ?? 0n) > 0n && !x.t.from);
-  await eachLimit(deposits, 4, async (x) => { const rc = await settled(c, rpc, tip, x.t.block, 'eth_getTransactionReceipt', [x.t.tx]).catch(() => null); if (rc?.from) x.t.from = lc(rc.from); });
+  // What a node is asked about the pool's transactions is asked about every one of them alike, never only this key's
+  // own, so the node learns nothing about which are this key's. The answers are public and fixed once settled, so they
+  // are kept between visits and each transaction is read once.
+  const P = pubTx(c);
+  for (const t of ts) {
+    const s = P.tx[t.tx];
+    if (s) Object.assign(t, { recipient: s.r, ext: BigInt(s.e), fee: BigInt(s.f), from: s.fr, to: s.to, input: s.in });
+  }
+  // A transaction from the relay's index carries no amounts: its receipt does. A deposit's receipt names its sender,
+  // public, which a withdrawal back to that account would tie to it.
+  // A read cut short keeps what it got for the next one.
+  const deep = (b) => b + c.confirmations <= tip;
+  await eachLimit(ts.filter((t) => t.ext === undefined || (t.ext > 0n && !t.from)), 4, async (t) => {
+    const known = t.ext !== undefined;
+    const rc = await settled(c, rpc, tip, t.block, 'eth_getTransactionReceipt', [t.tx]).catch((e) => { if (known) return null; throw e; });
+    const lg = rc?.logs?.find((l) => lc(l.address) === lc(POOL) && l.topics[0] === T_TRANSACT && BigInt(l.topics[1]) === t.nf[0] && BigInt(l.topics[2]) === t.nf[1]);
+    if (lg) { const d = decodeTransact(lg); Object.assign(t, { recipient: d.recipient, ext: d.ext, fee: d.fee }); }
+    if (rc?.from) t.from = lc(rc.from);
+  }).catch((e) => { savePubTx(P, ts, new Map(), deep); throw e; });
   // A withdrawal that ran calls (a bridge move, a swap) names its refund box in its calldata, public from then on, so
   // that box is never handed out as a payment link's address; a canonical bridge in it makes the row a move.
-  const calls = [...byTx.values()].filter((x) => x.ins.length && (x.t.ext ?? 0n) < 0n);
-  await eachLimit(calls, 4, async (x) => {
-    const tx = await settled(c, rpc, tip, x.t.block, 'eth_getTransactionByHash', [x.t.tx]);
-    if (!tx || lc(tx.to) !== lc(ROUTER)) return;
-    const input = lc(tx.input);
-    for (const [addr, b] of boxes) if (b.i > 0 && input.includes(strip(addr))) x.t.refund = Math.max(x.t.refund ?? 0, b.i);
-    x.t.dest = Object.entries(BRIDGES).find(([, a]) => input.includes(strip(lc(a))))?.[0];
+  await eachLimit(ts.filter((t) => (t.ext ?? 0n) < 0n && t.to === undefined), 4, async (t) => {
+    const tx = await settled(c, rpc, tip, t.block, 'eth_getTransactionByHash', [t.tx]).catch(() => null);
+    if (!tx) return;
+    t.to = lc(tx.to || '');
+    if (t.to === lc(ROUTER)) t.input = lc(tx.input);
   });
+  for (const x of byTx.values()) {
+    if (!x.ins.length || !x.t.input) continue;
+    for (const [addr, b] of boxes) if (b.i > 0 && x.t.input.includes(strip(addr))) x.t.refund = Math.max(x.t.refund ?? 0, b.i);
+    x.t.dest = Object.entries(BRIDGES).find(([, a]) => x.t.input.includes(strip(lc(a))))?.[0];
+  }
   const sum = (a) => a.reduce((s, v) => s + v, 0n);
   for (const { t, ins, outs, ours } of byTx.values()) {
     const used = sum(ins), kept = sum(outs), fee = t.fee ?? 0n, ext = t.ext ?? 0n;
@@ -1328,8 +1353,10 @@ async function scanHistory(c, onStep) {
       gifts.push({ i: x.i, v: o ? o.v : r.v, row: r, taken: r.taken });
     }
   }
-  const blocks = [...new Set(rows.map((r) => r.block))], time = new Map();
-  await eachLimit(blocks, 4, async (b) => { const blk = await settled(c, rpc, tip, b, 'eth_getBlockByNumber', ['0x' + b.toString(16), false]).catch(() => null); if (blk) time.set(b, Number(BigInt(blk.timestamp))); });
+  // The time of every block with a pool event, this key's or not.
+  const time = new Map(Object.entries(P.bt).map(([b, s]) => [Number(b), s]));
+  await eachLimit(evBlocks.filter((b) => !time.has(b)), 4, async (b) => { const blk = await settled(c, rpc, tip, b, 'eth_getBlockByNumber', ['0x' + b.toString(16), false]).catch(() => null); if (blk) time.set(b, Number(BigInt(blk.timestamp))); });
+  savePubTx(P, ts, time, deep);
   // A block whose time could not be read has none; it sorts by the time of the nearest block that has one.
   const known = [...time.keys()];
   for (const r of rows) {
@@ -1669,7 +1696,7 @@ const routeSeg = (tab, fee) => html`<p class="route">${routeOf(tab) === 'wallet'
     ? html`Sent by the relay, no gas needed${fee != null ? html` · fee <b class="num">${fmt(fee, 18, 6)} ETH</b>` : ''} · <button class="link" type="button" data-route="wallet">send from my wallet instead</button>`
     : html`<span class="warn">The relay is unavailable right now.</span> <button class="link" type="button" data-route="wallet">Send from my wallet instead</button>`}</p>`;
 function wireRoute(f, tab) {
-  $$('[data-route]', f).forEach((b) => b.onclick = () => { ROUTES[tab] = b.dataset.route; writeJson(ROUTE_PREF, ROUTES); renderForm(); });
+  $$('[data-route]', f).forEach((b) => b.onclick = () => { ROUTES[tab] = b.dataset.route; writeJson(ROUTE_PREF, ROUTES); renderForm(); reMax(); });
 }
 const routeNote = (tab, relay, wallet) => (routeOf(tab) === 'relay' ? relay : wallet);
 
@@ -1705,6 +1732,11 @@ function maxSpend(fee, extra = 0n) {
 const relayFee = (tab, c = S.chain) => (routeOf(tab) !== 'relay' ? 0n : CH[c.chainId].quote?.fee ? BigInt(CH[c.chainId].quote.fee) : null);
 // The most a spend may cost in relay fee: a quarter more than the fee its preview showed. The wallet refuses a dearer quote.
 const capOf = (fee) => (fee ? (fee * 5n) / 4n : null);
+// An amount Max filled in follows the route and the relay's fee: switching between relay and wallet, or a new fee, fills
+// it in again, unless it has been edited since.
+let MAXED = null;
+const markMax = (amt) => { MAXED = { id: amt.id, v: amt.value }; };
+const reMax = () => { const i = MAXED && $('#' + MAXED.id); if (i?.value && i.value === MAXED.v) $('#f-max')?.click(); };
 // The relay's fee moved past the preview's: its fresh quote replaces the one the preview used, and the form is redrawn with it.
 async function feeChanged(c, fee) {
   const st = CH[c.chainId];
@@ -1751,8 +1783,9 @@ async function act(btn, fn) {
     S.busy--; S.busyChain = null;
     const keepStatus = status.innerHTML;
     renderApp();
+    if (err?.feeMoved != null) reMax();
     status.innerHTML = keepStatus;
-    $('#use-wallet')?.addEventListener('click', () => { ROUTES[S.tab] = 'wallet'; writeJson(ROUTE_PREF, ROUTES); renderForm(); say(status, html`<span class="mute">Your wallet will send it. Press the button again.</span>`); });
+    $('#use-wallet')?.addEventListener('click', () => { ROUTES[S.tab] = 'wallet'; writeJson(ROUTE_PREF, ROUTES); renderForm(); reMax(); say(status, html`<span class="mute">Your wallet will send it. Press the button again.</span>`); });
   }
   const st = CH[c.chainId], again = st.deferred;
   st.deferred = false;
@@ -1976,7 +2009,7 @@ function formSend(f) {
   $('#f-psave').onclick = doSave;
   pname.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSave(); });
   $('#f-paste').onclick = async () => { try { to.value = (await navigator.clipboard.readText()).trim(); to.dispatchEvent(new Event('input')); } catch { to.focus(); } };
-  $('#f-max').onclick = () => { const fee = relayFee(tab); if (fee == null) return; const v = maxSpend(fee); amt.value = v ? plain(v) : ''; amt.dispatchEvent(new Event('input')); };
+  $('#f-max').onclick = () => { const fee = relayFee(tab); if (fee == null) return; const v = maxSpend(fee); amt.value = v ? plain(v) : ''; markMax(amt); amt.dispatchEvent(new Event('input')); };
   FORM.check = () => {
     const raw = to.value.trim(), a = parseUnits(amt.value), fee = relayFee(tab), bal = cur().bal, addr = isAddr(raw);
     if (raw !== lastTo) { lastTo = raw; okTo = null; if (raw && !addr) resolveRecipient(raw).then((r) => { if (to.value.trim() === raw) { okTo = r; FORM.check?.(); } }); }
@@ -2103,7 +2136,7 @@ function formLink(f) {
   let dep = null;
   // The link carries the relay's fee for taking it out too, so they get what you typed.
   const claimFee = () => (cur().quote?.fee ? BigInt(cur().quote.fee) : null);
-  $('#f-max').onclick = () => { const fee = relayFee(tab), cf = claimFee(); if (fee == null || cf == null) return; const v = maxSpend(fee, cf); amt.value = v ? plain(v) : ''; amt.dispatchEvent(new Event('input')); };
+  $('#f-max').onclick = () => { const fee = relayFee(tab), cf = claimFee(); if (fee == null || cf == null) return; const v = maxSpend(fee, cf); amt.value = v ? plain(v) : ''; markMax(amt); amt.dispatchEvent(new Event('input')); };
   FORM.check = () => {
     const a = parseUnits(amt.value), fee = relayFee(tab), cf = claimFee(), bal = cur().bal;
     mount(rc, html``); rc.hidden = true; go.disabled = true; dep = null; go.textContent = 'Create payment link';
@@ -2272,7 +2305,7 @@ function formWithdraw(f) {
   $('#f-me')?.addEventListener('click', () => { to.value = S.wallet; to.dispatchEvent(new Event('input')); });
   const feeNow = () => (l2 ? (BRIDGE_Q.fee[S.dest] ?? null) : relayFee(tab));
   const prepay = () => (l2 ? BRIDGE_Q.prepay[S.dest] || 0n : 0n);
-  $('#f-max').onclick = () => { const fee = feeNow(); if (fee == null) return; const v = maxSpend(fee, prepay()); amt.value = v ? plain(v) : ''; amt.dispatchEvent(new Event('input')); };
+  $('#f-max').onclick = () => { const fee = feeNow(); if (fee == null) return; const v = maxSpend(fee, prepay()); amt.value = v ? plain(v) : ''; markMax(amt); amt.dispatchEvent(new Event('input')); };
   FORM.check = () => {
     const a = parseUnits(amt.value), fee = feeNow(), bal = cur().bal, raw = to?.value.trim() || '';
     mount(rc, html``); rc.hidden = true; go.disabled = true;

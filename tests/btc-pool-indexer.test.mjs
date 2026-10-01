@@ -1162,6 +1162,15 @@ test('indexer: replays shields, pays and exits; persists; serves HTTP', async ()
   assert.equal((await call(h, `/btc-pool/nullifier/${bytesToHex(nf('e1'))}`)).body.spent, true);
   assert.equal((await call(h, `/btc-pool/nullifier/0x${bytesToHex(nf('e2'))}`)).body.height, 502);
   assert.equal((await call(h, `/btc-pool/nullifier/${'00'.repeat(32)}`)).body.spent, false);
+  // The whole list, in pages: every spend's nullifier, in (height, nf) order.
+  const all = (await call(h, '/btc-pool/nullifiers')).body;
+  assert.ok(all.nullifiers.some(([n, ht]) => n === '0x' + bytesToHex(nf('e1')) && ht > 0) && all.nullifiers.some(([n, ht]) => n === '0x' + bytesToHex(nf('e2')) && ht === 502));
+  assert.equal(all.next, null);
+  const pages = [];
+  for (let q = 'limit=1'; q;) { const r = (await call(h, `/btc-pool/nullifiers?${q}`)).body; pages.push(...r.nullifiers); q = r.next ? `limit=1&from=${r.next.from}&after=${r.next.after}` : null; }
+  assert.deepEqual(pages, all.nullifiers, 'one at a time, the same list');
+  assert.deepEqual((await call(h, '/btc-pool/nullifiers?from=503')).body.nullifiers, []);
+  assert.equal((await call(h, '/btc-pool/nullifiers?after=zz')).code, 400);
   const { cx, cy } = pointXY(B5.C);
   assert.deepEqual((await call(h, `/btc-pool/exit/${exit.txid}/1`)).body, {
     exists: true, txid: exit.txid, vout: 1, height: 502, asset: '0x' + bytesToHex(ASSET), Cx: '0x' + bytesToHex(cx), Cy: '0x' + bytesToHex(cy),
