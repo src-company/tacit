@@ -58,7 +58,7 @@ try {
   assert.equal(sums()[B].dayPoints, 110, 'before a bond is checked it counts');
 
   const seen = [];
-  const r = await decideBondHolds({ store, day: D, readEscrow: async (o, f) => { seen.push([o.slice(0, 6), f]); return f === B ? 0n : 5n; } });
+  const r = await decideBondHolds({ store, day: D, readEscrow: async (o, f) => { seen.push([o.slice(0, 6), f]); return f === B ? 0n : 10n ** 18n; } });
   assert.deepEqual(r, { checked: 2, released: 1 });
   assert.deepEqual(seen.map((x) => x[1]), [B, C], 'each bond of the day is read, in order');
   assert.equal(sums()[B].dayPoints, 100, 'a released bond no longer counts');

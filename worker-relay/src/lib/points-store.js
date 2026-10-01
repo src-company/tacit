@@ -310,7 +310,7 @@ export function openStore(dbPath, { excluded = [] } = {}) {
   `);
   const saveBondRefStmt = db.prepare(`INSERT OR IGNORE INTO bond_refs (tx_hash, outpoint, funder) VALUES (?, ?, ?)`);
   const bondsToCheckStmt = db.prepare(`
-    SELECT r.tx_hash AS txHash, r.outpoint AS outpoint, r.funder AS funder, d.depositor AS depositor
+    SELECT r.tx_hash AS txHash, r.outpoint AS outpoint, r.funder AS funder, d.depositor AS depositor, d.amount_wei AS amountWei
     FROM bond_refs r JOIN deposits d ON d.tx_hash = r.tx_hash LEFT JOIN bond_checks b ON b.tx_hash = r.tx_hash
     WHERE d.activity = 'cbtcmint' AND d.block_time >= ? AND d.block_time < ? AND b.tx_hash IS NULL
     ORDER BY d.block_number
@@ -466,6 +466,8 @@ export function openStore(dbPath, { excluded = [] } = {}) {
     if (deltas && deltas.size) applyDayRewards(deltas);
     saveSettleState(state);
   });
+  const depositorOfStmt = db.prepare(`SELECT depositor FROM deposits WHERE tx_hash = ?`);
+  const depositorOfTx = (txHash) => depositorOfStmt.get(txHash)?.depositor ?? null;
   const getMetaStmt = db.prepare(`SELECT v FROM meta WHERE k = ?`);
   const setMetaStmt = db.prepare(`INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v`);
   const getMeta = (k) => getMetaStmt.get(k)?.v ?? null;
@@ -663,7 +665,7 @@ export function openStore(dbPath, { excluded = [] } = {}) {
 
   return {
     db, recordDeposit, loadCursor, saveCursor, leaderboard, totalFor, depositsFor, countByActivity,
-    dayPointsByAddress, dayActivityPoints, weekActivityPoints, commitDay, getMeta, setMeta, saveBondRef, bondPairsBefore, bondsToCheck, saveBondCheck, applyDayRewards, applyAdjustment, listAdjustments: () => listAdjustmentsStmt.all(), allRewards, rewardFor,
+    dayPointsByAddress, dayActivityPoints, weekActivityPoints, commitDay, depositorOfTx, getMeta, setMeta, saveBondRef, bondPairsBefore, bondsToCheck, saveBondCheck, applyDayRewards, applyAdjustment, listAdjustments: () => listAdjustmentsStmt.all(), allRewards, rewardFor,
     savePoolSnapshot, poolSnapshots: (fromDay) => poolSnapshotsStmt.all(fromDay), poolDepositWeiByDay,
     loadSettleState, saveSettleState, savePublishedClaims, claimFor,
     recordPpWithdrawal, hasEarlierPpWithdrawal, loadPpCursor, savePpCursor,

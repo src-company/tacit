@@ -92,6 +92,26 @@ try {
   void hx; void hy; void helped;
   console.log('ok - through a helper each depositor\'s own share decides, so another depositor\'s share can neither keep a reclaimed bond counted nor take its credit');
 
+  // Taking a bond back and posting a sliver again does not keep it counted: what it was posted for must still be posted.
+  const sliver = bond(store, A, D + 13, out(12), A);
+  const dust = await decideBondHolds({ store, day: D + 13, readEscrow: async () => 1n });
+  assert.deepEqual(dust, { checked: 1, released: 1 }, '1 wei posted again after a reclaim is not the bond');
+  const whole = bond(store, B, D + 14, out(13), B);
+  assert.deepEqual(await decideBondHolds({ store, day: D + 14, readEscrow: async () => ETH }), { checked: 1, released: 0 }, 'the whole of it still posted counts');
+  assert.deepEqual(await (async () => { const t = bond(store, C, D + 15, out(14), C); return decideBondHolds({ store, day: D + 15, readEscrow: async () => 3n * ETH }); })(), { checked: 1, released: 0 }, 'and so does more than it was posted for (a top-up)');
+  void sliver; void whole;
+  console.log('ok - a bond counts only if the whole of what it was posted for is still posted');
+
+  // A lock earns only on the escrow it needs, shared among the bonds posted on it.
+  const X2 = '0x' + '21'.repeat(20), Y2 = '0x' + '22'.repeat(20), shareLock = out(15);
+  bond(store, X2, D + 16, shareLock, HELPER); bond(store, Y2, D + 16, shareLock, HELPER);
+  const sharesOf = { [X2]: 3n * ETH, [Y2]: ETH };
+  const shared2 = await accrueBondHolds({ store, day: D + 17, perWstEthDay: 500, readEscrow: async (o, f, who) => (o === shareLock ? sharesOf[who] : 0n), readLock: async (o) => (o === shareLock ? { vBtc: 1n, spent: false, redeemed: false, required: 2n * ETH } : { vBtc: 0n, spent: false, redeemed: false }) });
+  const got = Object.fromEntries(store.dayActivityPoints((D + 17) * DAY, (D + 18) * DAY).filter((x) => x.activity === 'cbtchold' && (x.address === X2 || x.address === Y2)).map((x) => [x.address, x.points]));
+  assert.deepEqual(got, { [X2]: 750, [Y2]: 250 }, 'a lock that needs 2 wstETH earns on 2 however many wallets back it: 1.5 and 0.5');
+  assert.equal(shared2.credited, 2);
+  console.log('ok - a lock earns on what it needs once, however many wallets post on it'); 
+
   // A lock earns only on the escrow it needs.
   const big = bond(store, A, D + 11, out(9), A);
   const capped = await accrueBondHolds({ store, day: D + 12, perWstEthDay: 500, readEscrow: async (o) => (o === out(9) ? 1000n * ETH : 0n), readLock: async () => ({ vBtc: 1n, spent: false, redeemed: false, required: ETH / 10n }) });

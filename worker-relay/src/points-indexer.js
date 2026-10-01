@@ -305,7 +305,10 @@ async function scanCollateralEngineCycle(store) {
   // Bonds posted before their references were kept have none: one walk from the engine's first block fills them in. Rows
   // already recorded are left as they are (recordDeposit ignores them); only the references are added.
   const backfillRefs = store.getMeta('bond_refs_backfilled') == null;
-  const priorCursor = backfillRefs ? null : store.loadCeCursor();
+  const storedCursor = store.loadCeCursor();
+  const priorCursor = backfillRefs ? null : storedCursor;
+  // Blocks the scan had already covered: during the backfill these only yield references. What is newer is recorded as always.
+  const alreadyCovered = (blockNumber) => backfillRefs && storedCursor != null && blockNumber <= storedCursor;
   const deployBlock = BigInt(CFG.collateralEngineDeployBlock);
   let newestSeen = null;
   let params = '';
@@ -316,10 +319,17 @@ async function scanCollateralEngineCycle(store) {
   // which case `from` is that helper's own address and the helper's OWN event (HelperEscrowPosted, same tx)
   // names the real one — same tx-hash cross-reference points-indexer.js already does for wrap tips.
   const cbtcEscrowHelperSet = new Set(ADDR.cbtcEscrowHelpers.map((a) => a.toLowerCase()));
-  async function realCbtcDepositor(txHash, rawFrom) {
+  async function realCbtcDepositor(txHash, rawFrom, blockTime) {
     if (!cbtcEscrowHelperSet.has(rawFrom.toLowerCase())) return rawFrom;
     const res = await blockscoutFetch(`${PP_BLOCKSCOUT_BASE}/transactions/${txHash}/logs`);
-    if (!res.ok) throw new Error(`blockscout tx logs ${res.status}`); // retried with the whole page, never recorded under the helper's address
+    if (!res.ok) {
+      // Retried with the whole page rather than recorded under the helper's address; but a transaction that still cannot be
+      // read well after it happened stops holding the scan back (the grace settlement itself allows), so one bad transaction
+      // cannot stop every bond after it.
+      if (Math.floor(Date.now() / 1000) - blockTime < CFG.pointsSettleMaxWaitSecs) throw new Error(`blockscout tx logs ${res.status}`);
+      log(`bond tx ${txHash}: logs unreadable ${res.status} long after it happened, credited to ${rawFrom}`);
+      return rawFrom;
+    }
     const data = await res.json();
     for (const item of data.items || []) {
       if (item.decoded && item.decoded.method_call.startsWith('HelperEscrowPosted(')) {
@@ -378,7 +388,14 @@ async function scanCollateralEngineCycle(store) {
 
   let cbtcCount = store.countByActivity('cbtcmint');
   for (const { item, p, blockNumber, blockTime } of cbtcCandidates) {
-    const depositor = (await realCbtcDepositor(item.transaction_hash, p.from)).toLowerCase();
+    // A bond already recorded only needs its reference; the walk that fills references in records nothing new, so it cannot
+    // credit an old bond to a day that has settled.
+    const known = store.depositorOfTx(item.transaction_hash);
+    if (known || alreadyCovered(blockNumber)) {
+      if (known) store.saveBondRef({ txHash: item.transaction_hash, outpoint: p.outpoint, funder: p.from });
+      continue;
+    }
+    const depositor = (await realCbtcDepositor(item.transaction_hash, p.from, blockTime)).toLowerCase();
     const tacB = tacMultiplier(depositor, blockNumber);
     const zShareB = zShareMultiplier(depositor, blockNumber);
     const wrote = store.recordDeposit({
@@ -393,6 +410,7 @@ async function scanCollateralEngineCycle(store) {
 
   let cusdCount = store.countByActivity('cusdmint');
   for (const { item, p, blockNumber, blockTime } of cusdCandidates) {
+    if (alreadyCovered(blockNumber)) continue;
     // No borrower address on CdpMinted — same convention as the wrap scanner: the transaction's own
     // signer, not any confidential note owner (which isn't public anyway).
     const tx = await publicClient.getTransaction({ hash: item.transaction_hash });

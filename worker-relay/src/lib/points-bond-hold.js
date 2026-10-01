@@ -1,10 +1,12 @@
 // A cBTC bond is public, and posting it can be undone before any cBTC is minted, so a bond that is posted and taken
 // back within the day would score for gas alone. Two rules read the escrow after the day is over:
 //
-//  - decideBondHolds: a bond counts for its own day's pot only if its funder still has the escrow posted when that day
-//    settles. The answer for each bond is read once, kept, and never changes, so a settled day always splits the same way.
+//  - decideBondHolds: a bond counts for its own day's pot only if the depositor still has at least what it posted on that
+//    outpoint when its day settles, so taking it back and posting a sliver again does not keep it. The answer for each bond
+//    is read once, kept, and never changes, so a settled day always splits the same way.
 //  - accrueBondHolds: each further day a bond stays posted on a real Bitcoin lock (one the pool knows, not spent, not
-//    redeemed) earns points per wstETH held, recorded once as that day's activity.
+//    redeemed) earns points per wstETH held, recorded once as that day's activity. A lock earns on the escrow it needs and no
+//    more, shared among the bonds posted on it in proportion to what each holds.
 //
 // readEscrow(outpoint, funder, depositor) -> bigint: the wstETH the depositor has posted on that outpoint now. A funder that
 // is a helper holds many depositors' shares under its one address, so the depositor's own share is what is read.
@@ -25,7 +27,7 @@ export async function decideBondHolds({ store, day, readEscrow, failAfterSecs = 
   for (const b of pending) {
     let held;
     try {
-      held = (await readEscrow(b.outpoint, b.funder, b.depositor)) > 0n;
+      held = (await readEscrow(b.outpoint, b.funder, b.depositor)) >= BigInt(b.amountWei);
     } catch (err) {
       if (!pastGrace(day, failAfterSecs, nowSec)) throw err;
       log(`bond ${b.txHash}: escrow unreadable past the grace, counted as held (${err?.message || err})`);
@@ -41,24 +43,34 @@ export async function decideBondHolds({ store, day, readEscrow, failAfterSecs = 
 export const holdTxHash = (outpoint, funder, depositor, day) => keccak256(toBytes(`bond-hold:${outpoint}:${funder}:${depositor}:${day}`));
 
 export async function accrueBondHolds({ store, day, readEscrow, readLock, perWstEthDay, failAfterSecs = null, nowSec = wallClock, log = () => {} }) {
-  const pairs = store.bondPairsBefore(day * 86400);
-  let credited = 0;
-  for (const p of pairs) {
+  const byOutpoint = new Map();
+  for (const p of store.bondPairsBefore(day * 86400)) byOutpoint.set(p.outpoint, [...(byOutpoint.get(p.outpoint) ?? []), p]);
+  let credited = 0, pairs = 0;
+  for (const [outpoint, bonds] of byOutpoint) {
+    pairs += bonds.length;
     try {
-      const posted = await readEscrow(p.outpoint, p.funder, p.depositor);
-      if (posted <= 0n) continue;
-      const lock = await readLock(p.outpoint);
+      const lock = await readLock(outpoint);
       if (!(lock.vBtc > 0n) || lock.spent || lock.redeemed) continue;
-      const held = lock.required != null && posted > lock.required ? lock.required : posted;
-      const wrote = store.recordDeposit({
-        txHash: holdTxHash(p.outpoint, p.funder, p.depositor, day), blockNumber: p.blockNumber, blockTime: day * 86400 + 86399,
-        depositor: p.depositor, amountWei: '0', priorDepositCount: 0, points: (Number(held) / 1e18) * perWstEthDay, activity: 'cbtchold',
-      });
-      if (wrote) credited += 1;
+      const posted = [];
+      for (const p of bonds) posted.push(await readEscrow(p.outpoint, p.funder, p.depositor));
+      const total = posted.reduce((s, v) => s + (v > 0n ? v : 0n), 0n);
+      if (total <= 0n) continue;
+      const cap = lock.required != null && total > lock.required ? lock.required : total;
+      for (let i = 0; i < bonds.length; i++) {
+        if (posted[i] <= 0n) continue;
+        const held = (posted[i] * cap) / total;
+        if (held <= 0n) continue;
+        const p = bonds[i];
+        const wrote = store.recordDeposit({
+          txHash: holdTxHash(p.outpoint, p.funder, p.depositor, day), blockNumber: p.blockNumber, blockTime: day * 86400 + 86399,
+          depositor: p.depositor, amountWei: '0', priorDepositCount: 0, points: (Number(held) / 1e18) * perWstEthDay, activity: 'cbtchold',
+        });
+        if (wrote) credited += 1;
+      }
     } catch (err) {
       if (!pastGrace(day, failAfterSecs, nowSec)) throw err;
-      log(`bond ${p.outpoint}: unreadable past the grace, no credit for day ${day} (${err?.message || err})`);
+      log(`bond ${outpoint}: unreadable past the grace, no credit for day ${day} (${err?.message || err})`);
     }
   }
-  return { pairs: pairs.length, credited };
+  return { pairs, credited };
 }
