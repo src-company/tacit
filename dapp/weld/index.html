@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-L+fdqKoYkuey1jY59TSb6V69JDDetrj0IEO2dQskA4w=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-GXLPcbgXWB7pMegcy5D9KJ0hDWEwgehezyA8705uFTA=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -225,7 +225,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--hair-2); margin: 0 0 18px; }
 .seg button { min-height: var(--tap); padding: 8px 10px; background: none; border: 0; cursor: pointer; color: var(--mute); line-height: 1.25; }
 .seg button + button { border-left: 1px solid var(--hair-2); }
-.seg button small { display: block; font-size: 11px; opacity: .8; }
+.seg button small { display: block; font-size: 11px; }
 .seg button[aria-selected="true"] { background: var(--ink); color: var(--card); }
 .seg.sub { border-color: var(--hair); margin-bottom: 16px; }
 .seg.sub button { min-height: 36px; font-size: 12.5px; }
@@ -454,8 +454,8 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     </div>
   </header>
 
-  <section class="hero">
-    <h1>Confidential money<br>across <em>Bitcoin</em> and <em>Ethereum</em>.</h1>
+  <section class="hero" aria-labelledby="hero-h">
+    <h1 id="hero-h">Confidential money<br>across <em>Bitcoin</em> and <em>Ethereum</em>.</h1>
     <p>Amounts and owners stay hidden. Every balance recovers from one key.</p>
     <div class="shelf" aria-label="Assets">
       <button type="button" data-asset="teth"><svg class="tk" aria-hidden="true"><use href="#tk-teth"/></svg>tETH</button>
@@ -2518,7 +2518,7 @@ function renderV1(el) {
 const OUT = { at: 0, p: null, v1: null, dev: {}, tac: new Map() };
 function readOutlook() {
   if (OUT.p || (OUT.at && Date.now() - OUT.at < 300e3)) return;
-  OUT.p = fetch(`${API}/stats?network=mainnet`, { cache: 'no-store', signal: within(20e3) }).then((r) => r.json()).then((d) => {
+  OUT.p = fetch(`${API}/stats?network=mainnet`, { signal: within(20e3) }).then((r) => r.json()).then((d) => {
     const n = (x) => BigInt(x?.$n ?? x ?? 0);
     if (d.eth) OUT.v1 = { held: n(d.eth.held), in: n(d.eth.inWei), deposits: Number(d.eth.deposits) || 0 };
     for (const x of d.dev || []) if (x.bal != null && x.dep != null) OUT.dev[x.chain] = { held: n(x.bal), in: n(x.dep), deposits: Number(x.nd) || 0 };   // a chain it could not read is unknown, not empty

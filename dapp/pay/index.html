@@ -35,7 +35,7 @@
   --hair-2: rgba(26,26,26,.28);
   --orange: #f7931a;
   --eth: #627eea;
-  --ok: #0a7d3a;
+  --ok: #0a7234;
   --err: #b8341d;
   --scrim: rgba(26,26,26,.36);
   --lift: 0 22px 44px -28px rgba(26,26,26,.45);
@@ -129,7 +129,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--hair-2); margin: 0 0 18px; }
 .seg button { min-height: var(--tap); padding: 8px 10px; background: none; border: 0; cursor: pointer; color: var(--mute); line-height: 1.25; }
 .seg button + button { border-left: 1px solid var(--hair-2); }
-.seg button small { display: block; font-size: 11px; opacity: .85; font-variant-numeric: tabular-nums; }
+.seg button small { display: block; font-size: 11px; font-variant-numeric: tabular-nums; }
 .seg button[aria-selected="true"] { background: var(--ink); color: var(--card); }
 .seg button:disabled { cursor: not-allowed; }
 .seg.sub { border-color: var(--hair); margin-bottom: 16px; }
@@ -359,8 +359,8 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
     <button class="chip" id="wallet" type="button" aria-haspopup="dialog"><span class="dot" id="wallet-dot"></span><span id="wallet-label">Open wallet</span></button>
   </header>
 
-  <section class="hero">
-    <h1>Pay anyone,<br><em>privately</em>.</h1>
+  <section class="hero" aria-labelledby="hero-h">
+    <h1 id="hero-h">Pay anyone,<br><em>privately</em>.</h1>
     <p>Bitcoin as a silent payment, TAC shielded, and ETH on Ethereum, Base and Robinhood Chain. One key holds all three, proves every payment on your device, and recovers everything on its own.</p>
     <ul class="facts">
       <li>No address reuse</li>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-irRaXVXEjfSgXu1Y/SZ65UqM9ZDJ3r4MZEZbwrEhXvk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-BKKjjYqVXBgDRbW0ltlLT0ixcnIHf/35OMyn/SSYWsU=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -35,7 +35,7 @@
   --hair-2: rgba(26,26,26,.28);
   --orange: #f7931a;
   --eth: #627eea;
-  --ok: #0a7d3a;
+  --ok: #0a7234;
   --err: #b8341d;
   --scrim: rgba(26,26,26,.36);
   --lift: 0 22px 44px -28px rgba(26,26,26,.45);
@@ -129,7 +129,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--hair-2); margin: 0 0 18px; }
 .seg button { min-height: var(--tap); padding: 8px 10px; background: none; border: 0; cursor: pointer; color: var(--mute); line-height: 1.25; }
 .seg button + button { border-left: 1px solid var(--hair-2); }
-.seg button small { display: block; font-size: 11px; opacity: .85; font-variant-numeric: tabular-nums; }
+.seg button small { display: block; font-size: 11px; font-variant-numeric: tabular-nums; }
 .seg button[aria-selected="true"] { background: var(--ink); color: var(--card); }
 .seg button:disabled { cursor: not-allowed; }
 .seg.sub { border-color: var(--hair); margin-bottom: 16px; }
@@ -360,8 +360,8 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
     <button class="chip" id="wallet" type="button" aria-haspopup="dialog"><span class="dot" id="wallet-dot"></span><span id="wallet-label">Open wallet</span></button>
   </header>
 
-  <section class="hero">
-    <h1>Pay in ETH,<br><em>privately</em>.</h1>
+  <section class="hero" aria-labelledby="hero-h">
+    <h1 id="hero-h">Pay in ETH,<br><em>privately</em>.</h1>
     <p>Shield ETH on Ethereum, Base and Robinhood Chain, pay anyone privately, and take out any part. Who you pay and how much stay hidden; deposits and withdrawals show on chain.</p>
     <ul class="facts">
       <li>Proved on your device</li>
@@ -1355,7 +1355,7 @@ function readPub() {
   }
   // What has passed through each pool, from the relay's tally of its public deposits (one read for every chain).
   if (TALLY.p || (TALLY.at && Date.now() - TALLY.at < 300e3)) return;
-  TALLY.p = fetch('https://api.tacit.finance/stats?network=mainnet', { cache: 'no-store' }).then((r) => r.json()).then((d) => {
+  TALLY.p = fetch('https://api.tacit.finance/stats?network=mainnet').then((r) => r.json()).then((d) => {
     const n = (x) => BigInt(x?.$n ?? x ?? 0);
     for (const x of d.dev || []) if (x.dep != null) TALLY[x.chain] = { in: n(x.dep), deposits: Number(x.nd) || 0 };   // a chain it could not read is unknown, not empty
   }).catch(() => {}).finally(() => { TALLY.p = null; TALLY.at = Date.now(); paintBal(); FORM.check?.(); });
