@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-U5/RtMMZStActKvWqqwseg5LA9DUjNpbgjZ5nQt2nXE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-RJZb3ejLgJpzYFQ5VrMc/RWkYtZMEgu19Bw//EGEEtQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -248,6 +248,9 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .kv b { font-weight: 400; color: var(--ink); text-align: right; overflow-wrap: anywhere; }
 .kv b.err { color: var(--err); }
 .kv b.warn { color: var(--orange); }
+.pts-line { display: inline-flex; align-items: center; gap: 6px; }
+.pts-line .tk { width: 14px; height: 14px; }
+.kv b small { font-size: 11px; }
 .rcpt { margin-top: 14px; padding-top: 8px; border-top: 1px dashed var(--hair-2); }
 
 .btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 52px; margin-top: 18px; padding: 10px 16px;
@@ -2434,6 +2437,53 @@ function renderV1(el) {
   ({ wrap: v1Wrap, send: v1Send, out: v1Out })[V1.mode]($('#v1-form'), $('#v1-status'));
 }
 
+// ── what a deposit joins and earns ────────────────────────────────────────────────────────────────────────
+// Each pool's public totals (what it holds, what has passed through it, in how many deposits) from the relay's tally
+// (/stats), read at most every five minutes. The points program scores a public ETH deposit at 1,000 points per ETH,
+// times an early bonus 1 + 4 / (1 + deposits so far / 200), counted per program (Tacit-pool wraps, and the ETH pools
+// on every chain together), times the depositor's TAC-holder tier (100, 1,000, 10,000 TAC: ×1.25, ×1.5, ×2). A wrap into
+// the Tacit pool earns ×1.25 more. The figure is an estimate: the program counts deposits from its own records.
+const OUT = { at: 0, p: null, v1: null, dev: {}, tac: new Map() };
+function readOutlook() {
+  if (OUT.p || (OUT.at && Date.now() - OUT.at < 300e3)) return;
+  OUT.p = fetch(`${API}/stats?network=mainnet`, { cache: 'no-store', signal: within(20e3) }).then((r) => r.json()).then((d) => {
+    const n = (x) => BigInt(x?.$n ?? x ?? 0);
+    if (d.eth) OUT.v1 = { held: n(d.eth.held), in: n(d.eth.inWei), deposits: Number(d.eth.deposits) || 0 };
+    for (const x of d.dev || []) OUT.dev[x.chain] = { held: n(x.bal), in: n(x.dep), deposits: Number(x.nd) || 0 };
+  }).catch(() => {}).finally(() => { OUT.p = null; OUT.at = Date.now(); outlookPaint(); });
+}
+function holderTier(addr) {
+  if (!addr) return 1;
+  const a = String(addr).toLowerCase();
+  if (!OUT.tac.has(a)) {
+    OUT.tac.set(a, null);
+    ethCall(ADDR.tac, '70a08231' + addrWord(a)).then((h) => { OUT.tac.set(a, wordAt(h, 0)); outlookPaint(); }).catch(() => OUT.tac.delete(a));
+  }
+  const b = OUT.tac.get(a), t = b == null ? 0 : Number(b / 10n ** 18n);
+  return t >= 10000 ? 2 : t >= 1000 ? 1.5 : t >= 100 ? 1.25 : 1;
+}
+// `kind`: 'v1' (a wrap into the Tacit pool) or 'dev' (a deposit into the ETH pool on any chain).
+function pointsRow(wei, kind) {
+  readOutlook();
+  const v1 = kind === 'v1', dev = Object.values(OUT.dev);
+  const known = v1 ? !!OUT.v1 : dev.length > 0, n = v1 ? OUT.v1?.deposits ?? 0 : dev.reduce((a, x) => a + x.deposits, 0);
+  const early = known ? 1 + 4 / (1 + n / 200) : 1, hold = holderTier(S.address), wrap = v1 ? 1.25 : 1;
+  const why = [known ? `×${early.toFixed(1)} early` : '', v1 ? '×1.25 tETH' : '', hold > 1 ? `×${hold} TAC holder` : ''].filter(Boolean).join(' · ');
+  const pts = Math.round((Number(wei) / 1e18) * 1000 * early * wrap * hold).toLocaleString('en-US');
+  return html`<div class="kv" data-pts title="1,000 points per ETH, with an early bonus that shrinks as deposits add up, and more for holding TAC. Points share a daily pot of up to 1,111 TAC."><span class="pts-line"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>TAC points</span><b class="num">${known ? '≈ ' : 'at least '}${pts}${why ? html` <small class="mute">${why}</small>` : ''}</b></div>`;
+}
+// `where`: 'v1', or a chain id for the ETH pool there.
+function poolLine(where) {
+  readOutlook();
+  const x = where === 'v1' ? OUT.v1 : OUT.dev[where], name = where === 'v1' ? 'The Tacit pool' : `The pool on ${DEVICE_CHAINS.find((c) => c.chainId === Number(where))?.name || 'this chain'}`;
+  return x ? html`${name} holds ${fmt(x.held, 18, 4)} ETH; ${fmt(x.in, 18, 4)} ETH has passed through it in ${x.deposits} deposits.` : '';
+}
+// Totals and holdings arrive after the form is drawn: fill the pool lines in place, and redo an open receipt.
+function outlookPaint() {
+  for (const el of $$('[data-pool]')) mount(el, poolLine(el.dataset.pool));
+  for (const id of ['w-amt', 'd-amt']) { const i = $('#' + id); if (i?.value && $('#' + (id === 'w-amt' ? 'w-rcpt' : 'd-rcpt'))?.querySelector('[data-pts]')) i.dispatchEvent(new Event('input')); }
+}
+
 // Wrap: one wallet transaction pays the deposit plus a relay tip; the relay then proves and settles the note.
 function v1Wrap(el, status) {
   mount(el, html`
@@ -2441,7 +2491,8 @@ function v1Wrap(el, status) {
     <div class="amt"><input id="w-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="ETH to wrap"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>
     <div class="rcpt" id="w-rcpt" hidden></div>
     <button class="btn" type="button" id="w-go" disabled>Make ETH private</button>
-    <p class="note">One transaction from ${your()}. A small fee in it pays Tacit’s relay to do the privacy work, so nothing heavy runs on your device.</p>`);
+    <p class="note">One transaction from ${your()}. A small fee in it pays Tacit’s relay to do the privacy work, so nothing heavy runs on your device.</p>
+    <p class="note mute" data-pool="v1">${poolLine('v1')}</p>`);
   const input = $('#w-amt'), go = $('#w-go'), rc = $('#w-rcpt');
   let bal = null, q = null, seq = 0;
   ethBalance().then((b) => { bal = b; const e = $('#w-bal'); if (e) e.textContent = b == null ? '—' : fmt(b, 18, 4); });
@@ -2461,7 +2512,8 @@ function v1Wrap(el, status) {
       mount(rc, html`
         <div class="kv"><span>You get</span><b>${fmt(wei, 18, 8)} tETH</b></div>
         <div class="kv"><span>Relay tip</span><b>${fmt(tip, 18, 6)} ETH</b></div>
-        <div class="kv"><span>${payName()} sends</span><b>${fmt(wei + tip, 18, 6)} ETH</b></div>`);
+        <div class="kv"><span>${payName()} sends</span><b>${fmt(wei + tip, 18, 6)} ETH</b></div>
+        ${pointsRow(wei, 'v1')}`);
       rc.hidden = false;
       const over = bal != null && wei + tip > bal;
       go.disabled = over;
@@ -2914,7 +2966,8 @@ function renderDevice(el) {
       <div class="amt text"><input id="d-dto" placeholder="Yourself · or bp1…, tacit1… or name.wei" autocomplete="off" spellcheck="false" aria-label="Deposit to"></div>
       <div class="rcpt" id="d-rcpt" hidden></div>
       <button class="btn" type="button" id="d-go" disabled>Deposit privately</button>
-      <p class="note">Proved on this device, then sent from ${your()}: you pay the gas, no fee. The deposit shows on chain; whose private balance it lands in does not.</p>`);
+      <p class="note">Proved on this device, then sent from ${your()}: you pay the gas, no fee. The deposit shows on chain; whose private balance it lands in does not.</p>
+      <p class="note mute" data-pool="${c.chainId}">${poolLine(c.chainId)}</p>`);
     let wb = null;
     const amt = $('#d-amt'), go = $('#d-go'), rc = $('#d-rcpt'), toEl = $('#d-dto'), dsv = { raw: '', r: null };
     const rpcOf = async () => (await getDeviceMods()).jsonRpc(c.rpc);
@@ -2934,7 +2987,7 @@ function renderDevice(el) {
       const over = wb != null && amount > wb;
       go.disabled = over;
       if (over) warn(rc, 'More than your wallet balance.');
-      else if (raw) { mount(rc, html`<div class="kv"><span>To</span><b>${dsv.r.label ? `${dsv.r.label} → ` : ''}${short(dsv.r.bp, 8)}</b></div>`); rc.hidden = false; }
+      else { mount(rc, html`${raw ? html`<div class="kv"><span>To</span><b>${dsv.r.label ? `${dsv.r.label} → ` : ''}${short(dsv.r.bp, 8)}</b></div>` : ''}${pointsRow(amount, 'dev')}`); rc.hidden = false; }
     };
     toEl.addEventListener('input', check);
     $('#d-max').onclick = () => { if (wb != null) { const v = wb > 3n * 10n ** 15n ? wb - 3n * 10n ** 15n : 0n; amt.value = v ? plain(v, 18) : ''; amt.dispatchEvent(new Event('input')); } };
