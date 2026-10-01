@@ -12,6 +12,7 @@ const SATS_URL = '/tac/sats.js?cb=6655b51b';     // tokens rewritten by build/bu
 const MARKET_URL = '/tac/market.js?cb=b5a39c64';
 const CLAIM_URL = '/tac/claim.js?cb=25c5f1f4';
 const UNIFIED_URL = '/tacit-unified.js?cb=a5b3a042';
+const KNOWN_URL = '/tacit-wallet-known.js?cb=49410363';
 const WORKER = 'https://api.tacit.finance';
 const ASSET = 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
 
@@ -20,6 +21,7 @@ const $ = (id) => document.getElementById(id);
 let T = null;          // dapp/tacit.js
 let S = null;          // dapp/sats/secret.js
 let prf = null;        // dapp/prf-wallet.js
+let K = null;          // dapp/tacit-wallet-known.js
 let poolWallet = null;
 let tacitAddress = null;   // the unified tacit1… address of the open key: null until its module has loaded, false if it could not
 let pub = { loading: false, notes: [], decimals: 8 };
@@ -134,37 +136,18 @@ async function loadTacit() {
   T = await import('/tacit.js');
   S = await import('/sats/secret.js');
   try { prf = await import('/prf-wallet.js'); } catch { prf = null; }
+  try { K = await import(KNOWN_URL); } catch { K = null; }
   return T;
 }
 
 // ── wallet ──
-// Identity is shared with the rest of tacit.finance: the same localStorage records, read the way weld reads
-// them, so a wallet opened on the main dapp is the wallet this page offers to unlock. `tacit-active-mode-v1`
-// says which kind is current, and each kind keeps its pubkey somewhere readable without unlocking anything.
-const readJson = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
+// The wallet this page offers is the one tacit.finance has open, chosen by the module weld and pay share
+// (tacit-wallet-known.js), so every page opens the same key.
 const isPub = (h) => /^0[23][0-9a-f]{64}$/.test(String(h || '').toLowerCase());
 
 let known = null;   // { mode, pubHex, address?, ext?, label?, credentialId? }
 
-function knownWallet() {
-  try {
-    const mode = localStorage.getItem('tacit-active-mode-v1');
-    if (mode === 'eth') { const r = readJson('tacit-eth-identity:mainnet'); if (r?.address && isPub(r.pubkey)) return { mode, pubHex: r.pubkey, address: r.address }; }
-    if (mode === 'btc') { const r = readJson('tacit-btc-identity:mainnet'); if (r?.address && isPub(r.tacitPubkey)) return { mode, pubHex: r.tacitPubkey, address: r.address, btc: r }; }
-    if (mode === 'ext') {
-      const ext = readJson('tacit-ext-state-v1');
-      const blob = ext?.address && readJson(`tacit-wallet-v1:mainnet:by:${String(ext.address).toLowerCase()}`);
-      if (blob && isPub(blob.pub)) return { mode, pubHex: blob.pub, address: ext.address, ext };
-    }
-    if (!mode || mode === 'passkey') {
-      const m = prf?.loadPrfMap?.() || {};
-      const l = Object.keys(m).sort((a, b) => (m[b]?.lastUsed || 0) - (m[a]?.lastUsed || 0))[0];
-      if (l && isPub(m[l]?.pubkey)) return { mode: 'passkey', pubHex: m[l].pubkey, label: l, credentialId: m[l].credentialId };
-    }
-    if (!mode || mode === 'local') { const b = readJson('tacit-wallet-v1:mainnet'); if (b && isPub(b.pub)) return { mode: 'local', pubHex: b.pub }; }
-  } catch {}
-  return null;
-}
+const knownWallet = () => K?.siteWallet() ?? null;
 
 const viaText = (k) => ({
   eth: `an Ethereum wallet (${short(k?.address || '', 6, 4)})`,
@@ -279,6 +262,7 @@ async function loadTacitAddress() {
 
 function lock() {
   if (T) T.wallet.priv = null;
+  $('key-out').value = '';
   try { T.invalidateHoldingsCache?.(); } catch {}
   poolWallet = null;
   tacitAddress = null;
@@ -614,6 +598,8 @@ async function scanEverything(statusId = 'st-recv') {
   $('btn-create').onclick = (e) => busy(e.currentTarget, 'st-connect', createWallet);
   $('btn-import').onclick = (e) => busy(e.currentTarget, 'st-connect', importKey);
   $('btn-key-copy').onclick = () => { navigator.clipboard?.writeText($('key-out').value); };
+  $('btn-key-lock').onclick = () => { $('key-sheet').close(); lock(); };
+  $('key-sheet').addEventListener('close', () => { $('key-out').value = ''; });
   $('btn-refresh').onclick = (e) => busy(e.currentTarget, 'st-recv', () => scanEverything('st-recv'));
 
   $('btn-shield').onclick = (e) => busy(e.currentTarget, 'st-shield', doShield);
