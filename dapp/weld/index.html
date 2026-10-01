@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-epyI2M+lGocrW2ZA1ChZlYYxOuFUdiGJzAMwT2MCwj4=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-DjoeRf6HbHJ/0KGuGsf4qCMsiol1LjcZqA9P3Rh2MJU=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -373,6 +373,7 @@ a.btn { text-decoration: none; white-space: nowrap; }
 .ptl.lb a { color: inherit; text-underline-offset: 3px; }
 .ptl .rk { display: inline-block; min-width: 3ch; color: var(--mute); }
 .ptl li.day { padding-top: 14px; font-weight: 500; color: var(--ink); }
+.ptl li.day small { font-weight: 400; font-size: 11.5px; margin-left: 6px; }
 .ptl-r { flex: none; display: flex; align-items: baseline; gap: 10px; }
 .ptl-r small { min-width: 5ch; text-align: right; font-size: 11.5px; }
 .pulse { margin: 0 0 14px; padding: 6px 0; border-top: 1px solid var(--hair); border-bottom: 1px solid var(--hair); }
@@ -4033,11 +4034,13 @@ async function readPoints(current) {
     const [p, c, held] = await Promise.all([get(`points/${addr}`), get(`claim/${addr}`), ethCall(ADDR.tac, SEL.balanceOf + addrWord(addr)).then((r) => wordAt(r, 0)).catch(() => null)]);
     // What is claimable comes from the distributor itself, not the service's copy of it.
     const owed = c?.proof && c.cumulativeAmount ? wordAt(await ethCall(DISTRIBUTOR, '787eef2e' + addrWord(addr) + word(BigInt(c.cumulativeAmount))).catch(() => '0x'), 0) : 0n;
+    const hist = p ? await get(`points/${addr}/days`) : null;
     const t = p?.today, today = t && Number(t.totalPoints) > 0 ? tacOf(BigInt(t.dayBudgetWei), Number(t.points), Number(t.totalPoints)) : 0n;
     // The service lists activity by block number, which does not order Base or Robinhood blocks against Ethereum's; time does.
     const recent = [...(p?.deposits || [])].sort((a, b) => Number(b.block_time) - Number(a.block_time));
     return { addr, label, points: Number(p?.points || 0), count: Number(p?.deposit_count || 0), todayPts: Number(t?.points || 0), today, tod: t || null, share: t && Number(t.totalPoints) > 0 ? Number(t.points) / Number(t.totalPoints) : 0,
-      owed, claim: c?.proof ? c : null, claimed: big(c?.claimedWei) || 0n, settled: big(c?.cumulativeAmount) || 0n, held, recent, boost: Number(recent[0]?.tac_boost || 1), read: !!p };
+      owed, claim: c?.proof ? c : null, claimed: big(c?.claimedWei) || 0n, settled: big(c?.cumulativeAmount) || 0n, held, recent, boost: Number(recent[0]?.tac_boost || 1), read: !!p,
+      hist: Array.isArray(hist?.days) ? new Map(hist.days.map((x) => [x.day, { p: Number(x.points) || 0, wei: big(x.tacWei), settled: !!x.settled }])) : null };
   }));
   const [lb, day] = await Promise.all([board, dayB]);
   for (const r of rows) {
@@ -4111,16 +4114,22 @@ function leaderboard(connected) {
       : html`<p class="note">Nobody has points ${day ? 'yet today' : 'yet'}.</p>`}
     <p class="note">${day ? 'Each address’s share of today’s pot, as it stands. ' : ''}Read ${ago(PTS.at)}. <button class="link" type="button" data-retry="points">Refresh</button></p>`;
 }
-// Points on each of the last days, from the address's own activity: drawn only when the service has sent all of it (it sends the latest 100).
+// Points on each of the last days. The service gives every day of the program (and what each paid, where that can be shown); without it, the
+// address's own activity list serves, but only when it is the whole of it (the service sends the latest 100).
 function dayStrip(r) {
-  if (!r.read || !r.recent.length || r.count > r.recent.length) return '';
-  const today = utcDay(now()), from = Math.max(today - 13, utcDay(PTS_END) - PTS_DAYS), by = new Map();
-  for (const d of r.recent) by.set(utcDay(d.block_time), (by.get(utcDay(d.block_time)) || 0) + Number(d.points || 0));
-  const days = Array.from({ length: today - from + 1 }, (_, i) => ({ d: from + i, p: by.get(from + i) || 0 })), max = Math.max(...days.map((x) => x.p), 1);
+  if (!r.read || (!r.hist && (!r.recent.length || r.count > r.recent.length))) return '';
+  const today = utcDay(now()), from = Math.max(today - 13, utcDay(PTS_END) - PTS_DAYS);
+  let by = r.hist;
+  if (!by) {
+    by = new Map();
+    for (const d of r.recent) { const k = utcDay(d.block_time), e = by.get(k) || { p: 0, wei: null, settled: true }; e.p += Number(d.points || 0); by.set(k, e); }
+  }
+  const days = Array.from({ length: today - from + 1 }, (_, i) => ({ d: from + i, ...(by.get(from + i) || { p: 0 }) })), max = Math.max(...days.map((x) => x.p), 1);
   if (days.length < 2 || !days.some((x) => x.p > 0)) return '';
   const best = days.reduce((a, x) => (x.p > a.p ? x : a));
+  const said = (x) => `${dayName(x.d)} · ${ptsFmt(x.p)} points${x.wei ? ` · ${x.settled ? '' : 'about '}${fmt(x.wei, 18, 2)} TAC` : ''}`;
   return html`<div class="ptd" role="group" aria-label="Points on each of the last ${days.length} days">
-    <div class="ptd-bars">${days.map((x) => html`<button type="button" class="ptd-b${x.d === today ? ' now' : ''}" data-ptd="${dayName(x.d)} · ${ptsFmt(x.p)} points" aria-label="${dayName(x.d)}: ${ptsFmt(x.p)} points"><i style="--h:${x.p / max}"></i></button>`)}</div>
+    <div class="ptd-bars">${days.map((x) => html`<button type="button" class="ptd-b${x.d === today ? ' now' : ''}" data-ptd="${said(x)}" aria-label="${said(x)}"><i style="--h:${x.p / max}"></i></button>`)}</div>
     <div class="ptd-x"><span>${dayShort(days[0].d)}</span><output class="ptd-r" data-d="Best day ${dayShort(best.d)} · ${ptsFmt(best.p)}">Best day ${dayShort(best.d)} · ${ptsFmt(best.p)}</output><span>Today</span></div></div>`;
 }
 render.pts = () => {
@@ -4152,7 +4161,7 @@ render.pts = () => {
     const days = new Map();
     for (const d of r.recent) { const k = utcDay(d.block_time); if (!days.has(k)) days.set(k, []); days.get(k).push(d); }
     return html`<details class="lockmore ptlog"><summary>Points by day</summary><ul class="ptl">${[...days].map(([k, list]) => html`
-      <li class="day"><span>${dayName(k)}</span><b class="num">+${ptsFmt(list.reduce((s, d) => s + Number(d.points || 0), 0))}</b></li>${list.map((d) => {
+      <li class="day"><span>${dayName(k)}</span><b class="num">+${ptsFmt(r.hist?.get(k)?.p ?? list.reduce((s, d) => s + Number(d.points || 0), 0))}${r.hist?.get(k)?.wei ? html` <small class="mute">${r.hist.get(k).settled ? '' : 'about '}${fmt(r.hist.get(k).wei, 18, 2)} TAC</small>` : ''}</b></li>${list.map((d) => {
         const [what, unit] = PT_ACTS[d.activity] || ['Activity'], c = ptChain(d.chain_id), amt = unit && big(d.amount_wei);
         return html`<li><span class="ptl-w">${what}${c && c.name !== 'Ethereum' ? ` on ${c.name}` : ''}<span class="ptl-m">${amt ? `${fmt(amt, 18, 4)} ${unit} · ` : ''}${ago(Number(d.block_time) * 1000)}${d.tac_boost > 1 ? ` · ${d.tac_boost}× holder` : ''}${c && d.tx_hash ? html` · ${txLink(d.tx_hash, c.explorer)}` : ''}</span></span><b class="num">+${ptsFmt(d.points)}</b></li>`;
       })}`)}</ul>${r.count > r.recent.length ? html`<p class="note">The latest ${r.recent.length} of ${r.count.toLocaleString('en-US')} are listed.</p>` : ''}</details>`;
