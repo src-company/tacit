@@ -142,6 +142,42 @@ await rejects('a second spelling of the position (index + 2^32)', await buildInp
   assert.equal(a.retNf, b.retNf);
   pass('one note gets the same tag whatever bucket it claims, so a note can claim once per epoch, not once per bucket');
 }
+// ── the exclusion proof must not be forgeable ──
+// circomlib's SMTVerifier trusts isOld0 and weights the terminal node by 1 - isOld0. With isOld0 free in the field, a spent note's own
+// leaf hash can be dressed as the terminal node of a proof about a key that is not there: pick any oldKey other than the nullifier and
+// solve for the isOld0 that makes the node equal the real one. The circuit constrains isOld0 to a bit.
+const modP = (x) => ((x % P_FR) + P_FR) % P_FR;
+const powP = (b, e) => { let r = 1n; b = modP(b); for (; e > 0n; e >>= 1n) { if (e & 1n) r = (r * b) % P_FR; b = (b * b) % P_FR; } return r; };
+const spentSet = async (idx) => { const t = await newMemEmptyTrie(); for (const i of idx) await t.insert(nullifier(notes[i].nk, leafFor(notes[i]), i), 1n); return t; };
+const forgedExclusion = async (t, i, { isOld0, oldKey, oldValue }) => {
+  const input = await buildInput({ note: notes[i], index: i, t, bucketMin: ETH / 10n });
+  return { ...input, smtOldKey: oldKey, smtOldValue: oldValue, smtIsOld0: isOld0 };
+};
+{
+  const spent = await spentSet([0, 1, 3, 5]);
+  const nf = nullifier(notes[3].nk, leafFor(notes[3]), 3);
+  assert.equal((await spent.find(nf)).found, true);
+  const oldKey = nf + 1n, leafHash = poseidon([nf, 1n, 1n]);
+  const isOld0 = modP(1n - leafHash * powP(poseidon([oldKey, 0n, 1n]), P_FR - 2n));
+  assert.ok(isOld0 > 1n);
+  const input = await forgedExclusion(spent, 3, { isOld0, oldKey, oldValue: 0n });
+  await rejects('a spent note whose exclusion is forged with an isOld0 that is not a bit', input);
+  const attempts = [];
+  for (const iz of [0n, 1n, 2n, P_FR - 1n, isOld0, rnd(P_FR)]) for (const ok of [nf + 1n, 0n, nf, rnd(P_FR)]) for (const ov of [0n, 1n, rnd(P_FR)]) attempts.push({ isOld0: iz, oldKey: ok, oldValue: ov });
+  let refused = 0;
+  for (const a of attempts) {
+    let threw = false;
+    try { await snarkjs.wtns.calculate(str(await forgedExclusion(spent, 3, a)), WASM, { type: 'mem' }); } catch { threw = true; }
+    assert.ok(threw, `a spent note's exclusion was accepted with ${JSON.stringify(str(a))}`);
+    refused++;
+  }
+  pass(`circuit rejects: ${refused} further forged exclusions of a spent note (isOld0, oldKey and oldValue varied)`);
+}
+for (const spentIdx of [[], [0], [0, 1, 5], [0, 1, 2, 5, 6, 7]]) {
+  const set = await spentSet(spentIdx);
+  await snarkjs.wtns.calculate(str(await buildInput({ t: set })), WASM, { type: 'mem' });
+}
+pass('an unspent note is excluded against an empty set and against sets of 1, 3 and 6 spent nullifiers');
 { // proving against a nullifier set the verifier does not hold is a pinned-root matter, not a circuit one
   const stale = await newMemEmptyTrie();
   const staleIn = await buildInput({ t: stale });

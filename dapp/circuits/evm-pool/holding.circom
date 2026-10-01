@@ -87,6 +87,9 @@ template EvmPoolHolding(depth, smtLevels, valueBits) {
     nfh.inputs[0] <== nk;
     nfh.inputs[1] <== leaf.out;
     nfh.inputs[2] <== index;
+    // circomlib's verifier takes isOld0 as given and weights the terminal node by 1 - isOld0, so a value other than 0 or 1 lets
+    // the prover pick the terminal node, and with it a spent nullifier's real leaf hash for a key that is not there.
+    smtIsOld0 * (smtIsOld0 - 1) === 0;
     component smt = SMTVerifier(smtLevels);
     smt.enabled <== 1;
     smt.fnc <== 1;
