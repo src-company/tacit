@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-vOTlVDMM4o8yqeXQKe1h6imML8GiAIVuBdiDGzIYgV8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Nd9VrfvurUIKSwvOcGWIr9FG260tH2N4fEhtwG+VD3Y=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -1591,7 +1591,7 @@ async function selfExit(run, spec) {
       selfSettle: settleFrom(t, { label: spec.label, say: tell }) });
     toast(`${spec.label}: done`);
     say(status(), html`<span class="ok">Done.</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
-    await Promise.allSettled([scanPrivate(true), loadTacHoldings()]);
+    await Promise.allSettled([scanPrivate(true), spec.after ? spec.after() : null]);
     rerender(spec.sheet);
   } catch (e) { run.fail(status(), e); }
 }
@@ -2827,7 +2827,12 @@ function v1Out(el, status) {
       const t = await getUx(), priv = walletPriv(), recipient = recipientOf(raw);
       const note = await noteFor(run, t, priv, x.units, (n) => BigInt(n.value) >= x.units, status);
       run.say(status, 'The relay is proving your withdrawal…');
-      await t.sendUnwrap({ note, walletPriv: priv, recipient, amount: x.units, waitOpts: run.wait(null, 15 * 60e3, { exit: { to: recipient, units: String(x.units), note: kNote(note), from: 'eth', sheet: 'eth' } }) });
+      try { await t.sendUnwrap({ note, walletPriv: priv, recipient, amount: x.units, waitOpts: run.wait(null, 15 * 60e3, { exit: { to: recipient, units: String(x.units), note: kNote(note), from: 'eth', sheet: 'eth' } }) }); }
+      catch (e) {
+        if (!relayRefused(e) || run.away) throw e;
+        offerSelfExit({ note, to: recipient, units: String(x.units), label: `Withdraw ${fmt(x.units, 8, 6)} ETH to ${short(raw, 6)}`, sheet: 'eth', status: () => $('#v1-status') }, e);
+        return;
+      }
       await scanPrivate(true).catch(() => {});
       rerender('eth');
     } catch (e) { run.fail(status, e); }
@@ -3574,7 +3579,7 @@ function renderTacBal(el) {
         const biggest = freeNotes(P.scan?.tac?.notes).sort(byValue).reverse()[0];
         const small = new Error('Each private TAC note is worth less than the relay fee to move it.');
         if (!biggest) throw small;
-        offerSelfExit({ note: biggest, to, units: String(biggest.value), label: `Make ${fmt(BigInt(biggest.value), 8, 2)} TAC public`, sheet: 'tac', status: () => $('#tac-bal-status') }, small);
+        offerSelfExit({ note: biggest, to, units: String(biggest.value), label: `Make ${fmt(BigInt(biggest.value), 8, 2)} TAC public`, sheet: 'tac', after: loadTacHoldings, status: () => $('#tac-bal-status') }, small);
         return;
       }
       run.take(...worth.map(kNote));
@@ -3587,7 +3592,7 @@ function renderTacBal(el) {
         try { await t.unwrap({ note: n, walletPriv: priv, recipient: to, wait: true, waitOpts: run.wait(`Make ${fmt(BigInt(n.value), 8, 2)} TAC public`, 15 * 60e3, { exit: { to, units: String(n.value), note: kNote(n), from: 'tac', sheet: 'tac' } }) }); }
         catch (e) {
           if (relayRefused(e) && !run.away) {
-            offerSelfExit({ note: n, to, units: String(n.value), label: `Make ${fmt(BigInt(n.value), 8, 2)} TAC public`, sheet: 'tac', status: () => $('#tac-bal-status') }, e);
+            offerSelfExit({ note: n, to, units: String(n.value), label: `Make ${fmt(BigInt(n.value), 8, 2)} TAC public`, sheet: 'tac', after: loadTacHoldings, status: () => $('#tac-bal-status') }, e);
             offered = true; break;
           }
           if (!run.away) throw e; run.fail(status, e);
@@ -5215,7 +5220,13 @@ render.borrow = () => {
       if (!note) throw new Error('Your cUSD is in an action still going through. Try again once it is done.');
       run.take(kNote(note));
       say(status, 'The relay is proving your withdrawal…');
-      const r = await t.unwrap({ note, walletPriv: priv, recipient: to, waitOpts: run.wait(`Withdraw ${fmt(BigInt(note.value), 8, 2)} cUSD as tacUSD`, 15 * 60e3, { exit: { to, units: String(note.value), note: kNote(note), from: 'cusd', sheet: 'borrow' } }) });
+      let r;
+      try { r = await t.unwrap({ note, walletPriv: priv, recipient: to, waitOpts: run.wait(`Withdraw ${fmt(BigInt(note.value), 8, 2)} cUSD as tacUSD`, 15 * 60e3, { exit: { to, units: String(note.value), note: kNote(note), from: 'cusd', sheet: 'borrow' } }) }); }
+      catch (e) {
+        if (!relayRefused(e) || run.away) throw e;
+        offerSelfExit({ note, to, units: String(note.value), label: `Withdraw ${fmt(BigInt(note.value), 8, 2)} cUSD as tacUSD`, sheet: 'borrow', after: () => loadBorrow(true), status: () => $('#bw-status') }, e);
+        return;
+      }
       toast(`tacUSD sent to ${your()}`);
       await loadBorrow(true); rerender('borrow'); say($('#bw-status'), html`<span class="ok">Withdrawn.</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
     } catch (e) { sayErr(status, e); }
@@ -5327,7 +5338,7 @@ function assetSendForm(el, status, { prefix, sheet, statusId, sources, pick }) {
         try { r = await t.sendUnwrap({ note, walletPriv: priv, recipient: x.recipient, amount: x.units, waitOpts: run.wait(null, 15 * 60e3, { exit: { to: x.recipient, units: String(x.units), note: kNote(note), from: k, sheet } }) }); }
         catch (e) {
           if (!relayRefused(e) || run.away) throw e;
-          offerSelfExit({ note, to: x.recipient, units: String(x.units), label: `Send ${show(x.units)} ${dtk} to ${short(raw, 6)} as ${a.out}`, sheet, status: out }, e);
+          offerSelfExit({ note, to: x.recipient, units: String(x.units), label: `Send ${show(x.units)} ${dtk} to ${short(raw, 6)} as ${a.out}`, sheet, after: sheet === 'tac' ? loadTacHoldings : null, status: out }, e);
           return;
         }
       } else {

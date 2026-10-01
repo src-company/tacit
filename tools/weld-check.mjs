@@ -216,6 +216,8 @@ const shot = (page, name) => SHOTS ? page.screenshot({ path: join(SHOTS, `weld-$
 async function step(name, fn) { if (!ONLY.has(name)) return; try { await fn(); } catch (e) { fails++; console.log('FAIL', name, '-', e.message.split('\n')[0]); } }
 const text = (page, sel) => page.evaluate((s) => document.querySelector(s)?.textContent || '', sel);
 const until = (page, fn, arg, timeout = 60000) => page.waitForFunction(fn, arg, { timeout });
+// A fee quote reads gas and the prove price over the fork, which can take minutes a call when the fork is slow.
+const QUOTE_WAIT = 600000;
 
 const TAC = '0xA1313eb9f3A445606D9583bcAc3ebeB56a858279', FARM = '0x0000003bF4BA0B21f5e0d35119b337F4d4CF82E0';
 const A0 = '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266', K0 = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
@@ -990,14 +992,14 @@ await step('tacsend', async () => {
     ok(!(await r.page.$('[data-ts]')), 'tacsend: one source only, no toggle (public TAC already sends from the wallet sheet)');
     await r.page.fill('#ts-to', tacit1('abd'.padEnd(64, '9')));
     await r.page.fill('#ts-amt', '15');
-    await until(r.page, () => /They get about/.test(document.querySelector('#ts-rcpt')?.textContent || '') && !document.querySelector('#ts-go').disabled, null, 60000)
-      .catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | preview: ${(await text(r.page, '#ts-rcpt')).replace(/\s+/g, ' ')} | status: ${await text(r.page, '#tac-bal-status')} | errors: ${r.errors.slice(0, 2).join(' | ')}`); });
+    await until(r.page, () => /They get about/.test(document.querySelector('#ts-rcpt')?.textContent || '') && !document.querySelector('#ts-go').disabled, null, QUOTE_WAIT)
+      .catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | preview: ${(await text(r.page, '#ts-rcpt')).replace(/\s+/g, ' ')} | rc.hidden=${await r.page.$eval('#ts-rcpt', (e) => e.hidden)} to=${await r.page.$eval('#ts-to', (e) => e.value.slice(0, 20))} amt=${await r.page.$eval('#ts-amt', (e) => e.value)} go.disabled=${await r.page.$eval('#ts-go', (e) => e.disabled)} html=${(await r.page.$eval('#ts-rcpt', (e) => e.innerHTML)).slice(0, 200)} | status: ${await text(r.page, '#tac-bal-status')} | errors: ${r.errors.slice(0, 2).join(' | ')}`); });
     ok(/TAC/.test(await text(r.page, '#ts-rcpt')) && !/cTAC/.test(await text(r.page, '#ts-rcpt')), `tacsend: a tacit1 recipient is quoted privately, shown as TAC (${(await text(r.page, '#ts-rcpt')).replace(/\s+/g, ' ').trim()})`);
     await r.page.fill('#ts-to', '0x000000000000000000000000000000000000dEaD');
-    await until(r.page, () => /Arrives/.test(document.querySelector('#ts-rcpt')?.textContent || '') && !document.querySelector('#ts-go').disabled, null, 60000);
+    await until(r.page, () => /Arrives/.test(document.querySelector('#ts-rcpt')?.textContent || '') && !document.querySelector('#ts-go').disabled, null, QUOTE_WAIT);
     ok(/Relay fee/.test(await text(r.page, '#ts-rcpt')) && /Arrives[^]*TAC/.test(await text(r.page, '#ts-rcpt')), `tacsend: an 0x recipient gets a partial amount as public TAC, fee first (${(await text(r.page, '#ts-rcpt')).replace(/\s+/g, ' ').trim()})`);
     await r.page.fill('#ts-amt', '1000');
-    await until(r.page, () => /More than your private balance/.test(document.querySelector('#ts-rcpt')?.textContent || ''), null, 60000);
+    await until(r.page, () => /More than your private balance/.test(document.querySelector('#ts-rcpt')?.textContent || ''), null, QUOTE_WAIT);
     ok(await r.page.$eval('#ts-go', (b) => b.disabled), 'tacsend: more than the private balance is refused');
     // The one-tap "Make public" (drains every worthwhile note) still sits alongside the new partial-amount form.
     ok(/Make public/.test(await text(r.page, '#tac-bal')), 'tacsend: the all-at-once "Make public" action is unchanged');
