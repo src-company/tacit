@@ -60,11 +60,12 @@ import { splitDayBudget, dayHistory } from '../src/lib/points-day-board.js';
 
 {
   const days = { 10: [{ address: '0xA', dayPoints: 100 }, { address: '0xB', dayPoints: 300 }], 11: [{ address: '0xb', dayPoints: 50 }], 12: [{ address: '0xA', dayPoints: 10 }, { address: '0xb', dayPoints: 10 }] };
-  const reads = {};
+  const reads = {}, ledger = { '0xa': 250n, '0xb': 1750n };
   const history = dayHistory({
     dayRowsFor: (d) => { reads[d] = (reads[d] || 0) + 1; return days[d] || []; },
     budgetFor: () => 1000n,
     capFor: (d) => (d === 12 ? 10n : null),   // a ceiling of 10 wei per point trims day 12 to 10 x 20 = 200
+    ledgerFor: (a) => ledger[a],
   });
   const span = { fromDay: 9, throughDay: 12, lastSettledDay: 11 };
   const a = history('0xa', span);
@@ -72,12 +73,20 @@ import { splitDayBudget, dayHistory } from '../src/lib/points-day-board.js';
   assert.deepEqual(a.days.map((d) => d.settled), [false, true], 'a day after the last settled one is marked so');
   assert.equal(a.days[1].tacWei, '250');
   assert.equal(a.days[0].tacWei, '100', 'today is read at the ceiling: 10 points at 10 wei a point');
-  assert.equal(a.settledWei, '250', 'the total is of the settled days only');
+  assert.equal(a.earnedWei, '250');
+  assert.equal(a.reconciled, true);
   const b = history('0xB', span);
   assert.deepEqual(b.days.map((d) => d.tacWei), ['100', '1000', '750'], 'case does not matter and the same split serves every address');
-  assert.equal(b.settledWei, '1750');
   assert.equal(reads[10], 1, 'a settled day is read once, however many addresses ask');
   assert.equal(reads[12], 2, 'the day in progress is read each time');
-  assert.deepEqual(history('0xc', span), { days: [], settledWei: '0' });
+  assert.deepEqual(history('0xc', span), { earnedWei: '0', reconciled: true, days: [] });
   console.log('ok - an address\'s days are what settlement pays, settled days are kept and today is not');
+
+  ledger['0xb'] = 1700n;   // the ledger paid 50 less than the days re-split to: the settled days cannot be shown as paid
+  const off = history('0xb', span);
+  assert.equal(off.reconciled, false);
+  assert.equal(off.earnedWei, '1700', 'what was earned is the ledger\'s');
+  assert.deepEqual(off.days.map((d) => d.tacWei), ['100', null, null], 'settled days carry points only; today is still an estimate');
+  assert.deepEqual(off.days.map((d) => d.points), [10, 50, 300]);
+  console.log('ok - settled days that do not add up to the ledger carry points only');
 }

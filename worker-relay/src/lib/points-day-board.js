@@ -38,10 +38,15 @@ export function splitDayBudget(rows, budgetWei, maxWeiPerPoint = null) {
   return deltas;
 }
 
-// What each UTC day paid one address, newest first, and the total of the settled days. `dayRowsFor(day)` is that day's
-// [{ address, dayPoints }], `budgetFor(day)` its budget and `capFor(day)` its TAC-per-point ceiling. A day through
-// `lastSettledDay` is final, so its split is kept; the days after it are read afresh and marked unsettled.
-export function dayHistory({ dayRowsFor, budgetFor, capFor }) {
+// What each UTC day paid one address, newest first. `dayRowsFor(day)` is that day's [{ address, dayPoints }],
+// `budgetFor(day)` its budget, `capFor(day)` its TAC-per-point ceiling and `ledgerFor(address)` what the reward ledger
+// holds for the address. A day through `lastSettledDay` is final, so its split is kept; the days after it are read afresh
+// and marked unsettled.
+//
+// A settled day's TAC is only given where it can be shown to be what was paid: the days re-split to exactly the ledger's
+// total. Activity credited to a day after it settled (or since excluded) moves a re-split, and the ledger, which is what
+// is claimed, does not follow it; those days carry points only (`tacWei: null`) and the ledger's total says what was earned.
+export function dayHistory({ dayRowsFor, budgetFor, capFor, ledgerFor }) {
   const final = new Map();
   const split = (day, settled) => {
     if (settled && final.has(day)) return final.get(day);
@@ -53,13 +58,17 @@ export function dayHistory({ dayRowsFor, budgetFor, capFor }) {
   };
   return (address, { fromDay, throughDay, lastSettledDay }) => {
     const a = address.toLowerCase(), days = [];
-    let settledWei = 0n;
+    let resplit = 0n;
     for (let day = fromDay; day <= throughDay; day++) {
       const settled = day <= lastSettledDay, e = split(day, settled).get(a);
       if (!e || !(e.points > 0)) continue;
-      if (settled) settledWei += e.wei;
-      days.push({ day, points: e.points, tacWei: e.wei.toString(), settled });
+      if (settled) resplit += e.wei;
+      days.push({ day, points: e.points, wei: e.wei, settled });
     }
-    return { days: days.reverse(), settledWei: settledWei.toString() };
+    const earnedWei = BigInt(ledgerFor(a) ?? 0), reconciled = resplit === earnedWei;
+    return {
+      earnedWei: earnedWei.toString(), reconciled,
+      days: days.reverse().map((d) => ({ day: d.day, points: d.points, tacWei: d.settled && !reconciled ? null : d.wei.toString(), settled: d.settled })),
+    };
   };
 }

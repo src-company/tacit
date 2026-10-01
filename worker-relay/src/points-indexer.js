@@ -1365,6 +1365,7 @@ function startHttp(store, evmState) {
     dayRowsFor: (d) => store.dayPointsByAddress(d * 86400, (d + 1) * 86400),
     budgetFor: (d) => dayBudgetWei(d - Math.floor(CFG.pointsProgramStartSec / 86400)),
     capFor: (d) => rateCapForDay(rateCapSchedule, d),
+    ledgerFor: (a) => store.rewardFor(a),
   });
   const server = createServer(async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
