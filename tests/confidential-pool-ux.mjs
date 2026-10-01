@@ -971,7 +971,7 @@ test('self-settled wrap: proved by the relay, sent by the caller with the memos 
   const r = await ux.submitWrapSettle({ built: again, waitOpts, depositTx: '0x' + 'ee'.repeat(32), selfSettle });
   assert.equal(subs[0].mode, 'prove', 'the relay is asked for a proof only');
   assert.ok(!('depositTx' in subs[0]), 'nothing for the relay to be paid by');
-  assert.deepEqual(sent[0], { publicValues: '0x01', proof: '0x02', memos: first.memos }, 'the memos the proof commits to, not a fresh seal');
+  assert.deepEqual(sent[0], { jobId: 'p', publicValues: '0x01', proof: '0x02', memos: first.memos }, 'the job it settles, and the memos the proof commits to, not a fresh seal');
   assert.equal(r.status, 'settled');
   assert.equal(r.txHash, '0x' + 'dd'.repeat(32));
   assert.equal(r.memoCheck.ok, true);

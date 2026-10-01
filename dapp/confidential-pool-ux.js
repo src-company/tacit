@@ -959,7 +959,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // object returned by buildWrap.
   // `depositTx`: the deposit's transaction, when known. A deposit sent through a tip forwarder carries the relay's tip,
   // which the relay reads from that receipt so the paid wrap is not held to its free-settle allowance.
-  // `selfSettle({ publicValues, proof, memos })` → { txHash }: the relay only proves, and the caller sends settle() from
+  // `selfSettle({ jobId, publicValues, proof, memos })` → { txHash }: the relay only proves, and the caller sends settle() from
   // the account it pays with (settleCalldata builds the call). A deposit's id commits to the note it becomes, so it is the
   // same wrap whoever sends it, and a relayed settle of it still queued finds it done.
   async function submitWrapSettle({ built, waitOpts, depositTx = null, selfSettle = null } = {}) {
@@ -969,7 +969,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       const proven = await relay.prove(spec, waitOpts);
       if (proven.status === 'settled') return proven;
       const memos = proven.memos || built.memos;
-      const sent = await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos });
+      const sent = await selfSettle({ jobId: proven.jobId, publicValues: proven.publicValues, proof: proven.proof, memos });
       return relay.verifyEmittedMemos({ jobId: proven.jobId, status: 'settled', ...sent }, [built.leaf], memos);
     }
     const sub = await relay.submitOp({ ...spec, mode: 'settle', depositTx }, waitOpts);
@@ -3137,11 +3137,11 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     if (!selfRelay && !selfSettle) return relay.settle({ type, ...spec, memos: sealedMemos }, waitOpts);
     const proven = await relay.prove({ type, ...spec, memos: sealedMemos }, waitOpts);
     if (proven.status === 'settled') return proven;
-    // `selfSettle({ publicValues, proof, memos, pair })` → { txHash }: the caller sends settle() from whichever account
+    // `selfSettle({ jobId, publicValues, proof, memos, pair })` → { txHash }: the caller sends settle() from whichever account
     // it pays with (settleCalldata builds the call), as openCdp's does. The memos are the ones the proof commits to (an
     // older relay client returns none, and its proof is over these).
     const memos = proven.memos || sealedMemos;
-    if (selfSettle) return { jobId: proven.jobId, ...(await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos, pair })) };
+    if (selfSettle) return { jobId: proven.jobId, ...(await selfSettle({ jobId: proven.jobId, publicValues: proven.publicValues, proof: proven.proof, memos, pair })) };
     return submitSettle({ settlerPriv: walletPriv, publicValues: proven.publicValues, proof: proven.proof, memos, pair });
   }
 
@@ -3472,7 +3472,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
 
   // Submit a gasless exit to the relay (no user tx) and, by default, block until it settles on-chain.
   // The box collects `fee`; the user receives `net`. Returns the build + { jobId, status, txHash }.
-  // `selfSettle({ publicValues, proof, memos })` → { txHash }: an exit with no fee, the whole value to the recipient; the
+  // `selfSettle({ jobId, publicValues, proof, memos })` → { txHash }: an exit with no fee, the whole value to the recipient; the
   // relay only proves it and the caller sends settle() from the account it pays with.
   // The relay re-checks a relayed fee against live gas when the job is submitted, and gas can move between the quote and
   // the submit. A refusal there costs nothing (nothing was proved), so an exit is quoted once more at twice its floor;
@@ -3500,7 +3500,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       const built = buildUnwrap({ note, walletPriv, recipient, selfSettle: true });
       const proven = await relay.prove({ type: 'unwrap', op: built.op, memos: [] }, waitOpts);
       if (proven.status === 'settled') return { ...built, jobId: proven.jobId, status: 'settled', txHash: proven.txHash || null };
-      const sent = await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos: [] });
+      const sent = await selfSettle({ jobId: proven.jobId, publicValues: proven.publicValues, proof: proven.proof, memos: [] });
       return { ...built, jobId: proven.jobId, status: 'settled', txHash: sent && sent.txHash };
     }
     const ticker = poolTickerOf(note.asset) || 'cETH';
@@ -3568,7 +3568,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       const proven = await relay.prove({ ...spec, memos: sealed }, waitOpts);
       if (proven.status === 'settled') return { ...out, jobId: proven.jobId, status: 'settled', txHash: proven.txHash || null };
       const memos = proven.memos || sealed;
-      const sent = await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos });
+      const sent = await selfSettle({ jobId: proven.jobId, publicValues: proven.publicValues, proof: proven.proof, memos });
       const checked = await relay.verifyEmittedMemos({ jobId: proven.jobId, status: 'settled', ...sent }, [changeLeaf], memos);
       return { ...out, jobId: proven.jobId, status: 'settled', txHash: checked.txHash, ...(checked.memoCheck ? { memoCheck: checked.memoCheck } : {}) };
     }

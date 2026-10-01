@@ -69,7 +69,7 @@ export function makeConfidentialDefiActions({ pool, cdp, farm, relay, id, chainB
     const proven = job.status === 'proven' || job.status === 'settled' ? await relay.status(job.jobId) : await relay.waitForProof(job.jobId, waitOpts);
     if (proven.status === 'settled') return { ...proven, jobId: job.jobId };
     const memos = typeof relay.provenMemos === 'function' ? relay.provenMemos(proven, spec, job.sealedMemos) : job.sealedMemos;
-    return { jobId: job.jobId, ...(await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos })) };
+    return { jobId: job.jobId, ...(await selfSettle({ jobId: job.jobId, publicValues: proven.publicValues, proof: proven.proof, memos })) };
   }
 
   // CDP close — burn the debt notes + release the basket (first leg net of fee). Each released leg is a minted

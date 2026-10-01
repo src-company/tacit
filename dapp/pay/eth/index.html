@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-iFSwPCheOm+ap8tkYF1UL23omWYtoroeXTjrSvX7hiE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-hi4seLrVCvva/baaAdvKugQZQWrKg8PR3b7ODnkHeoA=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -281,7 +281,8 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .earn div { padding: 10px 12px; background: var(--field); border: 1px solid var(--hair); }
 .earn b { display: block; font: 500 18px/1.2 var(--mono); letter-spacing: -.02em; }
 .earn span { font-size: 11.5px; color: var(--mute); }
-.pts-line { display: flex; align-items: center; gap: 8px; }
+.pts-line { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.note .link, .callout .link, .status .link { padding: 6px 2px; margin: -6px -2px; }
 .pts-line .tk { width: 16px; height: 16px; }
 .route { margin: 14px 0 0; font-size: 12.5px; color: var(--mute); }
 .route b { font-weight: 500; color: var(--ink); }
@@ -583,6 +584,7 @@ const errText = (e) => {
   if (/not enough in the pool/i.test(m)) return 'Your private balance does not cover this amount and its fee.';
   if (/does not match the ceremony|verification key does not match/i.test(m)) return 'The proving key did not match its published hash, so it was not used. Reload and try again.';
   if (/short of gas|can.t take this one/i.test(m)) return 'The relay can’t take this one right now.';
+  if (/^the relay is busy with other sends/i.test(m)) return m.charAt(0).toUpperCase() + m.slice(1);
   if (/failed to fetch|networkerror|load failed/i.test(m)) return 'Could not reach the network. Check your connection and try again.';
   if (/rate.?limit|too many requests|\b429\b/i.test(m)) return 'That network is busy right now. Try again in a moment.';
   if (/timed? ?out|timeout/i.test(m)) return 'The network took too long to answer. Try again.';
@@ -1355,7 +1357,7 @@ function readPub() {
   if (TALLY.p || (TALLY.at && Date.now() - TALLY.at < 300e3)) return;
   TALLY.p = fetch('https://api.tacit.finance/stats?network=mainnet', { cache: 'no-store' }).then((r) => r.json()).then((d) => {
     const n = (x) => BigInt(x?.$n ?? x ?? 0);
-    for (const x of d.dev || []) TALLY[x.chain] = { in: n(x.dep), deposits: Number(x.nd) || 0 };
+    for (const x of d.dev || []) if (x.dep != null) TALLY[x.chain] = { in: n(x.dep), deposits: Number(x.nd) || 0 };   // a chain it could not read is unknown, not empty
   }).catch(() => {}).finally(() => { TALLY.p = null; TALLY.at = Date.now(); paintBal(); FORM.check?.(); });
 }
 const TALLY = {};
@@ -1456,22 +1458,46 @@ const privacyView = (c, amount, to, via) => {
 // ETH, times the early bonus 1 + 4 / (1 + deposits so far / 200) (the pools' public deposit count, which the program
 // counts the same deposits from), times the wallet's TAC-holder tier (100, 1,000, 10,000 TAC: ×1.25, ×1.5, ×2) and the
 // Privacy Pools boost when it has one. Until the count is read it says the floor.
-const TAC_TOKEN = '0xA1313eb9f3A445606D9583bcAc3ebeB56a858279', TACB = { who: null, v: null, p: null };
+const TAC_TOKEN = '0xA1313eb9f3A445606D9583bcAc3ebeB56a858279', TAC_TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+const TACB = { who: null, v: null, p: null, retryAt: 0 };
+const tierOf = (wei) => { const t = Number(wei / 10n ** 18n); return t >= 10000 ? 2 : t >= 1000 ? 1.5 : t >= 100 ? 1.25 : 1; };
+// The program credits the tier of the LOWEST public TAC balance the depositor held over the trailing 7,200 blocks (about
+// a day), so TAC bought just now counts for nothing yet. The wallet's TAC transfers over that window are replayed
+// backwards from its balance now. → { now, held }: the tier by the balance now, and the tier it has held all day (1
+// where the transfers could not be read, which promises less rather than more). A read that failed is tried again
+// after half a minute.
+async function readTier(who) {
+  const rpc = await rpcApart(CHAINS.find((c) => c.chainId === 1)), me = '0x' + who.slice(2).padStart(64, '0');
+  const [bal, head] = await Promise.all([rpc('eth_call', [{ to: TAC_TOKEN, data: '0x70a08231' + who.slice(2).padStart(64, '0') }, 'latest']).then(BigInt), rpc('eth_blockNumber', []).then(BigInt)]);
+  let low = 0n;
+  try {
+    const q = (topics) => rpc('eth_getLogs', [{ address: TAC_TOKEN, topics, fromBlock: '0x' + (head - 7200n).toString(16), toBlock: 'latest' }]);
+    const seen = new Map();
+    for (const l of [...await q([TAC_TRANSFER, me]), ...await q([TAC_TRANSFER, null, me])]) seen.set(l.blockNumber + ':' + l.logIndex, l);
+    const sorted = [...seen.values()].sort((x, y) => (BigInt(y.blockNumber) - BigInt(x.blockNumber)) || (BigInt(y.logIndex) - BigInt(x.logIndex)));
+    let run = bal, min = bal;
+    for (const l of sorted) {
+      const v = BigInt(l.data);
+      run -= (l.topics[2].toLowerCase() === me ? v : 0n) - (l.topics[1].toLowerCase() === me ? v : 0n);
+      if (run < min) min = run;
+    }
+    low = min < 0n ? 0n : min;
+  } catch { low = 0n; }
+  return { now: tierOf(bal), held: tierOf(low) };
+}
 function holderBoost() {
   const who = S.wallet && lc(S.wallet);
-  if (!who) return 1;
-  if (TACB.who !== who && !TACB.p) {
-    Object.assign(TACB, { who, v: null });
-    TACB.p = rpcApart(CHAINS.find((c) => c.chainId === 1)).then((rpc) => rpc('eth_call', [{ to: TAC_TOKEN, data: '0x70a08231' + who.slice(2).padStart(64, '0') }, 'latest']))
-      .then((b) => { if (TACB.who === who) TACB.v = BigInt(b); }).catch(() => {}).finally(() => { TACB.p = null; FORM.check?.(); });
+  if (!who) return { now: 1, held: 1 };
+  if ((TACB.who !== who || (TACB.v == null && Date.now() > TACB.retryAt)) && !TACB.p) {
+    if (TACB.who !== who) Object.assign(TACB, { who, v: null });
+    TACB.p = readTier(who).then((t) => { if (TACB.who === who) TACB.v = t; }).catch(() => { TACB.retryAt = Date.now() + 30e3; }).finally(() => { TACB.p = null; FORM.check?.(); });
   }
-  const t = TACB.v == null ? 0 : Number(TACB.v / 10n ** 18n);
-  return t >= 10000 ? 2 : t >= 1000 ? 1.5 : t >= 100 ? 1.25 : 1;
+  return TACB.who === who && TACB.v ? TACB.v : { now: 1, held: 1 };
 }
 function pointsRow(a) {
   const known = CHAINS.every((c) => TALLY[c.chainId]), n = CHAINS.reduce((s, c) => s + (TALLY[c.chainId]?.deposits || 0), 0);
-  const early = known ? 1 + 4 / (1 + n / 200) : 1, hold = holderBoost(), pp = PTS.v?.pp ? 1.2 : 1;
-  const why = [known ? `×${early.toFixed(1)} early` : '', hold > 1 ? `×${hold} TAC holder` : '', pp > 1 ? '×1.2 Privacy Pools' : ''].filter(Boolean).join(' · ');
+  const early = known ? 1 + 4 / (1 + n / 200) : 1, tier = holderBoost(), hold = tier.held, pp = PTS.v?.pp ? 1.2 : 1;
+  const why = [known ? `×${early.toFixed(1)} early` : '', hold > 1 ? `×${hold} TAC holder` : '', tier.now > hold ? `×${tier.now} once your TAC is held a day` : '', pp > 1 ? '×1.2 Privacy Pools' : ''].filter(Boolean).join(' · ');
   return html`<div class="kv" title="1,000 points per ETH, with an early bonus that shrinks as deposits add up, and more for holding TAC. Points share a daily pot of up to 1,111 TAC."><span class="pts-line"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC points</span><b class="num">${known ? '≈ ' : 'at least '}${ptsFmt((Number(a) / 1e18) * 1000 * early * hold * pp)}${why ? html` <small class="mute">${why}</small>` : ''}</b></div>`;
 }
 const clearDraft = (...ids) => { for (const id of ids) { delete DRAFT[id]; const i = $('#' + id); if (i) i.value = ''; } FORM.check?.(); };

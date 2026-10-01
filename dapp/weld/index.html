@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Y+3G6kdJnnJyUqPTmcY4lndCvSsdFdML5rQktfuPNU8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-vOTlVDMM4o8yqeXQKe1h6imML8GiAIVuBdiDGzIYgV8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -248,7 +248,8 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .kv b { font-weight: 400; color: var(--ink); text-align: right; overflow-wrap: anywhere; }
 .kv b.err { color: var(--err); }
 .kv b.warn { color: var(--orange); }
-.pts-line { display: inline-flex; align-items: center; gap: 6px; }
+.pts-line { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.actr-f .link, .callout .link, .status .link, .note .link { padding: 6px 2px; margin: -6px -2px; }
 .pts-line .tk { width: 14px; height: 14px; }
 .kv b small { font-size: 11px; }
 .rcpt { margin-top: 14px; padding-top: 8px; border-top: 1px dashed var(--hair-2); }
@@ -741,7 +742,7 @@ const escMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#
 class Raw { constructor(s) { this.s = s; } }
 const part = (v) => v instanceof Raw ? v.s : Array.isArray(v) ? v.map(part).join('') : v == null || v === false ? '' : String(v).replace(/[&<>"']/g, (c) => escMap[c]);
 const html = (strs, ...vals) => new Raw(strs.reduce((a, s, i) => a + part(vals[i - 1]) + s));
-const mount = (el, view) => { el.innerHTML = view.s; };
+const mount = (el, view) => { el.innerHTML = view?.s ?? ''; };
 
 // Decimal formatting of a base-unit bigint: `dec` decimals, at most `max` shown, thousands grouped.
 function fmt(v, dec = 18, max = 4) {
@@ -844,6 +845,7 @@ const errText = (e) => {
   if (/relay lost the job/i.test(m)) return 'The relay lost track of this request. Check Activity before sending it again.';
   // A device-pool keeper not taking sends right now (see keeperTrouble): the page offers the paying account instead.
   if (/short of gas|can.t take this one/i.test(m)) return 'The relay can’t take this one right now.';
+  if (/^the relay is busy with other sends/i.test(m)) return m.charAt(0).toUpperCase() + m.slice(1);
   // The relay's daily allowance of settles that carry no fee in the op (a wrap's tip rides on its deposit, so a wrap
   // counts): it opens again at midnight UTC, not in a moment.
   if (/free relayed settles for today are used up/i.test(m)) return 'The relay’s free settles for today are used up. They open again at midnight UTC.';
@@ -1116,7 +1118,7 @@ function reattempt(id) {
   const it = actGet(id);
   if (!it || !badStatus(it.status)) return;
   const old = { ...it, id: `${id}~${Date.now().toString(36)}` }, op = it.in && actGet(it.in);
-  if (op) for (const s of op.steps) if (s.id === id) s.id = old.id;
+  if (op?.steps) for (const s of op.steps) if (s.id === id) s.id = old.id;
   ACT.items = ACT.items.map((x) => (x === it ? old : x));
   actSave();
 }
@@ -1308,11 +1310,13 @@ const recheckJob = (id) => jobStatus(id.slice(4)).then((st) => { if (st?.status 
 const runTx = (run, hash, step, doing) => { if (run && hash) run.txs.push({ id: `tx:1:${String(hash).toLowerCase()}`, step, doing }); return hash; };
 
 // A transaction this page sent, followed to its receipt. `via: 'keeper'` marks one a device-pool keeper submitted.
-// `nest`: the receipt it is a step of (see selfFinish), where it is kept rather than listed.
-function actTx(hash, { label, chainId = 1, via = null, nest = null } = {}) {
+// `nest`: the receipt it is a step of (see selfFinish), where it is kept rather than listed. `finishes`: the receipts
+// and jobs that finish when it confirms (a settle sent from here for a proof the relay made); kept with it, so that
+// holds after a reload too.
+function actTx(hash, { label, chainId = 1, via = null, nest = null, finishes = null } = {}) {
   if (!hash) return hash;
   const id = `tx:${chainId}:${String(hash).toLowerCase()}`;
-  if (!ACT.items.some((x) => x.id === id)) { SESS.add(id); OWN.set(id, busySheet()); actPut(id, { kind: 'tx', label: label || 'Transaction', chain: chainId, hash, via, status: 'pending', in: nest || undefined }); }
+  if (!ACT.items.some((x) => x.id === id)) { SESS.add(id); OWN.set(id, busySheet()); actPut(id, { kind: 'tx', label: label || 'Transaction', chain: chainId, hash, via, status: 'pending', in: nest || undefined, finishes: finishes || undefined }); }
   followTx(id);
   return hash;
 }
@@ -1320,8 +1324,10 @@ function followTx(id, once = false) {
   const it = ACT.items.find((x) => x.id === id);
   if (FOLLOW.has(id) || !it || (ended(it) && !once)) return;
   const p = (once ? receiptOnce(it.hash, it.chain) : receipt(it.hash, it.chain)).then((r) => {
-    if (r) actPut(id, r.status === '0x1' ? { status: 'confirmed' } : { status: 'failed', err: 'The transaction reverted.' });
-    else if (!once) actPut(id, { status: 'stale' });
+    if (r) {
+      actPut(id, r.status === '0x1' ? { status: 'confirmed' } : { status: 'failed', err: 'The transaction reverted.' });
+      if (r.status === '0x1') for (const f of it.finishes || []) finishedBy(f, it.hash);
+    } else if (!once) actPut(id, { status: 'stale' });
   }).catch(() => {}).finally(() => FOLLOW.delete(id));
   FOLLOW.set(id, p);
 }
@@ -1466,6 +1472,14 @@ function actFoot(it) {
   return html`<div class="actr-f">${say_ ? say_() : ''}</div>${it.warn ? html`<div class="actr-f err">${it.warn}</div>` : ''}${selfLine(it)}`;
 }
 
+// A settle sent from the paying account confirmed: what it was sent for is done, whether or not the relay ever hears of it.
+function finishedBy(id, hash) {
+  const it = actGet(id);
+  if (!it) return;
+  const main = it.kind === 'op' ? it.steps.find((x) => x.main)?.id : id, j = main && actGet(main);
+  if (j && !okStatus(j.status)) actPut(main, { status: 'settled', hash });
+  if (it.selfErr) actPut(id, { selfErr: '' });
+}
 // ── finishing from the paying account ─────────────────────────────────────────────────────────────────────────
 // A deposit waiting for its settle, or an exit, that the relay has not taken after a minute and a half can be finished
 // from the paying account instead: the relay proves it, which is all it is asked for, and the settle goes out from here,
@@ -1486,7 +1500,7 @@ function selfWork(it) {
 }
 function selfLine(it) {
   if (SELF.has(it.id)) return html`<div class="actr-f">${SELF.get(it.id)}</div>`;
-  const err = it.selfErr ? html`<div class="actr-f err">${it.selfErr}</div>` : '';
+  const err = it.selfErr && !ended(it) ? html`<div class="actr-f err">${it.selfErr}</div>` : '';
   if (!selfWork(it)) { OFFERED.delete(it.id); return err; }
   OFFERED.add(it.id);
   return html`${err}<div class="actr-f"><button class="link" type="button" data-self="${it.id}">${it.self.exit ? 'Send it' : 'Finish it'} from ${your()}</button>
@@ -1498,14 +1512,14 @@ document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-
 setInterval(() => {
   if (!$('#sheet-act').open || !S.key) return;
   const due = listed().filter((x) => x.self && !ended(x));
-  if (due.length && !P.scan) { scanPrivate().then(paintAct).catch(() => {}); return; }
+  if (due.length && !P.scan) { if (!P.err && !P.scanning) scanPrivate().then(paintAct).catch(() => {}); return; }
   if (due.some((x) => !OFFERED.has(x.id) && !SELF.has(x.id) && selfWork(x))) paintAct();
 }, 5000);
 // The settle a proof was bought for, sent from the paying account and followed to its receipt. `nest`: the receipt it
 // finishes, which keeps it as a step.
 const settleFrom = (t, { label, nest = null, say: tell }) => async (x) => {
   tell(`Sending it from ${your()}…`);
-  const hash = await sendTx({ to: t.cfg.pool, data: t.settleCalldata(x), label, nest });
+  const hash = await sendTx({ to: t.cfg.pool, data: t.settleCalldata(x), label, nest, finishes: [nest, x.jobId && 'job:' + x.jobId].filter(Boolean) });
   tell(html`Sent ${txLink(hash)}. Waiting for it to land…`);
   await waitTx(hash);
   return { txHash: hash };
@@ -1516,6 +1530,7 @@ async function selfFinish(id) {
   const tell = (v) => { SELF.set(id, v); paintAct(); };
   const run = newRun('act');
   run.nest = id; run.release = () => {};
+  run.take(...(w.ps ? w.ps.map(kDep) : [kNote(w.note)]));       // held from the first press, before anything is awaited
   actPut(id, { selfErr: '' });
   tell('The relay is proving it for you to send, about a minute…');
   let hash = null;
@@ -1536,8 +1551,7 @@ async function selfFinish(id) {
         selfSettle: settleFrom(t, { label: it.label, nest: id, say: tell }) })).txHash;
     }
     // The receipt is done by this transaction; the relay, once it gets to its own copy, finds it done too.
-    const main = it.kind === 'op' ? it.steps.find((x) => x.main)?.id : id;
-    if (hash && actGet(main)) actPut(main, { status: 'settled', hash });
+    if (hash) finishedBy(id, hash);
   } catch (e) { actPut(id, { selfErr: errText(e) }); }
   finally { SELF.delete(id); endRun(run); paintAct(); afterActivity(); }
 }
@@ -2259,7 +2273,7 @@ function wireSub(el, name, set) { $$(`[data-${name}]`, el).forEach((b) => b.oncl
 
 // ── Tacit V1 pool: shared module, loaded on first use ────────────────────────────────────────────────────
 const getUx = lazy(async () => {
-  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=7deff063'), import('/confidential-deployments.js')]);
+  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=f9cb0645'), import('/confidential-deployments.js')]);
   dep.setActiveNetwork('mainnet');
   setExternalTacHolders(() => (S.wallet ? [S.wallet] : []));      // public TAC in the connected wallet counts toward the exit-fee tier, as on tacit.finance
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
@@ -2497,26 +2511,50 @@ function readOutlook() {
   OUT.p = fetch(`${API}/stats?network=mainnet`, { cache: 'no-store', signal: within(20e3) }).then((r) => r.json()).then((d) => {
     const n = (x) => BigInt(x?.$n ?? x ?? 0);
     if (d.eth) OUT.v1 = { held: n(d.eth.held), in: n(d.eth.inWei), deposits: Number(d.eth.deposits) || 0 };
-    for (const x of d.dev || []) OUT.dev[x.chain] = { held: n(x.bal), in: n(x.dep), deposits: Number(x.nd) || 0 };
+    for (const x of d.dev || []) if (x.bal != null && x.dep != null) OUT.dev[x.chain] = { held: n(x.bal), in: n(x.dep), deposits: Number(x.nd) || 0 };   // a chain it could not read is unknown, not empty
   }).catch(() => {}).finally(() => { OUT.p = null; OUT.at = Date.now(); outlookPaint(); });
 }
+const tierOf = (wei) => { const t = Number(wei / 10n ** 18n); return t >= 10000 ? 2 : t >= 1000 ? 1.5 : t >= 100 ? 1.25 : 1; };
+// The program credits the tier of the LOWEST public TAC balance the depositor held over the trailing 7,200 blocks (about
+// a day), so TAC bought just now counts for nothing yet. The account's TAC transfers over that window are replayed
+// backwards from its balance now. → { now, held }: the tier by the balance now, and the tier it has held all day (1
+// where the transfers could not be read, which promises less rather than more).
+const TAC_TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+async function readTier(a) {
+  const me = '0x' + addrWord(a);
+  const [bal, head] = await Promise.all([ethCall(ADDR.tac, '70a08231' + addrWord(a)).then((h) => wordAt(h, 0)), rpc('eth_blockNumber', []).then(BigInt)]);
+  let low = 0n;
+  try {
+    const q = (topics) => rpc('eth_getLogs', [{ address: ADDR.tac, topics, fromBlock: '0x' + (head - 7200n).toString(16), toBlock: 'latest' }]);
+    const logs = new Map();
+    for (const l of [...await q([TAC_TRANSFER, me]), ...await q([TAC_TRANSFER, null, me])]) logs.set(l.blockNumber + ':' + l.logIndex, l);
+    const sorted = [...logs.values()].sort((x, y) => (BigInt(y.blockNumber) - BigInt(x.blockNumber)) || (BigInt(y.logIndex) - BigInt(x.logIndex)));
+    let run = bal, min = bal;
+    for (const l of sorted) {
+      const v = BigInt(l.data);
+      run -= (l.topics[2].toLowerCase() === me ? v : 0n) - (l.topics[1].toLowerCase() === me ? v : 0n);
+      if (run < min) min = run;
+    }
+    low = min < 0n ? 0n : min;
+  } catch { low = 0n; }
+  return { now: tierOf(bal), held: tierOf(low) };
+}
 function holderTier(addr) {
-  if (!addr) return 1;
+  if (!addr) return { now: 1, held: 1 };
   const a = String(addr).toLowerCase();
   if (!OUT.tac.has(a)) {
     OUT.tac.set(a, null);
-    ethCall(ADDR.tac, '70a08231' + addrWord(a)).then((h) => { OUT.tac.set(a, wordAt(h, 0)); outlookPaint(); }).catch(() => OUT.tac.delete(a));
+    readTier(a).then((t) => { OUT.tac.set(a, t); outlookPaint(); }).catch(() => OUT.tac.delete(a));
   }
-  const b = OUT.tac.get(a), t = b == null ? 0 : Number(b / 10n ** 18n);
-  return t >= 10000 ? 2 : t >= 1000 ? 1.5 : t >= 100 ? 1.25 : 1;
+  return OUT.tac.get(a) || { now: 1, held: 1 };
 }
 // `kind`: 'v1' (a wrap into the Tacit pool) or 'dev' (a deposit into the ETH pool on any chain).
 function pointsRow(wei, kind) {
   readOutlook();
   const v1 = kind === 'v1', dev = Object.values(OUT.dev);
-  const known = v1 ? !!OUT.v1 : dev.length > 0, n = v1 ? OUT.v1?.deposits ?? 0 : dev.reduce((a, x) => a + x.deposits, 0);
-  const early = known ? 1 + 4 / (1 + n / 200) : 1, hold = holderTier(S.address), wrap = v1 ? 1.25 : 1;
-  const why = [known ? `×${early.toFixed(1)} early` : '', v1 ? '×1.25 tETH' : '', hold > 1 ? `×${hold} TAC holder` : ''].filter(Boolean).join(' · ');
+  const known = v1 ? !!OUT.v1 : dev.length === DEVICE_CHAINS.length, n = v1 ? OUT.v1?.deposits ?? 0 : dev.reduce((a, x) => a + x.deposits, 0);
+  const early = known ? 1 + 4 / (1 + n / 200) : 1, tier = holderTier(S.address), hold = tier.held, wrap = v1 ? 1.25 : 1;
+  const why = [known ? `×${early.toFixed(1)} early` : '', v1 ? '×1.25 tETH' : '', hold > 1 ? `×${hold} TAC holder` : '', tier.now > hold ? `×${tier.now} once your TAC is held a day` : ''].filter(Boolean).join(' · ');
   const pts = Math.round((Number(wei) / 1e18) * 1000 * early * wrap * hold).toLocaleString('en-US');
   return html`<div class="kv" data-pts title="1,000 points per ETH, with an early bonus that shrinks as deposits add up, and more for holding TAC. Points share a daily pot of up to 1,111 TAC."><span class="pts-line"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>TAC points</span><b class="num">${known ? '≈ ' : 'at least '}${pts}${why ? html` <small class="mute">${why}</small>` : ''}</b></div>`;
 }
@@ -2524,7 +2562,7 @@ function pointsRow(wei, kind) {
 function poolLine(where) {
   readOutlook();
   const x = where === 'v1' ? OUT.v1 : OUT.dev[where], name = where === 'v1' ? 'The Tacit pool' : `The pool on ${DEVICE_CHAINS.find((c) => c.chainId === Number(where))?.name || 'this chain'}`;
-  return x ? html`${name} holds ${fmt(x.held, 18, 4)} ETH; ${fmt(x.in, 18, 4)} ETH has passed through it in ${x.deposits} deposits.` : '';
+  return x ? html`${name} holds ${fmt(x.held, 18, 4)} ETH; ${fmt(x.in, 18, 4)} ETH has passed through it in ${x.deposits} deposits.` : html``;
 }
 // Totals and holdings arrive after the form is drawn: fill the pool lines in place, and redo an open receipt.
 function outlookPaint() {
@@ -3001,7 +3039,9 @@ function renderDevice(el) {
     <div class="amt"><input id="${id}" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="${label}"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>`;
   // A send the keeper cannot take can go out from the paying account instead (DEV.self): proved here as before, then
   // sent from there, which pays the gas, takes no relay fee, and shows as the sender.
-  const relayFeeNow = () => (DEV.self ? 0n : BigInt(DEV.quote?.fee || 0));
+  // The wallet route covers a send, a withdrawal and a move into the Tacit pool; a move to another chain is the keeper's.
+  const walletRoute = () => DEV.self && !(DEV.mode === 'out' && c.chainId === 1 && DEV.dest !== 'addr' && DEV.dest !== 'v1');
+  const relayFeeNow = () => (walletRoute() ? 0n : BigInt(DEV.quote?.fee || 0));
   const selfNote = () => (DEV.self ? html`<p class="note">From ${your()}: no relay fee; it pays the gas, and its address shows as the sender. <button class="link" type="button" id="d-relay">Use the relay</button></p>` : '');
   const wireRoute = () => $('#d-relay')?.addEventListener('click', () => { DEV.self = false; rerender('eth'); });
   const failed = (e) => {
@@ -3168,7 +3208,7 @@ function renderDevice(el) {
       try {
         const amount = parseUnits(amt.value);
         if (!amount) throw new Error('Enter an amount.');
-        const W2 = await deviceWallet(), via = DEV.self && (dest === 'addr' || dest === 'v1') ? 'self' : null;
+        const W2 = await deviceWallet(), via = walletRoute() ? 'self' : null;
         let h, done;
         if (dest === 'addr') {
           const label = `Withdraw ${fmt(amount, 18, 6)} ETH from this device${c.chainId === 1 ? '' : `, on ${c.name}`}`;
