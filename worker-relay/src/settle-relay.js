@@ -444,7 +444,13 @@ async function settleOne(j) {
     await activateRelayedExit(j, txHash);
   } catch (e) {
     log(`job ${j.jobId} failed: ${e.message}`);
-    await confidentialAck({ jobId: j.jobId, error: safeErr(e) });
+    // As in the batch path: a broadcast that has not landed may still land, and acking failed is terminal. Name its hashes
+    // so the status points at something checkable, and keep watching them so a late landing corrects the record.
+    const pending = Array.isArray(e.broadcastHashes) && e.broadcastHashes.length
+      ? ` — broadcast and possibly still pending: ${e.broadcastHashes.join(', ')}`
+      : '';
+    await confidentialAck({ jobId: j.jobId, error: pending ? `${safeErr(e, 200 - pending.length)}${pending}` : safeErr(e), broadcastHashes: e.broadcastHashes });
+    rememberAbandoned(j.jobId, e.broadcastHashes);
   }
 }
 

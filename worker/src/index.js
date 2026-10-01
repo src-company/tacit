@@ -2695,7 +2695,7 @@ async function wrapTipPaid(env, body) {
   const row = (_CONFIDENTIAL_DEPLOYMENTS?.mainnet?.assets || []).find((a) => String(a.assetId || '').toLowerCase() === '0x' + asset);
   if (!row) return false;
   const commit = '0x' + bytesToHex(keccak_256(hexToBytes(cx + cy + owner))), amount = BigInt(op.value) * BigInt(row.unitScale || '1');
-  const forwarders = [env.WRAP_TIP_FORWARDER_ADDR || '0x000000D218B03db5837943b0b05DeA2965AE956e', env.WRAP_TOKEN_TIP_FORWARDER_ADDR]
+  const forwarders = [env.WRAP_TIP_FORWARDER_ADDR || '0x000000D218B03db5837943b0b05DeA2965AE956e', env.WRAP_TOKEN_TIP_FORWARDER_ADDR || '0x0000007b1d93d72f698A861aA86Ac675D6AF7216']
     .filter(Boolean).map((a) => String(a).toLowerCase());
   const to = '0x' + String(env.RELAY_TIP_RECIPIENT_ADDR || '0x006CD14F36F65eCbB29b2519cCBe63A0DC8549F2').slice(2).toLowerCase().padStart(64, '0');
   const r = await _ethRpc('mainnet', 'eth_getTransactionReceipt', [tx]).catch(() => null);

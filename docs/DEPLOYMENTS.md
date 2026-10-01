@@ -56,6 +56,8 @@ Shared infrastructure outside the CreateX manifest:
 | --- | --- |
 | BitcoinLightRelay (header relay) | [`0x20A6ddc2C6E620c6248B5A34E85996516FDd19D0`](https://etherscan.io/address/0x20A6ddc2C6E620c6248B5A34E85996516FDd19D0) |
 | WrapTipForwarder (a wrap plus its relay tip in one transaction) | [`0x000000D218B03db5837943b0b05DeA2965AE956e`](https://etherscan.io/address/0x000000D218B03db5837943b0b05DeA2965AE956e) |
+| WrapTokenTipForwarder (the same for a token wrap, permit included) | [`0x0000007b1d93d72f698A861aA86Ac675D6AF7216`](https://etherscan.io/address/0x0000007b1d93d72f698A861aA86Ac675D6AF7216) |
+| SettleTipForwarder (a self-settle plus a tip for whoever proved it) | [`0x0000008353ee6Dea1236544938C546E27010416D`](https://etherscan.io/address/0x0000008353ee6Dea1236544938C546E27010416D) |
 | PointsDistributor (points program claims) | [`0x000000C918e44A3a443937fA7594eA4f7C95D6b9`](https://etherscan.io/address/0x000000C918e44A3a443937fA7594eA4f7C95D6b9) |
 
 ### Canonical bridged / pool-minted ERC20s
