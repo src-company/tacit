@@ -257,11 +257,20 @@ export function makeRateLimiter({ perMin = 20, burst = 10, maxClients = 10_000, 
   };
 }
 
+// An IPv6 client is keyed by its /64, which one subscriber holds in full and could otherwise rotate through.
+export function ipKey(addr) {
+  const a = String(addr).trim().toLowerCase();
+  if (!a.includes(':') || /^(::ffff:)?\d+\.\d+\.\d+\.\d+$/.test(a)) return a;
+  const [h, t = ''] = a.split('::'), head = h ? h.split(':') : [], tail = t ? t.split(':') : [];
+  const full = a.includes('::') ? [...head, ...Array(Math.max(0, 8 - head.length - tail.length)).fill('0'), ...tail] : head;
+  return `${full.slice(0, 4).map((x) => x.replace(/^0+(?=.)/, '')).join(':')}::/64`;
+}
+
 function clientKey(req) {
   const f = req.headers?.['x-forwarded-for'];
   // The right-most hop is the one the fronting proxy appended; earlier hops are client-supplied.
-  if (f) { const k = String(f).split(',').pop().trim(); if (k) return k; }
-  return req.socket?.remoteAddress || 'unknown';
+  if (f) { const k = String(f).split(',').pop().trim(); if (k) return ipKey(k); }
+  return ipKey(req.socket?.remoteAddress || 'unknown');
 }
 
 function readJson(req, max) {

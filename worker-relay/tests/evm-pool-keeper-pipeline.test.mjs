@@ -168,5 +168,30 @@ await test('one requester holds at most two open slots', async () => {
   p.stop();
 });
 
+await test('a requester whose unused slot cost others their place may not reserve again for a while; others, and a harmless lapse, are unaffected', async () => {
+  const { p, advance } = setup({ maxDepth: 10, pauseMs: 5000 });
+  await p.reserve({ outLeaf: [11n, 12n], owner: 'ip1' });
+  await p.reserve({ outLeaf: [13n, 14n], owner: 'ip2' });
+  advance(2000);
+  assert.deepEqual((await p.head()).pending, [], 'the lapsed slot took the one behind it');
+  await assert.rejects(p.reserve({ outLeaf: [15n, 16n], owner: 'ip1' }), code(403), 'ip1 is paused');
+  await p.reserve({ outLeaf: [15n, 16n], owner: 'ip2' });
+  await p.cancel((await p.reserve({ outLeaf: [17n, 18n], owner: 'ip3' })).id);
+  await p.reserve({ outLeaf: [19n, 20n], owner: 'ip3' });
+  advance(6000);
+  await p.reserve({ outLeaf: [21n, 22n], owner: 'ip1' });
+  assert.equal(p.size(), 1, 'ip1 reserves again once the pause is over (the older slots lapsed meanwhile)');
+  p.stop();
+});
+
+await test('giving up a slot with others behind it pauses its owner too', async () => {
+  const { p } = setup({ maxDepth: 10, pauseMs: 5000 });
+  const a = await p.reserve({ outLeaf: [11n, 12n], owner: 'ip1' });
+  await p.reserve({ outLeaf: [13n, 14n], owner: 'ip2' });
+  await p.cancel(a.id);
+  await assert.rejects(p.reserve({ outLeaf: [15n, 16n], owner: 'ip1' }), code(403));
+  p.stop();
+});
+
 console.log(`\n${n} passed`);
 process.exit(0);

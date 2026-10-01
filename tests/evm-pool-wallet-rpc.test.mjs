@@ -113,7 +113,7 @@ await check('a relayer quote for another chain or pool, an unexpected address, o
   const walletFor = (q) => makeEvmPoolWallet({
     zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(5)), prove: null, store: null, keeper: 'https://k.test',
     fetchImpl: async () => ({ ok: true, status: 200, headers: new Map(), json: async () => q }),
-    chain: { chainId: 8453, pool: POOLA, router: '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5', rpc: async () => '0x0', deployBlock: 0, confirmations: 0 },
+    chain: { chainId: 8453, pool: POOLA, router: '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5', rpc: async () => '0x0', deployBlock: 0, confirmations: 0, relayer: RELAYER },
   });
   assert.equal((await walletFor(good).quote()).fee, good.fee);
   for (const [why, q] of [
@@ -142,6 +142,17 @@ await check('a spend built again from the same note takes another one-time key, 
   const seen = new Set([e0]);
   for (let a = 1; a < 16; a++) seen.add(paymentKey(k, { chainId: 1, nf, k: 0, attempt: a }));
   assert.equal(seen.size, 16);
+});
+
+await check('the router log read names no receive box, so a node does not see which boxes are one wallet\'s', async () => {
+  const POOLA = '0x000000c2A20657CE25f2Ba99737933D031AFBEE9', ROUTERA = '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5';
+  const seen = [];
+  const rpc = async (m, params) => { if (m === 'eth_getLogs') seen.push(params[0]); return m === 'eth_blockNumber' ? '0x64' : []; };
+  const w = makeEvmPoolWallet({ zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(5)), prove: null, store: null, chain: { chainId: 8453, pool: POOLA, router: ROUTERA, rpc, deployBlock: 0, confirmations: 0 } });
+  await w.sync();
+  const router = seen.filter((f) => f.address === ROUTERA);
+  assert.ok(router.length > 0);
+  for (const f of router) assert.equal(f.topics.length, 1, 'only the event signature');
 });
 
 console.log(`\n${n} checks passed`);

@@ -13,7 +13,7 @@ import { ROUTER_ABI, frontFees } from '../src/lib/evm-pool-keeper-chain.js';
 import { loadKeeperConfig, checkKeeperSigner, parseTokenMap, RELAY_EOA } from '../src/lib/evm-pool-keeper-config.js';
 import { openKeeperStore } from '../src/lib/evm-pool-keeper-store.js';
 import { makeLeafSync, LeafSyncError } from '../src/lib/evm-pool-keeper-leaves.js';
-import { createIntakeHandler, parseDepositSubmission, parseWrapSubmission, parseReceiveSubmission, parseRelaySubmission } from '../src/lib/evm-pool-keeper-intake.js';
+import { createIntakeHandler, parseDepositSubmission, parseWrapSubmission, parseReceiveSubmission, parseRelaySubmission, ipKey } from '../src/lib/evm-pool-keeper-intake.js';
 import { createKeeper, coverCheck, quoteFee } from '../src/lib/evm-pool-keeper-loop.js';
 import { loadZk } from '../src/lib/evm-pool-keeper-prover.js';
 
@@ -375,6 +375,17 @@ await test('HTTP intake refuses new intents at capacity', async () => {
     assert.equal((await fetch(url, { method: 'POST', body: JSON.stringify(makeDeposit({ nonce: 1n }).body) })).status, 200);
     assert.ok(!store.get(box), 'the oldest unfunded intent made room');
   } finally { server.close(); }
+});
+
+await test('an IPv6 client is keyed by its /64; IPv4 and mapped addresses by themselves', async () => {
+  assert.equal(ipKey('1.2.3.4'), '1.2.3.4');
+  assert.equal(ipKey('::ffff:1.2.3.4'), '::ffff:1.2.3.4');
+  assert.equal(ipKey('2001:db8:1:2:aaaa:bbbb:cccc:dddd'), '2001:db8:1:2::/64');
+  assert.equal(ipKey('2001:DB8:1:2::5'), '2001:db8:1:2::/64');
+  assert.equal(ipKey('2001:db8:1:2:ffff::9'), ipKey('2001:db8:1:2:1::'));
+  assert.equal(ipKey('2001:db8::1'), '2001:db8:0:0::/64');
+  assert.equal(ipKey('::1'), '0:0:0:0::/64');
+  assert.notEqual(ipKey('2001:db8:1:3::1'), ipKey('2001:db8:1:2::1'));
 });
 
 // ── leaf sync ──

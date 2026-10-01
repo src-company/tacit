@@ -256,6 +256,9 @@ sweeps only boxes it has been told about: `POST /evm-pool/keeper/receive` with `
 (idempotent; endpoint published at launch). The keeper then watches the box's balance and sweeps whenever the
 capped fee covers its gas. Registering tells the keeper which box belongs to which note key, which the first sweep
 makes public anyway; it never learns anything that spends. The owner can always sweep without a keeper.
+At capacity the keeper makes room for a new registration, and for a new deposit or wrap intent, by dropping the
+oldest one whose box has never held funds, so registrations that never pay cannot lock out new users; register again
+before paying if a box was dropped. Requests are rate limited per client address (an IPv6 client by its /64).
 
 **Zaps.** `zapTokenToDepositWithPermit2(tx, amountIn, permit, sig, swapData)` swaps any ERC-20 to ETH through the
 pinned aggregator and deposits exactly the proven amount, refunding the rest.
@@ -284,10 +287,10 @@ key material; it does not let anyone spend the note or link its later spends.
 A user never needs gas or a funded address: a relayer submits the transaction and is paid `fee` out of the
 user's shielded funds in the same call. The proof binds `relayer` and `fee` (with recipient, amount and memos), so
 a relayer cannot redirect the funds or raise its fee after it is signed, and a copy of the transaction submitted by anyone else still
-pays the named relayer. Before signing, the wallet checks the relayer's quote: it must name this chain and pool and
-the relayer address the wallet expects for the chain, and the fee must be within a per-chain ceiling (0.05 ETH on
-Ethereum, 0.002 ETH on Base and Robinhood Chain; a chain config can set `relayer` and `maxRelayFee`), so a compromised
-relayer cannot quote more than that. Withdrawing to a fresh, empty address through a relayer leaves no on-chain link to the
+pays the named relayer. Before signing, the wallet checks the relayer's quote: it must name this chain and pool, and
+the fee must be within a per-chain ceiling (0.05 ETH on Ethereum, 0.002 ETH on Base and Robinhood Chain), so a
+compromised relayer cannot quote more than that. In a browser on a real origin the quote must also come from the
+relayer address the wallet expects for the chain. A chain config can set `relayer` and `maxRelayFee`. Withdrawing to a fresh, empty address through a relayer leaves no on-chain link to the
 depositor's wallet.
 
 With the keeper service:
@@ -310,7 +313,10 @@ a spend's signature does not cover the root.
 2. `POST /relay { tx, reservation: id }`: the keeper checks the proof off chain against the slot and the transaction
    (proof, extDataHash, fee, nullifiers), then sends the slots in order, several per block.
 3. A slot that is not fulfilled within 90 s is cut, with the slots behind it, and those wallets reserve again.
-   `POST /cancel { reservation }` gives a slot up early.
+   `POST /cancel { reservation }` gives a slot up early. A slot that lapses, or is given up, with other slots behind
+   it costs those wallets their proofs, so its requester may not reserve again for ten minutes (`403`); such a
+   wallet proves against the queue's tail and sends without a reservation. A lapse with nobody behind it costs
+   nothing and is not counted.
 
 Unreserved relays still work: proven against `GET /head`'s `tail`, one takes the next slot. A withdraw-and-call or a
 move to V1 is simulated before it is sent, so it waits for an empty queue. The queue runs where the keeper sends to
@@ -320,9 +326,9 @@ leave a nonce gap; on Ethereum each insertion proves against the head.
 **History feed.** `GET /evm-pool/keeper/events?from=<block>` → `{ through, events }`: the pool's `Transact` and the
 router's `Received` events in blocks `from..through`, confirmed, in chain order, whole blocks per page. A wallet syncs
 most of its history from it in a few requests instead of thousands of log queries. It trusts nothing in it: each page
-is kept only if the tree it builds is one the pool has held at that size (`rootSize(root) == size`), and one
-`isSpent` call over the wallet's own notes catches a spend the feed left out. A feed can at most hide a note (by
-withholding its memo or `Received` event); `rescan()` rebuilds from chain logs alone.
+is kept only if the tree it builds is one the pool has held at that size (`rootSize(root) == size`). A feed can at
+most hide a note (by withholding its memo or `Received` event) or a spend of one; `rescan()` rebuilds from chain logs
+alone, and a spend that keeps failing runs it.
 
 A `409` with `stale: true` means another transaction landed first: rebuild against the new root and prove again
 (the owner's signature does not change). A `400` carrying `needFee` means gas moved; re-quote. Deposits are not
@@ -336,13 +342,14 @@ from a Blob) and submission. It checks the ceremony files against their pinned h
 served at `https://tacit.finance/evm-pool/tacit-evm-pool-wallet.js` with `Access-Control-Allow-Origin: *`, as are the
 ceremony files beside it.
 
-Current build: sha256 `575e5946506acc3629fec4fa0a1cc3045bf1514fd42c85d012d2286714f8a671`, IPFS
-`bafybeiapmcpttuoiick3mugbpm477ipdqmu43iu47ki7grz4pxssdjpa54` (pinned on Filebase). The build is deterministic from
+Current build: sha256 `94370c7d3c6324af3d69fc24e20e4d9ba72751b527529d1319a28bd6a81776da`, IPFS
+`bafybeigj4mx7yfngahio6uqds2ukjbpjc7nns7lndfia7er7pkkxxwqjwi` (pinned on Filebase). The build is deterministic from
 the repository: `node build/build-evm-pool-wallet.mjs` prints the same hash.
 
-The wallet keeps its synced state in storage sealed under a key from the wallet's view scalar, finds history through
-the keeper's feed and checks it against the pool (`rootSize`), rebuilds from chain logs alone once a week to catch
-anything a feed left out, and never sends a note's nullifier to a node to ask whether it is spent.
+The wallet keeps its synced state in storage sealed under a key from the wallet's view scalar. It finds history
+through the keeper's feed and checks every batch, from the feed or from a node's logs, against the pool (`rootSize`).
+It never sends a note's nullifier to a node to ask whether it is spent. A feed could withhold a memo and so hide an
+incoming note; `rescan()` rebuilds the state from chain logs alone, and a spend that keeps failing runs it.
 
 ```js
 import { makeEvmPoolWallet } from './tacit-evm-pool-wallet.js';

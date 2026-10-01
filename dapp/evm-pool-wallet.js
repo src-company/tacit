@@ -31,7 +31,8 @@ const ZERO = '0x0000000000000000000000000000000000000000';
 
 // The relayer addresses and the most a relayed spend may pay, per chain. A quote is signed into the proof, so the
 // wallet refuses one from another chain or pool, from an unexpected address, or above the ceiling. A chain config
-// may override with `relayer` and `maxRelayFee`.
+// may override with `relayer` and `maxRelayFee`. The address is pinned only in a browser on a real origin, so a test
+// or tool that runs its own keeper (a local page, node) keeps working; the other checks always apply.
 const RELAYERS = {
   1: '0x7c9f8aE4e48Cbb2727F95b6477a1cf92bCFc43D0',
   8453: '0xfA2afbaB631C7Eda7CeA6AE1440605C504E322Ec',
@@ -152,7 +153,6 @@ export function openNotes(zk, keys, items) {
 // from the key alone, to prove the payment to anyone who knows the recipient's address (verifyPayment). Deposits
 // have no input and use a random e.
 export const PAYMENT_ATTEMPTS = 16;
-const RESCAN_EVERY_MS = 7 * 24 * 3600 * 1000;
 export function paymentKey(keys, { chainId, nf, k, attempt = 0 }) {
   const key = sha256(concatBytes(TAG_EPH, word(keys.v)));
   const msg = concatBytes(word(BigInt(chainId)), word(BigInt(nf)), Uint8Array.of(k), attempt ? Uint8Array.of(attempt) : new Uint8Array());
@@ -406,8 +406,8 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   // Confirmed history from the keeper's feed, up to `safe`. A page is kept only if the tree it builds is one the pool
   // has held at that size, so the feed cannot forge leaves. No nullifier is sent to a node to ask whether it is
   // spent: a spend the feed left out shows when the chain-log scan reaches it, or as a refused spend, which rescans.
-  // A feed that withholds a memo or a Received event can hide a note, so a chain-log rescan runs every
-  // RESCAN_EVERY_MS; it cannot move funds. Any failure leaves `saved` as it was, for the chain-log scan to continue from.
+  // A feed that withholds a memo or a Received event can hide a note until rescan() reads the chain's logs alone
+  // (a spend that keeps failing does that itself); it cannot move funds. Any failure leaves `saved` as it was, for the chain-log scan to continue from.
   async function syncFromFeed(safe) {
     boxTopics();
     let cand = saved;
@@ -438,24 +438,6 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     persist();
   }
 
-  // Rebuilds the state from chain logs alone up to `safe` and adopts it when it holds notes the feed's state lacks
-  // (a feed that withheld a memo or a Received event). The rebuilt tree must be one the pool has held.
-  async function chainCheck(safe) {
-    boxTopics();
-    const [tlogs, rlogs] = await Promise.all([
-      logs(chain.pool, [TRANSACT_TOPIC], Number(chain.deployBlock ?? 0), safe),
-      logs(chain.router, [RECEIVED_TOPIC, boxTopics()], Number(chain.deployBlock ?? 0), safe),
-    ]);
-    const ts = tlogs.map(decodeTransact).sort((a, b) => a.block - b.block || a.firstIndex - b.firstIndex);
-    const full = { ...absorb({ ...blank(), nextRefund: saved.nextRefund }, ts, rlogs.map(decodeReceived)), block: saved.block };
-    if (full.tree.size !== saved.tree.size) return;
-    if (BigInt(await view32('rootSize(bytes32)', ['bytes32'], [full.tree.root])) !== BigInt(full.tree.size)) return;
-    const have = new Set(saved.notes.map((n) => n.index));
-    if (full.notes.some((n) => !have.has(n.index))) saved = { ...full, attempts: saved.attempts, nextRefund: Math.max(saved.nextRefund, full.nextRefund) };
-    saved.checkedAt = Date.now();
-    persist();
-  }
-
   // Reads new events: those `confirmations` deep are kept, the rest are re-read next time. With a keeper, confirmed
   // history comes from its feed first when it can. One read at a time: each absorbs into the state the last one left,
   // so a caller arriving while one runs waits for it, then reads what came after.
@@ -468,18 +450,18 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   async function readNew() {
     const tip = Number(BigInt(await chain.rpc('eth_blockNumber')));
     const safe = tip - confirmations;
-    if (keeper && feed && saved.block < safe) {
-      const fed = await syncFromFeed(safe).then(() => true, () => false);
-      if (fed && saved.block >= safe && Date.now() - (saved.checkedAt ?? 0) > RESCAN_EVERY_MS) await chainCheck(safe).catch(() => {});
-    }
+    if (keeper && feed && saved.block < safe) await syncFromFeed(safe).catch(() => {});
     const from = saved.block + 1;
     if (from > tip) return summary();
+    boxTopics();
+    // Every Received event of the router is read and ours picked out here, so the node is not told which boxes are
+    // one wallet's.
     const [tlogs, rlogs] = await Promise.all([
       logs(chain.pool, [TRANSACT_TOPIC], from, tip),
-      logs(chain.router, [RECEIVED_TOPIC, boxTopics()], from, tip),
+      logs(chain.router, [RECEIVED_TOPIC], from, tip),
     ]);
     const ts = tlogs.map(decodeTransact).sort((a, b) => a.block - b.block || a.firstIndex - b.firstIndex);
-    const rs = rlogs.map(decodeReceived);
+    const rs = rlogs.map(decodeReceived).filter((r) => boxIndex.has(r.box));
     if (safe >= from) {
       const next = { ...absorb(saved, ts.filter((t) => t.block <= safe), rs.filter((r) => r.block <= safe)), block: safe };
       if (next.tree.size !== saved.tree.size) {
@@ -513,7 +495,8 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       await new Promise((ok) => setTimeout(ok, (Number(r.headers?.get?.('retry-after')) || 3) * 1000 * (0.5 + Math.random())));
     }
   }
-  const wantRelayer = (chain.relayer ?? RELAYERS[chain.chainId])?.toLowerCase();
+  const realOrigin = !!globalThis.location?.hostname && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(globalThis.location.hostname);
+  const wantRelayer = (chain.relayer ?? (realOrigin ? RELAYERS[chain.chainId] : undefined))?.toLowerCase();
   const maxRelayFee = chain.maxRelayFee != null ? BigInt(chain.maxRelayFee) : MAX_RELAY_FEE[chain.chainId];
   function vetQuote(q) {
     if (Number(q.chainId) !== Number(chain.chainId) || String(q.pool).toLowerCase() !== chain.pool.toLowerCase()) {
@@ -598,13 +581,15 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
 
   // A slot in the keeper's queue for a transaction inserting `sealed`'s leaves and spending `ins`, and the tree to
   // prove it against: this wallet's, plus the leaves queued ahead of the slot. Many wallets prove at once, each in
-  // its own slot. → { id, tree }, 'stale' (a spend is queued already: wait), or null (prove without a slot).
+  // its own slot. → { id, tree }, 'stale' (a spend is queued already: wait), 'tail' (the keeper has paused this
+  // connection's reservations: prove against the queue's tail and send without one), or null (prove without a slot).
   async function reserveSlot(sealed, ins) {
     const leaf = (k) => String(sealed[k] ? sealed[k].leaf : 0n);
     let r;
     try {
       const res = await keeperPost('/reserve', { outLeaf0: leaf(0), outLeaf1: leaf(1), nfs: ins.map((n) => n.nf) });
       if (res.status === 409) return 'stale';
+      if (res.status === 403) return 'tail';
       if (res.status !== 200) return null;
       r = res.body;
     } catch { return null; }
@@ -655,7 +640,8 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       if (q && inserts && !simulated) {
         const r = await reserveSlot(sealed, ins);
         if (r === 'stale') continue;
-        if (r) { slot = r.id; tree = r.tree; }
+        if (r === 'tail') tree = (await queueTail(false)) || tree;
+        else if (r) { slot = r.id; tree = r.tree; }
       } else if (q && inserts) tree = (await queueTail(true)) || tree;
       const eh = extDataHash({ chainId: BigInt(chain.chainId), pool: chain.pool, recipient, extAmount, relayer, fee, memo0, memo1 });
       const w = zk.buildWitness({ asset, tree, inputs, outputs: sealed.map((o) => (o ? { v: o.v, npk: o.npk, rho: o.rho } : null)), extAmount, fee, extDataHash: eh });
@@ -669,7 +655,7 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
         onStep('sending through the relayer');
         const r = await keeperPost('/relay', { tx, ...extra, ...(slot ? { reservation: slot } : {}) });
         if (r.status === 409 && r.body.stale) continue;
-        if (r.status === 429) { await sleep(5000); continue; }
+        if (r.status === 429) { if (slot) await releaseSlot(slot); await sleep(5000); continue; }
         if (r.status !== 200 || !r.body.txHash) { if (slot) await releaseSlot(slot); throw new Error(r.body.error || `relayer returned ${r.status}`); }
         h = r.body.txHash;
       } else {
@@ -758,15 +744,6 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     connect(s) { signer = s; },
     // Forgets the synced state and rebuilds it from chain logs alone (no feed).
     rescan: () => rescanFromChain(),
-    // Whether this chain's receive address can be shown: the pool and router have code, and the router's own box
-    // for this wallet is the address computed here.
-    async ready() {
-      const code = async (a) => (await chain.rpc('eth_getCode', [a, 'latest'])) !== '0x';
-      if (!(await code(chain.pool)) || !(await code(chain.router))) return false;
-      const npk = receiveKeys(zk, keys.zkWallet, RECEIVE_INDEX).npk;
-      const r = await chain.rpc('eth_call', [{ to: chain.router, data: calldata('receiveBoxOf(uint256,uint16)', ['uint256', 'uint16'], [npk, RECEIVE_FEE_BPS]) }, 'latest']);
-      return ('0x' + String(r).slice(-40)).toLowerCase() === box.toLowerCase();
-    },
     quote: () => keeperGet('/quote'),
     // The receive box at `index` (0 is the private ETH address; later ones are one-time addresses, e.g. per payment
     // request, found again from the seed within the same gap as refund boxes). → address

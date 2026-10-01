@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Fjnva576+nwnXdeaYBDQ6ZUTc8JeyNKxYH6AmW600e4=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-0LI/JTprTqiFxtuEZjhDn+WKkI5RUnSIQ1SeQNhyOWg=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -590,7 +590,7 @@ const sayErr = (el, e) => say(el, html`<span class="err">${errText(e)}</span>`);
 // ── pool modules, loaded once, right after the page ──────────────────────────────────────────────────────
 const mods = lazy(async () => {
   const [zkm, wm, gw, pm, pos] = await Promise.all([
-    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=09d06f1f'), import('/evm-pool-gateway.js'),
+    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=dc049f16'), import('/evm-pool-gateway.js'),
     import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
   ]);
   const PO = { 2: pos.poseidon2, 3: pos.poseidon3, 4: pos.poseidon4, 5: pos.poseidon5, 7: pos.poseidon7 };
@@ -602,6 +602,9 @@ const mods = lazy(async () => {
 });
 const rpcs = new Map();
 const rpcOn = async (c) => { if (!rpcs.has(c.chainId)) rpcs.set(c.chainId, (await mods()).jsonRpc(c.rpc)); return rpcs.get(c.chainId); };
+// The connected wallet's own balance is read from the last node on the list, not the first that every private read
+// uses, so one node does not see a wallet's address beside the receive boxes (a chain with one node has no other).
+const rpcApart = async (c) => { const m = await mods(); return m.jsonRpc([...c.rpc].reverse()); };
 
 // ── the prover: the ceremony's key, named and hashed by /evm-pool/pin.json, checked, cached, run in a worker ──
 const PROVER = { state: 'idle', got: 0, total: 0, last: null, lastKind: null, cached: false, err: null, testing: false };
@@ -1132,9 +1135,9 @@ async function scanHistory(c, onStep) {
     onStep?.(0);
     const [tl, rl] = await Promise.all([
       logs(rpc, POOL, [T_TRANSACT], from, tip, onStep),
-      logs(rpc, ROUTER, [T_RECEIVED, [...boxes.keys()].map((a) => '0x' + strip(a).padStart(64, '0'))], from, tip),
+      logs(rpc, ROUTER, [T_RECEIVED], from, tip),
     ]);
-    evs.push(...tl.map(decodeTransact), ...rl.map(decodeReceived));
+    evs.push(...tl.map(decodeTransact), ...rl.map(decodeReceived).filter((r) => boxes.has(lc(r.box))));
   }
   const ts = evs.filter((e) => e.kind === 'transact').sort((a, b) => a.block - b.block || a.firstIndex - b.firstIndex);
   const leafAt = new Map();
@@ -1553,7 +1556,7 @@ function formDeposit(f) {
     let wb = null, dto = null, lastDto = '';
     const amt = $('#f-damt'), go = $('#f-go'), rc = $('#f-rcpt'), toEl = $('#f-dto');
     $('#f-conn')?.addEventListener('click', () => connectWallet().catch((e) => toast(errText(e), true)));
-    if (S.wallet) rpcOn(c).then((r) => r('eth_getBalance', [S.wallet, 'latest'])).then((b) => { wb = BigInt(b); const e = $('#f-wb'); if (e) e.textContent = fmt(wb, 18, 4); FORM.check?.(); }).catch(() => { const e = $('#f-wb'); if (e) e.textContent = '—'; });
+    if (S.wallet) rpcApart(c).then((r) => r('eth_getBalance', [S.wallet, 'latest'])).then((b) => { wb = BigInt(b); const e = $('#f-wb'); if (e) e.textContent = fmt(wb, 18, 4); FORM.check?.(); }).catch(() => { const e = $('#f-wb'); if (e) e.textContent = '—'; });
     $('#f-max')?.addEventListener('click', () => { if (wb == null) return; const v = wb > c.gasReserve ? wb - c.gasReserve : 0n; amt.value = v ? plain(v) : ''; amt.dispatchEvent(new Event('input')); });
     FORM.check = () => {
       if (!S.wallet) { go.disabled = false; return; }
@@ -2117,7 +2120,7 @@ function paintReq() {
       ${r.err ? html`<p class="note err">${r.err}</p>` : ''}` : html`
       ${!r.amount ? html`<div class="amt act"><input id="req-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="Amount"><span class="u">${ethIcon}ETH</span></div>` : ''}
       ${r.state === 'confirm' || r.state === 'proving' ? '' : html`<div class="row2">${privFirst ? html`<button class="btn" type="button" id="req-priv">Pay privately</button>` : ''}<button class="btn ${privFirst ? 'ghost' : ''}" type="button" id="req-wallet">Pay from a wallet</button>${privFirst ? '' : html`<button class="btn ghost" type="button" id="req-priv">Pay privately</button>`}</div>`}
-      <p class="note">${r.n ? 'From a wallet: your address and the amount show on chain as a payment to their deposit address, then it moves into their private balance.' : 'From a wallet: proved on this device (a one-time download), then sent from your wallet straight into their private balance. Your address and the amount show on chain; who you paid does not.'} Paying from a wallet earns you TAC points. Privately, from your own private ETH: nothing on chain links you to them.</p>
+      <p class="note">${r.n && r.ns ? 'From a wallet: your address and the amount show on chain as a payment to their deposit address, then it moves into their private balance.' : 'From a wallet: proved on this device (a one-time download), then sent from your wallet straight into their private balance. Your address and the amount show on chain; who you paid does not.'} Paying from a wallet earns you TAC points. Privately, from your own private ETH: nothing on chain links you to them.</p>
       <div class="status" role="status" id="req-status">${r.state === 'confirm' ? 'Confirm in your wallet…' : r.state === 'proving' ? html`<span class="spin" aria-hidden="true"></span>${r.step || 'Getting ready'}` : r.err ? html`<span class="err">${r.err}</span>` : ''}</div>`}`);
   if (typed && $('#req-amt')) $('#req-amt').value = typed;
   $('#req-x').onclick = () => { REQ.v = null; paintReq(); };

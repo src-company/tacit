@@ -8,7 +8,9 @@
 //     simulated before the slots ahead land.
 //  3. pump: ready slots are sent in order, several per block, never past a slot still proving.
 //
-// A slot not fulfilled in time is cut with everything behind it, and those wallets reserve again. The queue is
+// A slot not fulfilled in time is cut with everything behind it, and those wallets reserve again. A requester whose
+// unused slot cost others their place (it lapsed or was given up with slots behind it) may not reserve again for
+// pauseMs; a wallet in that position sends unreserved, against the queue's tail. The queue is
 // dropped whole when the chain's head stops leading into it (another sender's insertion landed first, or a sent
 // transaction reverted); what follows reverts cheaply on StaleRoot.
 //
@@ -27,13 +29,15 @@ const bytesOf = (h) => Uint8Array.from(Buffer.from(String(h).replace(/^0x/, ''),
 const stale = (m) => new PipelineError(409, m, { stale: true });
 
 export function makePipeline({
-  chain, verify, assetField, baseTree, maxDepth = 32, maxPerOwner = 2, reserveMs = 90_000, staleMs = 300_000,
+  chain, verify, assetField, baseTree, maxDepth = 32, maxPerOwner = 2, reserveMs = 90_000, staleMs = 300_000, pauseMs = 600_000,
   now = () => Date.now(), log = () => {},
 }) {
   // { id, start, oldRoot, newRoot, outLeaf: [a, b], nfs, owner, state: 'reserved' | 'ready' | 'sent', at, tx?, send?,
   //   hash?, done?: { resolve, reject } }
   let entries = [];
   let tail = null; // incTree of the pool plus every queued slot's leaves
+  const paused = new Map(); // owner → until: may not reserve before then
+  const pause = (e) => { if (e.owner) paused.set(e.owner, now() + pauseMs); };
 
   let lock = Promise.resolve();
   const exclusive = (f) => { const run = lock.then(f, f); lock = run.catch(() => {}); return run; };
@@ -54,7 +58,10 @@ export function makePipeline({
     if (BigInt(root) !== entries[0].oldRoot) return cut(0, `the pool's head no longer leads into the queue at ${entries[0].start}`);
     if (entries[0].state === 'sent' && now() - entries[0].at > staleMs) return cut(0, `slot ${entries[0].start} was sent but has not landed`);
     const late = entries.findIndex((e) => e.state === 'reserved' && now() - e.at > reserveMs);
-    if (late >= 0) cut(late, `slot ${entries[late].start} was not fulfilled in time`);
+    if (late >= 0) {
+      entries.forEach((e, i) => { if (i >= late && i < entries.length - 1 && e.state === 'reserved' && now() - e.at > reserveMs) pause(e); });
+      cut(late, `slot ${entries[late].start} was not fulfilled in time`);
+    }
   }
 
   async function tailTree() {
@@ -93,6 +100,8 @@ export function makePipeline({
 
   async function reserveLocked({ outLeaf, nfs = [], owner = null }) {
     await refresh();
+    for (const [k, until] of paused) if (until <= now()) paused.delete(k);
+    if (owner && paused.has(owner)) throw new PipelineError(403, 'a slot you reserved went unused while others waited on it, so reserving is paused for a few minutes; send without a reservation');
     if (entries.length >= maxDepth) throw new PipelineError(429, 'the queue is full; try again in a few seconds');
     if (owner && entries.filter((e) => e.owner === owner && e.state === 'reserved').length >= maxPerOwner) throw new PipelineError(429, 'too many open slots');
     const spends = nfs.map(BigInt).filter((x) => x !== 0n);
@@ -197,7 +206,9 @@ export function makePipeline({
     // Gives up a reservation (and, since their proofs build on it, every slot behind it).
     cancel: (id) => exclusive(async () => {
       const i = entries.findIndex((x) => x.id === id && x.state === 'reserved');
-      if (i >= 0) cut(i, `slot ${entries[i].start} was given up`);
+      if (i < 0) return;
+      if (i < entries.length - 1) pause(entries[i]);
+      cut(i, `slot ${entries[i].start} was given up`);
     }),
     busy: () => exclusive(async () => { await refresh(); return entries.length > 0; }),
     size: () => entries.length,
