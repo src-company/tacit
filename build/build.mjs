@@ -191,35 +191,46 @@ function pageCacheBust(files, write) {
 }
 
 // A page's module graph is discovered one import statement at a time, so each level of it costs a round trip before
-// the next level starts: the pay pages' unified-address chain was five deep. The page names the modules it loads at
-// once in a `<!-- preload-roots: /a.js /b.js -->` comment; the block after it is every module those reach through static
-// imports, as `modulepreload` links under the exact URL the page (or the module importing it) uses, so the whole graph
-// is fetched in parallel from the first bytes of the HTML. Generated here so it cannot go stale; --verify-only reports
-// a block that no longer matches.
+// the next level starts: the pay pages' unified-address chain was five deep. The page names its modules in a
+// `<!-- preload-roots: /a.js /b.js | /c.js -->` comment. Everything the first group reaches through static imports is
+// preloaded from the head, under the exact URL the page (or the module importing it) uses, so it is fetched in parallel
+// from the first bytes of the HTML. The group after the bar is what the page needs right after it starts, not before:
+// the module's first lines preload it, once what the page waits on has arrived, so the two do not share bandwidth.
+// Generated here so it cannot go stale; --verify-only reports a block that no longer matches.
 const PRELOAD_PAGES = ['pay/index.html', 'pay/eth/index.html'];
 const STATIC_IMPORT = /(?:^|[\n;}])\s*(?:import|export)\s*(?:[^'"();]*?\sfrom\s*)?(['"])([^'"]+)\1/g;
-function preloadBlock(page) {
-  const roots = (/<!-- preload-roots:([^>]*?)-->/.exec(page) || [])[1];
-  if (!roots) return null;
-  const code = page.replace(/<!-- preload:begin -->[\s\S]*?<!-- preload:end -->/, '');
+const HEAD_BLOCK = /<!-- preload:begin -->[\s\S]*?<!-- preload:end -->/, LATER_BLOCK = /\/\/ preload-later:begin\n[\s\S]*?\/\/ preload-later:end/;
+function preloadBlocks(page) {
+  const spec = (/<!-- preload-roots:([^>]*?)-->/.exec(page) || [])[1];
+  if (!spec) return null;
+  const [roots, later = ''] = spec.split('|');
+  const code = page.replace(HEAD_BLOCK, '').replace(LATER_BLOCK, '');
   const urlOf = (path) => {
     const m = new RegExp(`(["'])(${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\?cb=[A-Za-z0-9_-]+)?)\\1`).exec(code);
     if (!m) throw new Error(`preload root ${path} is not imported by the page`);
     return m[2];
   };
-  const urls = new Map();
-  const walk = (url) => {
-    if (urls.has(url)) return;
-    const path = url.split('?')[0], file = join(DAPP_DIR, path);
-    if (!existsSync(file)) throw new Error(`preload: ${url} is not in dapp/`);
-    urls.set(url, true);
-    for (const m of readFileSync(file, 'utf8').matchAll(STATIC_IMPORT)) {
-      if (/^[./]/.test(m[2])) walk(new URL(m[2], `https://x${path}`).pathname);
-    }
+  const reach = (list, seen) => {
+    const walk = (url) => {
+      if (seen.has(url)) return;
+      const path = url.split('?')[0], file = join(DAPP_DIR, path);
+      if (!existsSync(file)) throw new Error(`preload: ${url} is not in dapp/`);
+      seen.add(url);
+      for (const m of readFileSync(file, 'utf8').matchAll(STATIC_IMPORT)) {
+        if (/^[./]/.test(m[2])) walk(new URL(m[2], `https://x${path}`).pathname);
+      }
+    };
+    for (const r of list.trim().split(/\s+/).filter(Boolean)) walk(urlOf(r));
+    return seen;
   };
-  for (const r of roots.trim().split(/\s+/)) walk(urlOf(r));
-  const links = [...urls.keys()].map((u) => `<link rel="modulepreload" href="${u}"${u.startsWith('/vendor/tacit-deps') ? ' fetchpriority="high"' : ''}>`);
-  return `<!-- preload:begin -->\n${links.join('\n')}\n<!-- preload:end -->`;
+  const first = reach(roots, new Set()), after = [...reach(later, new Set(first))].slice(first.size);
+  const head = [...first].map((u) => `<link rel="modulepreload" href="${u}"${u.startsWith('/vendor/tacit-deps') ? ' fetchpriority="high"' : ''}>`);
+  return {
+    head: `<!-- preload:begin -->\n${head.join('\n')}\n<!-- preload:end -->`,
+    later: after.length
+      ? `// preload-later:begin\nfor (const u of ${JSON.stringify(after)}) document.head.append(Object.assign(document.createElement('link'), { rel: 'modulepreload', href: u }));\n// preload-later:end`
+      : `// preload-later:begin\n// preload-later:end`,
+  };
 }
 function pagePreloads(write) {
   const drift = [];
@@ -227,9 +238,10 @@ function pagePreloads(write) {
     const file = join(DAPP_DIR, rel);
     if (!existsSync(file)) continue;
     const before = readFileSync(file, 'utf8');
-    const block = preloadBlock(before);
-    if (!block) continue;
-    const after = before.replace(/<!-- preload:begin -->[\s\S]*?<!-- preload:end -->/, () => block);
+    const blocks = preloadBlocks(before);
+    if (!blocks) continue;
+    if (!LATER_BLOCK.test(before)) throw new Error(`${rel} has no preload-later block`);
+    const after = before.replace(HEAD_BLOCK, () => blocks.head).replace(LATER_BLOCK, () => blocks.later);
     if (after !== before) { drift.push(`${rel} modulepreload links do not match the page's imports`); if (write) writeFileSync(file, after); }
   }
   return drift;

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ejTc3oig90zY3WraiinAH72/5DuP6z6K7FL5LXaAi2Y=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-j7dl82Zqik8+02oZhiYVQqZOsmHjBjWzqJdJXP2cNGw=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Simple, private payments: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key and one tacit1 address, every payment made on your device, recovered from the key alone.">
@@ -19,8 +19,8 @@
 <meta name="theme-color" content="#E8E0CC" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#15130E" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<!-- Every module the page loads at once, one round trip instead of five: build/build.mjs expands these roots to their static imports. -->
-<!-- preload-roots: /vendor/tacit-deps.min.js /prf-wallet.js /tacit-wallet-known.js /evm-wallet.js /tacit-address.js /bip352.js /address-id.js /tacit-unified.js -->
+<!-- Every module the page loads, one round trip instead of five: build/build.mjs expands these roots to their static imports.; those after the bar are asked for by the module itself, once the first group has arrived. -->
+<!-- preload-roots: /vendor/tacit-deps.min.js /prf-wallet.js /tacit-wallet-known.js /evm-wallet.js /tacit-address.js /bip352.js /address-id.js | /tacit-unified.js -->
 <!-- preload:begin -->
 <link rel="modulepreload" href="/vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="/prf-wallet.js">
@@ -30,15 +30,6 @@
 <link rel="modulepreload" href="/tacit-address.js">
 <link rel="modulepreload" href="/bip352.js">
 <link rel="modulepreload" href="/address-id.js?cb=c4fa5a58">
-<link rel="modulepreload" href="/tacit-unified.js?cb=a5b3a042">
-<link rel="modulepreload" href="/btc-shielded-pool.js">
-<link rel="modulepreload" href="/vendor/tacit-poseidon.min.js">
-<link rel="modulepreload" href="/btc-pool-zk.js">
-<link rel="modulepreload" href="/amm-bjj.js">
-<link rel="modulepreload" href="/btc-pool-zk-boundary.js">
-<link rel="modulepreload" href="/amm-sigma.js">
-<link rel="modulepreload" href="/bulletproofs.js">
-<link rel="modulepreload" href="/bulletproofs-plus.js">
 <!-- preload:end -->
 <style>
 @font-face { font-family: 'IBM Plex Mono'; font-weight: 400; font-display: swap; src: url('/fonts/ibm-plex-mono-400-latin.woff2') format('woff2'); }
@@ -466,6 +457,10 @@ const [{ secp, keccak_256, sha256, hmac, bytesToHex, hexToBytes, concatBytes }, 
   import('/evm-wallet.js?cb=4f722dd7'), import('/tacit-address.js'), import('/bip352.js'), import('/address-id.js?cb=c4fa5a58')]);
 
 if (!secp.etc.hmacSha256Sync) secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, concatBytes(...m));
+// The rest of the page's modules, asked for now that the ones it waited on are here.
+// preload-later:begin
+for (const u of ["/tacit-unified.js?cb=a5b3a042","/btc-shielded-pool.js","/vendor/tacit-poseidon.min.js","/btc-pool-zk.js","/amm-bjj.js","/btc-pool-zk-boundary.js","/amm-sigma.js","/bulletproofs.js","/bulletproofs-plus.js"]) document.head.append(Object.assign(document.createElement('link'), { rel: 'modulepreload', href: u }));
+// preload-later:end
 
 // ── small helpers ────────────────────────────────────────────────────────────────────────────────────────
 const $ = (s, el = document) => el.querySelector(s);
