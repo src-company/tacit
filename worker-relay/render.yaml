@@ -365,6 +365,12 @@ services:
         value: "90"
       - key: POINTS_PROGRAM_TOTAL_WEI       # 100,000 TAC
         value: "100000000000000000000000"
+      # From UTC day 20729 (2026-10-03) a day's pot is the lesser of its budget and 0.03 TAC per point earned
+      # that day, so a quiet day cannot pay far more per point than a busy one. Applies forward only: days
+      # already settled are never re-priced. Entries are "<UTC day>:<TAC per point>", comma-separated;
+      # "<day>:off" lifts it. An entry can be changed or removed until its day arrives.
+      - key: POINTS_RATE_CAP_SCHEDULE
+        value: "20729:0.03"
       # PointsDistributor (CreateX CREATE3, deployed 2026-09-23, salt sender-guarded to the deployer key,
       # verified on Etherscan + Sourcify). ROOT_SETTER = 0x5c1aBec44465f305f2F1AE492eEd191327EbdF3f, its
       # own dedicated key (never RELAY_KEY/SETTLE_KEY — see the contract's own header for why). Publishing

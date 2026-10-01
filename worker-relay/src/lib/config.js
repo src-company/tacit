@@ -621,6 +621,9 @@ export const CFG = {
   pointsProgramDays: num('POINTS_PROGRAM_DAYS', 90),
   // 100,000 whole TAC, in wei, as a BigInt-safe string (avoid a float literal anywhere near 1e23).
   pointsProgramTotalWei: BigInt(opt('POINTS_PROGRAM_TOTAL_WEI', '100000000000000000000000')),
+  // Ceiling on TAC per point, as "<from UTC day>:<TAC per point>" entries (see lib/points-rate-cap.js). Empty
+  // means no ceiling. Only days at or after an entry's day are affected, so settled days are never re-priced.
+  pointsRateCapSchedule: opt('POINTS_RATE_CAP_SCHEDULE', ''),
   // Hot wallet that calls updateRoot daily. Deliberately its own key, not RELAY_KEY/SETTLE_KEY — see
   // PointsDistributor.sol's header: a leak only exposes whatever is currently funded into the distributor,
   // and keeping it separate from the higher-value relay/settle keys keeps that bound meaningful.

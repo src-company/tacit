@@ -11,6 +11,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { CFG, ADDR } from './lib/config.js';
 import { publicClient, clientForChain } from './lib/chain.js';
 import { withNonceRetry } from './lib/nonce-retry.js';
+import { POINTS_SCALE, parseRateCapSchedule, rateCapForDay, applyRateCeiling } from './lib/points-rate-cap.js';
 import Database from 'better-sqlite3';
 import { openStore } from './lib/points-store.js';
 import { parseBoostTiers, openTacBoost, scanTacTransfers } from './lib/tac-holder-boost.js';
@@ -121,6 +122,8 @@ const rootSetterWallet = CFG.pointsRootSetterKey
   : null;
 const ROOT_SETTER_MIN_TIP_WEI = 50_000_000n; // 0.05 gwei — same floor as header-relay's MIN_TIP_WEI
 const ROOT_SETTER_RECEIPT_TIMEOUT_MS = 300_000;
+
+const rateCapSchedule = parseRateCapSchedule(CFG.pointsRateCapSchedule, log);
 
 const WRAP_EVENT = {
   type: 'event',
@@ -1244,13 +1247,14 @@ export function dayBudgetWei(dayIndex) {
 // float's imprecision only ever affects the last few bits of the ratio, never the wei-scale result, and never
 // compounds across days (each day's split is independent). Integer division leaves a few wei of dust
 // unallocated per day — negligible at TAC's scale and not worth the complexity of redistributing.
-export function splitDayBudget(rows, budgetWei) {
-  const scaled = rows.map((r) => BigInt(Math.round(r.dayPoints * 1e6)));
+export function splitDayBudget(rows, budgetWei, maxWeiPerPoint = null) {
+  const scaled = rows.map((r) => BigInt(Math.round(r.dayPoints * POINTS_SCALE)));
   const totalScaled = scaled.reduce((s, v) => s + v, 0n);
   const deltas = new Map();
   if (totalScaled <= 0n) return deltas;
+  const pot = applyRateCeiling(budgetWei, totalScaled, maxWeiPerPoint);
   rows.forEach((r, i) => {
-    const share = (budgetWei * scaled[i]) / totalScaled;
+    const share = (pot * scaled[i]) / totalScaled;
     if (share > 0n) deltas.set(r.address, share);
   });
   return deltas;
@@ -1312,7 +1316,7 @@ export async function settleCycle(store) {
     if (rows.length) {
       const budget = dayBudgetWei(dayIndex);
       if (budget > 0n) {
-        const deltas = splitDayBudget(rows, budget);
+        const deltas = splitDayBudget(rows, budget, rateCapForDay(rateCapSchedule, d));
         if (deltas.size) store.applyDayRewards(deltas);
       }
     }
@@ -1455,7 +1459,10 @@ function startHttp(store, evmState) {
           // The running total as of THIS request, not a settled end-of-day figure — it moves as more
           // addresses deposit today, same as `row`'s own count does.
           const totalPoints = dayRows.reduce((s, r) => s + r.dayPoints, 0);
-          today = { points: row ? row.dayPoints : 0, totalPoints, dayBudgetWei: dayBudgetWei(todayDay - startDay).toString() };
+          // The pot as it would split right now: the day's budget, or less where the TAC-per-point ceiling
+          // binds, so a client's "share of today's pot" estimate matches what settlement will pay.
+          const pot = applyRateCeiling(dayBudgetWei(todayDay - startDay), BigInt(Math.round(totalPoints * POINTS_SCALE)), rateCapForDay(rateCapSchedule, todayDay));
+          today = { points: row ? row.dayPoints : 0, totalPoints, dayBudgetWei: pot.toString() };
         }
         res.end(JSON.stringify({ ...total, today, deposits }));
         return;
@@ -1511,6 +1518,7 @@ function startHttp(store, evmState) {
           publishedRoot: state?.publishedRoot ?? null,
           publishedTotalWei: state?.publishedTotalWei ?? null,
           totalLedgerWei,
+          rateCapSchedule: rateCapSchedule.map((e) => ({ fromDay: e.fromDay, maxWeiPerPoint: e.maxWeiPerPoint === null ? null : e.maxWeiPerPoint.toString() })),
           leaderboard,
         }));
         return;
