@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-iO81e8tXoU40bysDfrtkIaxB9Uc6SEqyHp+d4wIso/M=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-VhCJLjy9ZX7m1KGZ937GunHBtSZdg4481MiFWjRCheM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -1350,10 +1350,33 @@ function paintWallet() {
   $('#wallet-label').textContent = S.key ? short(UNIFIED_LIVE ? unifiedAddress() : S.key.bp, 6) : S.wallet ? short(S.wallet) : knownWallet() ? 'Open wallet' : 'Connect';
   if ($('#sheet-wallet').open) renderWalletSheet();
 }
+// Each pool's public size on its chain, read from the pool itself: the ETH it holds and the notes it has made, the
+// crowd a spend there hides among. Read at most once a minute per chain.
+const PUB = {};
+function readPub() {
+  for (const c of CHAINS) {
+    const q = PUB[c.chainId] ||= {};
+    if (q.p || (q.at && Date.now() - q.at < 60e3)) continue;
+    q.p = (async () => {
+      const rpc = await rpcOn(c);
+      const [b, n] = await Promise.all([rpc('eth_getBalance', [POOL, 'latest']), rpc('eth_call', [{ to: POOL, data: '0xfc7e9c6f' }, 'latest'])]);   // nextIndex()
+      Object.assign(q, { locked: BigInt(b), notes: Number(BigInt(n)) });
+    })().catch((e) => console.warn(`pool on ${c.name}:`, e?.message || e)).finally(() => { q.p = null; q.at = Date.now(); paintChains(); paintBal(); });
+  }
+  // What has passed through each pool, from the relay's tally of its public deposits (one read for every chain).
+  if (TALLY.p || (TALLY.at && Date.now() - TALLY.at < 300e3)) return;
+  TALLY.p = fetch('https://api.tacit.finance/stats?network=mainnet', { cache: 'no-store' }).then((r) => r.json()).then((d) => {
+    const n = (x) => BigInt(x?.$n ?? x ?? 0);
+    for (const x of d.dev || []) TALLY[x.chain] = { in: n(x.dep), deposits: Number(x.nd) || 0 };
+  }).catch(() => {}).finally(() => { TALLY.p = null; TALLY.at = Date.now(); paintBal(); });
+}
+const TALLY = {};
 function paintChains() {
+  readPub();
   mount($('#chains'), html`${CHAINS.map((c) => {
-    const st = CH[c.chainId], v = !S.key ? '' : st.bal != null ? `${eth(st.bal)} ETH` : st.last != null ? html`<span class="stale">${eth(st.last)} ETH</span>` : st.err ? '—' : html`<span class="sk" style="--w:7ch"></span>`;
-    return html`<button type="button" role="tab" data-chain="${c.chainId}" aria-selected="${c === S.chain}" ${S.busy ? 'disabled' : ''}>${c.name}${S.key ? html`<small>${v}</small>` : ''}</button>`;
+    const st = CH[c.chainId], q = PUB[c.chainId];
+    const v = !S.key ? (q?.locked != null ? `${fmt(q.locked, 18, 3)} in pool` : '') : st.bal != null ? `${eth(st.bal)} ETH` : st.last != null ? html`<span class="stale">${eth(st.last)} ETH</span>` : st.err ? '—' : html`<span class="sk" style="--w:7ch"></span>`;
+    return html`<button type="button" role="tab" data-chain="${c.chainId}" aria-selected="${c === S.chain}" ${S.busy ? 'disabled' : ''}>${c.name}${v ? html`<small>${v}</small>` : ''}</button>`;
   })}`);
   $$('#chains [data-chain]').forEach((b) => b.onclick = () => { if (!S.busy) switchChain(chainOf(b.dataset.chain)); });
 }
@@ -1366,17 +1389,28 @@ function switchChain(c, tab = null) {
   renderApp();
   syncChain(c);
 }
+// The selected chain's pool (its ETH and notes) and, once more than one chain is read, this key's total on all of them.
+function poolLine(c) {
+  const q = PUB[c.chainId];
+  const t = TALLY[c.chainId];
+  return q?.locked != null ? html`<div class="u mute">The pool on ${c.full} holds ${eth(q.locked)} ETH among ${q.notes} notes${t?.in ? html`; ${eth(t.in)} ETH has passed through it in ${t.deposits} deposits` : ''}.</div>` : '';
+}
+function totalLine() {
+  const known = CHAINS.map((x) => CH[x.chainId].bal).filter((b) => b != null);
+  if (known.length < 2) return '';
+  return html`<div class="u mute">${eth(known.reduce((a, b) => a + b, 0n))} ETH private across ${known.length === CHAINS.length ? 'all three chains' : `${known.length} chains`}</div>`;
+}
 function paintBal() {
   const c = S.chain, st = cur();
   if (REQ.v && S.key && !REQ.v.paid && !REQ.v.state && REQ.v.pf !== privFirstFor(REQ.v)) paintReq();
   if (!S.key) {
     mount($('#bal'), html`<span class="pair"><svg class="tk md" aria-hidden="true"><use href="#tk-eth"/></svg><svg class="tk md" aria-hidden="true"><use href="#tk-peth"/></svg></span>
-      <div><div class="v t">Private ETH</div><div class="u">on ${c.full} · yours shows once a wallet is open</div></div>`);
+      <div><div class="v t">Private ETH</div><div class="u">on ${c.full} · yours shows once a wallet is open</div>${poolLine(c)}</div>`);
     return;
   }
   const v = st.bal != null ? eth(st.bal) : st.last != null ? html`<span class="stale">${eth(st.last)}</span>` : null;
   mount($('#bal'), html`<span class="pair"><svg class="tk md" aria-hidden="true"><use href="#tk-eth"/></svg><svg class="tk md" aria-hidden="true"><use href="#tk-peth"/></svg></span>
-    <div><div class="v num">${v ?? (st.err ? html`<span class="err">—</span>` : html`<span class="sk" style="--w:8ch"></span>`)}</div><div class="u">ETH, private on ${c.full}</div></div>
+    <div><div class="v num">${v ?? (st.err ? html`<span class="err">—</span>` : html`<span class="sk" style="--w:8ch"></span>`)}</div><div class="u">ETH, private on ${c.full}</div>${totalLine()}${poolLine(c)}</div>
     <div class="side">${st.err ? html`<button class="link" type="button" id="bal-re">retry</button>` : st.bal != null ? html`<button class="link" type="button" id="bal-re">refresh</button>` : 'reading…'}</div>`);
   const re = $('#bal-re');
   if (re && S.busyChain === c.chainId) re.disabled = true;
