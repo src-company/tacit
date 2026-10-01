@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-1QoLYyVo1bCVu6xGfNY/cuiqaJcEpDqgQ5TaZTylNdc=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-QQ0caOWlCAXSLNjy0qJyQQKAsizqIFBr07nhmxxgL18=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -891,7 +891,7 @@ const keptDeposit = (e, landed, where = '') => {
 // A status line is state: it survives re-renders of its pane and clears when the sheet closes.
 const FLASH = {};
 const say = (el, view) => { if (!el) return; const v = view instanceof Raw ? view : html`${view}`; if (el.id && el.isConnected) FLASH[el.id] = v; mount(el, v); };
-const sayErr = (el, e) => say(el, html`<span class="err">${errText(e)}</span>`);
+const sayErr = (el, e) => { if (e?.offered) return; say(el, html`<span class="err">${errText(e)}</span>`); };   // an offered self-settle already says why
 // A read that failed, with a way to try it again. The button works wherever a re-render restores the line: RETRY[name]
 // runs on any press of a [data-retry=name].
 const RETRY = {};
@@ -1598,55 +1598,71 @@ async function selfFinish(id) {
   } catch (e) { actPut(id, { selfErr: errText(e) }); }
   finally { SELF.delete(id); endRun(run); paintAct(); afterActivity(); }
 }
-// An exit the relay refused at submit (its fee floor moved, its day's free settles are used up, it cannot take one right
-// now) has queued nothing, so there is no receipt to offer the self-settle from. The same exit goes out from the paying
+// An action the relay refused at submit (its fee floor moved, its day's free settles are used up, it cannot take one right
+// now) has queued nothing, so there is no receipt to offer the self-settle from. The same action goes out from the paying
 // account instead: the relay proves it, which is all it is asked for, and the account sends the settle and pays the
-// network fee, so the relay's fee is not charged. `spec`: { note, to, units, label, status } (status: its status line).
+// network fee. `spec`: { label, status() → its status line, sheet, after?, exit?, go({ t, priv, selfSettle, waitOpts }) }, where
+// `go` runs the same call again with the settle handed to the account. An `exit` also pays no relay fee. offerSelf returns
+// the error to throw, flagged so the caller's own failure line leaves the offer in place.
 const relayRefused = (e) => /fee below the current floor|FEE_MOVED|can.t take this one|free relayed settles|relay (5\d\d|429)\b|temporarily unavailable/i.test(`${e?.code || ''} ${e?.message || e || ''}`);
-const SELFX = {};
-let selfxSeq = 0;
+// An exit again, with the settle handed to the paying account (a whole note and a part of one are the same call).
+const exitGo = (note, to, units) => (x) => x.t.sendUnwrap({ note, walletPriv: x.priv, recipient: to, amount: BigInt(units), waitOpts: x.waitOpts, selfSettle: x.selfSettle });
+// A private send to a Tacit address, and the refund record this browser keeps for it (the sender's way back if it is never
+// claimed). One place, so the send the relay takes and the one the paying account settles both keep it.
+async function lockSend({ t, priv, note, who, units, ticker, selfSettle = null, waitOpts }) {
+  const { makeStealthSendStore } = await import('/confidential-secret-store.js');
+  let built = null;
+  const r = await t.stealthSend({ walletPriv: priv, recipientPubHex: who.pubHex, notes: [note], amount: units, onBuilt: (b) => { built = b; }, selfSettle, waitOpts });
+  if (built) {
+    await makeStealthSendStore({ sha256 }).add(priv, {
+      lockLeaf: built.lockLeaf, asset: built.asset, ticker, dec: 8, amount: built.amount, deadline: built.deadline,
+      lCx: built.lCx, lCy: built.lCy, ownerPub: built.ownerPub, lBlinding: built.lBlinding,
+      refundPriv: built.refundPriv, refundPub: built.refundPub, recipientPubHex: built.recipientPubHex,
+      txHash: r?.txHash, createdAt: Date.now(), recipientName: who.name || undefined,
+    }).catch(() => {});
+  }
+  return r;
+}
+const SELFDO = {};
+let selfdoSeq = 0;
 async function selfGasWei() {
   const gas = BigInt(await rpc('eth_gasPrice', []).catch(() => '0x0') || 0);
   return 700000n * (gas > 0n ? gas * 3n / 2n : 2000000000n);                  // a settle's gas, at a price that can move
 }
-// Sending a settle from the paying account costs its network fee: asked before the relay spends a minute proving for it.
-async function selfGasCheck() {
-  const need = await selfGasWei(), have = await ethBalance();
-  if (have != null && have < need) throw Object.assign(new Error(`Sending it yourself pays the network fee, about ${fmt(need, 18, 4)} ETH, from ${your()} (${short(S.address, 6)}). It holds ${fmt(have, 18, 4)}. Add a little ETH there, then press the button again.`), { said: true });
+const selfOffer = (spec) => html`<div class="actr-f"><button class="link" type="button" data-selfdo="${spec.id}">Send it from ${your()} instead</button>
+  ${spec.exit ? `no relay fee; ${your()} pays the network fee, and its address shows on the withdrawal.` : `${your()} pays the network fee.`}</div>`;
+function offerSelf(spec, e) {
+  const id = String(++selfdoSeq);
+  spec.id = id; SELFDO[id] = spec;
+  say(spec.status(), html`<span class="err">${errText(e)}</span>${selfOffer(spec)}`);
+  return Object.assign(new Error(errText(e)), { offered: true, said: true });
 }
-function offerSelfExit(spec, e) {
-  const id = String(++selfxSeq);
-  spec.id = id; SELFX[id] = spec;
-  say(spec.status(), html`<span class="err">${errText(e)}</span>
-    <div class="actr-f"><button class="link" type="button" data-selfexit="${id}">Send it from ${your()} instead</button>
-    no relay fee; ${your()} pays the network fee, and its address shows on the withdrawal.</div>`);
-}
-async function selfExit(run, spec) {
+async function selfDo(run, spec) {
   const status = () => spec.status();
   try {
     await payingAccount();
     const need = await selfGasWei(), have = await ethBalance();
     if (have != null && have < need) {
-      say(status(), html`<span class="err">Sending it yourself pays the network fee, about ${fmt(need, 18, 4)} ETH, from ${your()} (${short(S.address, 6)}). It holds ${fmt(have, 18, 4)}. Add a little ETH there, then press the button again.</span>
-        <div class="actr-f"><button class="link" type="button" data-selfexit="${spec.id}">Send it from ${your()} instead</button></div>`);
+      say(status(), html`<span class="err">Sending it yourself pays the network fee, about ${fmt(need, 18, 4)} ETH, from ${your()}. It holds ${fmt(have, 18, 4)}. Send a little ETH to it, then press the button again.</span>
+        <div class="kv"><span>Address</span><b class="mono">${short(S.address, 10)}</b><button class="link" type="button" data-selfcopy="${S.address}">copy</button></div>${selfOffer(spec)}`);
       return;
     }
     const t = await getUx(), priv = walletPriv();
-    run.take(kNote(spec.note));
     run.say(status(), 'The relay is proving it for you to send, about a minute…');
-    const tell = (v) => run.say(status(), v);
-    const r = await t.sendUnwrap({ note: spec.note, walletPriv: priv, recipient: spec.to, amount: BigInt(spec.units), waitOpts: run.wait(null, 15 * 60e3),
-      selfSettle: settleFrom(t, { label: spec.label, say: tell }) });
+    const selfSettle = settleFrom(t, { label: spec.label, say: (v) => run.say(status(), v) });
+    const r = await spec.go({ t, priv, selfSettle, waitOpts: run.wait(null, 15 * 60e3) });
     toast(`${spec.label}: done`);
-    say(status(), html`<span class="ok">Done.</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
+    say(status(), html`<span class="ok">${spec.then || 'Done.'}</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
     await Promise.allSettled([scanPrivate(true), spec.after ? spec.after() : null]);
     rerender(spec.sheet);
   } catch (e) { run.fail(status(), e); }
 }
 document.addEventListener('click', (e) => {
-  const b = e.target.closest?.('[data-selfexit]');
-  const spec = b && SELFX[b.dataset.selfexit];
-  if (spec) busy(b, (run) => selfExit(run, spec));
+  const c = e.target.closest?.('[data-selfcopy]');
+  if (c) { copy(c.dataset.selfcopy); return; }
+  const b = e.target.closest?.('[data-selfdo]');
+  const spec = b && SELFDO[b.dataset.selfdo];
+  if (spec) busy(b, (run) => selfDo(run, spec));
 });
 // The list is this browser's, whichever key is open: an entry another key made says so, since what it points to
 // (a Finish, a balance) is that key's.
@@ -2334,7 +2350,7 @@ function wireSub(el, name, set) { $$(`[data-${name}]`, el).forEach((b) => b.oncl
 
 // ── Tacit V1 pool: shared module, loaded on first use ────────────────────────────────────────────────────
 const getUx = lazy(async () => {
-  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=f9cb0645'), import('/confidential-deployments.js')]);
+  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=6afa64c9'), import('/confidential-deployments.js')]);
   dep.setActiveNetwork('mainnet');
   setExternalTacHolders(() => (S.wallet ? [S.wallet] : []));      // public TAC in the connected wallet counts toward the exit-fee tier, as on tacit.finance
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
@@ -2510,7 +2526,7 @@ async function settleLocks(run, kind, status) {
   run.take(...mine.map(kLock));
   const verb = kind === 'claim' ? 'Claim' : 'Take back';
   run.go({ label: mine.length > 1 ? `${kind === 'claim' ? 'Claiming' : 'Taking back'} ${mine.length} payments` : `${kind === 'claim' ? 'Claiming' : 'Taking back'} a payment`, one: false, status: () => $('#' + sid) });
-  let ok = 0, err = null;
+  let ok = 0, err = null, offered = false;
   for (;;) {
     if (run.switched()) { const e = new Error('Another Tacit key was opened, so the rest stopped.'); if (run.away) run.fail(status, e); else err ||= e; break; }
     await loadLocks(true);
@@ -2521,13 +2537,28 @@ async function settleLocks(run, kind, status) {
       const tk = tickerOf(t, due.asset), fee = BigInt(await t.quoteOpFee(tk, 'stealthclaim'));
       if (fee >= BigInt(due.amount)) throw new Error(`A ${fmt(BigInt(due.amount), 8, 8)} ${shownAs(tk)} payment is smaller than the relay fee to ${kind === 'claim' ? 'claim it' : 'take it back'}.`);
       run.say(status, `${kind === 'claim' ? 'Claiming' : 'Taking back'} ${fmt(BigInt(due.amount), 8, 6)} ${shownAs(tk)}: the relay is proving it…`);
-      const w = run.wait(`${verb} ${fmt(BigInt(due.amount), 8, 6)} ${shownAs(tk)}`, 15 * 60e3);
-      if (kind === 'claim') await t.stealthClaim({ walletPriv: priv, lockRecord: due, lockSetRoot: LK.root, fee, waitOpts: w });
-      else await t.stealthRefund({ walletPriv: priv, lockRecord: due, refundPriv: due.refundPriv, lockSetRoot: LK.sentRoot, fee, waitOpts: w });
+      const what = `${verb} ${fmt(BigInt(due.amount), 8, 6)} ${shownAs(tk)}`;
+      const call = (f, o) => (kind === 'claim'
+        ? t.stealthClaim({ walletPriv: priv, lockRecord: due, lockSetRoot: LK.root, fee: f, ...o })
+        : t.stealthRefund({ walletPriv: priv, lockRecord: due, refundPriv: due.refundPriv, lockSetRoot: LK.sentRoot, fee: f, ...o }));
+      try { await call(fee, { waitOpts: run.wait(what, 15 * 60e3) }); }
+      // The relay's floor moved between the quote and the submit: nothing was proved, so ask once more at twice the fee.
+      catch (e0) { if (/fee below the current floor/i.test(e0?.message || '') && fee * 2n < BigInt(due.amount)) await call(fee * 2n, { waitOpts: run.wait(what, 15 * 60e3) }); else throw e0; }
       ok++;
-    } catch (e) { if (run.away) run.fail(status, e); else err ||= e; }
+    } catch (e) {
+      if (relayRefused(e) && !run.away) {
+        const lot = due, tkr = tickerOf(t, lot.asset);
+        offerSelf({ label: `${verb} ${fmt(BigInt(lot.amount), 8, 6)} ${shownAs(tkr)}`, sheet: run.sheet, after: () => loadLocks(true), status: () => $('#' + sid),
+          go: (x) => (kind === 'claim'
+            ? x.t.stealthClaim({ walletPriv: x.priv, lockRecord: lot, lockSetRoot: LK.root, fee: 0n, selfSettle: x.selfSettle, waitOpts: x.waitOpts })
+            : x.t.stealthRefund({ walletPriv: x.priv, lockRecord: lot, refundPriv: lot.refundPriv, lockSetRoot: LK.sentRoot, fee: 0n, selfSettle: x.selfSettle, waitOpts: x.waitOpts })) }, e);
+        offered = true; break;
+      }
+      if (run.away) run.fail(status, e); else err ||= e;
+    }
   }
   await scanPrivate(true).catch(() => {});
+  if (offered) return;
   if (err && run.away) toast(html`${run.to.label}: one did not start: ${errText(err)}`, true, 9000);
   else if (err) throw ok ? new Error(`${ok} went through; another did not: ${errText(err)}`) : err;
 }
@@ -2762,8 +2793,18 @@ async function noteFor(run, t, priv, amount, fits, status, k = 'eth') {
   run.take(...picked.map(kNote));
   const doing = `${picked.length > 1 ? `Combining ${picked.length} notes` : 'Splitting a note'} to ${fmt(amount, 8, 6)} ${shownAs(tk)} first`;
   run.say(status, `${doing}…`);
-  await t.transfer({ walletPriv: priv, notes: picked, recipientPubHex: t.identity(priv).pubHex, amount, fee,
-    waitOpts: run.wait({ step: picked.length > 1 ? 'Combine notes' : 'Split a note', doing }, 15 * 60e3) });
+  const cut = (f, o) => t.transfer({ walletPriv: priv, notes: picked, recipientPubHex: t.identity(priv).pubHex, amount, fee: f, ...o });
+  const stepWait = () => run.wait({ step: picked.length > 1 ? 'Combine notes' : 'Split a note', doing }, 15 * 60e3);
+  try {
+    try { await cut(fee, { waitOpts: stepWait() }); }
+    // The relay's floor moved between the quote and the submit: nothing was proved, so ask once more at twice the fee.
+    catch (e0) { if (/fee below the current floor/i.test(e0?.message || '') && sum >= amount + fee * 2n) await cut(fee * 2n, { waitOpts: stepWait() }); else throw e0; }
+  } catch (e) {
+    if (!relayRefused(e) || run.away) throw e;
+    const line = () => (status.id && document.getElementById(status.id)) || status;
+    throw offerSelf({ label: doing, sheet: run.sheet, then: 'Your note is ready. Press the button again to send it.', status: line,
+      go: (x) => cut(0n, { selfSettle: x.selfSettle, waitOpts: x.waitOpts }) }, e);
+  }
   // The new note shows in a scan a moment after its settle: look a few times before giving up.
   for (let i = 0; i < 6; i++) {
     await scanPrivate(true);
@@ -2828,17 +2869,14 @@ function v1Send(el, status) {
     try {
       const t = await getUx(), priv = walletPriv();
       const note = await noteFor(run, t, priv, units, (n) => BigInt(n.value) === units, status);          // a lock spends a note of its exact size
-      const { makeStealthSendStore } = await import('/confidential-secret-store.js');
-      let built = null;
       run.say(status, 'Locking it to a one-time address only they can open…');
-      const r = await t.stealthSend({ walletPriv: priv, recipientPubHex: w.pubHex, notes: [note], amount: units, onBuilt: (b) => { built = b; }, waitOpts: run.wait(null, 15 * 60e3) });
-      if (built) {
-        await makeStealthSendStore({ sha256 }).add(priv, {
-          lockLeaf: built.lockLeaf, asset: built.asset, ticker: 'cETH', dec: 8, amount: built.amount, deadline: built.deadline,
-          lCx: built.lCx, lCy: built.lCy, ownerPub: built.ownerPub, lBlinding: built.lBlinding,
-          refundPriv: built.refundPriv, refundPub: built.refundPub, recipientPubHex: built.recipientPubHex,
-          txHash: r?.txHash, createdAt: Date.now(), recipientName: w.name || undefined,
-        }).catch(() => {});
+      const sendArgs = { t, priv, note, who: w, units, ticker: 'cETH' };
+      let r;
+      try { r = await lockSend({ ...sendArgs, waitOpts: run.wait(null, 15 * 60e3) }); }
+      catch (e) {
+        if (!relayRefused(e) || run.away) throw e;
+        offerSelf({ go: (x) => lockSend({ ...sendArgs, selfSettle: x.selfSettle, waitOpts: x.waitOpts }), label: `Send ${fmt(units, 8, 6)} tETH privately to ${w.name || short(raw, 8)}`, sheet: 'eth', status: () => $('#v1-status') }, e);
+        return;
       }
       await scanPrivate(true).catch(() => {});
       rerender('eth');
@@ -2907,7 +2945,7 @@ function v1Out(el, status) {
       try { await t.sendUnwrap({ note, walletPriv: priv, recipient, amount: x.units, waitOpts: run.wait(null, 15 * 60e3, { exit: { to: recipient, units: String(x.units), note: kNote(note), from: 'eth', sheet: 'eth' } }) }); }
       catch (e) {
         if (!relayRefused(e) || run.away) throw e;
-        offerSelfExit({ note, to: recipient, units: String(x.units), label: `Withdraw ${fmt(x.units, 8, 6)} ETH to ${short(raw, 6)}`, sheet: 'eth', status: () => $('#v1-status') }, e);
+        offerSelf({ exit: true, go: exitGo(note, recipient, x.units), label: `Withdraw ${fmt(x.units, 8, 6)} ETH to ${short(raw, 6)}`, sheet: 'eth', status: () => $('#v1-status') }, e);
         return;
       }
       await scanPrivate(true).catch(() => {});
@@ -3667,7 +3705,7 @@ function renderTacBal(el) {
         const biggest = freeNotes(P.scan?.tac?.notes).sort(byValue).reverse()[0];
         const small = new Error('Each private TAC note is worth less than the relay fee to move it.');
         if (!biggest) throw small;
-        offerSelfExit({ note: biggest, to, units: String(biggest.value), label: `Make ${fmt(BigInt(biggest.value), 8, 2)} TAC public`, sheet: 'tac', after: loadTacHoldings, status: () => $('#tac-bal-status') }, small);
+        offerSelf({ exit: true, go: exitGo(biggest, to, biggest.value), label: `Make ${fmt(BigInt(biggest.value), 8, 2)} TAC public`, sheet: 'tac', after: loadTacHoldings, status: () => $('#tac-bal-status') }, small);
         return;
       }
       run.take(...worth.map(kNote));
@@ -3680,7 +3718,7 @@ function renderTacBal(el) {
         try { await t.unwrap({ note: n, walletPriv: priv, recipient: to, wait: true, waitOpts: run.wait(`Make ${fmt(BigInt(n.value), 8, 2)} TAC public`, 15 * 60e3, { exit: { to, units: String(n.value), note: kNote(n), from: 'tac', sheet: 'tac' } }) }); }
         catch (e) {
           if (relayRefused(e) && !run.away) {
-            offerSelfExit({ note: n, to, units: String(n.value), label: `Make ${fmt(BigInt(n.value), 8, 2)} TAC public`, sheet: 'tac', after: loadTacHoldings, status: () => $('#tac-bal-status') }, e);
+            offerSelf({ exit: true, go: exitGo(n, to, n.value), label: `Make ${fmt(BigInt(n.value), 8, 2)} TAC public`, sheet: 'tac', after: loadTacHoldings, status: () => $('#tac-bal-status') }, e);
             offered = true; break;
           }
           if (!run.away) throw e; run.fail(status, e);
@@ -4351,7 +4389,14 @@ function renderFarmNotes(el) {
       run.take(...mine.map(kNote));
       for (const [i, n] of mine.entries()) {
         say(status, `The relay is taking your liquidity out${mine.length > 1 ? ` (${i + 1} of ${mine.length})` : ''}…`);
-        await t.lpRemove({ walletPriv: priv, assetA: r.assetA, assetB: r.assetB, feeBps: Number(x.p.feeBps ?? 30), shareNote: n, waitOpts: run.wait(`Take out ${pairName(x.p.pair)} liquidity`, 15 * 60e3) });
+        const args = { assetA: r.assetA, assetB: r.assetB, feeBps: Number(x.p.feeBps ?? 30), shareNote: n };
+        try { await t.lpRemove({ walletPriv: priv, ...args, waitOpts: run.wait(`Take out ${pairName(x.p.pair)} liquidity`, 15 * 60e3) }); }
+        catch (e1) {
+          if (!relayRefused(e1) || run.away) throw e1;
+          offerSelf({ label: `Take out ${pairName(x.p.pair)} liquidity`, sheet: 'farm', after: loadFarms, status: () => status,
+            go: (y) => y.t.lpRemove({ walletPriv: y.priv, ...args, fee: 0n, selfSettle: y.selfSettle, waitOpts: y.waitOpts }) }, e1);
+          return;
+        }
       }
       toast('Liquidity taken out');
       await done('Taken out: both assets are private notes again.');
@@ -5326,7 +5371,7 @@ render.borrow = () => {
       try { r = await t.unwrap({ note, walletPriv: priv, recipient: to, waitOpts: run.wait(`Withdraw ${fmt(BigInt(note.value), 8, 2)} cUSD as tacUSD`, 15 * 60e3, { exit: { to, units: String(note.value), note: kNote(note), from: 'cusd', sheet: 'borrow' } }) }); }
       catch (e) {
         if (!relayRefused(e) || run.away) throw e;
-        offerSelfExit({ note, to, units: String(note.value), label: `Withdraw ${fmt(BigInt(note.value), 8, 2)} cUSD as tacUSD`, sheet: 'borrow', after: () => loadBorrow(true), status: () => $('#bw-status') }, e);
+        offerSelf({ exit: true, go: exitGo(note, to, note.value), label: `Withdraw ${fmt(BigInt(note.value), 8, 2)} cUSD as tacUSD`, sheet: 'borrow', after: () => loadBorrow(true), status: () => $('#bw-status') }, e);
         return;
       }
       toast(`tacUSD sent to ${your()}`);
@@ -5441,22 +5486,18 @@ function assetSendForm(el, status, { prefix, sheet, statusId, sources, pick }) {
         try { r = await t.sendUnwrap({ note, walletPriv: priv, recipient: x.recipient, amount: x.units, waitOpts: run.wait(null, 15 * 60e3, { exit: { to: x.recipient, units: String(x.units), note: kNote(note), from: k, sheet } }) }); }
         catch (e) {
           if (!relayRefused(e) || run.away) throw e;
-          offerSelfExit({ note, to: x.recipient, units: String(x.units), label: `Send ${show(x.units)} ${dtk} to ${short(raw, 6)} as ${a.out}`, sheet, after: sheet === 'tac' ? loadTacHoldings : null, status: out }, e);
+          offerSelf({ exit: true, go: exitGo(note, x.recipient, x.units), label: `Send ${show(x.units)} ${dtk} to ${short(raw, 6)} as ${a.out}`, sheet, after: sheet === 'tac' ? loadTacHoldings : null, status: out }, e);
           return;
         }
       } else {
         const note = await noteFor(run, t, priv, x.units, (n) => BigInt(n.value) === x.units, status, k);          // a lock spends a note of its exact size
-        const { makeStealthSendStore } = await import('/confidential-secret-store.js');
-        let built = null;
         run.say(status, 'Locking it to a one-time address only they can open…');
-        r = await t.stealthSend({ walletPriv: priv, recipientPubHex: x.who.pubHex, notes: [note], amount: x.units, onBuilt: (b) => { built = b; }, waitOpts: run.wait(null, 15 * 60e3) });
-        if (built) {
-          await makeStealthSendStore({ sha256 }).add(priv, {
-            lockLeaf: built.lockLeaf, asset: built.asset, ticker: a.tk, dec: 8, amount: built.amount, deadline: built.deadline,
-            lCx: built.lCx, lCy: built.lCy, ownerPub: built.ownerPub, lBlinding: built.lBlinding,
-            refundPriv: built.refundPriv, refundPub: built.refundPub, recipientPubHex: built.recipientPubHex,
-            txHash: r?.txHash, createdAt: Date.now(), recipientName: x.who.name || undefined,
-          }).catch(() => {});
+        const sendArgs = { t, priv, note, who: x.who, units: x.units, ticker: a.tk };
+        try { r = await lockSend({ ...sendArgs, waitOpts: run.wait(null, 15 * 60e3) }); }
+        catch (e) {
+          if (!relayRefused(e) || run.away) throw e;
+          offerSelf({ go: (y) => lockSend({ ...sendArgs, selfSettle: y.selfSettle, waitOpts: y.waitOpts }), label: `Send ${show(x.units)} ${dtk} privately to ${x.who.name || short(raw, 8)}`, sheet, after: sheet === 'tac' ? loadTacHoldings : null, status: out }, e);
+          return;
         }
       }
       await scanPrivate(true).catch(() => {});

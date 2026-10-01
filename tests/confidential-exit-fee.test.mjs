@@ -87,3 +87,26 @@ test('send-out (part of a note) retries the same way', async () => {
   assert.equal(relay.fees[1], TAC_FLOOR * 2n);
   assert.ok(r.jobId);
 });
+
+// The other relayed operations take the same self-settle: the relay proves, the caller's function sends the settle.
+test('a note split (transfer) can be settled by the caller: proof only, no relay fee', async () => {
+  const subs = [], sent = [];
+  const fetchImpl = async (url, opts) => {
+    const body = opts && opts.body ? JSON.parse(opts.body) : null;
+    let obj;
+    if (String(url).endsWith('/confidential/submit')) { subs.push(body); obj = { jobId: 'p1', status: 'pending' }; }
+    else if (String(url).includes('/confidential/status')) obj = { jobId: 'p1', mode: 'prove', status: 'proven', publicValues: '0x03', proof: '0x04', memos: subs.at(-1).memos };
+    else obj = { jsonrpc: '2.0', id: 1, result: '0x0' };
+    return { ok: true, status: 200, json: async () => obj, text: async () => JSON.stringify(obj) };
+  };
+  const ux = makeConfidentialPoolUx({ ...deps, fetchImpl });
+  const note = tacNote(ux);
+  const selfSettle = async (x) => { sent.push(x); return { txHash: '0x' + 'cd'.repeat(32) }; };
+  const r = await ux.transfer({ walletPriv, notes: [note], recipientPubHex: ux.identity(walletPriv).pubHex, amount: BigInt(note.value) / 2n, fee: 0n, selfSettle, waitOpts: { intervalMs: 0, sleep: async () => {} } });
+  assert.equal(subs.length, 1);
+  assert.equal(subs[0].mode, 'prove', 'the relay is asked for the proof only');
+  assert.equal(BigInt(subs[0].op.transfer?.fee ?? subs[0].op.fee ?? 0), 0n, 'no relay fee in the op');
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].publicValues, '0x03'); assert.equal(sent[0].proof, '0x04');
+  assert.equal(r.txHash, '0x' + 'cd'.repeat(32));
+});

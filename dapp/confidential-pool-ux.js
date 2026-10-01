@@ -2170,7 +2170,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     wire.b = { cx: b.cx, cy: b.cy, owner: b.owner, sigR: bSig.R, sigZ: bSig.z };
     return wire;
   }
-  async function lpRemove({ walletPriv, assetA, assetB, feeBps = 30, shareNote, fee = null, deadline = 0n, selfRelay = false, waitOpts } = {}) {
+  async function lpRemove({ walletPriv, assetA, assetB, feeBps = 30, shareNote, fee = null, deadline = 0n, selfRelay = false, selfSettle = null, waitOpts } = {}) {
     if (!shareNote) throw new Error('lp-remove: need an LP-share note');
     if (!shareNote.path || shareNote.root == null) throw new Error('lp-remove: share note is missing its membership witness — rescan first');
     const id = identity(walletPriv);
@@ -2229,7 +2229,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     if (f > 0n) { const u = await feeUsdFor(f, tickerA).catch(() => null); if (u != null) op.feeUsd = u; }
 
     const opWire = toLpRemoveWire(op);
-    const r = await _dispatch({ type: 'lpremove', spec: { op: opWire, leaves, outputs: [outA, outB], ephRand }, sealedMemos: memos, selfRelay, walletPriv, waitOpts });
+    const r = await _dispatch({ type: 'lpremove', spec: { op: opWire, leaves, outputs: [outA, outB], ephRand }, sealedMemos: memos, selfRelay, selfSettle, walletPriv, waitOpts });
     return { ...r, burned: burn, dA: op.dA, dB: op.dB, netA: op.dA - f, fee: f, pid, lpAsset, assetA: a, assetB: b };
   }
 
@@ -2382,7 +2382,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   }
 
   // Build + relay-settle a confidential send. recipientPubHex = the recipient's confidential account pubkey.
-  async function transfer({ walletPriv, notes, recipientPubHex, amount, fee = 0n, feeUsd = null, selfRelay = false, waitOpts } = {}) {
+  async function transfer({ walletPriv, notes, recipientPubHex, amount, fee = 0n, feeUsd = null, selfRelay = false, selfSettle = null, waitOpts } = {}) {
     // Price the fee for the relay gate when the caller didn't. fee === 0n stays unpriced: that is a
     // self-settled / internal move (a note merge), not a relayed send the relay must profit on.
     if (feeUsd == null && BigInt(fee) > 0n) {
@@ -2391,7 +2391,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     const b = buildTransferOp({ walletPriv, notes, recipientPubHex, amount, fee, feeUsd });
     return _dispatch({
       type: 'transfer', spec: { op: b.op, leaves: b.leaves, outputs: b.outputs, ephRand: b.ephRand },
-      sealedMemos: b.memos, selfRelay, walletPriv, waitOpts,
+      sealedMemos: b.memos, selfRelay, selfSettle, walletPriv, waitOpts,
     });
   }
 
@@ -2515,7 +2515,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // so `onBuilt` surfaces everything needed for a later self-refund and the caller should persist it
   // (mirroring wrapAndSend's onBuilt contract) if they want a guaranteed refund path rather than relying
   // on re-discovering their own lock via a full lock-set scan.
-  async function stealthSend({ walletPriv, recipientPubHex, notes, amount, deadline, selfRelay = false, waitOpts, onBuilt } = {}) {
+  async function stealthSend({ walletPriv, recipientPubHex, notes, amount, deadline, selfRelay = false, selfSettle = null, waitOpts, onBuilt } = {}) {
     if (!notes || !notes.length) throw new Error('stealthSend: no input notes');
     const asset = notes[0].asset;
     if (notes.some((n) => n.asset !== asset)) throw new Error('stealthSend: all inputs must be one asset');
@@ -2559,7 +2559,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     const built = { lockLeaf: op.lockLeaf, asset, amount: amount.toString(), deadline: deadlineB.toString(), refundPriv: refundPrivHex, refundPub, recipientPubHex, memo, lCx: op.lCx, lCy: op.lCy, ownerPub, lBlinding };
     onBuilt?.(built);
 
-    const r = await _dispatch({ type: 'stealthlock', spec: { op, lockMemos: [memo] }, sealedMemos: [memo], selfRelay, walletPriv, waitOpts });
+    const r = await _dispatch({ type: 'stealthlock', spec: { op, lockMemos: [memo] }, sealedMemos: [memo], selfRelay, selfSettle, walletPriv, waitOpts });
     const memoCheck = await checkEmittedLockMemos({ txHash: r && r.txHash, lockLeaves: [op.lockLeaf], memos: [memo] });
     return { ...r, ...built, ...(memoCheck ? { memoCheck } : {}) };
   }
@@ -2722,7 +2722,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // identity().owner here: doing so would let the relay link every claim a wallet ever makes by that one
   // constant owner. `lockRecord` is one entry from scanStealthLocks' `mine`; `lockSetRoot` must be the SAME
   // scan's root (membership fails if the tree has moved since).
-  async function stealthClaim({ walletPriv, lockRecord, lockSetRoot, fee = 0n, selfRelay = false, waitOpts } = {}) {
+  async function stealthClaim({ walletPriv, lockRecord, lockSetRoot, fee = 0n, selfRelay = false, selfSettle = null, waitOpts } = {}) {
     const id = identity(walletPriv);
     const net = BigInt(lockRecord.amount) - BigInt(fee);
     if (net <= 0n) throw new Error('stealthClaim: fee exceeds the locked amount');
@@ -2748,14 +2748,14 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     // raw, JSON.stringify silently turns it into a numeric-keyed object the box harness can't parse as a
     // hex string — caught via a real settle on the live mainnet pool, not by any mocked-relay test.
     const op = { ...claim, mRange: _bytesHex(claim.mRange) };
-    const r = await _dispatch({ type: 'stealthclaim', spec: { op, leaves: [mLeaf], outputs: [output], ephRand }, sealedMemos: memos, selfRelay, walletPriv, waitOpts });
+    const r = await _dispatch({ type: 'stealthclaim', spec: { op, leaves: [mLeaf], outputs: [output], ephRand }, sealedMemos: memos, selfRelay, selfSettle, walletPriv, waitOpts });
     return { ...r, net, asset: lockRecord.asset };
   }
 
   // Reclaim a lock's value after `deadline` if the recipient never claimed. `refundPriv` is the scalar
   // stealthSend's onBuilt exposed — this module does not persist it, so the caller must have kept it (or
   // re-derive it themselves, if they built their own send flow deterministically instead).
-  async function stealthRefund({ walletPriv, lockRecord, refundPriv, lockSetRoot, fee = 0n, selfRelay = false, waitOpts } = {}) {
+  async function stealthRefund({ walletPriv, lockRecord, refundPriv, lockSetRoot, fee = 0n, selfRelay = false, selfSettle = null, waitOpts } = {}) {
     const id = identity(walletPriv);
     const net = BigInt(lockRecord.amount) - BigInt(fee);
     if (net <= 0n) throw new Error('stealthRefund: fee exceeds the locked amount');
@@ -2779,7 +2779,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     // oRange is raw bytes (buildStealthRefund's convention) — hex it here at the wire boundary; see the
     // matching comment in stealthClaim above for why this matters.
     const op = { ...refund, oRange: _bytesHex(refund.oRange) };
-    const r = await _dispatch({ type: 'stealthrefund', spec: { op, leaves: [oLeaf], outputs: [output], ephRand }, sealedMemos: memos, selfRelay, walletPriv, waitOpts });
+    const r = await _dispatch({ type: 'stealthrefund', spec: { op, leaves: [oLeaf], outputs: [output], ephRand }, sealedMemos: memos, selfRelay, selfSettle, walletPriv, waitOpts });
     return { ...r, net, asset: lockRecord.asset };
   }
 
