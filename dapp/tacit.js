@@ -19882,6 +19882,7 @@ function _crossoutReserved(txid, vout) {
 // A connected Ethereum wallet's public TAC counts toward the holder exit rate in every pool tab.
 setExternalTacHolders(() => (ethWallet?.state?.address ? ['0x' + String(ethWallet.state.address).replace(/^0x/, '')] : []));
 
+let _ethLaneLastReadError = null;
 async function scanHoldingsCrossChain(force = false) {
   const net = currentNetworkName();
   const dep = CROSSLANE_DEPLOYMENTS[net] || {};
@@ -19909,6 +19910,7 @@ async function scanHoldingsCrossChain(force = false) {
     try {
       const ux = _poolUxSingleton();
       const { byAsset, diag } = await ux.balance(wallet.priv);
+      _ethLaneLastReadError = diag && diag.errors && Object.keys(diag.errors).length ? Object.entries(diag.errors).map(([k, v]) => k + ': ' + v).join('; ') : null;
       // A deposit still waiting for its settle is money in limbo: say so wherever balances first load, not only on
       // the tabs that list it with a Resume button.
       try { notifyPendingWrapsOnce(diag, _confidentialNotify); } catch { /* the Pool and Send tabs still list it */ }
@@ -19921,6 +19923,7 @@ async function scanHoldingsCrossChain(force = false) {
       // this reader degrading is meant to be non-fatal to the rest of the scan) so a stuck note is diagnosable
       // instead of just absent.
       console.error('[scanHoldingsCrossChain] poolNotesReader (ux.balance) failed:', e);
+      _ethLaneLastReadError = String((e && e.message) || e);
       return [];
     }
   } : null;
@@ -22523,15 +22526,20 @@ async function _renderHoldingsUnifiedStrip(force = false) {
       <div class="empty" style="padding:10px 0;text-align:center;">
         <div style="font-weight:bold;margin-bottom:4px;font-size:12px;">⏳ Ethereum-lane holdings unavailable right now.</div>
         <div class="muted" style="font-size:11px;line-height:1.6;margin-bottom:8px;">Likely a transient RPC hiccup — you've had assets here before, so the chain state hasn't actually changed. Your funds are on chain regardless of what this reads.</div>
+        ${_ethLaneLastReadError ? `<div class="muted" style="font-size:10px;line-height:1.5;margin-bottom:8px;word-break:break-word;">Reason: ${escapeHtml(_ethLaneLastReadError)}</div>` : ''}
         <button type="button" id="btn-eth-lane-retry" class="btn-go" style="font-size:11px;padding:5px 12px;">↻ Retry</button>
       </div>
     </div>`;
     const btn = document.getElementById('btn-eth-lane-retry');
     if (btn) btn.onclick = () => { btn.disabled = true; btn.textContent = 'retrying…'; _renderHoldingsUnifiedStrip(true); };
   };
+  if (wallet && wallet.priv && !box.dataset.painted) {
+    box.style.display = '';
+    box.innerHTML = `<div class="section" style="padding:12px 14px;"><div class="muted" style="font-size:11px;">⏳ Reading your Ethereum-lane holdings from the chain…</div></div>`;
+  }
   let unified;
   try { unified = await scanHoldingsCrossChain(force); }
-  catch { if (hadAssetsBefore) showTransient(); else box.style.display = 'none'; return; }
+  catch (e) { _ethLaneLastReadError = String((e && e.message) || e); if (hadAssetsBefore) showTransient(); else box.style.display = 'none'; return; }
   const rows = [];
   const externalRows = [];
   for (const e of unified.values()) {
@@ -22572,7 +22580,7 @@ async function _renderHoldingsUnifiedStrip(force = false) {
     </div>`);
   }
   if (!rows.length && !externalRows.length) { if (hadAssetsBefore) showTransient(); else box.style.display = 'none'; return; }
-  _ethLaneEverSeenAssets = true; _saveEthLaneSeenFlag();
+  _ethLaneEverSeenAssets = true; _saveEthLaneSeenFlag(); box.dataset.painted = '1';
   box.innerHTML = `<div class="section" style="padding:12px 14px;">
     ${rows.length ? `<div class="note-concept" style="margin-bottom:8px;"><b>One note, two chains.</b> Your Tacit balance is the same confidential note whether it settles on <span class="btc-word">Bitcoin</span> or <span class="eth-word">Ethereum</span> — wrap, send, or trade it from either side.</div>${rows.join('')}` : ''}
     ${externalRows.length ? `<div class="muted" style="font-weight:600;font-size:11px;margin:${rows.length ? '14' : '0'}px 0 2px;">Public Ethereum tokens</div>${externalRows.join('')}` : ''}
