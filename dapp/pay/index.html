@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-VwQmxMNuVpmpo/3FNq3tJa5JM+FnRlVAtHe953qAEdQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-MVwL7prZPOUwsKCpe6czScdWY0JlK5HUpH8JzHplH+Y=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Simple, private payments: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key and one tacit1 address, every payment made on your device, recovered from the key alone.">
@@ -776,7 +776,46 @@ window.addEventListener('tacit:evm-accounts', (e) => {
 
 // ── BTC: silent payments from the key's own Bitcoin address ──────────────────────────────────────────────
 // got: how much of this key's read is in (1 sats, 2 held assets, 3 silent payments); part: a read is still filling it in.
-const BTC = { pub: null, at: 0, loading: null, err: null, sp: null, held: [], addr: null, share: null, got: 0, part: false };
+const BTC = { pub: null, at: 0, loading: null, err: null, sp: null, held: [], addr: null, share: null, got: 0, part: false, silentList: [] };
+// Silent payments this key had when it opened here; any found after (by a hint, a link or a pasted txid) is announced
+// once and marked new.
+const ANN = { pub: null, seen: new Set(), fresh: new Set() };
+const TXTIME = new Map();
+const ago = (t) => { const d = Math.max(0, Date.now() / 1000 - t); return d < 90 ? 'just now' : d < 5400 ? `${Math.round(d / 60)} min ago` : d < 129600 ? `${Math.round(d / 3600)} h ago` : `${Math.round(d / 86400)} days ago`; };
+// This key's silent payments still unspent, newest first, and their total. A coin's spent state is asked again when
+// `again`, else only once; a coin recorded before its block has its block's time asked.
+async function readSilent(t, again) {
+  const todo = [];
+  for (const e of Object.entries(t.loadSpCredits() || {}).filter(([, c]) => !c.coinClass)) {
+    const [txid, vout] = e[0].split(':');
+    if (SPENT.has(e[0])) t.removeSpCredit(txid, Number(vout)); else todo.push(e);
+  }
+  const ask = todo.filter(([k]) => again || !SPENT_LAST.has(k));
+  for (let i = 0; i < ask.length; i += 6) {
+    const outs = await Promise.all(ask.slice(i, i + 6).map(([k]) => { const [txid, vout] = k.split(':'); return esplora(`/tx/${txid}/outspend/${vout}`).catch(() => null); }));
+    outs.forEach((o, j) => {
+      const [k] = ask[i + j], [txid, vout] = k.split(':');
+      if (o) SPENT_LAST.set(k, !!o.spent);
+      if (o?.spent && o.status?.confirmed) { SPENT.add(k); t.removeSpCredit(txid, Number(vout)); }
+    });
+  }
+  const live = todo.filter(([k]) => !SPENT.has(k) && !SPENT_LAST.get(k));
+  await Promise.all(live.filter(([k, c]) => !c.blockTime && !TXTIME.has(k.split(':')[0])).slice(0, 12).map(async ([k]) => {
+    const txid = k.split(':')[0], st = await esplora(`/tx/${txid}/status`).catch(() => null);
+    if (st?.confirmed && st.block_time) TXTIME.set(txid, st.block_time);
+  }));
+  const list = live.map(([k, c]) => { const [txid, vout] = k.split(':'); return { k, txid, vout: Number(vout), sats: BigInt(c.sats || 0), at: c.blockTime || TXTIME.get(txid) || 0 }; })
+    .sort((a, b) => (b.at || Infinity) - (a.at || Infinity));
+  return { silent: list.reduce((n, x) => n + x.sats, 0n), list };
+}
+function announce(list) {
+  if (ANN.pub !== S.key?.pubHex) return;
+  const fresh = list.filter((x) => !ANN.seen.has(x.k));
+  if (!fresh.length) return;
+  for (const x of fresh) { ANN.seen.add(x.k); ANN.fresh.add(x.k); }
+  const sum = fresh.reduce((n, x) => n + x.sats, 0n);
+  toast(`Received ${fmt(sum, 8, 8)} BTC by silent payment${fresh.length > 1 ? ` in ${fresh.length} payments` : ''}`);
+}
 const SATS_DUST = 546n, ASSET_SEND_SATS = 3000n, TAC_ID = 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
 // Silent-payment outputs seen spent and confirmed, and each other one's last answer: a failed lookup keeps the last one.
 const SPENT = new Set(), SPENT_LAST = new Map();
@@ -789,7 +828,7 @@ function loadBtc(force = false) {
     const addr = t.wallet.address(), scan = t.scanHoldings(force);
     scan.catch(() => {});
     const utxos = await t.getUtxos(addr);
-    let sats = 0n, pending = 0n, silent = 0n;
+    let sats = 0n, pending = 0n;
     // At or below dust an output is a Tacit asset note: it counts with the assets, never as BTC.
     for (const u of utxos || []) { const v = BigInt(u.value || 0); if (v <= SATS_DUST) continue; if (u.status?.confirmed) sats += v; else pending += v; }
     if (!live()) return;
@@ -798,6 +837,15 @@ function loadBtc(force = false) {
     Object.assign(BTC, { pub, addr, sats, pending, err: null, part: true, got: Math.max(same ? BTC.got : 0, 1), silent: same ? BTC.silent : 0n, held: same ? BTC.held : [] });
     render();
     if (!BTC.sp) { try { BTC.sp = await t.walletSilentPaymentAddress(); } catch {} if (BTC.sp && live()) render(); }
+    if (ANN.pub !== pub) Object.assign(ANN, { pub, seen: new Set(Object.keys(t.loadSpCredits() || {})), fresh: new Set() });
+    // Payments hinted to this key, then every silent payment still unspent: shown before the slower asset scan ends.
+    await hintsForMe(t, pub).catch(() => {});
+    if (!live()) return;
+    const first = await readSilent(t, true);
+    if (!live()) return;
+    Object.assign(BTC, { silent: first.silent, silentList: first.list });
+    announce(first.list);
+    render();
     const h = await scan;
     if (!live()) return;
     const held = [...(h instanceof Map ? h.entries() : [])].map(([id, x]) => {
@@ -806,25 +854,11 @@ function loadBtc(force = false) {
     }).filter((a) => a.balance > 0n);
     Object.assign(BTC, { held, got: Math.max(BTC.got, 2) });
     render();
-    await hintsForMe(t, pub).catch(() => {});
+    // The scan marks silent-payment coins that carry an asset; those leave the BTC.
+    const after = await readSilent(t, false);
     if (!live()) return;
-    // Silent payments found for this key, still unspent.
-    const todo = [];
-    for (const e of Object.entries(t.loadSpCredits() || {}).filter(([, c]) => !c.coinClass)) {
-      const [txid, vout] = e[0].split(':');
-      if (SPENT.has(e[0])) t.removeSpCredit(txid, Number(vout)); else todo.push(e);
-    }
-    for (let i = 0; i < todo.length; i += 6) {
-      const outs = await Promise.all(todo.slice(i, i + 6).map(([k]) => { const [txid, vout] = k.split(':'); return esplora(`/tx/${txid}/outspend/${vout}`).catch(() => null); }));
-      outs.forEach((o, j) => {
-        const [k, c] = todo[i + j], [txid, vout] = k.split(':');
-        if (o) SPENT_LAST.set(k, !!o.spent);
-        if (o?.spent && o.status?.confirmed) { SPENT.add(k); t.removeSpCredit(txid, Number(vout)); }
-        if (!SPENT_LAST.get(k)) silent += BigInt(c.sats || 0);
-      });
-    }
-    if (!live()) return;
-    Object.assign(BTC, { at: Date.now(), silent, got: 3 });
+    Object.assign(BTC, { at: Date.now(), silent: after.silent, silentList: after.list, got: 3 });
+    announce(after.list);
   }, pub).catch((e) => { if (live()) BTC.err = e; }).finally(() => { if (BTC.loading === run) BTC.loading = null; if (live()) { BTC.part = false; render(); } });
   return (BTC.loading = run);
 }
@@ -864,7 +898,7 @@ const getUx = lazy(async () => {
 // it sends.
 const btcAvail = (b) => (b?.got === 3 ? b.sats + b.silent : null);
 function btcBal() {
-  const b = BTC.pub === S.key.pubHex ? BTC : null, more = !b || b.got === 3 ? '' : b.part ? ' · checking silent payments…' : ' · couldn’t check silent payments';
+  const b = BTC.pub === S.key.pubHex ? BTC : null, more = !b || b.got === 3 ? '' : b.part ? ' · still checking…' : ' · couldn’t finish checking';
   return html`<svg class="tk md" aria-hidden="true"><use href="#tk-btc"/></svg>
     <div><div class="v num">${b ? fmt(b.sats + b.silent, 8, 8) : BTC.err ? html`<span class="err">—</span>` : html`<span class="sk" style="--w:9ch"></span>`}</div>
       <div class="u">${!b && BTC.err ? html`<span class="err">Couldn’t read your BTC: ${errText(BTC.err)}</span>` : html`BTC${b?.pending ? ` · ${fmt(b.pending, 8, 8)} arriving` : ''}${b?.silent ? ` · ${fmt(b.silent, 8, 8)} by silent payment` : ''}${more}`}</div></div>
@@ -919,7 +953,7 @@ function btcSend(f) {
       const txid = await withKey(async (t) => (await t.buildAndBroadcastSatsSend({ recipientAddr: r.to, amountSats: Number(v) })).txid);
       markPaid('btc', to.value, v, txid);
       if (r.kind === 'sp') hintTo(r.to, txid);
-      BTC.share = r.kind === 'sp' ? { url: `${location.origin}/pay/#sp=${txid}`, what: 'A silent payment leaves no address on chain that points at them.' } : null;
+      BTC.share = r.kind === 'sp' ? { url: `${location.origin}/pay/#sp=${txid}`, what: 'Their Tacit wallet finds it on its own. For another silent-payment wallet, send them this link.', hinted: true } : null;
       amt.value = '';
       toast(`Sent ${fmt(v, 8, 8)} BTC`);
       await loadBtc(true).catch(() => {});
@@ -936,26 +970,38 @@ async function pinned(r, raw, routeOf, recheck) {
   recheck();
   throw new Error('Where that name points changed. Check it and send again.');
 }
-const shareView = (s) => html`<div class="callout"><span>${s.what} Send them this link so their wallet finds it at once.</span><button class="btn ghost sm" type="button" data-copy="${s.url}">Copy link</button></div>`;
+const shareView = (s) => html`<div class="callout"><span>${s.what}${s.hinted ? '' : ' Send them this link so their wallet finds it at once.'}</span><button class="btn ghost sm" type="button" data-copy="${s.url}">Copy link</button></div>`;
 const wireShare = (f) => $$('[data-copy]', f).forEach((x) => x.onclick = () => copy(x.dataset.copy, x.dataset.done || 'Copied'));
+const paidView = (list) => (list.length ? html`<div class="blk"><div class="lbl"><span>Paid to you by silent payment</span><span>${list.length} unspent</span></div>
+    ${list.slice(0, 8).map((x) => html`<div class="kv"><span>${x.at ? ago(x.at) : 'waiting for a block'}${ANN.fresh.has(x.k) ? html` · <b class="ok">new</b>` : ''}</span><b class="num">${fmt(x.sats, 8, 8)} BTC · ${btcTx(x.txid)}</b></div>`)}
+    <p class="note">Each landed at a fresh address only your key can find. They count in your balance and pay for your sends.</p></div>` : '');
 function btcReceive(f) {
   const b = BTC.pub === S.key.pubHex ? BTC : null;
   const row = (label, sub, v, note) => html`<div class="blk"><div class="lbl"><span>${label}</span><span>${sub}</span></div>
     <div class="addr"><code>${v || '…'}</code>${v ? html`<button class="link" type="button" data-copy="${v}">copy</button>` : ''}</div>${v ? idRow({ addressId: addressId(v) }) : ''}<p class="note">${note}</p></div>`;
   mount(f, html`
+    ${paidView(b?.silentList || [])}
     ${row('Your Tacit address', 'the one to share', S.key.tacit, 'From any Tacit wallet: BTC arrives as a silent payment, and TAC shielded. The same address takes ETH privately in Tacit apps.' + (S.key.tacit ? ' A payer sees the same ID before sending, so the two of you can check the address matches.' : ''))}
     ${askView('btc')}
     ${row('Silent payments', 'BIP‑352', BTC.sp, 'From any wallet that sends silent payments. Payments from Tacit apps show here on their own; from another wallet, open the link its sender shares or paste its transaction id below.')}
     ${row('Bitcoin address', 'public', b?.addr, 'From an exchange or any wallet. What arrives here is public; it funds your sends.')}
     <div class="lbl"><span>Add BTC from your Bitcoin wallet</span><span>Xverse, Leather or UniSat</span></div>
     <div class="amt"><input id="f-famt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="BTC to add"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-btc"/></svg>BTC</span></div>
-    <div class="foot-a"><button class="btn ghost sm" type="button" id="f-fund">Add to my Bitcoin address</button><button class="link" type="button" id="f-scan">Look for payments to me</button></div>
+    <div class="foot-a"><button class="btn ghost sm" type="button" id="f-fund">Add to my Bitcoin address</button><button class="link" type="button" id="f-scan">Check for new payments</button></div>
     <div class="lbl"><span>Got a payment link?</span></div>
     <div class="amt text"><input id="f-chk" placeholder="Payment link or transaction id" autocomplete="off" spellcheck="false" aria-label="Payment link"><button class="link" type="button" id="f-chk-go">check</button></div>`);
   wireShare(f);
   wireAsk(f, 'btc');
   $('#f-chk-go').onclick = () => { FOUND.v = parseFound($('#f-chk').value); if (!FOUND.v) return toast('Paste a payment link or a 64-character transaction id.', true); checkFound(); };
-  $('#f-scan').onclick = (e) => busyBtn(e.currentTarget, () => scanForMe());
+  $('#f-scan').onclick = (e) => busyBtn(e.currentTarget, async () => {
+    const status = $('#status');
+    say(status, html`<span class="spin" aria-hidden="true"></span>Checking for payments to you…`);
+    try {
+      const n = await pollHints();
+      await loadBtc(true);
+      say(status, n ? html`<span class="ok">Found ${n} new payment${n === 1 ? '' : 's'} to you.</span>` : 'Nothing new. Payments from Tacit apps show here on their own; from another wallet, paste its link or transaction id below.');
+    } catch (err) { sayErr(status, err); }
+  });
   $('#f-fund').onclick = (e) => busyBtn(e.currentTarget, async () => {
     const status = $('#status');
     try {
@@ -994,6 +1040,20 @@ const getHints = lazy(() => import('/sp-hints.js?cb=9d914fee'));
 async function hintTo(sp, txid) {
   try { const d = (await loadTacit()).decodeSilentPaymentAddress(sp); if (d?.scanPub) await (await getHints()).postHint(SP_HINTS, d.scanPub, txid); } catch {}
 }
+// The hints alone, every 20 s while the page shows a key: a payment from a Tacit app shows within a minute of it.
+// → how many silent payments it found.
+const HINTQ = { p: null };
+function pollHints() {
+  if (!S.key) return Promise.resolve(0);
+  if (HINTQ.p) return HINTQ.p;
+  const pub = S.key.pubHex;
+  return (HINTQ.p = withKey(async (t) => {
+    const n0 = Object.keys(t.loadSpCredits() || {}).length;
+    await hintsForMe(t, pub);
+    return Object.keys(t.loadSpCredits() || {}).length - n0;
+  }, pub).then((n) => { if (n > 0 && S.key?.pubHex === pub) loadBtc(true); return Math.max(0, n); }).finally(() => { HINTQ.p = null; }));
+}
+setInterval(() => { if (!document.hidden && S.key && !BTC.loading) pollHints().catch(() => {}); }, 20e3);
 async function hintsForMe(t, pub) {
   const H = await getHints(), k = HINT_AT + pub, st = readJson(k) || {};
   const privs = t.SP_KEY_VERSIONS.map((v) => t.deriveWalletSilentPaymentKeys(hexToBytes(S.key.priv), v).scanPriv);
@@ -1390,7 +1450,7 @@ function paintBal() {
 // What a form draws from the loaded data. A redraw with these unchanged leaves the form alone, and what is typed in it.
 const formReads = () => (S.mode === 'tac'
   ? [S.key.tacit, TAC.pub === S.key.pubHex, TAC.pool, TAC.top2, TAC.settling, TAC.route, TAC.relay, TAC.fee, TAC.pw?.addressString, TAC.share?.url, BTC.pub === S.key.pubHex, BTC.got, BTC.err != null, tacOnBtc()?.balance, shieldable().map((u) => `${u.utxo?.txid}:${u.utxo?.vout}:${u.amount}`)]
-  : [S.key.tacit, BTC.pub === S.key.pubHex, BTC.sats, BTC.silent, BTC.addr, BTC.sp, BTC.got, BTC.share?.url]).join('|');
+  : [S.key.tacit, BTC.pub === S.key.pubHex, BTC.sats, BTC.silent, BTC.silentList.map((x) => x.k + (ANN.fresh.has(x.k) ? '*' : '') + x.at).join(','), BTC.addr, BTC.sp, BTC.got, BTC.share?.url]).join('|');
 function render() {
   paintModes(); paintFound(); paintReq();
   const f = $('#form'), bal = $('#bal'), tabs = $('#tabs');

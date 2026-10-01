@@ -403,6 +403,10 @@ try {
       await p.waitForFunction(() => /Silent payment/.test(document.querySelector('#f-rcpt')?.textContent || '') && !document.querySelector('#f-go').disabled, null, { timeout: 60e3 }).catch(() => {});
       ok(/Silent payment/.test(await p.textContent('#f-rcpt')) && /ID/.test(await p.textContent('#f-rcpt')), `${form} tacit1 (${to.length} chars): routed as a silent payment, with its ID`);
       const hints0 = HINTS.length;
+      // In sequence: the recipient already has /pay open when the payment goes out (the unified case); for the older
+      // form they open it afterwards.
+      let R = null;
+      if (form === 'unified') { R = await page(browser, { route }); await R.p.goto(new URL(URL_).origin + '/pay/'); await openKey(R.p, B); await R.p.waitForFunction(() => !document.querySelector('#bal .sk'), null, { timeout: 120e3 }).catch(() => {}); }
       await p.click('#f-go');
       await p.waitForFunction(() => /Sent 0\.0005 BTC/.test(document.querySelector('#status')?.textContent || '') || document.querySelector('#status .err'), null, { timeout: 120e3 }).catch(() => {});
       for (let i = 0; i < 40 && HINTS.length === hints0; i++) await sleep(250);
@@ -419,12 +423,19 @@ try {
       ok(HINTS.length === hints0 + 1, `${form}: the send posted one hint for its recipient (${HINTS.length - hints0})`);
       ok(!errors.length, `${form}: no page errors ${errors.join(' | ').slice(0, 160)}`);
       await ctx.close();
-      // The recipient opens /pay with no link: the hint brings the payment in.
-      const R = await page(browser, { route });
-      await R.p.goto(new URL(URL_).origin + '/pay/');
-      await openKey(R.p, B);
+      // The hint brings the payment in with no link: within a poll on a page already open, or on opening /pay.
+      const t0 = Date.now();
+      if (!R) { R = await page(browser, { route }); await R.p.goto(new URL(URL_).origin + '/pay/'); await openKey(R.p, B); }
+      const toastSeen = R.p.waitForFunction(() => [...document.querySelectorAll('.toast')].some((t) => /Received 0\.0005 BTC by silent payment/.test(t.textContent)), null, { timeout: 120e3, polling: 200 }).then(() => true, () => false);
       await R.p.waitForFunction(() => /0\.0005 by silent payment/.test(document.querySelector('#bal')?.textContent || ''), null, { timeout: 120e3 }).catch(() => {});
-      ok(/0\.0005 by silent payment/.test(await R.p.textContent('#bal')), `${form}: the recipient sees it on opening /pay, from the hint: ${(await R.p.textContent('#bal .u')).replace(/\s+/g, ' ').trim()}`);
+      ok(/0\.0005 by silent payment/.test(await R.p.textContent('#bal')) && await toastSeen, `${form}: the recipient ${form === 'unified' ? 'with /pay already open' : 'opening /pay'} is told of it, from the hint, in ${Math.round((Date.now() - t0) / 1000)} s: ${(await R.p.textContent('#bal .u')).replace(/\s+/g, ' ').trim()}`);
+      await R.p.click('#tabs [data-tab="receive"]');
+      await R.p.waitForFunction(() => /Paid to you by silent payment/.test(document.querySelector('#form')?.textContent || ''), null, { timeout: 30e3 }).catch(() => {});
+      const paid = (await R.p.textContent('#form')).replace(/\s+/g, ' ');
+      ok(/Paid to you by silent payment ?1 unspent/.test(paid) && /· ?new/.test(paid) && /0\.0005(0000)? BTC/.test(paid), `${form}: Receive lists it, marked new: ${(paid.match(/Paid to you.*?BTC/) || [''])[0].slice(0, 120)}`);
+      await R.p.click('#f-scan');
+      await R.p.waitForFunction(() => /Nothing new|Found \d/.test(document.querySelector('#status')?.textContent || ''), null, { timeout: 60e3 }).catch(() => {});
+      ok(/Nothing new/.test(await R.p.textContent('#status')), `${form}: Check for new payments, once it is in: ${(await R.p.textContent('#status')).trim().slice(0, 60)}`);
       ok(!R.errors.length, `${form}: recipient page, no errors ${R.errors.join(' | ').slice(0, 160)}`);
       await R.ctx.close();
     }
