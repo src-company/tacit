@@ -371,6 +371,17 @@ services:
       # "<day>:off" lifts it. An entry can be changed or removed until its day arrives.
       - key: POINTS_RATE_CAP_SCHEDULE
         value: "20729:0.03"
+      # What a day's points count for, each from a UTC day forward (lib/points-engagement.js): a weight per kind of
+      # activity ("<day>:<activity>=<weight>,…", "<day>:off" ends them); a multiplier for an address's activity across
+      # kinds and days in the past week ("<day>:<step per other kind>,<step for a second day>,<most other kinds>,<points
+      # a kind needs>"); and the day from which a cBTC bond counts only while its escrow is still posted when the day
+      # settles. An entry can be changed or removed until its day arrives; never one whose day has passed.
+      - key: POINTS_CATEGORY_WEIGHTS
+        value: "20730:cbtcmint=3,cusdmint=2"
+      - key: POINTS_ENGAGEMENT
+        value: "20730:0.25,0.25,2,25"
+      - key: POINTS_BOND_HOLD_FROM_DAY
+        value: "20730"
       # PointsDistributor (CreateX CREATE3, deployed 2026-09-23, salt sender-guarded to the deployer key,
       # verified on Etherscan + Sourcify). ROOT_SETTER = 0x5c1aBec44465f305f2F1AE492eEd191327EbdF3f, its
       # own dedicated key (never RELAY_KEY/SETTLE_KEY — see the contract's own header for why). Publishing

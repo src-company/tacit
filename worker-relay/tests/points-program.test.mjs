@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { programTerms } from '../src/lib/points-program.js';
 import { parseBoostTiers } from '../src/lib/tac-holder-boost.js';
 import { parseRateCapSchedule } from '../src/lib/points-rate-cap.js';
+import { parseCategoryWeights, parseEngagementSchedule } from '../src/lib/points-engagement.js';
 
 const TAC = 10n ** 18n;
 const cfg = {
@@ -13,7 +14,7 @@ const cfg = {
   pointsBasePerEth: 1000, tethWrapBoostMultiplier: 1.25, pointsBasePerZswapEth: 1000, pointsBasePerCbtc: 1000, pointsBasePerCusd: 1, cusdMintBonusMultiplier: 2,
   pointsBasePerPmBet: 1000, pointsPerPmCreate: 50, pointsBasePerEvmPoolEth: 1000, evmPoolPointsStartBlocks: { 1: '24000000', 8453: '', 4663: '' },
   weinameEnabled: true, pointsBasePerWeiname: 1000, btcPoolPointsStartHeight: '', pointsBasePerBtcPoolTac: 1,
-  pointsBonusScale: 4, pointsBonusHalfLife: 200, tacBoostWindowBlocks: 7200,
+  pointsBonusScale: 4, pointsBonusHalfLife: 200, tacBoostWindowBlocks: 7200, pointsBondHoldFromDay: 0,
 };
 const budget = (i) => (cfg.pointsProgramTotalWei * BigInt(i + 1)) / 90n - (cfg.pointsProgramTotalWei * BigInt(i)) / 90n;
 const schedule = parseRateCapSchedule('20729:0.03');
@@ -55,4 +56,17 @@ const tiers = parseBoostTiers('100:1.25,1000:1.5,10000:2');
   assert.equal(t.earlyBonus.max, 3.5);
   assert.deepEqual(t.rateCap.map((e) => e.maxWeiPerPoint === null), [false, true], 'a ceiling that is lifted is null');
   console.log('ok - figures are rounded to what they are and a lifted ceiling is null');
+}
+
+{
+  const t = programTerms({ cfg: { ...cfg, pointsBondHoldFromDay: 20730 }, dayBudgetWei: budget, rateCapSchedule: schedule, tiers,
+    weights: parseCategoryWeights('20730:cbtcmint=3,cusdmint=2;20760:off'), engagement: parseEngagementSchedule('20730:0.25,0.25,2,25;20760:off') });
+  assert.deepEqual(t.weights, [{ fromDay: 20730, weights: { cbtcmint: 3, cusdmint: 2 } }, { fromDay: 20760, weights: {} }]);
+  assert.deepEqual(t.engagement, [{ fromDay: 20730, kindStep: 0.25, returnStep: 0.25, maxKinds: 2, minPoints: 25 }, { fromDay: 20760, off: true }]);
+  assert.equal(t.bondHoldFromDay, 20730);
+  assert.equal(t.kinds.cbtcmint, 'borrow');
+  const none = programTerms({ cfg, dayBudgetWei: budget });
+  assert.deepEqual([none.weights, none.engagement, none.bondHoldFromDay], [[], [], null], 'none configured states none');
+  JSON.stringify(t);
+  console.log('ok - the terms state the weights, the week multiplier and the bond hold, and none when none is set');
 }

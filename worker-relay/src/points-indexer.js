@@ -17,6 +17,9 @@ import { parseAdjustments } from './lib/points-adjustments.js';
 import { fundingStatus, fundingVerdict } from './lib/points-funding.js';
 import { tvlSeries } from './lib/points-tvl.js';
 import { programTerms } from './lib/points-program.js';
+import { makeCounted } from './lib/points-counted.js';
+import { decideBondHolds } from './lib/points-bond-hold.js';
+import { parseCategoryWeights, parseEngagementSchedule } from './lib/points-engagement.js';
 import { dayPot, dayBoard, dayHistory, splitDayBudget } from './lib/points-day-board.js';
 import Database from 'better-sqlite3';
 import { openStore } from './lib/points-store.js';
@@ -112,6 +115,9 @@ const DISTRIBUTOR_ABI = [
 const ERC20_BALANCEOF_ABI = [
   { type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }], outputs: [{ type: 'uint256' }] },
 ];
+const ESCROW_OF_ABI = [
+  { type: 'function', name: 'escrowOf', stateMutability: 'view', inputs: [{ name: 'outpoint', type: 'bytes32' }, { name: 'funder', type: 'address' }], outputs: [{ type: 'uint256' }] },
+];
 const CLAIMED_ABI = [
   { type: 'function', name: 'claimed', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }], outputs: [{ type: 'uint256' }] },
 ];
@@ -131,6 +137,10 @@ const ROOT_SETTER_RECEIPT_TIMEOUT_MS = 300_000;
 
 const rateCapSchedule = parseRateCapSchedule(CFG.pointsRateCapSchedule, log);
 const ledgerAdjustments = parseAdjustments(CFG.pointsLedgerAdjustments, log);
+const categoryWeights = parseCategoryWeights(CFG.pointsCategoryWeights, log);
+const engagementSchedule = parseEngagementSchedule(CFG.pointsEngagement, log);
+// The rows each UTC day is split by: settlement and every read of a day go through this one.
+const countedFor = (store) => makeCounted({ store, weightSchedule: categoryWeights, engagementSchedule, bondHoldFromDay: CFG.pointsBondHoldFromDay });
 
 const WRAP_EVENT = {
   type: 'event',
@@ -351,6 +361,8 @@ async function scanCollateralEngineCycle(store) {
       points: pointsForCbtcEscrow(p.amount, cbtcCount) * tacB * zShareB, activity: 'cbtcmint', tacBoost: tacB, zShareBoost: zShareB,
     });
     if (wrote) cbtcCount += 1;
+    // The outpoint and the funder the escrow share sits under (the helper, when one posted it), for the hold check.
+    store.saveBondRef({ txHash: item.transaction_hash, outpoint: p.outpoint, funder: p.from });
   }
 
   let cusdCount = store.countByActivity('cusdmint');
@@ -1379,9 +1391,12 @@ export async function settleCycle(store, coverage = null) {
 
   for (let d = state.lastSettledDay + 1; d <= settleThroughDay; d++) {
     const dayIndex = d - startDay;
-    const dayStart = d * 86400;
-    const dayEnd = dayStart + 86400;
-    const rows = store.dayPointsByAddress(dayStart, dayEnd);
+    // A bond counts only if its escrow is still posted now that its day is over; an escrow that cannot be read leaves the day unsettled.
+    if (CFG.pointsBondHoldFromDay && d >= CFG.pointsBondHoldFromDay) {
+      const r = await decideBondHolds({ store, day: d, readEscrow: (outpoint, funder) => publicClient.readContract({ address: ADDR.collateralEngine, abi: ESCROW_OF_ABI, functionName: 'escrowOf', args: [outpoint, funder] }) });
+      if (r.checked) log(`settle: day ${d}: ${r.checked} bond(s) checked, ${r.released} no longer posted`);
+    }
+    const rows = countedFor(store).rows(d);
     if (rows.length) {
       const budget = dayBudgetWei(dayIndex);
       if (budget > 0n) {
@@ -1466,8 +1481,9 @@ export async function settleCycle(store, coverage = null) {
 }
 
 function startHttp(store, evmState) {
+  const counted = countedFor(store);
   const history = dayHistory({
-    dayRowsFor: (d) => store.dayPointsByAddress(d * 86400, (d + 1) * 86400),
+    dayRowsFor: (d) => counted.rows(d),
     budgetFor: (d) => dayBudgetWei(d - Math.floor(CFG.pointsProgramStartSec / 86400)),
     capFor: (d) => rateCapForDay(rateCapSchedule, d),
     ledgerFor: (a) => store.rewardFor(a),
@@ -1526,11 +1542,10 @@ function startHttp(store, evmState) {
           if (!CFG.pointsProgramStartSec) { res.statusCode = 404; res.end(JSON.stringify({ error: 'no reward program' })); return; }
           const startDay = Math.floor(CFG.pointsProgramStartSec / 86400);
           const todayDay = Math.floor(Date.now() / 1000 / 86400);
-          const dayStart = todayDay * 86400;
           res.end(JSON.stringify({
             day: todayDay, programDay: todayDay - startDay + 1, programDays: CFG.pointsProgramDays,
-            program: programTerms({ cfg: CFG, dayBudgetWei, rateCapSchedule, tiers: CFG.tacBoostTiers ? parseBoostTiers(CFG.tacBoostTiers) : [] }),
-            ...dayBoard(store.dayPointsByAddress(dayStart, dayStart + 86400), { budgetWei: dayBudgetWei(todayDay - startDay), maxWeiPerPoint: rateCapForDay(rateCapSchedule, todayDay), limit }),
+            program: programTerms({ cfg: CFG, dayBudgetWei, rateCapSchedule, tiers: CFG.tacBoostTiers ? parseBoostTiers(CFG.tacBoostTiers) : [], weights: categoryWeights, engagement: engagementSchedule }),
+            ...dayBoard(counted.rows(todayDay), { budgetWei: dayBudgetWei(todayDay - startDay), maxWeiPerPoint: rateCapForDay(rateCapSchedule, todayDay), limit }),
           }));
           return;
         }
@@ -1549,15 +1564,14 @@ function startHttp(store, evmState) {
         if (CFG.pointsProgramStartSec) {
           const startDay = Math.floor(CFG.pointsProgramStartSec / 86400);
           const todayDay = Math.floor(Date.now() / 1000 / 86400);
-          const dayStart = todayDay * 86400;
-          const dayRows = store.dayPointsByAddress(dayStart, dayStart + 86400);
+          const dayRows = counted.rows(todayDay);
           const row = dayRows.find((r) => r.address.toLowerCase() === address.toLowerCase());
           // The running total as of THIS request, not a settled end-of-day figure — it moves as more
           // addresses deposit today, same as `row`'s own count does. The pot is the day's budget as it would split
           // right now, or less where the TAC-per-point ceiling binds, so a client's "share of today's pot" estimate
           // matches what settlement will pay.
           const { totalPoints, pot } = dayPot(dayRows, dayBudgetWei(todayDay - startDay), rateCapForDay(rateCapSchedule, todayDay));
-          today = { points: row ? row.dayPoints : 0, totalPoints, dayBudgetWei: pot.toString() };
+          today = { points: row ? row.dayPoints : 0, totalPoints, dayBudgetWei: pot.toString(), factor: row?.factor ?? 1, rawPoints: row ? row.rawPoints : 0, kinds: row?.kinds ?? 0, activeDays: row?.activeDays ?? 0 };
         }
         res.end(JSON.stringify({ ...total, today, deposits }));
         return;

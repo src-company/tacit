@@ -4,12 +4,15 @@
 // when the boost is off.
 //
 // cfg: the service's config. dayBudgetWei(i): the budget of the i-th day of the program. rateCapSchedule: the parsed
-// ceiling entries. tiers: parseBoostTiers' output for the TAC holder boost, or [].
+// ceiling entries. tiers: parseBoostTiers' output for the TAC holder boost, or []. weights and engagement: the parsed
+// category-weight and week-multiplier schedules (lib/points-engagement.js), each from a UTC day forward.
+
+import { KIND_OF } from './points-engagement.js';
 
 const BLOCK_SECS = 12;
 const round6 = (x) => Math.round(x * 1e6) / 1e6;
 
-export function programTerms({ cfg, dayBudgetWei, rateCapSchedule = [], tiers = [] }) {
+export function programTerms({ cfg, dayBudgetWei, rateCapSchedule = [], tiers = [], weights = [], engagement = [] }) {
   const startDay = Math.floor(cfg.pointsProgramStartSec / 86400);
   const rates = {
     wrap: round6(cfg.pointsBasePerEth * cfg.tethWrapBoostMultiplier),
@@ -36,5 +39,9 @@ export function programTerms({ cfg, dayBudgetWei, rateCapSchedule = [], tiers = 
       ? { tiers: tiers.map((t) => ({ tac: Number(t.minWei / 10n ** 18n), multiplier: t.multiplier })), windowHours: round6(cfg.tacBoostWindowBlocks * BLOCK_SECS / 3600) }
       : null,
     rates,
+    weights: weights.map((e) => ({ fromDay: e.fromDay, weights: e.weights })),
+    engagement: engagement.map((e) => (e.spec ? { fromDay: e.fromDay, ...e.spec } : { fromDay: e.fromDay, off: true })),
+    bondHoldFromDay: cfg.pointsBondHoldFromDay || null,
+    kinds: KIND_OF,
   };
 }

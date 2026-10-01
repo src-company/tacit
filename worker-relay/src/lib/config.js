@@ -621,6 +621,12 @@ export const CFG = {
   // Ceiling on TAC per point, as "<from UTC day>:<TAC per point>" entries (see lib/points-rate-cap.js). Empty
   // means no ceiling. Only days at or after an entry's day are affected, so settled days are never re-priced.
   pointsRateCapSchedule: opt('POINTS_RATE_CAP_SCHEDULE', ''),
+  // What a day's points count for beyond what each activity scored (lib/points-engagement.js), each from a UTC day
+  // forward: a weight per kind of activity, a multiplier for activity across kinds and days in the week, and the
+  // day from which a cBTC bond counts only while its escrow is still posted when its day settles. Empty means none.
+  pointsCategoryWeights: opt('POINTS_CATEGORY_WEIGHTS', ''),
+  pointsEngagement: opt('POINTS_ENGAGEMENT', ''),
+  pointsBondHoldFromDay: num('POINTS_BOND_HOLD_FROM_DAY', 0),
   // A UTC day settles once, so it waits until it is over, this margin has passed and every scanner has read past
   // its end (lib/points-settle-gate.js). A scanner that stays behind no longer holds rewards back after the
   // maximum wait.

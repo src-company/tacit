@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-XGO1q5fFjpK8siqzai3eldr+iFof+HhG3hLM38hk9NQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-WsHnW2No7kwMQSMECxrrksv8/8tHV3/5IWae1HZdR/8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -4098,7 +4098,8 @@ const PTS = { at: 0, key: '', rows: null, board: null, day: null, pulse: null, v
 const PGM = { startDay: Date.UTC(2026, 8, 23) / 864e5, days: 90, totalWei: 100000n * 10n ** 18n, dayWei: 1111111111111111111111n,
   rateCap: [{ fromDay: Date.UTC(2026, 9, 3) / 864e5, wei: 3n * 10n ** 16n }], early: { max: 5, half: 200 }, wrapBoost: 1.25,
   tiers: [[100, 1.25], [1000, 1.5], [10000, 2]], windowHours: 24,
-  rates: { wrap: 1250, evmpooldeposit: 1000, zswapeth: 1000, cbtcmint: 1000, cusdmint: 2 } };
+  rates: { wrap: 1250, evmpooldeposit: 1000, zswapeth: 1000, cbtcmint: 1000, cusdmint: 2 },
+  weights: [], engagement: [], bondHoldFromDay: null };
 const ptsDays = () => PGM.days, ptsEnd = () => (PGM.startDay + PGM.days) * 86400;   // the first second after the program's last day
 const potTac = () => fmt(PGM.dayWei, 18, 0), rateStr = (n) => Number(n).toLocaleString('en-US');
 const ethBase = () => PGM.rates.evmpooldeposit ?? PGM.rates.zswapeth ?? 1000;
@@ -4110,6 +4111,12 @@ function capText(day) {
   const now = eff && lim(eff), later = next && `${lim(next) || 'no limit'} from ${dayShort(next.fromDay)}`;
   return now ? (later ? `${now}, ${later}` : now) : later && lim(next) ? later : null;
 }
+// What each activity is called, and the weights and the week's multiplier in force on `day` or next to come: the entry in force, or
+// failing that the first one ahead, with the day it starts when that is still to come.
+const ACT_NAME = { wrap: 'Tacit-pool wrap', evmpooldeposit: 'ETH-pool deposit', zswapeth: 'ETH swap', weiname: '.wei name', cbtcmint: 'cBTC bond', cusdmint: 'cUSD loan', pmbet: 'bet', pmcreate: 'market' };
+const scheduled = (list, day) => { const eff = [...list].reverse().find((e) => e.fromDay <= day), next = list.find((e) => e.fromDay > day); return eff ? { e: eff, from: null } : next ? { e: next, from: next.fromDay } : null; };
+const pct = (x) => `${Math.round(x * 100)}%`;
+const weightNote = (act, day) => { const s = scheduled(PGM.weights, day), w = s?.e.weights[act]; return w && w !== 1 ? ` · ×${w}${s.from ? ` from ${dayShort(s.from)}` : ''}` : ''; };
 // Takes the service's terms where they are well-formed and leaves what the page has for the rest.
 function takeProgram(p) {
   if (!p || typeof p !== 'object') return;
@@ -4126,6 +4133,15 @@ function takeProgram(p) {
     next.tiers = t.sort((a, b) => a[0] - b[0]);
     if (num(p.holder?.windowHours, 1, 24 * 30) != null) next.windowHours = Number(p.holder.windowHours);
   }
+  if (Array.isArray(p.weights)) next.weights = p.weights.map((e) => { const f = num(e?.fromDay, 1, 1e6); return f == null || !e.weights || typeof e.weights !== 'object' ? null : { fromDay: f, weights: Object.fromEntries(Object.entries(e.weights).filter(([, v]) => num(v, 0.01, 20) != null).map(([k, v]) => [k, Number(v)])) }; }).filter(Boolean).sort((a, b) => a.fromDay - b.fromDay);
+  if (Array.isArray(p.engagement)) next.engagement = p.engagement.map((e) => {
+    const f = num(e?.fromDay, 1, 1e6);
+    if (f == null) return null;
+    if (e.off) return { fromDay: f, spec: null };
+    const k = num(e.kindStep, 0, 2), r = num(e.returnStep, 0, 2), m = num(e.maxKinds, 0, 8);
+    return k == null || r == null || m == null ? null : { fromDay: f, spec: { kindStep: k, returnStep: r, maxKinds: m } };
+  }).filter(Boolean).sort((a, b) => a.fromDay - b.fromDay);
+  if ('bondHoldFromDay' in p) next.bondHoldFromDay = num(p.bondHoldFromDay, 1, 1e6);
   if (p.rates && typeof p.rates === 'object') next.rates = Object.fromEntries(Object.entries(p.rates).filter(([, v]) => num(v, 0, 1e9) != null && Number(v) > 0).map(([k, v]) => [k, Number(v)]));
   Object.assign(PGM, next);
   for (const e of $$('[data-pgm="pot"]')) e.textContent = potTac();
@@ -4176,7 +4192,7 @@ async function readPoints(current) {
     const recent = [...(p?.deposits || [])].sort((a, b) => Number(b.block_time) - Number(a.block_time));
     return { addr, label, points: Number(p?.points || 0), count: Number(p?.deposit_count || 0), todayPts: Number(t?.points || 0), today, tod: t || null, share: t && Number(t.totalPoints) > 0 ? Number(t.points) / Number(t.totalPoints) : 0,
       owed, claim: c?.proof ? c : null, claimed: big(c?.claimedWei) || 0n, settled: big(c?.cumulativeAmount) || 0n, held, recent, boost: Number(recent[0]?.tac_boost || 1), read: !!p,
-      hist: Array.isArray(hist?.days) ? new Map(hist.days.map((x) => [x.day, { p: Number(x.points) || 0, wei: big(x.tacWei), settled: !!x.settled }])) : null };
+      hist: Array.isArray(hist?.days) ? new Map(hist.days.map((x) => [x.day, { p: Number(x.points) || 0, f: Number(x.factor) || 1, wei: big(x.tacWei), settled: !!x.settled }])) : null };
   }));
   const [lb, day] = await Promise.all([board, dayB]);
   if (day?.program) takeProgram(day.program);
@@ -4210,13 +4226,13 @@ async function claimPoints(r) {
 }
 // What each way of earning pays, at the rates the program states; one it is not scoring is not offered.
 const earnRows = () => {
-  const r = PGM.rates, n = rateStr;
+  const r = PGM.rates, n = rateStr, day = utcDay(now());
   return [
-    r.wrap && ['private', 'teth', 'Wrap ETH into the Tacit pool', `${n(r.wrap)} points per ETH`],
-    r.evmpooldeposit && ['device', 'eth', 'Deposit ETH on this device', `${n(r.evmpooldeposit)} per ETH, on Ethereum, Base or Robinhood Chain`],
-    r.zswapeth && ['buy', 'tac', 'Buy TAC with ETH', `${n(r.zswapeth)} per ETH, through the Precision pool`],
-    r.cbtcmint && ['borrow', 'cbtc', 'Post a bond toward cBTC', `${n(r.cbtcmint)} per wstETH`],
-    r.cusdmint && ['borrow', 'cusd', 'Borrow cUSD', `${n(r.cusdmint)} per dollar, when you send the loan yourself`],
+    r.wrap && ['private', 'teth', 'Wrap ETH into the Tacit pool', `${n(r.wrap)} points per ETH${weightNote('wrap', day)}`],
+    r.evmpooldeposit && ['device', 'eth', 'Deposit ETH on this device', `${n(r.evmpooldeposit)} per ETH, on Ethereum, Base or Robinhood Chain${weightNote('evmpooldeposit', day)}`],
+    r.zswapeth && ['buy', 'tac', 'Buy TAC with ETH', `${n(r.zswapeth)} per ETH, through the Precision pool${weightNote('zswapeth', day)}`],
+    r.cbtcmint && ['borrow', 'cbtc', 'Post a bond toward cBTC', `${n(r.cbtcmint)} per wstETH${weightNote('cbtcmint', day)}`],
+    r.cusdmint && ['borrow', 'cusd', 'Borrow cUSD', `${n(r.cusdmint)} per dollar, when you send the loan yourself${weightNote('cusdmint', day)}`],
   ].filter(Boolean);
 };
 // Today's pot and how it is being split: the same for everyone, so shown before anyone connects.
@@ -4275,12 +4291,20 @@ function dayStrip(r) {
 }
 // The program's terms in one place, closed until asked for: its days, the pot, the limit per point, who is paid and when.
 function terms() {
-  const last = PGM.startDay + PGM.days - 1, cap = capText(utcDay(now()));
+  const last = PGM.startDay + PGM.days - 1, today = utcDay(now()), cap = capText(today);
+  const w = scheduled(PGM.weights, today), names = w && Object.entries(w.e.weights).filter(([, x]) => x !== 1).map(([a, x]) => `${ACT_NAME[a] || a} ×${x}`);
+  const mix = names?.length ? `${names.join(', ')}${w.from ? ` from ${dayShort(w.from)}` : ''}` : null;
+  const g = scheduled(PGM.engagement, today), sp = g?.e.spec;
+  const week = sp ? `${pct(sp.kindStep)} more for each other kind of activity in the past 7 days${sp.maxKinds ? ` (up to ${pct(sp.kindStep * sp.maxKinds)})` : ''}, and ${pct(sp.returnStep)} more for activity on more than one day${g.from ? `, from ${dayShort(g.from)}` : ''}` : null;
+  const bonds = PGM.bondHoldFromDay ? `a cBTC bond counts while it stays posted through the day${PGM.bondHoldFromDay > today ? `, from ${dayShort(PGM.bondHoldFromDay)}` : ''}` : null;
   const kv = (k, v) => html`<div class="kv"><span>${k}</span><b>${v}</b></div>`;
   return html`<details class="lockmore ptlog"><summary>Terms</summary>
     ${kv('Runs', `${dayShort(PGM.startDay)} to ${dayShort(last)} (UTC), ${PGM.days} days`)}
     ${kv('Each day’s pot', `up to ${potTac()} TAC, of ${fmt(PGM.totalWei, 18, 0)} in all`)}
     ${cap ? kv('Limit', cap) : ''}
+    ${mix ? kv('Weights', mix) : ''}
+    ${week ? kv('Each week', week) : ''}
+    ${bonds ? kv('Bonds', bonds) : ''}
     ${kv('Points go to', 'the address that sent the transaction')}
     ${kv('Settled', 'each day, shortly after it ends')}
     ${kv('Claim', 'any time once a day is settled')}</details>`;
@@ -4314,7 +4338,7 @@ render.pts = () => {
     const days = new Map();
     for (const d of r.recent) { const k = utcDay(d.block_time); if (!days.has(k)) days.set(k, []); days.get(k).push(d); }
     return html`<details class="lockmore ptlog"><summary>Points by day</summary><ul class="ptl">${[...days].map(([k, list]) => html`
-      <li class="day"><span>${dayName(k)}</span><b class="num">+${ptsFmt(r.hist?.get(k)?.p ?? list.reduce((s, d) => s + Number(d.points || 0), 0))}${r.hist?.get(k)?.wei ? html` <small class="mute">${r.hist.get(k).settled ? '' : 'about '}${fmt(r.hist.get(k).wei, 18, 2)} TAC</small>` : ''}</b></li>${list.map((d) => {
+      <li class="day"><span>${dayName(k)}</span><b class="num">+${ptsFmt(r.hist?.get(k)?.p ?? list.reduce((s, d) => s + Number(d.points || 0), 0))}${r.hist?.get(k)?.f > 1 ? html` <small class="mute">×${r.hist.get(k).f}</small>` : ''}${r.hist?.get(k)?.wei ? html` <small class="mute">${r.hist.get(k).settled ? '' : 'about '}${fmt(r.hist.get(k).wei, 18, 2)} TAC</small>` : ''}</b></li>${list.map((d) => {
         const [what, unit] = PT_ACTS[d.activity] || ['Activity'], c = ptChain(d.chain_id), amt = unit && big(d.amount_wei);
         return html`<li><span class="ptl-w">${what}${c && c.name !== 'Ethereum' ? ` on ${c.name}` : ''}<span class="ptl-m">${amt ? `${fmt(amt, 18, 4)} ${unit} · ` : ''}${ago(Number(d.block_time) * 1000)}${d.tac_boost > 1 ? ` · ${d.tac_boost}× holder` : ''}${c && d.tx_hash ? html` · ${txLink(d.tx_hash, c.explorer)}` : ''}</span></span><b class="num">+${ptsFmt(d.points)}</b></li>`;
       })}`)}</ul>${r.count > r.recent.length ? html`<p class="note">The latest ${r.recent.length} of ${r.count.toLocaleString('en-US')} are listed.</p>` : ''}</details>`;
@@ -4332,6 +4356,7 @@ render.pts = () => {
         ${r.read && on ? html`<div class="kv"><span>Today</span><b>${r.todayPts > 0 ? `${ptsFmt(r.todayPts)} points · ${sharePct(r.share)} · about ${fmt(r.today, 18, 2)} TAC` : 'nothing yet'}</b></div>` : ''}
         ${r.read ? standing(r) : ''}
         ${r.boost > 1 ? html`<div class="kv"><span>Holder boost at last activity</span><b>${r.boost}×</b></div>` : ''}
+        ${r.read && on && r.tod?.factor > 1 ? html`<div class="kv"><span>This week</span><b>×${r.tod.factor} · ${r.tod.kinds} kind${r.tod.kinds === 1 ? '' : 's'} of activity · ${r.tod.activeDays} day${r.tod.activeDays === 1 ? '' : 's'}</b></div>` : ''}
         ${r.settled > 0n ? html`<div class="kv"><span>Earned on settled days</span><b>${fmt(r.settled, 18, 2)} TAC</b></div>` : ''}
         ${r.claimed > 0n ? html`<div class="kv"><span>Claimed so far</span><b>${fmt(r.claimed, 18, 2)} TAC</b></div>` : ''}
         ${r.read && on ? nextTier(r) : ''}

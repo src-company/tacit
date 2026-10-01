@@ -105,6 +105,20 @@ export function openStore(dbPath, { excluded = [] } = {}) {
       PRIMARY KEY (day, chain_id, pool)
     );
 
+    -- A cBTC bond's lock outpoint and the funder its escrow share sits under, kept from the event so a bond can be
+    -- checked still posted when its day settles (lib/points-bond-hold.js); and what that check found, kept so a
+    -- settled day always re-splits to the same rows.
+    CREATE TABLE IF NOT EXISTS bond_refs (
+      tx_hash  TEXT PRIMARY KEY,
+      outpoint TEXT NOT NULL,
+      funder   TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS bond_checks (
+      tx_hash    TEXT PRIMARY KEY,
+      held       INTEGER NOT NULL,
+      checked_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS reward_adjustments (
       id         TEXT PRIMARY KEY,
       address    TEXT NOT NULL,
@@ -273,6 +287,28 @@ export function openStore(dbPath, { excluded = [] } = {}) {
     FROM deposits WHERE block_time >= ? AND block_time < ?
     GROUP BY depositor
   `);
+  // The same rows by activity, with a bond that was checked and found released left out. dayPointsByAddress above is
+  // the whole of a day before any of that applies.
+  const dayActivityStmt = db.prepare(`
+    SELECT d.depositor AS address, d.activity AS activity, SUM(d.points) AS points
+    FROM deposits d LEFT JOIN bond_checks b ON b.tx_hash = d.tx_hash
+    WHERE d.block_time >= ? AND d.block_time < ? AND COALESCE(b.held, 1) = 1
+    GROUP BY d.depositor, d.activity
+  `);
+  const weekActivityStmt = db.prepare(`
+    SELECT d.depositor AS address, d.block_time / 86400 AS day, d.activity AS activity, SUM(d.points) AS points
+    FROM deposits d LEFT JOIN bond_checks b ON b.tx_hash = d.tx_hash
+    WHERE d.block_time >= ? AND d.block_time < ? AND COALESCE(b.held, 1) = 1
+    GROUP BY d.depositor, d.block_time / 86400, d.activity
+  `);
+  const saveBondRefStmt = db.prepare(`INSERT OR IGNORE INTO bond_refs (tx_hash, outpoint, funder) VALUES (?, ?, ?)`);
+  const bondsToCheckStmt = db.prepare(`
+    SELECT r.tx_hash AS txHash, r.outpoint AS outpoint, r.funder AS funder
+    FROM bond_refs r JOIN deposits d ON d.tx_hash = r.tx_hash LEFT JOIN bond_checks b ON b.tx_hash = r.tx_hash
+    WHERE d.activity = 'cbtcmint' AND d.block_time >= ? AND d.block_time < ? AND b.tx_hash IS NULL
+    ORDER BY d.block_number
+  `);
+  const saveBondCheckStmt = db.prepare(`INSERT OR IGNORE INTO bond_checks (tx_hash, held, checked_at) VALUES (?, ?, ?)`);
   const getRewardStmt = db.prepare(`SELECT cumulative_wei FROM reward_ledger WHERE address = ?`);
   const upsertRewardStmt = db.prepare(`
     INSERT INTO reward_ledger (address, cumulative_wei) VALUES (@address, @cumulativeWei)
@@ -409,6 +445,22 @@ export function openStore(dbPath, { excluded = [] } = {}) {
 
   function dayPointsByAddress(dayStartSec, dayEndSec) {
     return dayPointsStmt.all(dayStartSec, dayEndSec);
+  }
+  function dayActivityPoints(dayStartSec, dayEndSec) {
+    return dayActivityStmt.all(dayStartSec, dayEndSec);
+  }
+  function weekActivityPoints(fromSec, toSec) {
+    return weekActivityStmt.all(fromSec, toSec);
+  }
+  function saveBondRef({ txHash, outpoint, funder }) {
+    saveBondRefStmt.run(txHash, String(outpoint).toLowerCase(), String(funder).toLowerCase());
+  }
+  function bondsToCheck(dayStartSec, dayEndSec) {
+    return bondsToCheckStmt.all(dayStartSec, dayEndSec);
+  }
+  // The first answer to a bond stands, so a settled day cannot move.
+  function saveBondCheck(txHash, held, checkedAt) {
+    return saveBondCheckStmt.run(txHash, held ? 1 : 0, checkedAt).changes > 0;
   }
 
   // deltas: Map<lowercaseAddress, bigint wei>. Read-add-write per address, in one transaction, so a crash
@@ -573,7 +625,7 @@ export function openStore(dbPath, { excluded = [] } = {}) {
 
   return {
     db, recordDeposit, loadCursor, saveCursor, leaderboard, totalFor, depositsFor, countByActivity,
-    dayPointsByAddress, applyDayRewards, applyAdjustment, listAdjustments: () => listAdjustmentsStmt.all(), allRewards, rewardFor,
+    dayPointsByAddress, dayActivityPoints, weekActivityPoints, saveBondRef, bondsToCheck, saveBondCheck, applyDayRewards, applyAdjustment, listAdjustments: () => listAdjustmentsStmt.all(), allRewards, rewardFor,
     savePoolSnapshot, poolSnapshots: (fromDay) => poolSnapshotsStmt.all(fromDay), poolDepositWeiByDay,
     loadSettleState, saveSettleState, savePublishedClaims, claimFor,
     recordPpWithdrawal, hasEarlierPpWithdrawal, loadPpCursor, savePpCursor,

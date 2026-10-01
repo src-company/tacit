@@ -1786,11 +1786,11 @@ await step('ptsview', async () => {
   const dep = (h, chain, block, ago, activity, pts, boost) => ({ tx_hash: '0x' + h.repeat(64), block_number: block, block_time: t0 - ago, amount_wei: '100000000000000000', points: pts, activity, tac_boost: boost, chain_id: chain, pp_boosted: false });
   const hex = (c) => '0x' + c.repeat(40);
   const pointsBody = (count) => ({ address: A0.toLowerCase(), points: 1234.5, deposit_count: count,
-    today: { points: 100, totalPoints: 1000, dayBudgetWei: '1111111111111111111111' },
+    today: { points: 100, totalPoints: 1000, dayBudgetWei: '1111111111111111111111', factor: 1.25, rawPoints: 80, kinds: 2, activeDays: 3 },
     deposits: [dep('b', 8453, 52000000, 7200, 'evmpooldeposit', 90, 1), dep('a', 1, 26090000, 60, 'wrap', 125, 1.5), dep('c', 1, 26080000, 90000, 'zswapeth', 100, 1)] });
   // Each day of the program, as the service gives it: today an estimate, a settled day with its TAC, and a day that carries points only (its TAC is null).
   const daysBody = { address: A0.toLowerCase(), startDay: today - 8, programDays: 90, today, lastSettledDay: today - 1, earnedWei: '8000000000000000000', days: [
-    { day: today, points: 215, tacWei: '4500000000000000000', settled: false }, { day: today - 1, points: 100, tacWei: '2000000000000000000', settled: true }, { day: today - 5, points: 40, tacWei: null, settled: true }] };
+    { day: today, points: 215, factor: 1.25, tacWei: '4500000000000000000', settled: false }, { day: today - 1, points: 100, tacWei: '2000000000000000000', settled: true }, { day: today - 5, points: 40, tacWei: null, settled: true }] };
   await r.ctx.route(/api\.tacit\.finance\/points\/0x/, (route) => json(route, /\/days$/.test(route.request().url()) ? daysBody : pointsBody(3)));
   await r.ctx.route(/api\.tacit\.finance\/claim\/0x/, (route) => json(route, { cumulativeAmount: '8000000000000000000', claimedWei: '5000000000000000000', unclaimedWei: '3000000000000000000', proof: null }));
   const dShort = (d) => new Date(d * 864e5).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
@@ -1798,7 +1798,10 @@ await step('ptsview', async () => {
   const program = { startDay: today - 8, days: 90, lastDay: today + 81, totalWei: '100000000000000000000000', dayBudgetWei: '1111111111111111111111',
     rateCap: [{ fromDay: today - 2, maxWeiPerPoint: '20000000000000000' }, { fromDay: today + 20, maxWeiPerPoint: null }], settleGraceSecs: 1800,
     earlyBonus: { max: 3, halfLife: 100 }, tethWrapBoost: 1.25, holder: { tiers: [{ tac: 50, multiplier: 1.1 }, { tac: 500, multiplier: 1.3 }], windowHours: 24 },
-    rates: { wrap: 1500, evmpooldeposit: 1000, zswapeth: 1000, cbtcmint: 1000 } };
+    rates: { wrap: 1500, evmpooldeposit: 1000, zswapeth: 1000, cbtcmint: 1000 },
+    // A weight in force, a multiplier for the week that starts tomorrow, and a bond rule that does too.
+    weights: [{ fromDay: today - 1, weights: { cbtcmint: 3 } }], engagement: [{ fromDay: today + 1, kindStep: 0.25, returnStep: 0.25, maxKinds: 2, minPoints: 25 }], bondHoldFromDay: today + 1,
+    kinds: { wrap: 'private', cbtcmint: 'borrow' } };
   await r.ctx.route(/api\.tacit\.finance\/leaderboard/, (route) => json(route, /day=today/.test(route.request().url())
     ? { day: today, programDay: 9, programDays: 90, program, totalPoints: 1000, dayBudgetWei: '1111111111111111111111', taking: 2, rows: [{ address: A0.toLowerCase(), points: 100 }, { address: hex('2'), points: 50 }] }
     : [{ address: hex('1'), points: 9e9 }, { address: A0.toLowerCase(), points: 1234.5 }]));
@@ -1813,7 +1816,7 @@ await step('ptsview', async () => {
     bars: document.querySelectorAll('#pts-body .ptd-b').length,
     links: [...document.querySelectorAll('#pts-body .ptl a')].map((a) => a.href) }));
   ok(/^Wrapped ETH/.test(v.items[0] || '') && /^Deposited ETH on Base/.test(v.items[1] || '') && /^Swapped ETH/.test(v.items[2] || ''), `ptsview: recent points in time order across chains (${v.items.join(' | ')})`);
-  ok(v.days.length >= 2 && /^Today\s*\+215\s*about 4\.5 TAC$/.test(v.days[0]) && /^Yesterday\s*\+100\s*2 TAC$/.test(v.days[1]), `ptsview: the activity is grouped under each day's total and what it paid (${v.days.join(' | ')})`);
+  ok(v.days.length >= 2 && /^Today\s*\+215\s*×1\.25\s*about 4\.5 TAC$/.test(v.days[0]) && /^Yesterday\s*\+100\s*2 TAC$/.test(v.days[1]), `ptsview: the activity is grouped under each day's total and what it paid (${v.days.join(' | ')})`);
   ok(/Holder boost at last activity\s*1\.5×/.test(v.body), 'ptsview: the holder boost is the newest activity\'s');
   ok(/rank\s*#2/.test(v.body) && /#1 today/.test(v.body) && /Claimed so far\s*5 TAC/.test(v.body) && /10% · about 111\.11 TAC/.test(v.body) && /closes in \d/.test(v.body), `ptsview: rank, claimed, today's share and the countdown (${v.body.slice(0, 500)})`);
   ok(/Earned on settled days\s*8 TAC/.test(v.body) && /To reach #1\s*8,999,998,766 points/.test(v.body), `ptsview: settled TAC and the gap to the rank above (${v.body.slice(0, 700)})`);
@@ -1828,12 +1831,17 @@ await step('ptsview', async () => {
   ok(/Early activity counts up to 3×\. Holding 50 or 500 public TAC at the same address through the past day multiplies its points by 1\.1 or 1\.3\./.test(v.body),
     `ptsview: the early bonus and the holder tiers are the service's (${v.body.slice(-330)})`);
   ok(/Hold 50 public TAC here through a day and what it does next earns 1\.1×/.test(v.body), 'ptsview: the next holder tier is read from the same tiers');
+  ok(/1,000 per wstETH · ×3(?! from)/.test(v.body), 'ptsview: a weight in force shows on its way of earning');
+  ok(/This week\s*×1\.25 · 2 kinds of activity · 3 days/.test(v.body), `ptsview: an address whose points were multiplied for the week is told so (${v.body.slice(500, 900)})`);
   await r.page.click('#pts-body summary:has-text("Terms")');
   await r.page.evaluate(() => document.querySelector('#pts-body details:has(> summary)').closest('#pts-body').lastElementChild.scrollIntoView({ block: 'end' }));
   await shot(r.page, 'ptsview-terms');
   const terms = await r.page.$eval('#pts-body details:has(> summary:has-text("Terms"))', (d) => d.textContent.replace(/\s+/g, ' '));
   ok(new RegExp(`Runs\\s*${dShort(today - 8)} to ${lastD} \\(UTC\\), 90 days`).test(terms) && /Each day’s pot\s*up to 1,111 TAC, of 100,000 in all/.test(terms)
-    && new RegExp(`Limit\\s*0\\.02 TAC per point, no limit from ${nextD}`).test(terms) && /Points go to\s*the address that sent the transaction/.test(terms) && /Settled\s*each day, shortly after it ends/.test(terms) && /Claim\s*any time once a day is settled/.test(terms),
+    && new RegExp(`Limit\\s*0\\.02 TAC per point, no limit from ${nextD}`).test(terms)
+    && /Weights\s*cBTC bond ×3(?! from)/.test(terms)
+    && new RegExp(`Each week\\s*25% more for each other kind of activity in the past 7 days \\(up to 50%\\), and 25% more for activity on more than one day, from ${dShort(today + 1)}`).test(terms)
+    && new RegExp(`Bonds\\s*a cBTC bond counts while it stays posted through the day, from ${dShort(today + 1)}`).test(terms) && /Points go to\s*the address that sent the transaction/.test(terms) && /Settled\s*each day, shortly after it ends/.test(terms) && /Claim\s*any time once a day is settled/.test(terms),
     `ptsview: the terms list the days, the pot, the limit, who is paid and when (${terms.slice(0, 300)})`);
   await r.page.click('.ptd-b:last-child');
   const said = (await r.page.textContent('.ptd-r')).trim();

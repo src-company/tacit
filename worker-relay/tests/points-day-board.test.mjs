@@ -90,3 +90,14 @@ import { splitDayBudget, dayHistory } from '../src/lib/points-day-board.js';
   assert.deepEqual(off.days.map((d) => d.points), [10, 50, 300]);
   console.log('ok - settled days that do not add up to the ledger carry points only');
 }
+
+{
+  // A day's rows may carry the multiplier the address's points were counted at; the history says which day had one.
+  const days = { 10: [{ address: '0xa', dayPoints: 150, rawPoints: 100, factor: 1.5 }, { address: '0xb', dayPoints: 50 }] };
+  const history = dayHistory({ dayRowsFor: (d) => days[d] || [], budgetFor: () => 200n, capFor: () => null, ledgerFor: () => 0n });
+  const span = { fromDay: 10, throughDay: 10, lastSettledDay: 10 };
+  assert.equal(history('0xa', span).days[0].factor, 1.5);
+  assert.equal(history('0xb', span).days[0].factor, 1, 'a row with no multiplier counts at 1');
+  assert.equal(history('0xa', span).days[0].points, 150, 'the points are the ones the day was split by');
+  console.log('ok - the history carries the multiplier a day was counted at');
+}
