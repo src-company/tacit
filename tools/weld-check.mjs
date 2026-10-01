@@ -4,6 +4,8 @@
 //   airdrop  a listed recipient claims its TAC; the tile updates
 //   links    friendly links open the right sheet and tab (#swap, #points, #earn), the address bar follows the tab, and
 //            every sheet has a copy-link button
+//   ux       the page's shell: a toast over an open sheet can be pressed, a drag ending on the backdrop leaves the sheet open, an
+//            unreadable amount says so, one sheet replacing another keeps its link in the address bar, a hash naming nothing is ignored
 //   apr      every farm row shows its APR now, and the public farm's card spells it out
 //   pair     ETH + TAC staked in one transaction with an EIP-2612 permit
 //   farm     a one-sided ETH zap waits for its typed loss acceptance, stakes, claims, then withdraws everything
@@ -66,7 +68,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,selfexit,farmjoin,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,ux,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,selfexit,farmjoin,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -280,6 +282,41 @@ await step('links', async () => {
   const shares = await page.$$eval('dialog.sheet:not(.layer) .sheet-head .x.share', (b) => b.length);
   const sheets = await page.$$eval('dialog.sheet:not(.layer)', (d) => d.length);
   ok(shares === sheets && sheets >= 6, `links: every sheet has a copy-link button (${shares}/${sheets})`);
+});
+
+await step('ux', async () => {
+  await page.goto(url + '#sell');
+  await page.waitForSelector('#sell-connect, #sl-amt', { timeout: 60000 });
+  if (await page.$('#sell-connect')) await page.click('#sell-connect');
+  await page.waitForSelector('#sl-amt');
+  // The page outside a modal dialog is inert, so a toast has to sit inside it to be pressed.
+  await page.evaluate(() => {
+    const t = document.createElement('div'); t.className = 'toast'; t.innerHTML = '<button id="ux-toast" type="button">Open</button>'; window.__ux = 0;
+    t.querySelector('button').onclick = () => { window.__ux++; }; document.querySelector('#toast-container').append(t);
+  });
+  await page.waitForSelector('#ux-toast');
+  await page.click('#ux-toast');
+  ok((await page.evaluate(() => window.__ux)) === 1 && await page.$eval('#sheet-tac', (d) => d.open), 'ux: a toast over an open sheet can be pressed, and the sheet stays open');
+  await page.evaluate(() => document.querySelector('#toast-container .toast')?.remove());
+  const box = await page.locator('#sl-amt').boundingBox();
+  await page.mouse.move(box.x + 20, box.y + box.height / 2); await page.mouse.down(); await page.mouse.move(2, 2); await page.mouse.up();
+  ok(await page.$eval('#sheet-tac', (d) => d.open), 'ux: a drag that starts in the sheet and ends on the backdrop leaves it open');
+  await page.fill('#sl-amt', '1,500');
+  await page.locator('#sl-amt').blur();                                       // 1,500 is flagged on leaving the field, not while it may still be typed
+  ok(/Write 1500/.test(await text(page, '[data-amt-hint]')), 'ux: an ambiguous 1,500 says how to write it');
+  await page.fill('#sl-amt', '1.2.3');
+  ok(/cannot be read/.test(await text(page, '[data-amt-hint]')), 'ux: an unreadable amount says so');
+  await page.fill('#sl-amt', '1');
+  ok(!(await page.$('[data-amt-hint]')), 'ux: a readable amount shows no hint');
+  await page.evaluate(() => { location.hash = '#farm'; });
+  await page.waitForSelector('#sheet-farm[open]', { timeout: 60000 });
+  await sleep(600);
+  ok((await page.evaluate(() => location.hash)) === '#farm', 'ux: one sheet replacing another keeps the new sheet\'s link in the address bar');
+  await page.goto(url + '#constructor');
+  await page.waitForSelector('.tile');
+  await page.evaluate(() => { location.hash = '#points'; });
+  await page.waitForSelector('#sheet-pts[open]', { timeout: 60000 });
+  ok(true, 'ux: a hash that names no sheet is ignored, and later links still open their sheets');
 });
 
 await step('apr', async () => {
