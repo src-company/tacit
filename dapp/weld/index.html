@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-QaaOlVYDC5KQ3aCOHevPd0pA1aiRbCeXKNnIts4Yaq0=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-41JphulmJQUxmwBlpDLn6M34XYvqdm0DIxsxcgXT9Hk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -4430,8 +4430,11 @@ function weiForm(f, status) {
 // ── farms ────────────────────────────────────────────────────────────────────────────────────────────────
 // The public farm program is kept from the last visit and shown until the fresh read replaces it.
 const PROGRAM_KEY = 'tacit-lite-farm-program-v1', FARM_FOOT_KEY = 'tacit-lite-farm-foot-v1';
-const FARM = { precision: null, program: store.get(PROGRAM_KEY), open: 'precision', mode: null, positions: null, outPct: '100', outAs: 'both', fill: null, wtac: null };
+const FARM = { precision: null, program: store.get(PROGRAM_KEY), open: 'precision', mode: null, positions: null, outPct: '100', outAs: 'both', fill: null, wtac: null, paid: null, reinvest: null };
 const WTAC = '0x2018139a8fdd3666855be3315c7683b4d6ab7aef';        // WrappedTac: the private farms' reward token, 1:1 for TAC
+const FARM_FIRST_BLOCK = 26033952;                                // where the public farm's rate was first set
+const REWARD_PAID = '0xe2403640ba68fed3a2f88b7557551d1993f84b99bb10ff833f0cf8db0c5e0486';   // RewardPaid(address indexed user, uint256 reward)
+const LOG_RPCS = ['https://mainnet.gateway.tenderly.co', ...RPCS];   // the first node that serves a range this old
 let precisionSeq = 0;
 async function loadPrecision() {
   const my = ++precisionSeq;
@@ -4478,11 +4481,19 @@ async function loadPositions() {
   const t = await getUx(), pub = S.key.pubHex, got = await t.farmPositions({ walletPriv: walletPriv() });
   if (S.key?.pubHex === pub) { FARM.positions = got; dashSoon(); }
 }
+// What the public farm has paid this account so far: every RewardPaid to it since the farm began. With no node able to
+// answer, the figure is left out rather than shown as zero.
+async function loadPaid(who) {
+  if (FARM.paid && FARM.paid.who !== who) FARM.paid = null;
+  const logs = await rpc('eth_getLogs', [{ address: ADDR.precisionFarm, topics: [REWARD_PAID, '0x' + who.slice(2).toLowerCase().padStart(64, '0')], fromBlock: '0x' + FARM_FIRST_BLOCK.toString(16), toBlock: 'latest' }], LOG_RPCS);
+  if (S.address === who) FARM.paid = { who, v: logs.reduce((t, l) => t + BigInt(l.data), 0n) };
+}
 const loadFarms = (force = false) => once(FARM, `${S.address}|${S.key?.pubHex}`, readFarms, force);   // forced after an action
 async function readFarms(current) {
   const [pr, pg] = await Promise.allSettled([loadPrecision(), loadProgram(), S.key ? loadPositions() : null, S.key ? scanPrivate() : null,
     S.address ? ((who) => ethCall(WTAC, SEL.balanceOf + addrWord(who)).then((r) => { FARM.wtac = { who, v: wordAt(r, 0) }; }))(S.address) : null]);
   if (!current()) return;
+  if (S.address) loadPaid(S.address).then(() => { if (current()) rerender('farm'); }).catch(() => {});
   FARM.errs = { precision: pr.status === 'rejected' && FARM.precision?.who !== S.address ? pr.reason : null, program: pg.status === 'rejected' && !FARM.program ? pg.reason : null };
   const x = FARM.precision, prog = FARM.program;
   const shielded = prog?.epoch?.active ? Number(prog.epoch.ratePerDayTac) : 0;
@@ -4658,15 +4669,22 @@ function renderPrecision(el) {
   if (!FARM.mode) FARM.mode = x.tac >= 10n ** 18n ? 'pair' : 'eth';
   const has = x.staked > 0n, mode = FARM.mode, withEth = mode !== 'tac', withTac = mode !== 'eth';
   const myDay = has && x.totalStaked ? x.perDay * x.staked / x.totalStaked : 0n;
+  const ethOf = (tac, p = x) => (p.tacEth > 0 ? BigInt(Math.round(Number(tac) * p.tacEth)) : 0n);   // at the pool's price
+  const ethText = (e) => `${e < 10n ** 13n ? '< 0.00001' : fmt(e, 18, 5)} ETH`;
+  const paid = FARM.paid?.who === x.who ? FARM.paid.v : null;
   mount(el, html`
     <div class="kv"><span>${x.live ? 'Stream ends' : 'Stream'}</span><b>${x.live ? dayFmt(x.finish) : 'between reward periods'}</b></div>
     <div class="kv"><span>In the pool</span><b>${fmt(x.r0, 18, 4)} ETH + ${fmt(x.r1, 18, 0)} TAC${x.supply ? ` · ${pctFmt(Number(x.totalStaked * 10000n / x.supply) / 100)} staked` : ''}</b></div>
     ${x.live ? aprRow(precisionApr(x)) : ''}
     ${has ? html`
       <div class="kv"><span>Your stake</span><b>${fmt(x.mine.eth, 18, 4)} ETH + ${fmt(x.mine.tac, 18, 2)} TAC</b></div>
-      <div class="kv"><span>Earning</span><b>${fmt(myDay, 18, 2)} TAC a day · ${pctFmt(Number(x.staked * 10000n / x.totalStaked) / 100)} of the farm</b></div>
+      <p class="note">Swap fees stay in the pool, so they are already counted in this value.</p>
+      <div class="kv"><span>Earning</span><b>${fmt(myDay, 18, 2)} TAC a day${ethOf(myDay) > 0n ? ` (≈ ${ethText(ethOf(myDay))})` : ''} · ${pctFmt(Number(x.staked * 10000n / x.totalStaked) / 100)} of the farm</b></div>
       <div class="kv"><span>Earned</span><b class="num" id="pf-earned">${fmt(earnedNow(x), 18, 4)} TAC</b></div>
+      ${ethOf(earnedNow(x)) > 0n ? html`<div class="kv"><span>Worth about</span><b class="num" id="pf-earned-eth">${ethText(ethOf(earnedNow(x)))}</b></div>` : ''}
+      ${paid > 0n ? html`<div class="kv"><span>Claimed so far</span><b>${fmt(paid, 18, 2)} TAC${ethOf(paid) > 0n ? ` (≈ ${ethText(ethOf(paid))})` : ''}</b></div>` : ''}
       <button class="btn ghost" type="button" id="pf-claim" ${earnedNow(x) === 0n ? 'disabled' : ''}>Claim ${fmt(earnedNow(x), 18, 2)} TAC</button>
+      <button class="link" type="button" id="pf-reinvest" ${earnedNow(x) === 0n ? 'disabled' : ''}>Claim and add to the farm</button>
       <div class="lbl"><span>Withdraw</span></div>
       ${segSub('pfp', FARM.outPct, [['25', '25%'], ['50', '50%'], ['100', 'All']])}
       ${segSub('pfr', FARM.outAs, [['both', 'ETH + TAC'], ['eth', 'As ETH'], ['tac', 'As TAC']])}
@@ -4700,11 +4718,13 @@ function renderPrecision(el) {
   if (has && x.live) {
     // Counted from the latest read of this account, which a background refresh may have replaced since this render.
     const tick = () => {
-      const e = $('#pf-earned'), b = $('#pf-claim'), y = FARM.precision;
+      const e = $('#pf-earned'), w = $('#pf-earned-eth'), b = $('#pf-claim'), r = $('#pf-reinvest'), y = FARM.precision;
       if (!e?.isConnected || !$('#sheet-farm').open || y?.who !== x.who || !(y.staked > 0n)) { clearInterval(FARM.tick); return; }
       const v = earnedNow(y);
       e.textContent = `${fmt(v, 18, 4)} TAC`;
+      if (w) w.textContent = ethText(ethOf(v, y));
       if (b && b.getAttribute('aria-busy') !== 'true') { b.textContent = `Claim ${fmt(v, 18, 2)} TAC`; b.disabled = v === 0n; }
+      if (r && r.getAttribute('aria-busy') !== 'true') r.disabled = v === 0n;
     };
     FARM.tick = setInterval(tick, 1000);
   }
@@ -4763,6 +4783,12 @@ function renderPrecision(el) {
   $('#pf-max')?.addEventListener('click', () => (mode === 'pair' && ethFor(x.tac) < spendable ? fill(tacIn, x.tac) : fill(ethIn, spendable)));
   $('#pf-tmax')?.addEventListener('click', () => fill(tacIn, mode === 'pair' ? (tacFor(spendable) < x.tac ? tacFor(spendable) : x.tac) : x.tac));
   if (FARM.fill === 'tac' && tacIn) { FARM.fill = null; $('#pf-tmax').click(); }
+  if (FARM.reinvest && tacIn) {
+    const v = FARM.reinvest; FARM.reinvest = null;
+    fill(tacIn, v < x.tac ? v : x.tac);
+    say(status, html`<span class="ok">Claimed ${fmt(v, 18, 2)} TAC. It is ready to farm below.</span>`);
+    go.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
   go.onclick = () => busy(go, async () => {
     const z = q;                                                  // the quote shown when pressed, whatever is typed after
     if (!z || !lossOk(ackBox, z.loss)) return;
@@ -4798,6 +4824,20 @@ function renderPrecision(el) {
   if (c) c.onclick = () => busy(c, async () => {
     try { await done(await sendTx({ to: ADDR.precisionFarm, data: SEL.claim, label: 'Claim TAC from the farm' }), 'Claiming', `Claimed to ${your()}.`); toast('TAC claimed'); }
     catch (e) { sayErr(status, e); }
+  });
+  // Claim, then open the add form on TAC with exactly what was paid, so it goes back to work in one more step.
+  const ri = $('#pf-reinvest');
+  if (ri) ri.onclick = () => busy(ri, async () => {
+    try {
+      const hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.claim, label: 'Claim TAC from the farm' });
+      say(status, html`Claiming… ${txLink(hash)}`);
+      const r = await waitTx(hash);
+      const got = (r.logs || []).filter((l) => l.address.toLowerCase() === ADDR.precisionFarm.toLowerCase() && l.topics[0] === REWARD_PAID).reduce((t, l) => t + BigInt(l.data), 0n);
+      await loadFarms(true);
+      if (got > 0n) Object.assign(FARM, { mode: 'tac', reinvest: got });
+      rerender('farm');
+      toast(`Claimed ${fmt(got, 18, 2)} TAC`);
+    } catch (e) { sayErr(status, e); }
   });
   const ex = $('#pf-exit');
   if (!ex) return;

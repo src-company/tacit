@@ -8,7 +8,9 @@
 //            unreadable amount says so, one sheet replacing another keeps its link in the address bar, a hash naming nothing is ignored
 //   apr      every farm row shows its APR now, and the public farm's card spells it out
 //   pair     ETH + TAC staked in one transaction with an EIP-2612 permit
-//   farm     a one-sided ETH zap waits for its typed loss acceptance, stakes, claims, then withdraws everything
+//   farm     a one-sided ETH zap waits for its typed loss acceptance, stakes, claims, then withdraws everything; what is
+//            earned and earned a day also read in ETH, and a claim then shows under Claimed so far
+//   reinvest a stake's claim opens the add form on TAC with exactly what was paid, and farming it stakes it again
 //   buy      TAC bought with ETH through zRouter
 //   tacfarm  TAC alone zapped in with a permit; half withdrawn as ETH; LP held staked again; the rest withdrawn as TAC
 //   sell     TAC sold for ETH through zRouter in one transaction, the permit riding as its first leg
@@ -74,7 +76,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,ux,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,selfexit,selfmore,selflocks,selfsplit,farmjoin,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,ux,apr,pair,farm,reinvest,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,selfexit,selfmore,selflocks,selfsplit,farmjoin,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -389,6 +391,11 @@ await step('farm', async () => {
   const seen = []; for (let i = 0; i < 8; i++) { seen.push(parseFloat(await text(page, '#pf-earned'))); await sleep(500); }
   ok(seen.every((v, i) => !i || v >= seen[i - 1]), `farm: and never counts down when a fresh read lands (${seen.join(' → ')})`);
   ok(!!e0 && e0 !== e1 && parseFloat(e1) > parseFloat(e0), `farm: what the stake has earned counts up while the sheet is open (${e0} → ${e1})`);
+  const eth0 = (await text(page, '#pf-earned-eth')).trim();
+  ok(/^(< )?[\d.,]+ ETH$/.test(eth0), `farm: what it has earned also reads in ETH (${eth0} for ${e1.trim()})`);
+  ok(/Swap fees stay in the pool/.test(await text(page, '#farm-precision')), 'farm: the stake says its swap fees are already in its value');
+  ok(/TAC a day \(≈ (< )?[\d.,]+ ETH\)/.test(await text(page, '#farm-precision')), 'farm: and what it earns a day');
+  ok(!/Claimed so far/.test(await text(page, '#farm-precision')), 'farm: nothing is under Claimed so far before a first claim');
   await rpc('evm_increaseTime', [60]); await rpc('evm_mine', []);
   await page.evaluate(() => { location.hash = ''; location.hash = '#farm'; });
   await until(page, () => { const b = document.querySelector('#pf-claim'); return b && !b.disabled; });
@@ -396,10 +403,45 @@ await step('farm', async () => {
   await page.click('#pf-claim');
   await until(page, () => /TAC claimed/.test(document.querySelector('#toast-container')?.textContent || ''));
   ok((await tacOf(A0)) > before, 'farm: claim pays TAC');
+  const got = Number((await tacOf(A0)) - before) / 1e18;
+  await until(page, () => /Claimed so far/.test(document.querySelector('#farm-precision')?.textContent || ''), null, 180000);
+  const shown = parseFloat(((await text(page, '#farm-precision')).match(/Claimed so far\s*([\d.,]+) TAC/) || [])[1]?.replace(/,/g, ''));
+  ok(Math.abs(shown - got) <= 0.006 + got * 0.001, `farm: the claim then shows under Claimed so far (${shown} TAC for ${got.toFixed(4)} paid)`);
   await page.waitForSelector('#pf-exit');
   await page.click('#pf-exit');
   await until(page, () => /Withdrawn/.test(document.querySelector('#toast-container')?.textContent || '') || /err/.test(document.querySelector('#pf-status')?.innerHTML || ''));
   ok((await stakedOf(A0)) === 0n, `farm: withdraw all leaves nothing staked ${await text(page, '#pf-status')}`);
+});
+
+await step('reinvest', async () => {
+  await page.goto(url + '#farm');
+  await page.waitForSelector('#pf-connect, [data-pfm]', { timeout: 60000 });
+  if (await page.$('#pf-connect')) await page.click('#pf-connect');
+  await page.waitForSelector('[data-pfm="eth"]', { timeout: 60000 });
+  await page.click('[data-pfm="eth"]');
+  await page.fill('#pf-amt', '2');
+  await acceptLoss(page, '#pf-go', '#pf-ackv');
+  if (await page.isDisabled('#pf-go')) throw new Error(`the deposit stayed disabled: ${await text(page, '#pf-rcpt')}`);
+  await page.click('#pf-go');
+  await page.waitForSelector('#pf-exit', { timeout: 60000 });
+  await rpc('evm_increaseTime', [3600]); await rpc('evm_mine', []);
+  await page.evaluate(() => { location.hash = ''; location.hash = '#farm'; });
+  await until(page, () => { const b = document.querySelector('#pf-reinvest'); return b && !b.disabled; });
+  const t0 = await tacOf(A0), s0 = await stakedOf(A0);
+  await page.click('#pf-reinvest');
+  if (!await chainUntil(async () => (await tacOf(A0)) > t0)) throw new Error('the claim did not pay');
+  const got = Number((await tacOf(A0)) - t0) / 1e18;
+  await until(page, () => document.querySelector('[data-pfm="tac"]')?.getAttribute('aria-selected') === 'true' && /\d/.test(document.querySelector('#pf-tac')?.value || ''), null, 180000);
+  const filled = parseFloat(await page.inputValue('#pf-tac'));
+  ok(Math.abs(filled - got) <= 0.006 + got * 0.001, `reinvest: the add form opens on TAC with what was claimed (${filled} of ${got.toFixed(4)})`);
+  ok(/ready to farm below/.test(await text(page, '#pf-status')), 'reinvest: and says so');
+  await acceptLoss(page, '#pf-go', '#pf-ackv');
+  ok(!(await page.isDisabled('#pf-go')), 'reinvest: Farm with TAC is ready');
+  await page.click('#pf-go');
+  ok(await chainUntil(async () => (await stakedOf(A0)) > s0), 'reinvest: the claimed TAC is staked again');
+  await page.waitForSelector('#pf-exit');
+  await page.click('#pf-exit');
+  await chainUntil(async () => (await stakedOf(A0)) === 0n);
 });
 
 await step('buy', async () => {
