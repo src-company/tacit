@@ -132,7 +132,7 @@ function renderBody(addr, points, claim) {
   const deposits = (points && Array.isArray(points.deposits)) ? points.deposits.slice(0, 12) : [];
 
   const todayHtml = today
-    ? `<div class="muted" style="margin-top:4px;">Today: <strong>${esc(fmtPoints(today.points))}</strong> pts, out of ${esc(fmtPoints(today.totalPoints))} pts earned network-wide against a ${esc(fmtWei(today.dayBudgetWei, 0))} TAC daily budget.</div>`
+    ? `<div class="muted" style="margin-top:4px;">Today: <strong>${esc(fmtPoints(today.points))}</strong> pts, out of ${esc(fmtPoints(today.totalPoints))} pts earned network-wide against today’s ${esc(fmtWei(today.dayBudgetWei, 0))} TAC pot.</div>`
     : '';
 
   const rowsHtml = deposits.length

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-zynnHgpxJ/rIV15e+YLTMiT+ecLN0Eln8OhOYMLeypQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-NP4Dwdz5U5uqWszwhadhmi6/1AsaOdzPM5fxXcPN1dk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -494,7 +494,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <a class="tile" href="#pts" data-open="pts" aria-haspopup="dialog">
       <span class="pair"><svg class="tk" aria-hidden="true"><use href="#i-pts"/></svg></span>
       <h2>Points</h2>
-      <p>Earn TAC just for using Tacit: making ETH private, swapping, borrowing and more. 1,111 TAC is shared out every day.</p>
+      <p>Earn TAC just for using Tacit: making ETH private, swapping, borrowing and more. Up to 1,111 TAC is shared out every day.</p>
       <span class="tile-foot"><span class="dot" data-dot="pts"></span><span data-foot="pts">100,000 TAC over 90 days</span><span class="go" aria-hidden="true">→</span></span>
     </a>
     <a class="tile" href="#farm" data-open="farm" aria-haspopup="dialog">
@@ -3685,7 +3685,7 @@ function renderSell(el) {
 }
 
 // ── Points: the live TAC rewards program ─────────────────────────────────────────────────────────────────
-// 100,000 TAC over 90 days; each UTC day's 1,111 TAC is split by that day's points. Points and TAC belong to the address
+// 100,000 TAC over 90 days; each UTC day's pot (today.dayBudgetWei), up to 1,111 TAC, is split by that day's points. Points and TAC belong to the address
 // that sent each transaction, so the connected wallet and the Tacit account are read, and claimed, on their own.
 const DISTRIBUTOR = '0x000000C918e44A3a443937fA7594eA4f7C95D6b9', ZROUTER = '0x000000000000FB114709235f1ccBFfb925F600e4';
 const WNS = '0x0000000000696760E15f265e828DB644A0c242EB', ZSWAP = 'https://zswap.wei.limo';
@@ -3778,7 +3778,7 @@ render.pts = () => {
     })}</ul></details>`;
   };
   mount(el, html`
-    <p class="lede-s">Every day through Dec 21 (UTC), 1,111 TAC is split by that day’s points.${on ? ` Today’s split closes in ${dayLeft()}; its TAC is yours to claim once the day is settled.` : ' Claim any time.'}</p>
+    <p class="lede-s">Every day through Dec 21 (UTC), up to 1,111 TAC is split by that day’s points, at most 0.03 TAC per point from Oct 3.${on ? ` Today’s split closes in ${dayLeft()}; its TAC is yours to claim once the day is settled.` : ' Claim any time.'}</p>
     ${rows ? rows.map((r, i) => html`
       <div class="pt">
         <div class="bal"><div><div class="v num">${ptsFmt(r.points)}</div><div class="u">points · ${r.label} ${short(r.addr)}</div></div>

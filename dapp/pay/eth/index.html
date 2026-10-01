@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-0LI/JTprTqiFxtuEZjhDn+WKkI5RUnSIQ1SeQNhyOWg=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-iO81e8tXoU40bysDfrtkIaxB9Uc6SEqyHp+d4wIso/M=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -2303,7 +2303,7 @@ function qrSvg(text) {
 }
 
 // ── TAC points: public ETH deposited into the pool earns them for the wallet that deposits (or that pays a link or
-// deposit address), 1,111 TAC a day split by points; tacit-points is the source (api.tacit.finance) ───────────────
+// deposit address), up to 1,111 TAC a day split by points; tacit-points is the source (api.tacit.finance) ───────────────
 const API = 'https://api.tacit.finance', DISTRIBUTOR = '0x000000C918e44A3a443937fA7594eA4f7C95D6b9';
 const PTS = { who: null, at: 0, v: null, reading: null };
 const TAC_WEI = 10n ** 18n;
@@ -2336,7 +2336,7 @@ const ptsFmt = (n) => Math.round(Number(n) || 0).toLocaleString('en-US');
 function paintPoints() {
   const v = PTS.who && PTS.who === lc(S.wallet || '') ? PTS.v : null;
   mount($('#points-body'), html`
-    <p class="lede-s">Deposit ETH into the pool and earn TAC. Each day, 1,111 TAC is shared by points.</p>
+    <p class="lede-s">Deposit ETH into the pool and earn TAC. Each day, up to 1,111 TAC is shared by points.</p>
     <ul class="perks">
       <li><span><b>1,000+ points per ETH</b> deposited on Ethereum, Base or Robinhood Chain, more while the pool is young.</span></li>
       <li><span><b>×1.2</b> if your wallet has received ETH from <a href="https://privacypools.com" target="_blank" rel="noopener">Privacy Pools</a>.</span></li>

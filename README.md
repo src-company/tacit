@@ -275,8 +275,10 @@ Protocol view of reserve flows and buybacks. See [`docs/TAC.md`](./docs/TAC.md).
 
 A time-limited launch program, not a protocol feature.
 
-- **Points.** 100,000 TAC is paid out over 90 days, 2026-09-23 through 2026-12-21 (UTC): each day's 1,111 TAC
-  is split by that day's points. Points go to the address that sent each transaction:
+- **Points.** 100,000 TAC is paid out over 90 days, 2026-09-23 through 2026-12-21 (UTC): each day's pot, up to
+  1,111 TAC, is split by that day's points. From 2026-10-03 (UTC) a day pays at most 0.03 TAC per point, so a
+  day with little activity pays out less than the full amount. Points go to the address that sent each
+  transaction:
   - wrapping ETH into the confidential pool: 1,250 per ETH;
   - depositing ETH into the EVM pool on Ethereum, Base or Robinhood Chain: 1,000 per ETH;
   - swapping ETH through zRouter or zSwap, and betting ETH on zSwap: 1,000 per ETH; creating a zSwap market: 50;
