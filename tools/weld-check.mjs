@@ -62,6 +62,8 @@
 //            then proof-only jobs with no relay fee from the paying account
 //   selflocks the ETH sheet's claim, take-back and withdrawal, each refused by the relay and sent from the paying account
 //   selfsplit the split before a private send, refused the same way
+//   makepub   Make public with the relay taking it: the fee shown beforehand, an address entered there, a bad one refused, and
+//            the sheet saying it was sent and where it goes
 //   tacdeposit  a real 20 TAC deposit whose settle never landed: the TAC sheet and the dashboard offer to finish it,
 //            and Finish submits a wrap job rebuilt with the TAC asset and its own scale
 //   PLAYWRIGHT=<path to playwright-core> node tools/weld-check.mjs [scenario,…] [fork rpc]   (SHOTS=<dir> saves screenshots)
@@ -81,7 +83,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,ux,apr,pair,farm,reinvest,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,selfexit,selfmore,selflocks,selfsplit,farmjoin,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,ux,apr,pair,farm,reinvest,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,selfexit,selfmore,selflocks,selfsplit,makepub,farmjoin,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -1414,6 +1416,59 @@ await step('selfsplit', async () => {
     }
     if (r.errors.length) { fails++; console.log('FAIL selfsplit page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   } finally { refuseSubmits = 0; proveStub = false; await r.browser.close(); }
+});
+
+// Make public with the relay taking the job: the sheet says plainly that it was sent and where it goes, names the relay fee
+// beforehand, and sends to an address entered there; a bad address is refused before anything is sent.
+await step('makepub', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  const hex = 'ac5e9'.padEnd(64, '8');
+  const DEAD = '0x000000000000000000000000000000000000dEaD';
+  await r.page.route(/\/confidential-pool-ux\.js\?cb=/, (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: `
+    import * as real from '/confidential-pool-ux.js?stub=real';
+    export * from '/confidential-pool-ux.js?stub=real';
+    export function makeConfidentialPoolUx(o) {
+      const ux = real.makeConfidentialPoolUx(o), balance = ux.balance;
+      ux.balance = async (priv) => {
+        const b = await balance(priv);
+        const hx = typeof priv === 'string' ? priv : '0x' + [...priv].map((x) => x.toString(16).padStart(2, '0')).join('');
+        const w = ux.buildWrap({ walletPriv: hx, amountWei: (30n * 10n ** 18n).toString(), ticker: 'cTAC', index: 0 });
+        const note = ux.indexer.recover([{ type: 'LeavesInserted', firstLeafIndex: 0, leaves: [w.leaf], memos: [w.memo] }], hx)[0];
+        if (!note) throw new Error('stub note not recovered');
+        b.notes = [...b.notes, note];
+        const g = b.byAsset[note.asset] ||= { asset: note.asset, value: 0n, notes: [] };
+        g.value = BigInt(g.value) + BigInt(note.value); g.notes = [...g.notes, note];
+        return b;
+      };
+      return ux;
+    }` }));
+  try {
+    await r.page.goto(r.url + '#wallet');
+    await r.page.click('#wallet-body [data-in="paste"]');
+    await r.page.fill('#ws-hex', hex);
+    await r.page.click('#wallet-body [data-in="key"]');
+    await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+    await r.page.evaluate(() => { location.hash = ''; location.hash = '#tac'; });
+    await r.page.waitForSelector('#tac-pub', { timeout: 240000 });
+    ok(await until(r.page, () => /relay fee of about \d+ TAC comes out of it/.test(document.querySelector('#tac-bal')?.textContent || ''), null, QUOTE_WAIT).then(() => true, () => false),
+      `makepub: the sheet names the relay fee before it is pressed (${(await text(r.page, '#tac-bal')).replace(/\s+/g, ' ').match(/A relay fee[^.]*\./)?.[0] || 'none'})`);
+    // A bad address is refused here, with nothing sent.
+    const n0 = submits.length;
+    await r.page.fill('#tac-pub-to', 'not an address');
+    await r.page.click('#tac-pub');
+    await until(r.page, () => /address|0x/i.test(document.querySelector('#tac-bal-status')?.textContent || ''), null, 120000);
+    ok(submits.length === n0, `makepub: a bad address is refused before anything is sent (${(await text(r.page, '#tac-bal-status')).replace(/\s+/g, ' ').slice(0, 100)})`);
+    // The address entered gets it, and the sheet says the job is with the relay, and where it goes.
+    await r.page.fill('#tac-pub-to', DEAD);
+    await r.page.click('#tac-pub');
+    await until(r.page, () => /Sent to the relay/.test(document.querySelector('#tac-bal-status')?.textContent || ''), null, QUOTE_WAIT);
+    const said = (await text(r.page, '#tac-bal-status')).replace(/\s+/g, ' ');
+    const job = submits.slice(n0).find((x) => x.type === 'unwrap');
+    ok(job && String(job.op.recipient).toLowerCase() === DEAD.toLowerCase(), `makepub: the exit pays the address entered (${job ? job.op.recipient : 'no submit'})`);
+    ok(/✓ Sent to the relay/.test(said) && /0x0000/.test(said) && /proved in about a minute/.test(said), `makepub: the sheet says it was sent and where it goes (${said.slice(0, 150)})`);
+    ok(!!(await r.page.$('#tac-bal-status button.btn[data-act-open]')), 'makepub: and offers a clear button to follow it');
+    if (r.errors.length) { fails++; console.log('FAIL makepub page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { await r.browser.close(); }
 });
 
 await step('keys', async () => {
