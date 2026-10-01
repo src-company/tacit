@@ -776,6 +776,16 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       || (x.bitcoinLink && x.bitcoinLink.toLowerCase() === id));
     return a ? a.ticker : null;
   }
+  // The pool row for an asset id, for pricing and settling. Two configured rows can share one id (TAC, the public ERC20
+  // kept so a Bitcoin-lane holding merges with it, and cTAC, the pool asset), and tickerOf returns the first, which
+  // has no relay fee policy: a TAC note's exit would be quoted a zero floor and refused. Fees take the row the relay
+  // prices, as its own quote does; display keeps tickerOf.
+  function poolTickerOf(assetIdHex) {
+    const id = lc(assetIdHex);
+    const rows = cfg.assets.filter((x) => (x.assetId && lc(x.assetId) === id) || (x.bitcoinLink && lc(x.bitcoinLink) === id));
+    const row = rows.find((x) => RELAY_FEE_ASSETS[x.ticker]) || rows.find((x) => /^c/.test(x.ticker)) || rows[0];
+    return row ? row.ticker : null;
+  }
 
   // ── wrap on-ramp ──
   const evmTx = makeEvmTx({ secp, keccak256 });
@@ -2095,7 +2105,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     const rA = res ? BigInt(res.reserveA) : 0n, rB = res ? BigInt(res.reserveB) : 0n;
     const sharesPre = res ? BigInt(res.totalShares) : 0n;
     const amtA = BigInt(amountA);
-    const f = fee == null ? await gasAwareMinFee(tickerOf(a), 'lp') : BigInt(fee);
+    const f = fee == null ? await gasAwareMinFee(poolTickerOf(a), 'lp') : BigInt(fee);
     if (f >= amtA) throw new Error(`lp-add: the relay fee (${f}) is not covered by this contribution — add more`);
     const addA = amtA - f;
     if (!res || sharesPre === 0n) {
@@ -2115,7 +2125,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     const mine = (notes || []).filter((n) => String(n.asset).toLowerCase() === String(asset).toLowerCase());
     const exact = mine.find((n) => BigInt(n.value) === want);
     if (exact) return { note: exact, split: false };
-    const ticker = tickerOf(asset);
+    const ticker = poolTickerOf(asset);
     const splitFee = await gasAwareMinFee(ticker, 'transfer');
     // The split is itself a relayed transfer, so the source note must cover amount + that fee.
     const src = mine.filter((n) => BigInt(n.value) >= want + splitFee).sort((x, y) => (BigInt(x.value) > BigInt(y.value) ? 1 : -1))[0];
@@ -2179,7 +2189,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
 
     // Quote the fee against the withdrawal it is carved from, so an amount too small to cover the settle is
     // rejected here with a legible message instead of failing the proportionality check in the guest.
-    const tickerA = tickerOf(a);
+    const tickerA = poolTickerOf(a);
     const dAExpected = (BigInt(res.reserveA) * burn) / sharesPre;
     let f = fee == null ? await gasAwareMinFee(tickerA, 'lpremove') : BigInt(fee);
     if (f >= dAExpected) {
@@ -2376,7 +2386,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     // Price the fee for the relay gate when the caller didn't. fee === 0n stays unpriced: that is a
     // self-settled / internal move (a note merge), not a relayed send the relay must profit on.
     if (feeUsd == null && BigInt(fee) > 0n) {
-      feeUsd = await feeUsdFor(fee, tickerOf(notes?.[0]?.asset)).catch(() => null);
+      feeUsd = await feeUsdFor(fee, poolTickerOf(notes?.[0]?.asset)).catch(() => null);
     }
     const b = buildTransferOp({ walletPriv, notes, recipientPubHex, amount, fee, feeUsd });
     return _dispatch({
@@ -3370,7 +3380,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // dust note (too small to relay) still exit. Otherwise the relay fee is quoted and deducted.
   function buildUnwrap({ note, walletPriv, recipient, feeOpts, selfSettle = false, ttlSecs = 3600 } = {}) {
     if (!note) throw new Error('buildUnwrap: note required');
-    const ticker = tickerOf(note.asset) || 'cETH';
+    const ticker = poolTickerOf(note.asset) || 'cETH';
     let fee, net;
     if (selfSettle) {
       fee = 0n; net = BigInt(note.value);
@@ -3464,7 +3474,28 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // The box collects `fee`; the user receives `net`. Returns the build + { jobId, status, txHash }.
   // `selfSettle({ publicValues, proof, memos })` → { txHash }: an exit with no fee, the whole value to the recipient; the
   // relay only proves it and the caller sends settle() from the account it pays with.
-  async function unwrap({ note, walletPriv, recipient, feeOpts, wait = true, waitOpts, selfSettle = null } = {}) {
+  // The relay re-checks a relayed fee against live gas when the job is submitted, and gas can move between the quote and
+  // the submit. A refusal there costs nothing (nothing was proved), so an exit is quoted once more at twice its floor;
+  // a floor the caller set is left as it is. Still refused, the user is told in plain words.
+  const _floorRefused = (e) => /fee below the current floor/i.test(String((e && e.message) || e));
+  async function _withFloorRetry(ticker, opKind, feeOpts, run) {
+    const minFee = await gasAwareMinFee(ticker, opKind);
+    try { return await run({ ...feeOpts, minFee }); }
+    catch (e) {
+      if (!_floorRefused(e)) throw e;
+      const higher = (minFee > 0n ? minFee : relayMinFee(ticker)) * 2n;
+      try { return await run({ ...feeOpts, minFee: higher }); }
+      catch (e2) {
+        if (_floorRefused(e2)) throw Object.assign(new Error('The network fee rose while this was being sent. Try again in a minute; the fee is worked out again each time.'), { code: 'FEE_MOVED', cause: e2 });
+        throw e2;
+      }
+    }
+  }
+  async function unwrap(args = {}) {
+    if (!args.note || args.selfSettle || (args.feeOpts && args.feeOpts.minFee != null)) return _unwrapOnce(args);
+    return _withFloorRetry(poolTickerOf(args.note.asset) || 'cETH', 'unwrap', args.feeOpts, (feeOpts) => _unwrapOnce({ ...args, feeOpts }));
+  }
+  async function _unwrapOnce({ note, walletPriv, recipient, feeOpts, wait = true, waitOpts, selfSettle = null } = {}) {
     if (selfSettle) {
       const built = buildUnwrap({ note, walletPriv, recipient, selfSettle: true });
       const proven = await relay.prove({ type: 'unwrap', op: built.op, memos: [] }, waitOpts);
@@ -3472,7 +3503,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       const sent = await selfSettle({ publicValues: proven.publicValues, proof: proven.proof, memos: [] });
       return { ...built, jobId: proven.jobId, status: 'settled', txHash: sent && sent.txHash };
     }
-    const ticker = tickerOf(note.asset) || 'cETH';
+    const ticker = poolTickerOf(note.asset) || 'cETH';
     const minFee = (feeOpts && feeOpts.minFee != null) ? feeOpts.minFee : await gasAwareMinFee(ticker, 'unwrap');
     const built = buildUnwrap({ note, walletPriv, recipient, feeOpts: { ...feeOpts, minFee } });
     const sub = await relay.submitOp({ type: 'unwrap', op: built.op, memos: [] }, waitOpts); // no new leaf ⇒ no memo
@@ -3485,9 +3516,13 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // keep the remainder as a hidden change note back to self — one proof, relay-settled. `amount` is debited from
   // the note; the recipient receives amount − fee. Falls back to the whole-note unwrap when there's no change.
   // With `selfSettle` (as unwrap's), there is no fee: the recipient receives all of `amount`.
-  async function sendUnwrap({ note, walletPriv, recipient, amount, feeOpts, wait = true, waitOpts, selfSettle = null } = {}) {
+  async function sendUnwrap(args = {}) {
+    if (!args.note || args.selfSettle || (args.feeOpts && args.feeOpts.minFee != null)) return _sendUnwrapOnce(args);
+    return _withFloorRetry(poolTickerOf(args.note.asset) || 'cETH', 'sendunwrap', args.feeOpts, (feeOpts) => _sendUnwrapOnce({ ...args, feeOpts }));
+  }
+  async function _sendUnwrapOnce({ note, walletPriv, recipient, amount, feeOpts, wait = true, waitOpts, selfSettle = null } = {}) {
     if (!note) throw new Error('sendUnwrap: note required');
-    const ticker = tickerOf(note.asset) || 'cETH';
+    const ticker = poolTickerOf(note.asset) || 'cETH';
     amount = BigInt(amount);
     const noteValue = BigInt(note.value);
     if (amount > noteValue) throw new Error('sendUnwrap: amount exceeds the note (merge notes first)');
@@ -3751,7 +3786,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     ux: { cfg, assetByTicker, buildWrap, nextWrapIndex, submitWrapSettle },
   });
 
-  return { cfg, assets: _poolAssets, assetByTicker, account, identity, rpc, ethCall, fetchEvents, balance, poolStatsFromEvents, tickerOf,
+  return { cfg, assets: _poolAssets, assetByTicker, account, identity, rpc, ethCall, fetchEvents, balance, poolStatsFromEvents, tickerOf, poolTickerOf,
     deriveOutput, buildWrap, nextWrapIndex, wrap, submitWrapSettle, buildRouterWrap, routerWrap, routerConfigured, buildWrapTransferOp, wrapAndSend, resumeWrapAndSend, sendPreparedTx, buildTransferOp, transfer, stealthSend, scanStealthLocks, stealthClaim, stealthRefund, stealthLockPosition, crossOut, payInvoice, quoteUnwrapFee, holderFeeBps, setPublicTacHeld, quoteTransferFee, quoteOpFee: gasAwareMinFee, feeUsdFor, relayFeeEligible, buildUnwrap, unwrap, sendUnwrap, addBridgeAmountHint, buildAttestMeta, chainBindingHex,
     erc2612Nonce: _erc2612Nonce, waitReceipt: _waitReceipt, poolReserves, poolCurrentRoot, sameRoot, routePoolId, quoteRoute, route, swapBatched, swapBatchPending, swapBatchFlush, lpBondPosition, buildLpBondOp, lpBond, farmProgram, farmBond, farmPositions, importFarmPosition, recover, recoverCdpPositions, scanSentLocks, farmHarvest, farmUnbond, farmRedeem, buildFastlaneExitOp, fastlaneExit, lpAdd, lpRemove, quoteLpAdd, wrapLp, wrapSwap, ensureExactNote, mintCbtc, defiActions, cdp: _cdp, cdpPositionTree, submitSettle, settleCalldata,
     cbtcLockState, syncCbtcLockReservations, cbtcBonds,

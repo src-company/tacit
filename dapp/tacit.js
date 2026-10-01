@@ -22905,6 +22905,7 @@ const _BURNDEP_BUSY_LABEL = {
 function _burndepFriendlyError(e) {
   const m = String((e && e.message) || e || '');
   if (/cannot read propert(y|ies) of undefined/i.test(m)) return 'Something unexpected went wrong reading this bridge’s own record. Try again — if it repeats, use "Recover a bridge from its transaction id" below with this burn’s txid.';
+  if (/fee below the current floor/i.test(m)) return 'The network fee rose while this was being sent. Nothing was spent. Try again in a minute; the fee is worked out again each time.';
   if (/memory cap, and was stopped/i.test(m)) return 'The relay is under heavier load than usual right now. This clears up on its own — wait a minute and try again.';
   if (/failed to fetch|networkerror|load failed/i.test(m)) return 'Could not reach the network. Check your connection and try again.';
   if (/rate.?limit|too many requests|\b429\b/i.test(m)) return 'That service is busy right now. Try again in a moment.';
