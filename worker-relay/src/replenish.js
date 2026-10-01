@@ -16,6 +16,8 @@ import { getAddress, maxUint256 } from 'viem';
 import { CFG, ADDR, OP_GAS, DEFAULT_OP_GAS, OP_PROVE, MAINTENANCE_RUNS_PER_DAY } from './lib/config.js';
 import { withNonceRetry as _withNonceRetry } from './lib/nonce-retry.js';
 import { proverCredit } from './lib/prover.js';
+import { setProverCredit } from './lib/worker-client.js';
+import { creditText } from './lib/prove-credit.js';
 import {
   publicClient, relayWallet, fundedWallets, ethUsdPrice, ERC20_ABI, VAPP_ABI, ZQUOTER_ABI, ZROUTER_ABI,
   PROVE, VAPP, ZQUOTER, ZROUTER,
@@ -392,6 +394,7 @@ export async function replenishOnce({ roles = null, convertToProve = true } = {}
   // under the floor, ETH above the gas buffer goes to PROVE this pass (capped), not only ETH above the sweep line.
   const credit = convertToProve ? await proverCredit() : null;
   const creditLow = credit != null && credit < CFG.proveCreditFloorWei;
+  if (credit != null) setProverCredit(creditText(credit));
   if (credit != null) log(`prover credit ${(Number(credit) / 1e18).toFixed(2)} PROVE${creditLow ? ` — under the ${(Number(CFG.proveCreditFloorWei) / 1e18).toFixed(0)} PROVE floor, buying from ETH above the gas buffer` : ''}`);
 
   for (const { address: owner, wallet, roles: held } of earners) {

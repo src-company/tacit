@@ -707,6 +707,8 @@ async function handleProverHeartbeat(req, env, cors) {
     prover_alive: body.prover_alive === true || body.prover_alive === 'true',
     note: typeof body.note === 'string' ? body.note.slice(0, 200) : '',
   };
+  // The prover network credit in PROVE ("78.24"), when the service reads it: kept, and given only to the relay's own token.
+  if (typeof body.prover_credit === 'string' && /^\d{1,12}(\.\d{1,4})?$/.test(body.prover_credit)) rec.prover_credit = body.prover_credit;
   // Progress fields (optional). These let /prover-health answer "how far
   // behind is proof coverage", not just "is the prover up": prover_alive only says the loop process exists, not that
   // state is advancing.
@@ -720,7 +722,7 @@ async function handleProverHeartbeat(req, env, cors) {
 
 // One kind's stored heartbeat -> the {status,healthy,reasons,...} shape /prover-health has always returned.
 // Shared by the single-kind and all-kinds paths below so they can never drift apart on what "healthy" means.
-async function readProverKindHealth(env, network, kind) {
+async function readProverKindHealth(env, network, kind, authed = false) {
   const raw = await env.REGISTRY_KV.get(proverHbKey(network, kind));
   if (!raw) return { status: 'unknown', healthy: false, reasons: ['no heartbeat recorded yet'] };
   let hb;
@@ -744,6 +746,7 @@ async function readProverKindHealth(env, network, kind) {
     gas_wei: gas !== null ? hb.gas_wei : null,
     prover_alive: hb.prover_alive !== false,
     note: hb.note || '',
+    ...(authed && hb.prover_credit ? { prover_credit: hb.prover_credit } : {}),
     last_proven_height: Number.isInteger(hb.last_proven_height) ? hb.last_proven_height : null,
     relay_tip: Number.isInteger(hb.relay_tip) ? hb.relay_tip : null,
     btc_tip: Number.isInteger(hb.btc_tip) ? hb.btc_tip : null,
@@ -758,13 +761,13 @@ async function readProverKindHealth(env, network, kind) {
 // top-level healthy/status/reasons that is the AND/union of all of them — so an existing caller that only
 // ever checked the top-level fields (built back when there was only one shared record) still gets "any
 // prover service down" rather than silently narrowing to whichever kind happens to sort first.
-async function handleProverHealth(env, cors, url) {
+async function handleProverHealth(env, cors, url, authed = false) {
   const hdr = { ...cors, 'Cache-Control': 'no-store' };
   const network = url.searchParams.get('network') || 'mainnet';
   const kindParam = url.searchParams.get('kind');
 
   if (kindParam) {
-    const health = await readProverKindHealth(env, network, kindParam);
+    const health = await readProverKindHealth(env, network, kindParam, authed);
     return jsonResponse({ network, kind: kindParam, ...health }, health.healthy ? 200 : 503, hdr);
   }
 
@@ -772,7 +775,7 @@ async function handleProverHealth(env, cors, url) {
   let healthy = true;
   const reasons = [];
   for (const kind of PROVER_KINDS) {
-    const health = await readProverKindHealth(env, network, kind);
+    const health = await readProverKindHealth(env, network, kind, authed);
     services[kind] = health;
     if (!health.healthy) { healthy = false; reasons.push(...health.reasons); }
   }
@@ -26202,7 +26205,7 @@ async function _routeFetch(req, env, ctx) {
     }
 
     if (url.pathname === '/prover-heartbeat' && req.method === 'POST') return handleProverHeartbeat(req, env, cors);
-    if (url.pathname === '/prover-health' && req.method === 'GET') return handleProverHealth(env, cors, url);
+    if (url.pathname === '/prover-health' && req.method === 'GET') return handleProverHealth(env, cors, url, checkConfidentialAuth(req, env));
 
     if (req.method === 'GET' && (url.pathname === '/leaderboard' || /^\/(points|claim)\/0x[0-9a-fA-F]{40}$/.test(url.pathname))) {
       return handlePointsProxy(url.pathname, url.search, cors);

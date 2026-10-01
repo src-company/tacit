@@ -169,9 +169,13 @@ export async function confidentialActivateAck({ jobId, txHash, error }) {
 //
 // Best-effort — a failed beat must never take down a prove — but a rejection is logged once per process.
 let _hbWarned = false;
+// The prover network credit this process last read (PROVE, as text), carried with every heartbeat it sends.
+let _credit = null;
+export const setProverCredit = (text) => { _credit = text; };
 export async function heartbeat(kind, detail) {
   try {
     const res = await postJson('/prover-heartbeat', {
+      ...(_credit ? { prover_credit: _credit } : {}),
       token: CFG.heartbeatToken,
       network: CFG.network,
       kind,

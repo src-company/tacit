@@ -30,6 +30,7 @@ import { makeRpc, checkFarm, FARM_MANAGER_MAINNET } from './lib/farm-health.js';
 import { stallVerdict, driftVerdict } from './lib/reflection-stall.js';
 import { manualRecoveryHint } from './lib/reflection-reconcile.js';
 import { reflectionDriftSeen, crossOutGapSeen } from './lib/worker-client.js';
+import { creditLevel } from './lib/prove-credit.js';
 import { publicClient, relayWallet, watchedWallets, ERC20_ABI, PROVE, readPool, readReflectionDigest, HEADER_RELAY, RELAY_ABI } from './lib/chain.js';
 import { safeErr } from './lib/safe-err.js';
 
@@ -267,7 +268,10 @@ async function checkProverKinds() {
       h = await res.json();
     } catch (e) { log(`prover-health ${kind} unreadable: ${e?.message || e}`); continue; }
     const note = String(h?.note || '');
-    log(`prover-health ${kind}: healthy=${h?.healthy} age=${h?.age_seconds}s note=${note}`);
+    log(`prover-health ${kind}: healthy=${h?.healthy} age=${h?.age_seconds}s note=${note}${h?.prover_credit ? ` credit=${h.prover_credit} PROVE` : ''}`);
+    // The prover network credit (reported by the settle service's replenish run): proving stops when it is spent.
+    const low = h?.prover_credit ? creditLevel(h.prover_credit, Number(CFG.proveCreditFloorWei) / 1e18) : null;
+    if (low) await alert(low, `prover credit is ${h.prover_credit} PROVE, under ${low === 'critical' ? '60% of ' : ''}the ${Number(CFG.proveCreditFloorWei) / 1e18} PROVE floor: network proofs stop when it reaches zero. Fund the settle wallet (replenish converts ETH above its gas float to PROVE) or deposit PROVE`, { kind, prover_credit: h.prover_credit });
     if (h?.healthy === false) {
       await alert('critical', `${kind} prover unhealthy: ${(h.reasons || []).join('; ') || 'no heartbeat'}`, { kind, ...h });
     } else if (/^error\b|\bSTALL\b/i.test(note)) {
