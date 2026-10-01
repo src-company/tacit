@@ -260,7 +260,7 @@ export function makeConfidentialRecovery({ pool, memo, keccak256, secp, hmac, sh
   // false, every m·10^k for m < 100: the burns a wallet makes are whole-unit amounts. A candidate counts only when its leaf
   // equals one the chain inserted, so an amount outside the set is not found — never mis-found.
   // `unexplained` maps txHash -> the leaves of that transaction no other channel accounted for.
-  function walkBridgeMints({ priv, tx, unexplained, assets, values = [], roundValues = true, destIndexes = 8, maxNullifiers = 16 }) {
+  function walkBridgeMints({ priv, tx, unexplained, assets, values = [], roundValues = true, destIndexes = 8, maxNullifiers = 16, maxExp = 18 }) {
     const p = privBytes(priv);
     const nulls = [];
     for (const [txHash, leaves] of unexplained) {
@@ -272,7 +272,7 @@ export function makeConfidentialRecovery({ pool, memo, keccak256, secp, hmac, sh
     const points = new Map();
     for (const v of values) { const b = BigInt(v); if (b > 0n && !points.has(b)) points.set(b, H.multiply(b)); }
     if (roundValues) {
-      for (let k = 0; k <= 18; k++) {
+      for (let k = 0; k <= maxExp; k++) {
         const base = H.multiply(10n ** BigInt(k));
         let acc = base;
         for (let m = 1; m < 100; m++) { const v = BigInt(m) * 10n ** BigInt(k); if (!points.has(v)) points.set(v, acc); acc = acc.add(base); }
