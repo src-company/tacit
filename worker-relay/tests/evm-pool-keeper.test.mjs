@@ -364,8 +364,16 @@ await test('HTTP intake refuses new intents at capacity', async () => {
   await new Promise((r) => server.listen(0, r));
   const url = `http://127.0.0.1:${server.address().port}/evm-pool/keeper/deposit`;
   try {
-    assert.equal((await fetch(url, { method: 'POST', body: JSON.stringify(makeDeposit().body) })).status, 200);
+    const first = await fetch(url, { method: 'POST', body: JSON.stringify(makeDeposit().body) });
+    assert.equal(first.status, 200);
+    const box = (await first.json()).box;
+    // A box that has held funds is kept: the table is full for a newcomer.
+    store.update(box, { funded_at: T0 });
     assert.equal((await fetch(url, { method: 'POST', body: JSON.stringify(makeDeposit({ nonce: 1n }).body) })).status, 503);
+    // One that never held funds is the first to go, so registrations that never pay cannot lock out new users.
+    store.update(box, { funded_at: null });
+    assert.equal((await fetch(url, { method: 'POST', body: JSON.stringify(makeDeposit({ nonce: 1n }).body) })).status, 200);
+    assert.ok(!store.get(box), 'the oldest unfunded intent made room');
   } finally { server.close(); }
 });
 
@@ -818,6 +826,7 @@ await test('HTTP relay and receive: quote, submit, stale → 409, low fee → ne
       const again2 = await fetch(`http://127.0.0.1:${full.address().port}/evm-pool/keeper/receive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chainId: CHAIN_ID, npk: receiveNpk.toString(), feeBps: 25 }) });
       assert.equal(again2.status, 200);
       assert.equal((await again2.json()).status, 'watching');
+      store.update(w.box, { funded_at: t }); // a box that has held funds is kept; one that never did makes room
       const other = await fetch(`http://127.0.0.1:${full.address().port}/evm-pool/keeper/receive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chainId: CHAIN_ID, npk: '99', feeBps: 25 }) });
       assert.equal(other.status, 503, 'a new box at capacity is refused');
     } finally { full.close(); }
@@ -940,7 +949,7 @@ await test('a keeper that cannot front a send says so on /quote and /relay (503)
   try {
     let r = await fetch(`${base}/quote`);
     assert.equal(r.status, 503);
-    assert.match((await r.json()).error, /can't take this one right now; send it from your own wallet/);
+    assert.match((await r.json()).error, /relay is busy with other sends.*your own wallet/);
     r = await fetch(base + '/relay', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(relayTx()) });
     assert.equal(r.status, 503);
     assert.equal(chain.sent.length, 0, 'nothing was sent');

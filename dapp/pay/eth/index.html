@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-3IFgpzaPJfT8FuoSle3BrRjlCfpwE09qJyr0syyIOOo=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-XLHTKw/4XhYwdmPJDb6resr9DDOmEB4y1hRvybzlY1A=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -590,13 +590,13 @@ const sayErr = (el, e) => say(el, html`<span class="err">${errText(e)}</span>`);
 // ── pool modules, loaded once, right after the page ──────────────────────────────────────────────────────
 const mods = lazy(async () => {
   const [zkm, wm, gw, pm, pos] = await Promise.all([
-    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=7e89465f'), import('/evm-pool-gateway.js'),
+    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=09d06f1f'), import('/evm-pool-gateway.js'),
     import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
   ]);
   const PO = { 2: pos.poseidon2, 3: pos.poseidon3, 4: pos.poseidon4, 5: pos.poseidon5, 7: pos.poseidon7 };
   return {
     zk: zkm.makeEvmPoolZk({ poseidon: (xs) => PO[xs.length](xs) }), poolAsset: zkm.poolAsset, extDataHash: zkm.extDataHash,
-    evmPoolKeys: wm.evmPoolKeys, makeEvmPoolWallet: wm.makeEvmPoolWallet, jsonRpc: wm.jsonRpc, openNotes: wm.openNotes, sealNote: wm.sealNote, recipientOf: wm.recipientOf, paymentKey: wm.paymentKey, verifyPayment: wm.verifyPayment,
+    evmPoolKeys: wm.evmPoolKeys, makeEvmPoolWallet: wm.makeEvmPoolWallet, jsonRpc: wm.jsonRpc, openNotes: wm.openNotes, sealNote: wm.sealNote, recipientOf: wm.recipientOf, paymentKey: wm.paymentKey, PAYMENT_ATTEMPTS: wm.PAYMENT_ATTEMPTS, verifyPayment: wm.verifyPayment,
     receiveKeys: gw.receiveKeys, receiveBoxAddress: gw.receiveBoxAddress, RECEIVE_FEE_BPS: gw.RECEIVE_FEE_BPS, vkHash: pm.vkHash,
   };
 });
@@ -756,7 +756,7 @@ async function setKey(k) {
   warmIfSaved();
   const { priv, ...pub } = S.key;
   if (k.mode === 'key') writeJson(PAY_ID, null); else writeJson(PAY_ID, pub);
-  paintWallet(); renderApp(); paintRecover(); readPoints(true);
+  paintWallet(); renderApp(); paintRecover(); paintPoints();
   toast(`Opened ${short(UNIFIED_LIVE ? unifiedAddress() : keys.address, 8)}`);
   syncAll(true);
   historyAll();
@@ -888,14 +888,14 @@ async function connectWallet() {
   const a = '0x' + address;
   if (S.key?.mode === 'eth' && lc(S.key.address) !== a) lock();
   S.provider = provider; S.wallet = a;
-  paintWallet(); renderForm(); readPoints(true);
+  paintWallet(); renderForm(); paintPoints();
   return a;
 }
 window.addEventListener('tacit:evm-accounts', (e) => {
   const a = (e.detail?.accounts || [])[0];
   S.wallet = a ? lc(a) : null;
   if (S.key?.mode === 'eth' && lc(S.key.address) !== S.wallet) { lock(); toast('Your wallet switched accounts, so the key it opened was locked.'); }
-  paintWallet(); renderForm(); readPoints(true);
+  paintWallet(); renderForm(); paintPoints();
 });
 async function ensureChain(id) {
   const want = '0x' + id.toString(16);
@@ -1156,8 +1156,10 @@ async function scanHistory(c, onStep) {
   const provable = (t, ours) => {
     for (const k of [0, 1]) {
       if (ours.has(k) || t.outLeaf[k] === 0n || t.memo[k]?.length !== 65) continue;
-      const e = m.paymentKey(keys, { chainId: c.chainId, nf: t.nf[0], k });
-      if (bytesToHex(secp.ProjectivePoint.BASE.multiply(e).toRawBytes(true)) === bytesToHex(t.memo[k].subarray(0, 33))) return { k, e };
+      for (let attempt = 0; attempt < m.PAYMENT_ATTEMPTS; attempt++) {
+        const e = m.paymentKey(keys, { chainId: c.chainId, nf: t.nf[0], k, attempt });
+        if (bytesToHex(secp.ProjectivePoint.BASE.multiply(e).toRawBytes(true)) === bytesToHex(t.memo[k].subarray(0, 33))) return { k, e };
+      }
     }
     return null;
   };
@@ -1505,7 +1507,7 @@ async function act(btn, fn) {
   }
   const st = CH[c.chainId], again = st.deferred;
   st.deferred = false;
-  if (ok) { syncChain(c, true).then(() => historyOf(c, true)); setTimeout(() => readPoints(true), 90_000); }
+  if (ok) { syncChain(c, true).then(() => historyOf(c, true)); }
   else if (again) syncChain(c, true);
 }
 const done = (c, h, text) => { say($('#status'), html`<span class="ok">${text}</span> ${txLink(c, h)}`); toast(text); };
@@ -2042,9 +2044,15 @@ async function bridgeQuote(dest) {
 // #pay=<bp1…>&n=<deposit-address key, hex>&amount=&chain=&for=. The pool address takes a private payment; n names the
 // payee's deposit address (receiveBoxOf(n, 25)), so a payer with only an ordinary wallet can pay too.
 const npkHex = (v) => BigInt(v).toString(16).padStart(64, '0');
-function payLink({ bp, n, amount, chain, note }) {
+// ns is the payee's signature over n under their view key (the key inside the pool address), so a payer's page can
+// tell that the deposit address in a link is the one the payee made; a link without a valid one pays the pool address.
+const BOX_TAG = new TextEncoder().encode('tacit-pay-box-v1');
+const boxDigest = (npk) => keccak_256(concatBytes(BOX_TAG, hexToBytes(npkHex(npk))));
+const signBox = (v, npk) => secp.sign(boxDigest(npk), hexToBytes(npkHex(v))).toCompactHex();
+const boxSigOk = (V, nHex, sigHex) => { try { return secp.verify(sigHex, boxDigest(BigInt('0x' + nHex)), V.toRawBytes(true)); } catch { return false; } };
+function payLink({ bp, n, ns, amount, chain, note }) {
   const q = new URLSearchParams({ pay: bp });
-  if (n != null) q.set('n', npkHex(n));
+  if (n != null) { q.set('n', npkHex(n)); if (ns) q.set('ns', ns); }
   if (amount) q.set('amount', plain(amount));
   q.set('chain', chain.key);
   if (note) q.set('for', note);
@@ -2074,7 +2082,7 @@ function formReceive(f) {
   if (UNIFIED_LIVE) nameUpgrade().then((plan) => { const el = $('#f-up'); if (plan && el?.isConnected) { mount(el, upgradeView(plan)); wireUpgrade(el, plan, () => mount(el, html``)); } });
   $$('[data-copy]', f).forEach((b) => b.onclick = () => copy(b.dataset.copy));
   if (!box) return;
-  const link = () => payLink({ bp: UNIFIED_LIVE ? unifiedAddress() : S.key.bp, n: box.npk, amount: parseUnits($('#f-ramt').value), chain: c, note: $('#f-rfor').value.trim() });
+  const link = () => payLink({ bp: UNIFIED_LIVE ? unifiedAddress() : S.key.bp, n: box.npk, ns: signBox(S.keys.v, box.npk), amount: parseUnits($('#f-ramt').value), chain: c, note: $('#f-rfor').value.trim() });
   let last = '';
   FORM.check = () => { const l = link(); if (l === last) return; last = l; mount($('#f-qr'), qrSvg(l)); };
   $('#f-link').onclick = () => copy(link(), 'Payment link copied');
@@ -2156,7 +2164,10 @@ async function payFromWallet(btn) {
       const c = S.chain, a = r.amount ?? parseUnits($('#req-amt')?.value);
       if (!a) throw new Error('Enter an amount.');
       if (!r.n) return await shieldTo(r, a, c);
-      const m = await mods(), npk = BigInt('0x' + r.n), box = m.receiveBoxAddress(npk, m.RECEIVE_FEE_BPS, ROUTER), rpc = await rpcOn(c);
+      const m = await mods();
+      const dto = await resolveRecipient(r.bp), payee = dto.bp ? m.recipientOf(await spareKeys(), dto.bp) : null;
+      if (!r.ns || !payee || !boxSigOk(payee.V, r.n, r.ns)) return await shieldTo(r, a, c);
+      const npk = BigInt('0x' + r.n), box = m.receiveBoxAddress(npk, m.RECEIVE_FEE_BPS, ROUTER), rpc = await rpcOn(c);
       const q = await keeperJson(c, '/quote').catch(() => null);
       const min = q?.receiveMin ? ((BigInt(q.receiveMin) + 10n ** 12n - 1n) / 10n ** 12n) * 10n ** 12n : 0n;
       if (a < min) throw new Error(`On ${c.full}, a payment from a wallet needs at least ${fmt(min, 18, 6)} ETH for the relay to move it in. Pay privately, or send more.`);
@@ -2334,10 +2345,12 @@ function paintPoints() {
         <div><b class="num">${fmt(v.owed, 18, 2)}</b><span>TAC to claim</span></div>
       </div>
       ${v.pp ? html`<p class="note ok">Your Privacy Pools boost is on.</p>` : ''}`
-      : html`<p class="note"><span class="sk" style="--w:14ch"></span></p>`)
+      : PTS.reading ? html`<p class="note"><span class="sk" style="--w:14ch"></span></p>`
+      : html`<p class="note">Looking up points sends your wallet address to Tacit from this connection, so it is not done automatically. <button class="link" type="button" id="pts-show">Show my points</button></p>`)
     : html`<p class="note">Connect the wallet you deposit from to see its points.</p>`}
     <div class="foot-a"><a class="link" href="/weld/#points">${v?.owed > 0n ? 'Claim your TAC on weld ↗' : 'Track and claim on weld ↗'}</a>${S.wallet ? '' : html`<button class="link" type="button" id="pts-conn">Connect a wallet</button>`}</div>`);
-  $('#pts-conn')?.addEventListener('click', () => connectWallet().then(() => readPoints(true)).catch((e) => toast(errText(e), true)));
+  $('#pts-show')?.addEventListener('click', () => { readPoints(true); paintPoints(); });
+  $('#pts-conn')?.addEventListener('click', () => connectWallet().then(() => paintPoints()).catch((e) => toast(errText(e), true)));
 }
 
 // ── the device card ──────────────────────────────────────────────────────────────────────────────────────
@@ -2603,7 +2616,7 @@ function applyHash() {
   if (words.includes('link')) S.sendMode = 'link';
   if (c) { S.chain = c; writeJson(CHAIN_PREF, c.chainId); if (c.chainId !== 1) S.dest = 'addr'; }
   if (bp) {
-    REQ.v = { bp, n: /^[0-9a-f]{1,64}$/.test(n) ? n : null, amount, note: (q.get('for') || '').trim().slice(0, 60) };
+    REQ.v = { bp, n: /^[0-9a-f]{1,64}$/.test(n) ? n : null, ns: /^[0-9a-f]{128}$/i.test((q.get('ns') || '').trim()) ? q.get('ns').trim() : null, amount, note: (q.get('for') || '').trim().slice(0, 60) };
     DRAFT['f-to'] = bp; if (amount) DRAFT['f-amt'] = plain(amount);
     S.tab = 'send';
   } else if (tab && TABS.some(([k]) => k === tab)) S.tab = tab;

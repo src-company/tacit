@@ -45,6 +45,8 @@ export function openKeeperStore(dbPath) {
     pending: db.prepare("SELECT COUNT(*) AS n FROM intents WHERE status = 'pending' AND kind != 'receive'"),
     receiving: db.prepare("SELECT COUNT(*) AS n FROM intents WHERE status = 'pending' AND kind = 'receive'"),
     lapsed: db.prepare("SELECT box FROM intents WHERE status = 'pending' AND kind = 'receive' AND deadline < ? AND COALESCE(note, '') != 'swept' ORDER BY deadline LIMIT 1"),
+    unfunded: db.prepare("SELECT box FROM intents WHERE status = 'pending' AND kind = 'receive' AND funded_at IS NULL AND COALESCE(note, '') != 'swept' ORDER BY created LIMIT 1"),
+    unfundedPending: db.prepare("SELECT box FROM intents WHERE status = 'pending' AND kind != 'receive' AND funded_at IS NULL ORDER BY created LIMIT 1"),
     leafCount: db.prepare('SELECT COUNT(*) AS n FROM leaves'),
     leaves: db.prepare('SELECT leaf FROM leaves ORDER BY idx'),
     insLeaf: db.prepare('INSERT INTO leaves (idx, leaf, block) VALUES (?, ?, ?)'),
@@ -77,9 +79,19 @@ export function openKeeperStore(dbPath) {
     // Boxes awaiting completion; receive boxes, which are watched indefinitely, are counted apart.
     pendingCount: () => st.pending.get().n,
     receiveCount: () => st.receiving.get().n,
-    // Drops the receive box whose watch lapsed longest ago and that was never swept; false if there is none.
+    // Makes room for a new receive box: drops the one whose watch lapsed longest ago and that was never swept, else
+    // the oldest one that has never held funds (so registrations that fill the table without paying cannot lock
+    // out new users); false if there is none.
     evictLapsedReceive(now) {
-      const r = st.lapsed.get(now);
+      const r = st.lapsed.get(now) ?? st.unfunded.get();
+      if (!r) return false;
+      db.prepare('DELETE FROM intents WHERE box = ?').run(r.box);
+      return true;
+    },
+
+    // At capacity, drops the oldest deposit or wrap intent whose box has never held funds; false if there is none.
+    evictUnfundedPending() {
+      const r = st.unfundedPending.get();
       if (!r) return false;
       db.prepare('DELETE FROM intents WHERE box = ?').run(r.box);
       return true;

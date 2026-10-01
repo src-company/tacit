@@ -107,13 +107,25 @@ payments again from the key alone (`paymentKey`); a deposit's are random, as are
 wallet below:
 
 ```
-e_k = HMAC-SHA256(sha256("tacit-evm-pool-eph-v1" ‖ be256(v)), be256(chainId) ‖ be256(nf0) ‖ k) mod n
+e_k = HMAC-SHA256(sha256("tacit-evm-pool-eph-v1" ‖ be256(v)), be256(chainId) ‖ be256(nf0) ‖ k [‖ a]) mod n
       v = the sender's view scalar, nf0 = the spend's first nullifier, k = the output (0 or 1)
+      a = the attempt, one byte 1 to 15, appended only when non-zero
 ```
+
+A spend that never landed and is built again from the same note (a new quote, so a new change amount) takes the next
+attempt, so two memos never share a one-time key or a keystream. The wallet remembers the count with its state and
+looks through attempts 0 to 15 when it finds its payments again. Attempt 0 is the plain form above, so existing
+proofs are unchanged.
 
 A payment proof is `(chain, tx, k, e_k)`. Anyone holding the recipient's address checks it (`verifyPayment`):
 `e_k·G` is the memo's `pk_eph`, the memo opens under `s = compress(e_k·V)`, and the note it opens to is the output's
 leaf. It shows nothing about any other address.
+
+A payment request link (`#pay=<address>&n=<npk>&ns=<sig>&amount=`) names the payee's deposit address by `n`
+(`receiveBoxOf(n, 25)`) and signs it: `ns` is a secp256k1 signature, under the view key inside the pool address, over
+`keccak256("tacit-pay-box-v1" ‖ be256(n))`. A payer's page pays the deposit address only when the signature checks
+against the address in the link; otherwise it pays the pool address directly, so a link whose `n` was swapped cannot
+redirect a payment.
 
 A payment link hands over a key of its own, whose pool balance holds the payment:
 
@@ -271,8 +283,11 @@ key material; it does not let anyone spend the note or link its later spends.
 
 A user never needs gas or a funded address: a relayer submits the transaction and is paid `fee` out of the
 user's shielded funds in the same call. The proof binds `relayer` and `fee` (with recipient, amount and memos), so
-a relayer cannot redirect the funds or raise its fee, and a copy of the transaction submitted by anyone else still
-pays the named relayer. Withdrawing to a fresh, empty address through a relayer leaves no on-chain link to the
+a relayer cannot redirect the funds or raise its fee after it is signed, and a copy of the transaction submitted by anyone else still
+pays the named relayer. Before signing, the wallet checks the relayer's quote: it must name this chain and pool and
+the relayer address the wallet expects for the chain, and the fee must be within a per-chain ceiling (0.05 ETH on
+Ethereum, 0.002 ETH on Base and Robinhood Chain; a chain config can set `relayer` and `maxRelayFee`), so a compromised
+relayer cannot quote more than that. Withdrawing to a fresh, empty address through a relayer leaves no on-chain link to the
 depositor's wallet.
 
 With the keeper service:
@@ -320,6 +335,14 @@ wallet as one ES module with no imports: key derivation, note scanning, proving 
 from a Blob) and submission. It checks the ceremony files against their pinned hashes before it uses them. It is
 served at `https://tacit.finance/evm-pool/tacit-evm-pool-wallet.js` with `Access-Control-Allow-Origin: *`, as are the
 ceremony files beside it.
+
+Current build: sha256 `575e5946506acc3629fec4fa0a1cc3045bf1514fd42c85d012d2286714f8a671`, IPFS
+`bafybeiapmcpttuoiick3mugbpm477ipdqmu43iu47ki7grz4pxssdjpa54` (pinned on Filebase). The build is deterministic from
+the repository: `node build/build-evm-pool-wallet.mjs` prints the same hash.
+
+The wallet keeps its synced state in storage sealed under a key from the wallet's view scalar, finds history through
+the keeper's feed and checks it against the pool (`rootSize`), rebuilds from chain logs alone once a week to catch
+anything a feed left out, and never sends a note's nullifier to a node to ask whether it is spent.
 
 ```js
 import { makeEvmPoolWallet } from './tacit-evm-pool-wallet.js';

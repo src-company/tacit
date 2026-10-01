@@ -1,6 +1,6 @@
 // jsonRpc over several nodes, and the wallet's log scan against nodes with different eth_getLogs range limits.
 import assert from 'node:assert/strict';
-import { jsonRpc, makeEvmPoolWallet, evmPoolKeys, sealNote, openNote } from '../dapp/evm-pool-wallet.js';
+import { jsonRpc, makeEvmPoolWallet, evmPoolKeys, sealNote, openNote, paymentKey, sealState, openState } from '../dapp/evm-pool-wallet.js';
 import { poolAsset } from '../dapp/evm-pool-zk.js';
 import { makeEvmPoolZk } from '../dapp/evm-pool-zk.js';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7 } from 'poseidon-lite';
@@ -101,10 +101,47 @@ await check('state saved with every leaf and nullifier loads as a tree of unspen
   assert.equal(sum.leaves, 6);
   const w2 = makeEvmPoolWallet({ zk, keys, prove: null, store: { get: () => JSON.stringify({ block: 100, leaves: leaves.map(String), notes, spent: [spentNf] }), set: (k, v) => saved.set('new', v) }, chain: { chainId: 8453, pool: POOL, router: '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5', rpc: async (m) => (m === 'eth_blockNumber' ? '0x6e' : []), deployBlock: 0, confirmations: 0 } });
   await w2.sync();
-  const now = JSON.parse(saved.get('new'));
+  const now = JSON.parse(openState(keys.v, saved.get('new')));
   assert.ok(now.tree && !now.leaves && !now.spent, 'saved again as a tree, with no leaves or nullifier list');
   assert.deepEqual(Object.keys(now.tree.tracked), ['1'], 'only the unspent note keeps a path');
   assert.equal(now.tree.root, zk.tree(leaves).root.toString());
+});
+
+await check('a relayer quote for another chain or pool, an unexpected address, or an excessive fee is refused', async () => {
+  const POOLA = '0x000000c2A20657CE25f2Ba99737933D031AFBEE9', RELAYER = '0xfA2afbaB631C7Eda7CeA6AE1440605C504E322Ec';
+  const good = { chainId: 8453, pool: POOLA, relayer: RELAYER, fee: '5000000000000' };
+  const walletFor = (q) => makeEvmPoolWallet({
+    zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(5)), prove: null, store: null, keeper: 'https://k.test',
+    fetchImpl: async () => ({ ok: true, status: 200, headers: new Map(), json: async () => q }),
+    chain: { chainId: 8453, pool: POOLA, router: '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5', rpc: async () => '0x0', deployBlock: 0, confirmations: 0 },
+  });
+  assert.equal((await walletFor(good).quote()).fee, good.fee);
+  for (const [why, q] of [
+    ['chain', { ...good, chainId: 1 }], ['pool', { ...good, pool: '0x1111111111111111111111111111111111111111' }],
+    ['relayer', { ...good, relayer: '0x2222222222222222222222222222222222222222' }],
+    ['fee', { ...good, fee: (10n ** 18n).toString() }], ['fee format', { ...good, fee: '-1' }],
+  ]) await assert.rejects(() => walletFor(q).quote(), /nothing was signed/, why);
+});
+
+await check('saved state is ciphertext at rest, opens only under its own key, and fails its tag if altered; plain JSON still loads', async () => {
+  const keys = evmPoolKeys(zk, new Uint8Array(32).fill(9));
+  const text = JSON.stringify({ block: 5, notes: [{ v: '123456789' }] });
+  const sealedText = sealState(keys.v, text);
+  assert.ok(sealedText.startsWith('enc1:') && !sealedText.includes('123456789'));
+  assert.equal(openState(keys.v, sealedText), text);
+  assert.equal(openState(keys.v + 1n, sealedText), null);
+  assert.equal(openState(keys.v, sealedText.slice(0, -2) + (sealedText.endsWith('00') ? '11' : '00')), null);
+  assert.notEqual(sealState(keys.v, text), sealedText, 'a fresh nonce each time');
+  assert.equal(openState(keys.v, text), text);
+});
+
+await check('a spend built again from the same note takes another one-time key, and attempt 0 is the plain derivation', async () => {
+  const k = evmPoolKeys(zk, new Uint8Array(32).fill(5)), nf = 12345n;
+  const e0 = paymentKey(k, { chainId: 1, nf, k: 0 });
+  assert.equal(e0, paymentKey(k, { chainId: 1, nf, k: 0, attempt: 0 }));
+  const seen = new Set([e0]);
+  for (let a = 1; a < 16; a++) seen.add(paymentKey(k, { chainId: 1, nf, k: 0, attempt: a }));
+  assert.equal(seen.size, 16);
 });
 
 console.log(`\n${n} checks passed`);

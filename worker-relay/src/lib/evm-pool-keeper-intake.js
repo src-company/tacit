@@ -331,7 +331,7 @@ export function createIntakeHandler({
       log(`watching receive box ${box} (fee cap ${parsed.intent.feeBps} bps)`);
       return view(store.get(box));
     }
-    if (store.pendingCount() >= cfg.maxPending) throw new IntakeError(503, 'the keeper is at capacity; try again later');
+    if (store.pendingCount() >= cfg.maxPending && !store.evictUnfundedPending()) throw new IntakeError(503, 'the keeper is at capacity; try again later');
     if (kind === 'deposit') {
       parsed = parseDepositSubmission(body, { zk, asset: assetField, now: t, cfg });
       box = await chain.depositBoxOf(parsed.intent);
@@ -372,7 +372,7 @@ export function createIntakeHandler({
   // that would fail. Its own fees refill it once it is running.
   async function mustFront(gas) {
     const room = chain.canFront ? await chain.canFront(gas) : { ok: true };
-    if (!room.ok) throw new IntakeError(503, "the relay can't take this one right now; send it from your own wallet, or try again later");
+    if (!room.ok) throw new IntakeError(503, "the relay is busy with other sends; try again in a minute. Sending it from your own wallet also works, and shows your address as the sender");
   }
 
   // The fee for `gas` (default relayGas; a withdrawal that also runs calls asks for more), within the gas cap.

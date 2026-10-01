@@ -28,6 +28,16 @@ const TAG_MAC = te.encode('tacit-evm-pool-aead-tag-v1');
 const TAG_EPH = te.encode('tacit-evm-pool-eph-v1');
 const SEED_TAG = te.encode('tacit-btc-pool-seed-v1');
 const ZERO = '0x0000000000000000000000000000000000000000';
+
+// The relayer addresses and the most a relayed spend may pay, per chain. A quote is signed into the proof, so the
+// wallet refuses one from another chain or pool, from an unexpected address, or above the ceiling. A chain config
+// may override with `relayer` and `maxRelayFee`.
+const RELAYERS = {
+  1: '0x7c9f8aE4e48Cbb2727F95b6477a1cf92bCFc43D0',
+  8453: '0xfA2afbaB631C7Eda7CeA6AE1440605C504E322Ec',
+  4663: '0xc1F8DAc6BC910A5A794b4795b5F9997e0E8A5Fad',
+};
+const MAX_RELAY_FEE = { 1: 5n * 10n ** 16n, 8453: 2n * 10n ** 15n, 4663: 2n * 10n ** 15n };
 const VMAX = 1n << 120n;
 const G = secp.ProjectivePoint.BASE;
 const N_SECP = secp.CURVE.n;
@@ -66,6 +76,34 @@ function open(s, sealed) {
   if (!eq(sealed.subarray(16, 32), keccak_256(concatBytes(TAG_MAC, k, ct)).subarray(0, 16))) return null;
   const ks = keccak_256(concatBytes(k, new Uint8Array(2))).subarray(0, 16);
   return toBig(ct.map((b, i) => b ^ ks[i]));
+}
+
+// Saved-state sealing: "enc1:" ‖ hex(nonce16 ‖ ciphertext ‖ tag16), a keccak counter-mode stream and tag under keys
+// from the view scalar. openState returns the plain text, passes stored plain JSON through, and null for anything
+// that fails its tag.
+const TAG_STATE = te.encode('tacit-evm-pool-state-v1');
+const stateKeys = (v, nonce) => ({
+  enc: keccak_256(concatBytes(TAG_STATE, Uint8Array.of(1), word(v), nonce)),
+  mac: keccak_256(concatBytes(TAG_STATE, Uint8Array.of(2), word(v), nonce)),
+});
+function stateStream(enc, n) {
+  const out = new Uint8Array(Math.ceil(n / 32) * 32);
+  for (let i = 0; i * 32 < n; i++) out.set(keccak_256(concatBytes(enc, be(BigInt(i), 4))), i * 32);
+  return out.subarray(0, n);
+}
+export function sealState(v, text) {
+  const nonce = crypto.getRandomValues(new Uint8Array(16)), pt = te.encode(text), { enc, mac } = stateKeys(v, nonce);
+  const ks = stateStream(enc, pt.length), ct = pt.map((b, i) => b ^ ks[i]);
+  return 'enc1:' + hex(concatBytes(nonce, ct, keccak_256(concatBytes(mac, ct)).subarray(0, 16)));
+}
+export function openState(v, stored) {
+  if (!stored || !stored.startsWith('enc1:')) return stored || null;
+  const b = unhex(stored.slice(5));
+  if (b.length < 32) return null;
+  const nonce = b.subarray(0, 16), ct = b.subarray(16, b.length - 16), { enc, mac } = stateKeys(v, nonce);
+  if (!eq(b.subarray(b.length - 16), keccak_256(concatBytes(mac, ct)).subarray(0, 16))) return null;
+  const ks = stateStream(enc, ct.length);
+  return new TextDecoder().decode(ct.map((x, i) => x ^ ks[i]));
 }
 
 // An output note of `value` for a recipient { V (secp point), A, N (BabyJub) }: { v, npk, rho, leaf, memo }.
@@ -107,13 +145,18 @@ export function openNotes(zk, keys, items) {
 }
 
 // The one-time key e of output `k` of a spend whose first input has nullifier `nf`, on `chainId`:
-//   e = HMAC-SHA256(key = sha256("tacit-evm-pool-eph-v1" ‖ be32(v)), msg = be32(chainId) ‖ be32(nf) ‖ k) mod n
-// A nullifier is spent once, so e never repeats; and the sender (or a holder of its view key) can derive it again
+//   e = HMAC-SHA256(key = sha256("tacit-evm-pool-eph-v1" ‖ be32(v)), msg = be32(chainId) ‖ be32(nf) ‖ k [‖ attempt]) mod n
+// A nullifier is spent once, so e never repeats across spends. A spend that never landed and is built again from the
+// same note (another quote, so another change) takes the next `attempt` (1 to 15, appended to the message; attempt 0
+// is the plain form), so two memos never share a keystream. The sender (or a holder of its view key) can derive it again
 // from the key alone, to prove the payment to anyone who knows the recipient's address (verifyPayment). Deposits
 // have no input and use a random e.
-export function paymentKey(keys, { chainId, nf, k }) {
+export const PAYMENT_ATTEMPTS = 16;
+const RESCAN_EVERY_MS = 7 * 24 * 3600 * 1000;
+export function paymentKey(keys, { chainId, nf, k, attempt = 0 }) {
   const key = sha256(concatBytes(TAG_EPH, word(keys.v)));
-  const e = toBig(hmac(sha256, key, concatBytes(word(BigInt(chainId)), word(BigInt(nf)), Uint8Array.of(k)))) % N_SECP;
+  const msg = concatBytes(word(BigInt(chainId)), word(BigInt(nf)), Uint8Array.of(k), attempt ? Uint8Array.of(attempt) : new Uint8Array());
+  const e = toBig(hmac(sha256, key, msg)) % N_SECP;
   if (!e) throw new Error('evm-pool-wallet: degenerate payment key');
   return e;
 }
@@ -227,10 +270,10 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
 
   // State: { block, tree (an incTree tracking each unspent owned note), notes (unspent), nextRefund }. The tree keeps
   // the pool's right edge and owned paths only, so state stays small however large the pool grows.
-  const blank = () => ({ block: Number(chain.deployBlock ?? 0) - 1, tree: zk.incTree(), notes: [], nextRefund: 1 });
+  const blank = () => ({ block: Number(chain.deployBlock ?? 0) - 1, tree: zk.incTree(), notes: [], nextRefund: 1, attempts: {} });
   let saved = blank();
   try {
-    const j = store?.get(skey);
+    const j = openState(keys.v, store?.get(skey));
     if (j) {
       const o = JSON.parse(j);
       let tree;
@@ -239,7 +282,7 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
         tree = zk.incTree();
         tree.append((o.leaves || []).map(BigInt), (o.notes || []).map((n) => n.index));
       }
-      saved = { nextRefund: 1, ...o, tree };
+      saved = { nextRefund: 1, attempts: {}, ...o, tree };
       delete saved.leaves;
       delete saved.spent;
     }
@@ -263,18 +306,30 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   saved = { ...saved, notes: saved.notes.map(withKeys) };
   { // state saved with every nullifier: keep only the notes still unspent
     let old = null;
-    try { old = JSON.parse(store?.get(skey) || 'null')?.spent; } catch {}
+    try { old = JSON.parse(openState(keys.v, store?.get(skey)) || 'null')?.spent; } catch {}
     if (old) {
       const s = new Set(old);
       for (const n of saved.notes) if (s.has(n.nf)) saved.tree.untrack(n.index);
       saved.notes = saved.notes.filter((n) => !s.has(n.nf));
     }
   }
+  // The stored state is sealed under a key from the wallet's view scalar, so another script on this origin reading
+  // storage finds balances and note positions only as ciphertext. A state saved before this loads as plain JSON.
   const persist = () => {
     const bare = { ...saved, tree: saved.tree.toJSON(), notes: saved.notes.map(({ sk, nk, nf, ...rest }) => rest) };
-    try { store?.set(skey, JSON.stringify(bare)); } catch {}
+    try { store?.set(skey, sealState(keys.v, JSON.stringify(bare))); } catch {}
   };
   const noteKey = (n) => `${n.index}`;
+  // The attempt number of the next spend built from the note with nullifier `nf` (see paymentKey), remembered with the
+  // state so a reload does not start over; the table keeps the latest 64 notes.
+  function nextAttempt(nf) {
+    const k = String(nf), a = saved.attempts[k] ?? 0;
+    delete saved.attempts[k];
+    saved.attempts[k] = (a + 1) % PAYMENT_ATTEMPTS;
+    for (const old of Object.keys(saved.attempts).slice(0, -64)) delete saved.attempts[old];
+    persist();
+    return a;
+  }
 
   // Appends `transacts` to a copy of `state`, keeping a path for each leaf found to be ours: a memo that opens, or
   // the leaf a Received event of one of our boxes names (the same transaction, so the same batch).
@@ -349,9 +404,10 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   const view32 = async (sig, types, values) => chain.rpc('eth_call', [{ to: chain.pool, data: calldata(sig, types, values) }, 'latest']);
 
   // Confirmed history from the keeper's feed, up to `safe`. A page is kept only if the tree it builds is one the pool
-  // has held at that size, so the feed cannot forge leaves; one isSpent call then drops any of our notes whose spend
-  // it left out. A feed that withholds a memo or a Received event can hide a note until rescan(); it cannot move
-  // funds. Any failure leaves `saved` as it was, for the chain-log scan to continue from.
+  // has held at that size, so the feed cannot forge leaves. No nullifier is sent to a node to ask whether it is
+  // spent: a spend the feed left out shows when the chain-log scan reaches it, or as a refused spend, which rescans.
+  // A feed that withholds a memo or a Received event can hide a note, so a chain-log rescan runs every
+  // RESCAN_EVERY_MS; it cannot move funds. Any failure leaves `saved` as it was, for the chain-log scan to continue from.
   async function syncFromFeed(safe) {
     boxTopics();
     let cand = saved;
@@ -378,16 +434,25 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       cand = next;
     }
     if (cand === saved) return;
-    if (cand.notes.length) {
-      const out = unhex(await view32('isSpent(bytes32[])', [{ array: 'bytes32' }], [cand.notes.map((n) => BigInt(n.nf))]));
-      const spentNow = new Set(cand.notes.filter((_, i) => out[64 + 32 * i + 31] === 1).map((n) => n.index));
-      if (spentNow.size) {
-        const tree = cand.tree.clone();
-        for (const i of spentNow) tree.untrack(i);
-        cand = { ...cand, tree, notes: cand.notes.filter((n) => !spentNow.has(n.index)) };
-      }
-    }
     saved = cand;
+    persist();
+  }
+
+  // Rebuilds the state from chain logs alone up to `safe` and adopts it when it holds notes the feed's state lacks
+  // (a feed that withheld a memo or a Received event). The rebuilt tree must be one the pool has held.
+  async function chainCheck(safe) {
+    boxTopics();
+    const [tlogs, rlogs] = await Promise.all([
+      logs(chain.pool, [TRANSACT_TOPIC], Number(chain.deployBlock ?? 0), safe),
+      logs(chain.router, [RECEIVED_TOPIC, boxTopics()], Number(chain.deployBlock ?? 0), safe),
+    ]);
+    const ts = tlogs.map(decodeTransact).sort((a, b) => a.block - b.block || a.firstIndex - b.firstIndex);
+    const full = { ...absorb({ ...blank(), nextRefund: saved.nextRefund }, ts, rlogs.map(decodeReceived)), block: saved.block };
+    if (full.tree.size !== saved.tree.size) return;
+    if (BigInt(await view32('rootSize(bytes32)', ['bytes32'], [full.tree.root])) !== BigInt(full.tree.size)) return;
+    const have = new Set(saved.notes.map((n) => n.index));
+    if (full.notes.some((n) => !have.has(n.index))) saved = { ...full, attempts: saved.attempts, nextRefund: Math.max(saved.nextRefund, full.nextRefund) };
+    saved.checkedAt = Date.now();
     persist();
   }
 
@@ -403,7 +468,10 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   async function readNew() {
     const tip = Number(BigInt(await chain.rpc('eth_blockNumber')));
     const safe = tip - confirmations;
-    if (keeper && feed && saved.block < safe) await syncFromFeed(safe).catch(() => {});
+    if (keeper && feed && saved.block < safe) {
+      const fed = await syncFromFeed(safe).then(() => true, () => false);
+      if (fed && saved.block >= safe && Date.now() - (saved.checkedAt ?? 0) > RESCAN_EVERY_MS) await chainCheck(safe).catch(() => {});
+    }
     const from = saved.block + 1;
     if (from > tip) return summary();
     const [tlogs, rlogs] = await Promise.all([
@@ -413,7 +481,12 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     const ts = tlogs.map(decodeTransact).sort((a, b) => a.block - b.block || a.firstIndex - b.firstIndex);
     const rs = rlogs.map(decodeReceived);
     if (safe >= from) {
-      saved = { ...absorb(saved, ts.filter((t) => t.block <= safe), rs.filter((r) => r.block <= safe)), block: safe };
+      const next = { ...absorb(saved, ts.filter((t) => t.block <= safe), rs.filter((r) => r.block <= safe)), block: safe };
+      if (next.tree.size !== saved.tree.size) {
+        const size = BigInt(await view32('rootSize(bytes32)', ['bytes32'], [next.tree.root]));
+        if (size !== BigInt(next.tree.size)) throw new Error('the node\'s logs do not match the pool');
+      }
+      saved = next;
       persist();
     }
     view = absorb(saved, ts.filter((t) => t.block > safe), rs.filter((r) => r.block > safe));
@@ -440,11 +513,25 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       await new Promise((ok) => setTimeout(ok, (Number(r.headers?.get?.('retry-after')) || 3) * 1000 * (0.5 + Math.random())));
     }
   }
+  const wantRelayer = (chain.relayer ?? RELAYERS[chain.chainId])?.toLowerCase();
+  const maxRelayFee = chain.maxRelayFee != null ? BigInt(chain.maxRelayFee) : MAX_RELAY_FEE[chain.chainId];
+  function vetQuote(q) {
+    if (Number(q.chainId) !== Number(chain.chainId) || String(q.pool).toLowerCase() !== chain.pool.toLowerCase()) {
+      throw new Error('the relayer quoted another chain or pool, so nothing was signed');
+    }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(q.relayer ?? '') || (wantRelayer && q.relayer.toLowerCase() !== wantRelayer)) {
+      throw new Error('the relayer quoted an address this wallet does not expect, so nothing was signed');
+    }
+    if (!/^\d+$/.test(String(q.fee)) || (maxRelayFee != null && BigInt(q.fee) > maxRelayFee)) {
+      throw new Error('the relayer quoted a fee above this wallet\'s limit, so nothing was signed');
+    }
+    return q;
+  }
   async function keeperGet(path) {
     const r = await keeperFetch(path);
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || `relayer returned ${r.status}`);
-    return j;
+    return path.startsWith('/quote') ? vetQuote(j) : j;
   }
   async function keeperPost(path, body) {
     const r = await keeperFetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -554,7 +641,8 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   // selfCall(tx) → { to, data }: what the signer submits, when not pool.transact (withdrawToV1).
   async function transact({ ins, outs, extAmount = 0n, recipient = ZERO, q = null, extra = {}, selfCall = null, onStep = () => {} }) {
     // A spend's outputs take one-time keys the sender can derive again (paymentKey); a deposit's are random.
-    const eOf = (k) => (ins.length ? paymentKey(keys, { chainId: chain.chainId, nf: BigInt(ins[0].nf), k }) : undefined);
+    const attempt = ins.length ? nextAttempt(ins[0].nf) : 0;
+    const eOf = (k) => (ins.length ? paymentKey(keys, { chainId: chain.chainId, nf: BigInt(ins[0].nf), k, attempt }) : undefined);
     const sealed = outs.map((o, k) => (o ? sealNote(zk, { to: o.to, value: o.value, asset, e: eOf(k) }) : null));
     const memo0 = sealed[0]?.memo ?? new Uint8Array(), memo1 = sealed[1]?.memo ?? new Uint8Array();
     const fee = q ? BigInt(q.fee) : 0n, relayer = q ? q.relayer : ZERO;
@@ -599,7 +687,18 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       }
       for (const n of ins) pending.delete(n.nf);
     }
+    // No round landed: rebuild the state from the chain, so a note a feed wrongly showed as unspent is dropped.
+    await rescanFromChain().catch(() => {});
     throw new Error('the pool kept moving; try again');
+  }
+
+  // Forgets the synced state and rebuilds it from chain logs alone (no feed).
+  async function rescanFromChain() {
+    await reading.catch(() => {});
+    const keep = { attempts: saved.attempts, nextRefund: saved.nextRefund };
+    saved = { ...blank(), ...keep }; view = null; persist();
+    const f = feed; feed = false;
+    try { return await sync(); } finally { feed = f; }
   }
 
   // The relayer's quote for a spend, or null when the signer submits it.
@@ -658,11 +757,15 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     // Sets the user's own wallet for self-submitted actions ({ address, send }, as the signer option).
     connect(s) { signer = s; },
     // Forgets the synced state and rebuilds it from chain logs alone (no feed).
-    async rescan() {
-      await reading.catch(() => {});
-      saved = blank(); view = null; persist();
-      const f = feed; feed = false;
-      try { return await sync(); } finally { feed = f; }
+    rescan: () => rescanFromChain(),
+    // Whether this chain's receive address can be shown: the pool and router have code, and the router's own box
+    // for this wallet is the address computed here.
+    async ready() {
+      const code = async (a) => (await chain.rpc('eth_getCode', [a, 'latest'])) !== '0x';
+      if (!(await code(chain.pool)) || !(await code(chain.router))) return false;
+      const npk = receiveKeys(zk, keys.zkWallet, RECEIVE_INDEX).npk;
+      const r = await chain.rpc('eth_call', [{ to: chain.router, data: calldata('receiveBoxOf(uint256,uint16)', ['uint256', 'uint16'], [npk, RECEIVE_FEE_BPS]) }, 'latest']);
+      return ('0x' + String(r).slice(-40)).toLowerCase() === box.toLowerCase();
     },
     quote: () => keeperGet('/quote'),
     // The receive box at `index` (0 is the private ETH address; later ones are one-time addresses, e.g. per payment
