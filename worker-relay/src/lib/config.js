@@ -625,6 +625,9 @@ export const CFG = {
   // its end (lib/points-settle-gate.js). A scanner that stays behind no longer holds rewards back after the
   // maximum wait.
   pointsSettleGraceSecs: num('POINTS_SETTLE_GRACE_SECS', 1800),
+  // One-off add-only ledger credits as a JSON array of { id, address, wei } (lib/points-adjustments.js). Each id is
+  // applied once; empty means none.
+  pointsLedgerAdjustments: opt('POINTS_LEDGER_ADJUSTMENTS', ''),
   pointsSettleMaxWaitSecs: num('POINTS_SETTLE_MAX_WAIT_SECS', 21600),
   // Hot wallet that calls updateRoot daily. Deliberately its own key, not RELAY_KEY/SETTLE_KEY — see
   // PointsDistributor.sol's header: a leak only exposes whatever is currently funded into the distributor,

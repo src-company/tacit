@@ -93,6 +93,15 @@ export function openStore(dbPath, { excluded = [] } = {}) {
       cumulative_wei TEXT NOT NULL
     );
 
+    -- One-off add-only credits already folded into reward_ledger (see lib/points-adjustments.js); the id is what
+    -- makes applying one idempotent.
+    CREATE TABLE IF NOT EXISTS reward_adjustments (
+      id         TEXT PRIMARY KEY,
+      address    TEXT NOT NULL,
+      wei        TEXT NOT NULL,
+      applied_at INTEGER NOT NULL
+    );
+
     -- Which UTC day-epochs (floor(unixSec/86400)) have been folded into reward_ledger, and the last root this
     -- process successfully got onto PointsDistributor. A day can be settled locally (advancing
     -- last_settled_day) well before its reward is actually claimable on-chain — see settleCycle's comment on
@@ -403,6 +412,20 @@ export function openStore(dbPath, { excluded = [] } = {}) {
     }
   });
 
+  const hasAdjustmentStmt = db.prepare(`SELECT 1 FROM reward_adjustments WHERE id = ?`);
+  const insertAdjustmentStmt = db.prepare(`INSERT INTO reward_adjustments (id, address, wei, applied_at) VALUES (@id, @address, @wei, @appliedAt)`);
+  const listAdjustmentsStmt = db.prepare(`SELECT id, address, wei, applied_at AS appliedAt FROM reward_adjustments ORDER BY applied_at, id`);
+
+  // Credits `wei` to `address` once per id; false when the id was already applied. Add-only, summed as a BigInt, and
+  // recorded in the same transaction so a crash cannot credit without remembering it (or the reverse).
+  const applyAdjustment = db.transaction(({ id, address, wei }) => {
+    if (wei <= 0n || hasAdjustmentStmt.get(id)) return false;
+    const row = getRewardStmt.get(address);
+    upsertRewardStmt.run({ address, cumulativeWei: ((row ? BigInt(row.cumulative_wei) : 0n) + wei).toString() });
+    insertAdjustmentStmt.run({ id, address, wei: wei.toString(), appliedAt: Math.floor(Date.now() / 1000) });
+    return true;
+  });
+
   function allRewards() {
     return allRewardsStmt.all();
   }
@@ -522,7 +545,7 @@ export function openStore(dbPath, { excluded = [] } = {}) {
 
   return {
     db, recordDeposit, loadCursor, saveCursor, leaderboard, totalFor, depositsFor, countByActivity,
-    dayPointsByAddress, applyDayRewards, allRewards, rewardFor,
+    dayPointsByAddress, applyDayRewards, applyAdjustment, listAdjustments: () => listAdjustmentsStmt.all(), allRewards, rewardFor,
     loadSettleState, saveSettleState, savePublishedClaims, claimFor,
     recordPpWithdrawal, hasEarlierPpWithdrawal, loadPpCursor, savePpCursor,
     loadCeCursor, saveCeCursor, loadZrouterCursor, saveZrouterCursor,

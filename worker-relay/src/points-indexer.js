@@ -13,6 +13,7 @@ import { publicClient, clientForChain } from './lib/chain.js';
 import { withNonceRetry } from './lib/nonce-retry.js';
 import { parseRateCapSchedule, rateCapForDay } from './lib/points-rate-cap.js';
 import { settleThroughDay as gateThroughDay } from './lib/points-settle-gate.js';
+import { parseAdjustments } from './lib/points-adjustments.js';
 import { dayPot, dayBoard, dayHistory, splitDayBudget } from './lib/points-day-board.js';
 import Database from 'better-sqlite3';
 import { openStore } from './lib/points-store.js';
@@ -126,6 +127,7 @@ const ROOT_SETTER_MIN_TIP_WEI = 50_000_000n; // 0.05 gwei — same floor as head
 const ROOT_SETTER_RECEIPT_TIMEOUT_MS = 300_000;
 
 const rateCapSchedule = parseRateCapSchedule(CFG.pointsRateCapSchedule, log);
+const ledgerAdjustments = parseAdjustments(CFG.pointsLedgerAdjustments, log);
 
 const WRAP_EVENT = {
   type: 'event',
@@ -1341,6 +1343,10 @@ export async function settleCycle(store, coverage = null) {
     store.saveSettleState(state);
   }
 
+  for (const adj of ledgerAdjustments) {
+    if (store.applyAdjustment(adj)) log(`ledger adjustment ${adj.id}: credited ${formatTac(adj.wei)} TAC to ${adj.address}`);
+  }
+
   if (!ADDR.pointsDistributor || !rootSetterWallet) return; // publishing not configured yet
 
   const rewards = store.allRewards();
@@ -1567,6 +1573,7 @@ function startHttp(store, evmState) {
           publishedRoot: state?.publishedRoot ?? null,
           publishedTotalWei: state?.publishedTotalWei ?? null,
           totalLedgerWei,
+          adjustments: store.listAdjustments().map((a) => ({ id: a.id, address: a.address, wei: a.wei, appliedAt: a.appliedAt })),
           rateCapSchedule: rateCapSchedule.map((e) => ({ fromDay: e.fromDay, maxWeiPerPoint: e.maxWeiPerPoint === null ? null : e.maxWeiPerPoint.toString() })),
           leaderboard,
         }));
