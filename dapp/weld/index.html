@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-lqPBb9hAOVWBh8VRGZKgdw8G9wvj8ilgebfuIE9VXtE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-BsdCmVwowT6YoD10CgMJOO5vs97AYb8zaZwr4x4MSZE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -234,7 +234,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 .bal .side { margin-left: auto; text-align: right; font-size: 12px; color: var(--mute); }
 
 .lbl { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--mute); margin: 14px 0 6px; }
-.lbl button { background: none; border: 0; padding: 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; }
+.lbl button { background: none; border: 0; padding: 7px 0; margin: -7px 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; }
 .lbl button:hover { color: var(--ink); }
 .amt { display: flex; align-items: center; background: var(--field); border: 1px solid var(--hair); border-bottom-color: var(--ink); }
 .amt:focus-within { border-color: var(--ink); }
@@ -2484,7 +2484,11 @@ function poolLine(where) {
 // Totals and holdings arrive after the form is drawn: fill the pool lines in place, and redo an open receipt.
 function outlookPaint() {
   for (const el of $$('[data-pool]')) mount(el, poolLine(el.dataset.pool));
-  for (const id of ['w-amt', 'd-amt']) { const i = $('#' + id); if (i?.value && $('#' + (id === 'w-amt' ? 'w-rcpt' : 'd-rcpt'))?.querySelector('[data-pts]')) i.dispatchEvent(new Event('input')); }
+  // A form's own check redraws its receipt with the figures just read; never while its action is running.
+  for (const [id, go, rc] of [['w-amt', 'w-go', 'w-rcpt'], ['d-amt', 'd-go', 'd-rcpt']]) {
+    const i = $('#' + id);
+    if (i?.value && $('#' + rc)?.querySelector('[data-pts]') && $('#' + go)?.getAttribute('aria-busy') !== 'true') i.dispatchEvent(new Event('input'));
+  }
 }
 
 // Wrap: one wallet transaction pays the deposit plus a relay tip; the relay then proves and settles the note.

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Q/G40w7fFTxS8QI0MySjBfVO/U6eKRJ+iu9allTuUS0=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-iFSwPCheOm+ap8tkYF1UL23omWYtoroeXTjrSvX7hiE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -139,6 +139,8 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .bal { display: flex; align-items: center; gap: 14px; padding: 14px 0; margin-bottom: 16px; border-top: 1px solid var(--hair); border-bottom: 1px solid var(--hair); }
 .bal .v { font: 500 30px/1.1 var(--mono); letter-spacing: -.02em; }
 .bal .u { color: var(--mute); font-size: 12.5px; }
+.poolstat { margin: -6px 0 16px; font-size: 12px; line-height: 1.5; color: var(--mute); min-height: 3em; }
+.poolstat[hidden] { display: none; }
 .req { padding: 16px; margin: 0 0 18px; background: var(--field); border: 1px solid var(--ink); }
 .req .lbl { margin-top: 0; }
 .req-a { font: 400 44px/1 var(--serif); letter-spacing: -.02em; margin: 4px 0 6px; }
@@ -152,7 +154,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .bal .side { margin-left: auto; text-align: right; font-size: 12px; color: var(--mute); }
 
 .lbl { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--mute); margin: 14px 0 6px; }
-.lbl button { background: none; border: 0; padding: 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; }
+.lbl button { background: none; border: 0; padding: 7px 0; margin: -7px 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; }
 .lbl button:hover { color: var(--ink); }
 .amt { display: flex; align-items: center; background: var(--field); border: 1px solid var(--hair); border-bottom-color: var(--ink); }
 .amt:focus-within { border-color: var(--ink); }
@@ -231,6 +233,7 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .chainsum li { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; font-size: 12.5px; border-bottom: 1px dashed var(--hair); }
 .chainsum li:last-child { border-bottom: 0; }
 .chainsum .n { min-width: 9ch; color: var(--ink); }
+.chainsum .num { white-space: nowrap; }
 .chainsum .s { margin-left: auto; color: var(--mute); text-align: right; }
 .modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0 0 18px; }
 .modes a { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 10px 12px; color: var(--ink); text-decoration: none; background: var(--field); border: 1px solid var(--hair); transition: border-color .15s, background .15s; }
@@ -379,6 +382,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
       <div class="req" id="due" hidden></div>
       <div class="seg" role="tablist" aria-label="Chain" id="chains"></div>
       <div class="bal" id="bal"></div>
+      <div class="poolstat" id="poolstat" aria-live="polite"></div>
       <div class="seg sub" role="tablist" aria-label="Action" id="tabs"></div>
       <div id="form"></div>
       <div class="status" role="status" aria-live="polite" id="status"></div>
@@ -1377,25 +1381,35 @@ function switchChain(c, tab = null) {
 function poolLine(c) {
   const q = PUB[c.chainId];
   const t = TALLY[c.chainId];
-  return q?.locked != null ? html`<div class="u mute">The pool on ${c.full} holds ${eth(q.locked)} ETH among ${q.notes} notes${t?.in ? html`; ${eth(t.in)} ETH has passed through it in ${t.deposits} deposits` : ''}.</div>` : '';
+  return q?.locked != null ? html`<div>The pool on ${c.full} holds ${eth(q.locked)} ETH among ${q.notes} notes${t?.in ? html`; ${eth(t.in)} ETH has passed through it in ${t.deposits} deposits` : ''}.</div>` : '';
+}
+// Its own row under the balance. It keeps its place while the pool is first read, so nothing below it moves under a
+// finger, and gives the space back if the read failed.
+function paintPoolStat() {
+  const el = $('#poolstat');
+  if (!el) return;
+  const c = S.chain, q = PUB[c.chainId], line = poolLine(c), total = S.key ? totalLine() : '';
+  el.hidden = !line && !total && !!(q && q.at);
+  mount(el, html`${total}${line}`);
 }
 function totalLine() {
   const known = CHAINS.map((x) => CH[x.chainId].bal).filter((b) => b != null);
   const total = known.reduce((a, b) => a + b, 0n);
   if (known.length < 2 || !total || total === cur().bal) return '';   // only when it says more than this chain's own
-  return html`<div class="u mute">${eth(total)} ETH private across ${known.length === CHAINS.length ? 'all three chains' : `${known.length} chains`}</div>`;
+  return html`<div>${eth(total)} ETH private across ${known.length === CHAINS.length ? 'all three chains' : `${known.length} chains`}</div>`;
 }
 function paintBal() {
   const c = S.chain, st = cur();
+  paintPoolStat();
   if (REQ.v && S.key && !REQ.v.paid && !REQ.v.state && REQ.v.pf !== privFirstFor(REQ.v)) paintReq();
   if (!S.key) {
     mount($('#bal'), html`<span class="pair"><svg class="tk md" aria-hidden="true"><use href="#tk-eth"/></svg><svg class="tk md" aria-hidden="true"><use href="#tk-peth"/></svg></span>
-      <div><div class="v t">Private ETH</div><div class="u">on ${c.full} · yours shows once a wallet is open</div>${poolLine(c)}</div>`);
+      <div><div class="v t">Private ETH</div><div class="u">on ${c.full} · yours shows once a wallet is open</div></div>`);
     return;
   }
   const v = st.bal != null ? eth(st.bal) : st.last != null ? html`<span class="stale">${eth(st.last)}</span>` : null;
   mount($('#bal'), html`<span class="pair"><svg class="tk md" aria-hidden="true"><use href="#tk-eth"/></svg><svg class="tk md" aria-hidden="true"><use href="#tk-peth"/></svg></span>
-    <div><div class="v num">${v ?? (st.err ? html`<span class="err">—</span>` : html`<span class="sk" style="--w:8ch"></span>`)}</div><div class="u">ETH, private on ${c.full}</div>${totalLine()}${poolLine(c)}</div>
+    <div><div class="v num">${v ?? (st.err ? html`<span class="err">—</span>` : html`<span class="sk" style="--w:8ch"></span>`)}</div><div class="u">ETH, private on ${c.full}</div></div>
     <div class="side">${st.err ? html`<button class="link" type="button" id="bal-re">retry</button>` : st.bal != null ? html`<button class="link" type="button" id="bal-re">refresh</button>` : 'reading…'}</div>`);
   const re = $('#bal-re');
   if (re && S.busyChain === c.chainId) re.disabled = true;
