@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-hi4seLrVCvva/baaAdvKugQZQWrKg8PR3b7ODnkHeoA=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-irRaXVXEjfSgXu1Y/SZ65UqM9ZDJ3r4MZEZbwrEhXvk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -1366,7 +1366,7 @@ function paintChains() {
   mount($('#chains'), html`${CHAINS.map((c) => {
     const st = CH[c.chainId], q = PUB[c.chainId];
     const v = !S.key ? (q?.locked != null ? `${fmt(q.locked, 18, 3)} in pool` : '') : st.bal != null ? `${eth(st.bal)} ETH` : st.last != null ? html`<span class="stale">${eth(st.last)} ETH</span>` : st.err ? '—' : html`<span class="sk" style="--w:7ch"></span>`;
-    return html`<button type="button" role="tab" data-chain="${c.chainId}" aria-selected="${c === S.chain}" ${S.busy ? 'disabled' : ''}>${c.name}${v ? html`<small>${v}</small>` : ''}</button>`;
+    return html`<button type="button" role="tab" data-chain="${c.chainId}" aria-selected="${c === S.chain}" ${S.busy ? 'disabled' : ''} ${!S.key && q?.locked != null ? html`aria-label="${c.name}, ${fmt(q.locked, 18, 3)} ETH in the pool"` : ''}>${c.name}${v ? html`<small>${v}</small>` : ''}</button>`;
   })}`);
   $$('#chains [data-chain]').forEach((b) => b.onclick = () => { if (!S.busy) switchChain(chainOf(b.dataset.chain)); });
 }
@@ -1494,11 +1494,21 @@ function holderBoost() {
   }
   return TACB.who === who && TACB.v ? TACB.v : { now: 1, held: 1 };
 }
+let PTSINFO = false;
+const PTS_WHY = 'Points share each day’s pot of up to 1,111 TAC. You earn 1,000 per ETH, times an early bonus that shrinks as deposits add up, times more for holding TAC for a day (and 1.2 with Privacy Pools). This is an estimate: the program counts deposits from its own records.';
+document.addEventListener('click', (e) => {
+  const b = e.target.closest?.('[data-ptsinfo]');
+  if (!b) return;
+  PTSINFO = !PTSINFO;
+  for (const x of $$('[data-ptsinfo]')) x.setAttribute('aria-expanded', String(PTSINFO));
+  for (const n of $$('[data-ptsnote]')) n.hidden = !PTSINFO;
+});
 function pointsRow(a) {
   const known = CHAINS.every((c) => TALLY[c.chainId]), n = CHAINS.reduce((s, c) => s + (TALLY[c.chainId]?.deposits || 0), 0);
   const early = known ? 1 + 4 / (1 + n / 200) : 1, tier = holderBoost(), hold = tier.held, pp = PTS.v?.pp ? 1.2 : 1;
   const why = [known ? `×${early.toFixed(1)} early` : '', hold > 1 ? `×${hold} TAC holder` : '', tier.now > hold ? `×${tier.now} once your TAC is held a day` : '', pp > 1 ? '×1.2 Privacy Pools' : ''].filter(Boolean).join(' · ');
-  return html`<div class="kv" title="1,000 points per ETH, with an early bonus that shrinks as deposits add up, and more for holding TAC. Points share a daily pot of up to 1,111 TAC."><span class="pts-line"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC points</span><b class="num">${known ? '≈ ' : 'at least '}${ptsFmt((Number(a) / 1e18) * 1000 * early * hold * pp)}${why ? html` <small class="mute">${why}</small>` : ''}</b></div>`;
+  return html`<div class="kv"><span class="pts-line"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC points <button class="link" type="button" data-ptsinfo aria-expanded="${PTSINFO}">how?</button></span><b class="num">${known ? '≈ ' : 'at least '}${ptsFmt((Number(a) / 1e18) * 1000 * early * hold * pp)}${why ? html` <small class="mute">${why}</small>` : ''}</b></div>
+    <p class="note mute" data-ptsnote ${PTSINFO ? '' : 'hidden'}>${PTS_WHY}</p>`;
 }
 const clearDraft = (...ids) => { for (const id of ids) { delete DRAFT[id]; const i = $('#' + id); if (i) i.value = ''; } FORM.check?.(); };
 const amountField = (id, label, extra = '') => html`
@@ -1608,6 +1618,7 @@ function formDeposit(f) {
       <div class="blk"><div class="lbl"><span>Your deposit address</span><span>same on every chain</span></div>
         <div class="addr"><code>${W?.receiveBox || '…'}</code>${W ? html`<button class="link" type="button" data-copy="${W.receiveBox}">copy</button>` : ''}</div>
         <p class="note">Send ETH here from an exchange or any wallet, on Ethereum, Base or Robinhood Chain. It moves into your private balance on that chain, usually within minutes, for at most 0.25%${min ? html`; on ${c.full}, send at least ${fmt(min, 18, 6)} ETH` : ''}. Only send ETH: tokens sent here are lost. Everything sent here is visibly sent to this one address; to be paid by others, share a link from Receive.</p></div>
+      <p class="note mute">Points go to the address that sent the ETH to this address, so ETH sent from an exchange earns none for you.</p>
       ${(st.waitBoxes || []).map(([i, v]) => {
         const self = (min && v < min) || !relayUp();
         return html`<div class="callout"><span>${fmt(v, 18, 6)} ETH is ${self ? 'waiting' : 'on its way in'} at ${i ? 'a payment link’s address' : 'your deposit address'}${self ? (relayUp() ? ': below the relay’s minimum, so take it in yourself.' : ': the relay is unavailable, so take it in yourself.') : '. The relay collects it shortly.'}</span>${self ? html`<button class="btn ghost sm" type="button" data-sweep="${i}">Take it in</button>` : ''}</div>`;

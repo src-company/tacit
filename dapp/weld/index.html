@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Nd9VrfvurUIKSwvOcGWIr9FG260tH2N4fEhtwG+VD3Y=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-dd6GU7kMfaTaOwNiSoCJQKLHnF62PgUR0Zj/NEh0pgM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -249,7 +249,6 @@ input::placeholder { color: var(--mute); opacity: .7; }
 .kv b.err { color: var(--err); }
 .kv b.warn { color: var(--orange); }
 .pts-line { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.actr-f .link, .callout .link, .status .link, .note .link { padding: 6px 2px; margin: -6px -2px; }
 .pts-line .tk { width: 14px; height: 14px; }
 .kv b small { font-size: 11px; }
 .rcpt { margin-top: 14px; padding-top: 8px; border-top: 1px dashed var(--hair-2); }
@@ -268,6 +267,8 @@ a.btn { text-decoration: none; white-space: nowrap; }
 .row2 .btn { margin-top: 10px; }
 .link { background: none; border: 0; padding: 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; font-size: 12.5px; }
 .link:hover { color: var(--ink); }
+.actr-f .link, .callout .link, .status .link, .note .link { padding: 6px 2px; margin: -6px -2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 .status { font-size: 12.5px; min-height: 20px; margin-top: 12px; overflow-wrap: anywhere; }
 .status:empty { display: none; }
@@ -421,6 +422,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
 </style>
 </head>
 <body>
+<div class="sr" id="live" role="status" aria-live="polite"></div>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
   <defs>
     <symbol id="tk-tac" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#0a0a0a"/><circle cx="16" cy="16" r="13" fill="none" stroke="#f4efe6" stroke-width="2.5"/><path d="M17.5 7L13 22.5Q13 25 18 24" fill="none" stroke="#f7931a" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11L21 11" stroke="#f7931a" stroke-width="2.4" stroke-linecap="round"/></symbol>
@@ -1487,6 +1489,8 @@ function finishedBy(id, hash) {
 // so it is the same wrap whoever sends it; an exit spends the same note, so only one of the two can land. What it takes
 // is read from the last scan: the deposits still waiting, or the note still unspent. `self` on a receipt: { deps: [kDep]
 // } or { exit: { to, units, note: kNote, from: scan key, sheet } }.
+// Spoken by a screen reader, which the list's redraws would not be: plain text into the page's one live region.
+const announce = (v) => { const el = $('#live'); if (el) el.textContent = typeof v === 'string' ? v : String(v?.s || '').replace(/<[^>]+>/g, ''); };
 const SELF = new Map();                                            // receipt id → what finishing it is doing now
 const OFFERED = new Set();                                         // receipts drawn with the offer
 function selfWork(it) {
@@ -1510,6 +1514,7 @@ document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-
 // The offer appears once a receipt has waited long enough, which no change of its own marks: the open list is drawn
 // again when one comes due. It needs a scan, which is read if none has been yet.
 setInterval(() => {
+  if (S.key && listed().some((x) => x.self?.exit && !ended(x))) dashSoon();   // the dashboard's offer appears once a receipt has waited long enough
   if (!$('#sheet-act').open || !S.key) return;
   const due = listed().filter((x) => x.self && !ended(x));
   if (due.length && !P.scan) { if (!P.err && !P.scanning) scanPrivate().then(paintAct).catch(() => {}); return; }
@@ -1527,7 +1532,7 @@ const settleFrom = (t, { label, nest = null, say: tell }) => async (x) => {
 async function selfFinish(id) {
   const it = actGet(id), w = it && selfWork(it);
   if (!w || SELF.has(id)) return;
-  const tell = (v) => { SELF.set(id, v); paintAct(); };
+  const tell = (v) => { SELF.set(id, v); announce(v); paintAct(); };
   const run = newRun('act');
   run.nest = id; run.release = () => {};
   run.take(...(w.ps ? w.ps.map(kDep) : [kNote(w.note)]));       // held from the first press, before anything is awaited
@@ -2549,6 +2554,14 @@ function holderTier(addr) {
   return OUT.tac.get(a) || { now: 1, held: 1 };
 }
 // `kind`: 'v1' (a wrap into the Tacit pool) or 'dev' (a deposit into the ETH pool on any chain).
+let PTSINFO = false;
+const PTS_WHY = 'Points share each day’s pot of up to 1,111 TAC. You earn 1,000 per ETH, times an early bonus that shrinks as deposits add up, times more for holding TAC for a day (and 1.25 for a wrap into the Tacit pool). This is an estimate: the program counts deposits from its own records.';
+document.addEventListener('click', (e) => {
+  if (!e.target.closest?.('[data-ptsinfo]')) return;
+  PTSINFO = !PTSINFO;
+  for (const x of $$('[data-ptsinfo]')) x.setAttribute('aria-expanded', String(PTSINFO));
+  for (const n of $$('[data-ptsnote]')) n.hidden = !PTSINFO;
+});
 function pointsRow(wei, kind) {
   readOutlook();
   const v1 = kind === 'v1', dev = Object.values(OUT.dev);
@@ -2556,7 +2569,8 @@ function pointsRow(wei, kind) {
   const early = known ? 1 + 4 / (1 + n / 200) : 1, tier = holderTier(S.address), hold = tier.held, wrap = v1 ? 1.25 : 1;
   const why = [known ? `×${early.toFixed(1)} early` : '', v1 ? '×1.25 tETH' : '', hold > 1 ? `×${hold} TAC holder` : '', tier.now > hold ? `×${tier.now} once your TAC is held a day` : ''].filter(Boolean).join(' · ');
   const pts = Math.round((Number(wei) / 1e18) * 1000 * early * wrap * hold).toLocaleString('en-US');
-  return html`<div class="kv" data-pts title="1,000 points per ETH, with an early bonus that shrinks as deposits add up, and more for holding TAC. Points share a daily pot of up to 1,111 TAC."><span class="pts-line"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>TAC points</span><b class="num">${known ? '≈ ' : 'at least '}${pts}${why ? html` <small class="mute">${why}</small>` : ''}</b></div>`;
+  return html`<div class="kv" data-pts><span class="pts-line"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>TAC points <button class="link" type="button" data-ptsinfo aria-expanded="${PTSINFO}">how?</button></span><b class="num">${known ? '≈ ' : 'at least '}${pts}${why ? html` <small class="mute">${why}</small>` : ''}</b></div>
+    <p class="note mute" data-ptsnote ${PTSINFO ? '' : 'hidden'}>${PTS_WHY}</p>`;
 }
 // `where`: 'v1', or a chain id for the ETH pool there.
 function poolLine(where) {
@@ -5533,6 +5547,8 @@ function paintDash() {
   };
   const items = dashItems().filter((it) => it.core || it.show || Number(base[it.key]?.v || 0) > 0);
   const due = [];
+  // An exit that has been in line a while, which the paying account can send instead (the same offer as in its receipt).
+  if (k) { const stuck = listed().filter((x) => x.self?.exit && selfWork(x)); if (stuck.length) due.push([stuck.length === 1 ? `${stuck[0].label} has been in line for a few minutes. You can send it now from ${your()}, with no relay fee.` : `${stuck.length} withdrawals have been in line for a few minutes. You can send them now from ${your()}, with no relay fee.`, 'act', 'See how']); }
   if (k && P.scan) for (const sheet of ['eth', 'tac', 'borrow']) { const ps = pendingFor(sheet); if (ps.some((p) => p.ticker)) due.push([waitingText(ps), sheet, 'Finish']); }
   const [lm, lb] = [lockList('claim').length, lockList('refund').length];
   if (k && LK.pub === k && lm) due.push([`${lm === 1 ? 'A private payment was' : `${lm} private payments were`} sent to you.`, 'claim', 'Claim']);
@@ -5564,7 +5580,7 @@ function paintDash() {
     $('#dash-due').innerHTML = dueHtml; $('#dash-g').innerHTML = gridHtml; DASH.view = view;
     $$('[data-dash-open]', sec).forEach((b) => b.onclick = () => openSheet(b.dataset.dashOpen));
     // The line opens its sheet and presses that sheet's own button there, unless an action is already running in it.
-    $$('[data-dash-do]', sec).forEach((b) => b.onclick = () => { const [link, sheet, btn] = DASH_DO[b.dataset.dashDo]; const busyThere = running(sheet); openSheet(link); if (!busyThere) $('#' + btn)?.click(); });
+    $$('[data-dash-do]', sec).forEach((b) => b.onclick = () => { if (b.dataset.dashDo === 'act') return openAct(); const [link, sheet, btn] = DASH_DO[b.dataset.dashDo]; const busyThere = running(sheet); openSheet(link); if (!busyThere) $('#' + btn)?.click(); });
     if (was) $(was, sec)?.focus();
   }
   clearTimeout(dashSaveT);

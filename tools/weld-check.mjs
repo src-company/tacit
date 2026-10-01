@@ -1719,6 +1719,17 @@ await step('receipts', async () => {
     await until(r.page, () => /More than your private balance/.test(document.querySelector('#o-rcpt')?.textContent || ''), null, 30000);
     ok(await r.page.$eval('#o-go', (b) => b.disabled) && /Private 0\.05 tETH · 0\.5 tETH in use/.test(await text(r.page, '#o-max')), `receipts: notes two actions are spending are not offered to a third (${await text(r.page, '#o-max')})`);
 
+    // The withdrawal has now been in line for a while (the offer comes after 90 seconds): the dashboard offers it from the
+    // Tacit account, in plain words that say nothing of the relay's wallet, and so does its receipt in Activity.
+    const nudged = await until(r.page, () => /Withdraw 0\.25 ETH to .* has been in line for a few minutes\. You can send it now from your Tacit account, with no relay fee\./.test(document.querySelector('#dash-due')?.textContent || ''), null, 150000).then(() => true, () => false);
+    ok(nudged, `receipts: a withdrawal in line a few minutes is offered from the Tacit account on the dashboard (${(await text(r.page, '#dash-due')).replace(/\s+/g, ' ').slice(0, 140)})`);
+    await r.page.evaluate(() => { document.querySelectorAll('dialog[open]').forEach((d) => d.close()); });
+    await r.page.click('#act'); await r.page.waitForSelector('#sheet-act[open]');
+    const offer = await until(r.page, () => /Send it from your Tacit account\s+instead/.test(document.querySelector('#act-body')?.textContent || ''), null, 30000).then(() => true, () => false);
+    ok(offer && !/gas|top/i.test((await text(r.page, '#act-body')).replace(/network fee|no relay fee|pays the network/gi, '')), 'receipts: and so is its receipt in Activity, with no word about the relay running short');
+    await r.page.evaluate(() => { document.querySelectorAll('dialog[open]').forEach((d) => d.close()); });
+    await r.page.evaluate(() => { location.hash = '#private'; });
+
     // The split settles: the send takes the new 0.1 note and queues its lock, with no one pressing anything.
     await open(a0.calls[0].jobId);
     await until(r.page, () => (window.__rx?.calls || []).length === 3, null, 90000).catch(() => {});
