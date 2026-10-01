@@ -59,6 +59,15 @@ curl -s -H "Authorization: Bearer $BOX_TOKEN" "$WORKER_BASE/reflection/eth-state
 cast call "$POOL" "attestedReflectionDigest()(bytes32)" # frozen across several sidecar cycles
 ```
 
+### What the sidecar now does by itself
+
+It keeps each candidate's resume state under `candidates/<contentHash>-<lastBlock>.json`. When the committed file
+is behind the folded candidate, it commits that candidate's archived state; failing that, when the folded candidate
+added no cross-out or consume, it rebuilds the file from the committed records through the candidate's block
+(`bootstrap_slot` from its `ethPv`). Either is written only once it passes the same check. The usual cause is a
+candidate the sidecar discarded as stale that the Bitcoin side folded anyway. A folded candidate with records the
+committed file lacks, and no archived state, still stops with `STALE RESUME STATE`, and needs the steps below.
+
 ### Recovering
 
 Two options, cheapest first.

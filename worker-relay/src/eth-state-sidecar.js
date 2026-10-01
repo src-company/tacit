@@ -32,7 +32,7 @@
 // resolves safely instead of either double-publishing or silently losing track.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { readFile, writeFile, rm, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, rm, mkdir, readdir, stat, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { keccak256 } from 'viem';
 import { CFG } from './lib/config.js';
@@ -40,7 +40,7 @@ import { reflectionEthState, reflectionEthStatePublish, heartbeat, heartbeatIdle
 import { proveEthState, commitEthProveState } from './lib/prover.js';
 import { readPool } from './lib/chain.js';
 import { safeErr } from './lib/safe-err.js';
-import { resumeMismatch } from './lib/eth-state-resume.js';
+import { resumeMismatch, rebuildFromConfirmed } from './lib/eth-state-resume.js';
 
 const log = (...a) => console.log(`[eth-state ${new Date().toISOString()}]`, ...a);
 const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
@@ -50,6 +50,37 @@ const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
 // Losing this file (ephemeral disk, or first run) is always safe — the worst case is one redundant
 // eth_prove run that gets a 409 (see below), never a double-publish or a skipped commit.
 const LOCAL_INFLIGHT_PATH = path.join(CFG.ethProveOutDir, 'sidecar-inflight.json');
+
+// Every candidate's resume state, kept by content hash and block: eth_prove overwrites its pending file on the
+// next run, so a candidate this process gave up on (stale, superseded, or a restart) that the Bitcoin side folds
+// anyway can still be committed exactly. A few are kept; only the folded one is ever used.
+const ARCHIVE_DIR = path.join(CFG.ethProveOutDir, 'candidates');
+const ARCHIVE_KEEP = 16;
+const archivePath = (contentHash, lastBlock) => path.join(ARCHIVE_DIR, `${String(contentHash).toLowerCase().replace(/^0x/, '')}-${Number(lastBlock)}.json`);
+async function archiveCandidate(contentHash, lastBlock) {
+  await mkdir(ARCHIVE_DIR, { recursive: true });
+  await writeFile(archivePath(contentHash, lastBlock), await readFile(path.join(CFG.ethProveOutDir, 'eth_set_state.pending.json')));
+  const files = await readdir(ARCHIVE_DIR);
+  if (files.length <= ARCHIVE_KEEP) return;
+  const aged = await Promise.all(files.map(async (f) => ({ f, t: (await stat(path.join(ARCHIVE_DIR, f))).mtimeMs })));
+  aged.sort((a, b) => a.t - b.t);
+  await Promise.all(aged.slice(0, aged.length - ARCHIVE_KEEP).map((x) => rm(path.join(ARCHIVE_DIR, x.f), { force: true })));
+}
+// The committed file the folded candidate stands for: its archived state, else one rebuilt from it when it adds
+// nothing to the committed records (see rebuildFromConfirmed). Written only when it then passes resumeMismatch.
+async function healResume(committed, confirmed) {
+  let next = null, how = null;
+  try { next = JSON.parse(await readFile(archivePath(confirmed.contentHash, confirmed.lastBlock), 'utf8')); how = 'its archived state'; }
+  catch (e) { if (e.code !== 'ENOENT') log('archived candidate unreadable:', e.message); }
+  if (!next || resumeMismatch({ committed: next, confirmed })) { next = rebuildFromConfirmed({ committed, confirmed }); how = 'the committed records, through its block'; }
+  if (!next || resumeMismatch({ committed: next, confirmed })) return null;
+  const file = path.join(CFG.ethProveOutDir, 'eth_set_state.json');
+  await writeFile(`${file}.heal`, JSON.stringify(next));
+  await rename(`${file}.heal`, file);
+  await rm(LOCAL_INFLIGHT_PATH, { force: true });
+  log(`resume state realigned to the folded candidate ${confirmed.contentHash} (block ${confirmed.lastBlock}) from ${how}`);
+  return next;
+}
 
 // Stall watchdog: a fresh candidate is deterministic from (pool, prior_set_root/count, prior_consumed_root/
 // count, prior_msg_root/count) — none of which include last_block — so an eth_prove run that keeps landing
@@ -152,7 +183,8 @@ async function cycle() {
   } catch (e) {
     if (e.code !== 'ENOENT') throw e; // no committed file: eth_prove would start from zero
   }
-  const mismatch = resumeMismatch({ committed, confirmed: state.confirmed });
+  let mismatch = resumeMismatch({ committed, confirmed: state.confirmed });
+  if (mismatch && await healResume(committed, state.confirmed)) mismatch = null;
   if (mismatch) {
     const msg = `STALE RESUME STATE: ${mismatch}. A candidate built from here would not continue the Bitcoin `
       + "guest's digest chain, so none is built until the committed file is rebuilt from the confirmed candidate "
@@ -203,6 +235,7 @@ async function cycle() {
   log(`proved — ${result.crossouts.length} cumulative crossout(s), ${result.consumeds.length} cumulative `
     + `consumed, execBlock=${result.execBlock}, contentHash=${contentHash}`);
   await checkStall(contentHash);
+  await archiveCandidate(contentHash, result.lastBlock).catch((e) => log('could not archive candidate state:', e.message));
 
   // Persist the in-flight marker BEFORE publishing: if the process dies between the POST landing and this
   // write, the worst case is one extra harmless GET-confirms-it-anyway cycle on restart (the content hash
