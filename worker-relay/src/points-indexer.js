@@ -14,6 +14,8 @@ import { withNonceRetry } from './lib/nonce-retry.js';
 import { parseRateCapSchedule, rateCapForDay } from './lib/points-rate-cap.js';
 import { settleThroughDay as gateThroughDay } from './lib/points-settle-gate.js';
 import { parseAdjustments } from './lib/points-adjustments.js';
+import { fundingStatus, fundingVerdict } from './lib/points-funding.js';
+import { tvlSeries } from './lib/points-tvl.js';
 import { dayPot, dayBoard, dayHistory, splitDayBudget } from './lib/points-day-board.js';
 import Database from 'better-sqlite3';
 import { openStore } from './lib/points-store.js';
@@ -1241,6 +1243,7 @@ export function buildRewardTree(rewards) {
 // cursors only name the newest log seen, not how far they have looked, so a success time stands in for coverage.
 const scanOkAt = {};
 let lastGateLogSec = 0;
+let lastFundingAlertSec = 0;
 const PAGED_SCANNERS = () => ['pp', 'ce', 'pm', ...(CFG.weinameEnabled ? ['weiname'] : [])];
 async function ran(name, fn) {
   const startedAt = Math.floor(Date.now() / 1000);
@@ -1267,6 +1270,52 @@ async function scannersCoveredThrough(store, evmState) {
     times.push(scanOkAt[name] - PAGED_LAG_SECS);
   }
   return times.length ? Math.min(...times) : null;
+}
+
+// Whether the distributor holds enough TAC for the days still to publish (lib/points-funding.js), read at most once a
+// minute. null when it is not configured or the chain cannot be read, so a failed read never looks like "funded".
+let fundingCache = { at: 0, value: null };
+async function readFunding(state, ledgerWei) {
+  if (!ADDR.pointsDistributor || !CFG.pointsProgramStartSec) return null;
+  if (Date.now() - fundingCache.at < 60_000) return fundingCache.value;
+  let value = null;
+  try {
+    const [held, claimed] = await Promise.all([
+      publicClient.readContract({ address: ADDR.tacToken, abi: ERC20_BALANCEOF_ABI, functionName: 'balanceOf', args: [ADDR.pointsDistributor] }),
+      publicClient.readContract({ address: ADDR.pointsDistributor, abi: DISTRIBUTOR_ABI, functionName: 'totalClaimed' }),
+    ]);
+    const startDay = Math.floor(CFG.pointsProgramStartSec / 86400);
+    const budgetFor = (day) => (day >= startDay && day < startDay + CFG.pointsProgramDays ? dayBudgetWei(day - startDay) : 0n);
+    const s = fundingStatus({ heldWei: held, claimedWei: claimed, ledgerWei, budgetFor, nextDay: (state?.lastSettledDay ?? startDay - 1) + 1, graceSecs: CFG.pointsSettleGraceSecs });
+    value = {
+      distributor: ADDR.pointsDistributor, heldWei: String(held), claimedWei: String(claimed), fundedWei: String(s.fundedWei),
+      ledgerWei: String(s.ledgerWei), headroomWei: String(s.headroomWei), shortfallWei: String(s.shortfallWei),
+      daysCovered: s.daysCovered, topUpBeforeSec: s.topUpBeforeSec, verdict: fundingVerdict(s),
+    };
+  } catch (err) { log('funding read failed:', err?.message || err); }
+  fundingCache = { at: Date.now(), value };
+  return value;
+}
+
+// One reading of the ETH each pool holds per UTC day (lib/points-tvl.js), taken on the first cycle of the day and only
+// within its first six hours, so a closed day compares readings from the same moment and a mid-day restart does not
+// leave a part-day reading. A pool that cannot be read is retried next cycle; the first reading of a day is kept.
+const poolTargets = () => [
+  { chainId: 1, pool: 'v1', address: ADDR.pool, client: publicClient },
+  ...ZROUTER_CHAINS.map(({ chainId, client }) => ({ chainId, pool: 'evm', address: CFG.evmPoolAddr, client })),
+];
+async function snapshotPools(store) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const day = Math.floor(nowSec / 86400);
+  if (nowSec - day * 86400 > 6 * 3600) return;
+  const have = new Set(store.poolSnapshots(day).filter((r) => r.day === day).map((r) => `${r.chainId}:${r.pool}`));
+  for (const t of poolTargets()) {
+    if (have.has(`${t.chainId}:${t.pool}`)) continue;
+    try {
+      const bal = await t.client.getBalance({ address: t.address });
+      store.savePoolSnapshot({ day, chainId: t.chainId, pool: t.pool, ethWei: bal.toString(), takenAt: nowSec });
+    } catch (err) { log(`pool snapshot failed (${t.pool} on chain ${t.chainId}):`, err?.message || err); }
+  }
 }
 
 // Folds every UTC day-epoch through yesterday into the local reward ledger (always happens, independent of
@@ -1361,6 +1410,8 @@ export async function settleCycle(store, coverage = null) {
   ]);
   const funded = balance + totalClaimed;
   if (totalWei > funded) {
+    if (nowSec - lastFundingAlertSec <= 600) return;
+    lastFundingAlertSec = nowSec;
     log(`ALERT: PointsDistributor needs ${formatTac(totalWei - funded)} more TAC funded before day ${settleThroughDay} settles on-chain (declared ${formatTac(totalWei)}, funded ${formatTac(funded)})`);
     return;
   }
@@ -1573,9 +1624,20 @@ function startHttp(store, evmState) {
           publishedRoot: state?.publishedRoot ?? null,
           publishedTotalWei: state?.publishedTotalWei ?? null,
           totalLedgerWei,
+          funding: await readFunding(state, BigInt(totalLedgerWei)),
           adjustments: store.listAdjustments().map((a) => ({ id: a.id, address: a.address, wei: a.wei, appliedAt: a.appliedAt })),
           rateCapSchedule: rateCapSchedule.map((e) => ({ fromDay: e.fromDay, maxWeiPerPoint: e.maxWeiPerPoint === null ? null : e.maxWeiPerPoint.toString() })),
           leaderboard,
+        }));
+        return;
+      }
+      if (url.pathname === '/tvl') {
+        const todayDay = Math.floor(Date.now() / 1000 / 86400);
+        const days = Math.min(Math.max(Number(url.searchParams.get('days')) || 30, 1), 120);
+        const from = todayDay - days;
+        res.end(JSON.stringify({
+          asOf: Math.floor(Date.now() / 1000),
+          days: tvlSeries(store.poolSnapshots(from), store.poolDepositWeiByDay(from * 86400, (todayDay + 1) * 86400)),
         }));
         return;
       }
@@ -1689,6 +1751,11 @@ async function main() {
       await scanCycle(store);
     } catch (err) {
       log('scan cycle failed:', err?.message || err);
+    }
+    try {
+      await snapshotPools(store);
+    } catch (err) {
+      log('pool snapshot cycle failed:', err?.message || err);
     }
     try {
       await settleCycle(store, () => scannersCoveredThrough(store, evmState));

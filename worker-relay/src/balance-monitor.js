@@ -178,6 +178,26 @@ async function checkSnapshotCapacity() {
 // The launch farms stream one treasury across several pools; the failures worth a page are an under-funded treasury, an
 // epoch about to run dry, and weight streaming into pools nobody has staked in. The checks are shared with GET /farm/health and
 // tools/farm-monitor.mjs. An unreadable chain is a warning, not a critical: it says nothing about the farm itself.
+// The points service reports whether the PointsDistributor holds enough TAC for the days still to publish (GET /rewards
+// -> funding, lib/points-funding.js). Short means the next publish is held back and claims for new days are blocked;
+// under three covered days is the time to send more.
+async function checkPointsFunding() {
+  let funding;
+  try {
+    const res = await fetch(`${CFG.pointsApiBase}/rewards`, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    funding = (await res.json()).funding;
+  } catch (e) { await alert('warning', `points funding unreadable: ${safeErr(e)}`); return; }
+  if (!funding) { log('points funding: not reported (distributor unconfigured, or its balance could not be read)'); return; }
+  log(`points funding = ${funding.verdict}: ${funding.daysCovered} day(s) covered, headroom ${formatEther(BigInt(funding.headroomWei))} TAC`);
+  const extra = { distributor: funding.distributor, daysCovered: funding.daysCovered, headroomWei: funding.headroomWei };
+  if (funding.verdict === 'critical') {
+    await alert('critical', `PointsDistributor is ${formatEther(BigInt(funding.shortfallWei))} TAC short of what is allocated: the next publish is held back and new days cannot be claimed — send TAC to ${funding.distributor}`, extra);
+  } else if (funding.verdict === 'warning') {
+    await alert('warning', `PointsDistributor covers ${funding.daysCovered} more day(s): send TAC to ${funding.distributor} before ${new Date(funding.topUpBeforeSec * 1000).toISOString()}`, extra);
+  }
+}
+
 async function checkFarmHealth() {
   const manager = process.env.FARM_MANAGER_ADDR || FARM_MANAGER_MAINNET;
   if (/^(off|none|0|false)$/i.test(manager) || /^0x0{40}$/i.test(manager)) { log('farm check disabled (FARM_MANAGER_ADDR)'); return; }
@@ -466,7 +486,7 @@ async function checkEvmPoolKeepers() {
 
 async function main() {
   log(`monitor run — worker=${CFG.workerBase} relay=${relayWallet ? relayWallet.account.address : '(no key on this service — watching by address)'}`);
-  const results = await Promise.allSettled([checkProve(), checkEth(), checkReflectionLag(), checkProverKinds(), checkSnapshotCapacity(), checkFarmHealth(), checkReflectionStall(), checkQueue(), checkEthStatePending(), checkCrossOutFold(), checkEvmPoolKeepers()]);
+  const results = await Promise.allSettled([checkProve(), checkEth(), checkReflectionLag(), checkProverKinds(), checkSnapshotCapacity(), checkFarmHealth(), checkPointsFunding(), checkReflectionStall(), checkQueue(), checkEthStatePending(), checkCrossOutFold(), checkEvmPoolKeepers()]);
   for (const r of results) if (r.status === 'rejected') log('check threw:', r.reason?.message || r.reason);
   log(`monitor done — ${criticals} critical${criticals === 1 ? '' : 's'}`);
   // Exit non-zero so the cron run is marked failed even with no webhook configured. A check that THREW is

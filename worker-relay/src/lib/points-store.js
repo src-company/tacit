@@ -95,6 +95,16 @@ export function openStore(dbPath, { excluded = [] } = {}) {
 
     -- One-off add-only credits already folded into reward_ledger (see lib/points-adjustments.js); the id is what
     -- makes applying one idempotent.
+    -- The ETH each pool held on the first cycle of a UTC day (lib/points-tvl.js); the first reading of a day stands.
+    CREATE TABLE IF NOT EXISTS pool_snapshots (
+      day      INTEGER NOT NULL,
+      chain_id INTEGER NOT NULL,
+      pool     TEXT NOT NULL,
+      eth_wei  TEXT NOT NULL,
+      taken_at INTEGER NOT NULL,
+      PRIMARY KEY (day, chain_id, pool)
+    );
+
     CREATE TABLE IF NOT EXISTS reward_adjustments (
       id         TEXT PRIMARY KEY,
       address    TEXT NOT NULL,
@@ -426,6 +436,24 @@ export function openStore(dbPath, { excluded = [] } = {}) {
     return true;
   });
 
+  const insertPoolSnapshotStmt = db.prepare(`INSERT OR IGNORE INTO pool_snapshots (day, chain_id, pool, eth_wei, taken_at) VALUES (@day, @chainId, @pool, @ethWei, @takenAt)`);
+  const poolSnapshotsStmt = db.prepare(`SELECT day, chain_id AS chainId, pool, eth_wei AS ethWei FROM pool_snapshots WHERE day >= ? ORDER BY day, chain_id, pool`);
+  const poolDepositsStmt = db.prepare(`SELECT block_time AS t, amount_wei AS w FROM deposits WHERE activity IN ('wrap', 'evmpooldeposit') AND block_time >= ? AND block_time < ?`);
+
+  function savePoolSnapshot(snap) {
+    return insertPoolSnapshotStmt.run(snap).changes > 0;
+  }
+
+  // Wei scored as deposited into a pool (V1 wraps and EVM pool deposits) per UTC day, summed as BigInts.
+  function poolDepositWeiByDay(fromSec, toSec) {
+    const out = new Map();
+    for (const r of poolDepositsStmt.iterate(fromSec, toSec)) {
+      const day = Math.floor(r.t / 86400);
+      out.set(day, (out.get(day) ?? 0n) + BigInt(r.w));
+    }
+    return out;
+  }
+
   function allRewards() {
     return allRewardsStmt.all();
   }
@@ -546,6 +574,7 @@ export function openStore(dbPath, { excluded = [] } = {}) {
   return {
     db, recordDeposit, loadCursor, saveCursor, leaderboard, totalFor, depositsFor, countByActivity,
     dayPointsByAddress, applyDayRewards, applyAdjustment, listAdjustments: () => listAdjustmentsStmt.all(), allRewards, rewardFor,
+    savePoolSnapshot, poolSnapshots: (fromDay) => poolSnapshotsStmt.all(fromDay), poolDepositWeiByDay,
     loadSettleState, saveSettleState, savePublishedClaims, claimFor,
     recordPpWithdrawal, hasEarlierPpWithdrawal, loadPpCursor, savePpCursor,
     loadCeCursor, saveCeCursor, loadZrouterCursor, saveZrouterCursor,
