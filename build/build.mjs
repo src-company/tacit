@@ -1,12 +1,18 @@
-// Build script: refreshes ../dapp/vendor/tacit-deps.min.js from npm-installed
-// noble + scure + sats-connect packages and prints SHA-384 hashes for the
-// bundle, index.html, and tacit.js. Run when bundled deps change; otherwise
-// the dApp is served as-is from ../dapp/.
+// Build script. `npm run build` refreshes the cache-bust tokens, CSP hashes and
+// service-worker cache version from the files in ../dapp/ and prints SHA-384
+// hashes for the vendor bundle, index.html, and tacit.js. It reads the vendor
+// bundles as committed.
+//
+// `npm run build:vendor` (--vendor) first re-bundles ../dapp/vendor/*.min.js
+// from the npm-installed noble + scure + sats-connect + snarkjs + poseidon
+// packages, then does the rest. Run it when a bundled dependency or an entry
+// file changes. The output depends on the installed esbuild version.
+//
+// `npm run build:verify` (--verify-only) checks the fingerprints and writes nothing.
 //
 // The dApp source is split: ../dapp/index.html (markup + meta-CSP) loads
 // ../dapp/tacit.js (the application module), which imports from
-// ./vendor/tacit-deps.min.js. Editing either source file directly does not
-// require a build — only the vendor bundle is generated.
+// ./vendor/tacit-deps.min.js.
 
 import { build } from 'esbuild';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -38,9 +44,10 @@ const OUT_DIR    = join(HERE, 'out');                        // build artifacts 
 const BR_OUT     = join(OUT_DIR, 'tacit.js.br');             // brotli-q11 copy for the edge route
 
 const verifyOnly = process.argv.includes('--verify-only');
+const rebundle = process.argv.includes('--vendor') && !verifyOnly;
 
 async function bundleVendor() {
-  if (verifyOnly) {
+  if (!rebundle) {
     if (!existsSync(BUNDLE_OUT)) throw new Error(`bundle missing: ${BUNDLE_OUT}`);
     return readFileSync(BUNDLE_OUT);
   }
@@ -61,7 +68,7 @@ async function bundleVendor() {
 // who never visit the Mixer tab don't pay the ~800 KB cost — tacit.js
 // loads it lazily via dynamic import inside verifyMixerProof.
 async function bundleMixer() {
-  if (verifyOnly) {
+  if (!rebundle) {
     if (!existsSync(MIXER_OUT)) throw new Error(`bundle missing: ${MIXER_OUT}`);
     return readFileSync(MIXER_OUT);
   }
@@ -90,7 +97,7 @@ async function bundleMixer() {
 // don't pay its cost on the eager critical path. tacit.js lazy-imports it
 // via ensureSatsConnect() on first external-wallet use.
 async function bundleSatsConnect() {
-  if (verifyOnly) {
+  if (!rebundle) {
     if (!existsSync(SATSCONNECT_OUT)) throw new Error(`bundle missing: ${SATSCONNECT_OUT}`);
     return readFileSync(SATSCONNECT_OUT);
   }
@@ -110,7 +117,7 @@ async function bundleSatsConnect() {
 
 // Poseidon bundle for the Bitcoin shielded pool (dapp/btc-pool-zk.js). Loaded only by pool pages.
 async function bundlePoseidon() {
-  if (verifyOnly) {
+  if (!rebundle) {
     if (!existsSync(POSEIDON_OUT)) throw new Error(`bundle missing: ${POSEIDON_OUT}`);
     return readFileSync(POSEIDON_OUT);
   }
@@ -241,22 +248,22 @@ function updatePinnedCsp(page) {
 async function main() {
   mkdirSync(VENDOR_DIR, { recursive: true });
 
-  console.log(verifyOnly ? '• Reading existing bundle...' : '• Bundling vendor deps...');
+  console.log(rebundle ? '• Bundling vendor deps...' : '• Reading existing bundle...');
   const bundle = await bundleVendor();
   console.log(`  ${BUNDLE_OUT}`);
   console.log(`  ${bundle.length.toLocaleString()} bytes · ${sha384b64(bundle)}`);
 
-  console.log(verifyOnly ? '• Reading existing mixer bundle...' : '• Bundling mixer deps (snarkjs)...');
+  console.log(rebundle ? '• Bundling mixer deps (snarkjs)...' : '• Reading existing mixer bundle...');
   const mixerBundle = await bundleMixer();
   console.log(`  ${MIXER_OUT}`);
   console.log(`  ${mixerBundle.length.toLocaleString()} bytes · ${sha384b64(mixerBundle)}`);
 
-  console.log(verifyOnly ? '• Reading existing sats-connect bundle...' : '• Bundling sats-connect...');
+  console.log(rebundle ? '• Bundling sats-connect...' : '• Reading existing sats-connect bundle...');
   const satsConnectBundle = await bundleSatsConnect();
   console.log(`  ${SATSCONNECT_OUT}`);
   console.log(`  ${satsConnectBundle.length.toLocaleString()} bytes · ${sha384b64(satsConnectBundle)}`);
 
-  console.log(verifyOnly ? '• Reading existing poseidon bundle...' : '• Bundling poseidon (Bitcoin pool)...');
+  console.log(rebundle ? '• Bundling poseidon (Bitcoin pool)...' : '• Reading existing poseidon bundle...');
   const poseidonBundle = await bundlePoseidon();
   console.log(`  ${POSEIDON_OUT}`);
   console.log(`  ${poseidonBundle.length.toLocaleString()} bytes · ${sha384b64(poseidonBundle)}`);
