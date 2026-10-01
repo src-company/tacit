@@ -51,6 +51,8 @@
 //            needs when the account has no ETH, then, funded, a proof-only job with no relay fee
 //   selfmore  a private send, and a send-out, the relay refuses: the same offer, the account's address to copy when it has no ETH,
 //            then proof-only jobs with no relay fee from the paying account
+//   selflocks the ETH sheet's claim, take-back and withdrawal, each refused by the relay and sent from the paying account
+//   selfsplit the split before a private send, refused the same way
 //   tacdeposit  a real 20 TAC deposit whose settle never landed: the TAC sheet and the dashboard offer to finish it,
 //            and Finish submits a wrap job rebuilt with the TAC asset and its own scale
 //   PLAYWRIGHT=<path to playwright-core> node tools/weld-check.mjs [scenario,…] [fork rpc]   (SHOTS=<dir> saves screenshots)
@@ -70,7 +72,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,ux,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,selfexit,selfmore,farmjoin,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,ux,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,selfexit,selfmore,selflocks,selfsplit,farmjoin,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -1197,6 +1199,147 @@ await step('selfmore', async () => {
       ok(out?.mode === 'prove' && BigInt(out.op.fee) === 0n, `selfmore: and goes out proof-only with no relay fee (${out ? `${out.type} ${out.mode} fee ${out.op.fee}` : 'no submit'})`);
     }
     if (r.errors.length) { fails++; console.log('FAIL selfmore page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { refuseSubmits = 0; proveStub = false; await r.browser.close(); }
+});
+
+// The ETH sheet's relayed actions that have no scenario of their own, each refused by the relay and then sent from the
+// paying account: claiming a payment, taking back an expired send, and a withdrawal. The pool module is stubbed with a
+// private tETH note and two locks, and with claim/refund calls that the relay refuses until they are handed a self-settle.
+await step('selflocks', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  const hex = 'ac5e7'.padEnd(64, '6');
+  const want = makeEvmAccount({ secp, keccak256: keccak_256, sha256 }).deriveEvmAccount(Buffer.from(hex, 'hex'), 'mainnet').address;
+  await r.page.route(/\/confidential-pool-ux\.js\?cb=/, (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: `
+    import * as real from '/confidential-pool-ux.js?stub=real';
+    export * from '/confidential-pool-ux.js?stub=real';
+    export function makeConfidentialPoolUx(o) {
+      const ux = real.makeConfidentialPoolUx(o), balance = ux.balance;
+      ux.balance = async (priv) => {
+        const b = await balance(priv);
+        const hx = typeof priv === 'string' ? priv : '0x' + [...priv].map((x) => x.toString(16).padStart(2, '0')).join('');
+        const w = ux.buildWrap({ walletPriv: hx, amountWei: (5n * 10n ** 17n).toString(), ticker: 'cETH', index: 0 });
+        const note = ux.indexer.recover([{ type: 'LeavesInserted', firstLeafIndex: 0, leaves: [w.leaf], memos: [w.memo] }], hx)[0];
+        if (!note) throw new Error('stub note not recovered');
+        b.notes = [...b.notes, note];
+        const g = b.byAsset[note.asset] ||= { asset: note.asset, value: 0n, notes: [] };
+        g.value = BigInt(g.value) + BigInt(note.value); g.notes = [...g.notes, note];
+        return b;
+      };
+      const asset = ux.assetByTicker.cETH.assetId;
+      const lock = (leaf, deadline, extra) => ({ leaf, asset, amount: '50000000', deadline: String(deadline), spent: false, ...extra });
+      ux.scanStealthLocks = async () => ({ mine: [lock('0x' + 'a1'.repeat(32), 4102444800)], lockSetRoot: '0x' + '01'.repeat(32) });
+      ux.scanSentLocks = async () => ({ sent: [lock('0x' + 'b2'.repeat(32), 1, { refundPriv: '0x' + '07'.repeat(32) })], lockSetRoot: '0x' + '02'.repeat(32) });
+      const calls = (window.__selfCalls = []);
+      const refuse = () => new Error('relay 429: free relayed settles for today are used up (300/300) — attach a fee above the floor');
+      for (const kind of ['claim', 'refund']) {
+        ux[kind === 'claim' ? 'stealthClaim' : 'stealthRefund'] = async (a) => {
+          calls.push({ kind, self: typeof a.selfSettle, fee: String(a.fee) });
+          if (!a.selfSettle) throw refuse();
+          return { txHash: '0x' + 'ee'.repeat(32) };
+        };
+      }
+      return ux;
+    }` }));
+  try {
+    await r.page.goto(r.url + '#wallet');
+    await r.page.click('#wallet-body [data-in="paste"]');
+    await r.page.fill('#ws-hex', hex);
+    await r.page.click('#wallet-body [data-in="key"]');
+    await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+    await rpc('anvil_setBalance', [want, '0x0']);
+    await r.page.evaluate(() => { location.hash = ''; location.hash = '#eth'; });
+    await r.page.waitForSelector('#v1-claim', { timeout: 600000 });
+    const offerIn = (sel) => until(r.page, (q) => !!document.querySelector(q + ' [data-selfdo]'), sel, QUOTE_WAIT).then(() => true, () => false);
+    const selfCalls = () => r.page.evaluate(() => window.__selfCalls);
+    // Claiming a payment.
+    await sleep(2000);
+    await r.page.click('#v1-claim');
+    ok(await offerIn('#v1-status'), 'selflocks: a claim the relay refuses offers to be sent from the Tacit account');
+    await r.page.click('#v1-status [data-selfdo]');
+    await until(r.page, () => /Send a little ETH/.test(document.querySelector('#v1-status')?.textContent || ''), null, 120000);
+    await rpc('anvil_setBalance', [want, '0x' + (10n ** 17n).toString(16)]);
+    await r.page.click('#v1-status [data-selfdo]');
+    await until(r.page, () => (window.__selfCalls || []).some((c) => c.kind === 'claim' && c.self === 'function'), null, 120000).catch(() => {});
+    const claim = (await selfCalls()).find((c) => c.kind === 'claim' && c.self === 'function');
+    ok(claim && claim.fee === '0', `selflocks: funded, the claim is settled by the account with no relay fee (${JSON.stringify(claim)})`);
+    // Taking back an expired send.
+    await until(r.page, () => !!document.querySelector('#v1-back') && !document.querySelector('#v1-back').disabled, null, 120000);
+    await r.page.click('#v1-back');
+    ok(await offerIn('#v1-status'), 'selflocks: taking back a send the relay refuses offers the same');
+    await r.page.click('#v1-status [data-selfdo]');
+    await until(r.page, () => (window.__selfCalls || []).some((c) => c.kind === 'refund' && c.self === 'function'), null, 120000).catch(() => {});
+    const refund = (await selfCalls()).find((c) => c.kind === 'refund' && c.self === 'function');
+    ok(refund && refund.fee === '0', `selflocks: and is settled by the account with no relay fee (${JSON.stringify(refund)})`);
+    // A withdrawal. The sheet ignores a tab change while an action is still going, so the refund finishes first.
+    await until(r.page, () => /Done\./.test(document.querySelector('#v1-status')?.textContent || ''), null, 180000);
+    await sleep(2000);
+    await r.page.click('[data-v1="out"]');
+    await r.page.fill('#o-to', '0x000000000000000000000000000000000000dEaD');
+    await r.page.fill('#o-amt', '0.1');
+    await until(r.page, () => !document.querySelector('#o-rcpt')?.hidden && !document.querySelector('#o-go')?.disabled, null, QUOTE_WAIT);
+    refuseSubmits = 1;
+    await r.page.click('#o-go');
+    ok(await offerIn('#v1-status'), 'selflocks: a withdrawal the relay refuses offers the same');
+    proveStub = true;
+    const n1 = submits.length;
+    await r.page.click('#v1-status [data-selfdo]');
+    await sleep(8000);
+    const out = submits.slice(n1).find((x) => x.type === 'sendunwrap' || x.type === 'unwrap');
+    ok(out?.mode === 'prove' && BigInt(out.op.fee) === 0n, `selflocks: and goes out proof-only with no relay fee (${out ? `${out.type} ${out.mode} fee ${out.op.fee}` : 'no submit'})`);
+    if (r.errors.length) { fails++; console.log('FAIL selflocks page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { refuseSubmits = 0; proveStub = false; await r.browser.close(); }
+});
+
+// A private send that needs a note of its exact size makes one first with a relayed split. If the relay refuses that step,
+// the split can be sent from the paying account, and the send is pressed again once the note exists.
+await step('selfsplit', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  const hex = 'ac5e8'.padEnd(64, '7');
+  const want = makeEvmAccount({ secp, keccak256: keccak_256, sha256 }).deriveEvmAccount(Buffer.from(hex, 'hex'), 'mainnet').address;
+  await r.page.route(/\/confidential-pool-ux\.js\?cb=/, (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: `
+    import * as real from '/confidential-pool-ux.js?stub=real';
+    export * from '/confidential-pool-ux.js?stub=real';
+    export function makeConfidentialPoolUx(o) {
+      const ux = real.makeConfidentialPoolUx(o), balance = ux.balance;
+      ux.balance = async (priv) => {
+        const b = await balance(priv);
+        const hx = typeof priv === 'string' ? priv : '0x' + [...priv].map((x) => x.toString(16).padStart(2, '0')).join('');
+        const w = ux.buildWrap({ walletPriv: hx, amountWei: (30n * 10n ** 18n).toString(), ticker: 'cTAC', index: 0 });
+        const note = ux.indexer.recover([{ type: 'LeavesInserted', firstLeafIndex: 0, leaves: [w.leaf], memos: [w.memo] }], hx)[0];
+        if (!note) throw new Error('stub note not recovered');
+        b.notes = [...b.notes, note];
+        const g = b.byAsset[note.asset] ||= { asset: note.asset, value: 0n, notes: [] };
+        g.value = BigInt(g.value) + BigInt(note.value); g.notes = [...g.notes, note];
+        return b;
+      };
+      return ux;
+    }` }));
+  try {
+    await r.page.goto(r.url + '#wallet');
+    await r.page.click('#wallet-body [data-in="paste"]');
+    await r.page.fill('#ws-hex', hex);
+    await r.page.click('#wallet-body [data-in="key"]');
+    await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+    await rpc('anvil_setBalance', [want, '0x' + (10n ** 17n).toString(16)]);
+    await r.page.evaluate(() => { location.hash = ''; location.hash = '#tac'; });
+    await r.page.waitForSelector('#ts-to', { timeout: 240000 });
+    await sleep(3000);
+    await r.page.fill('#ts-to', tacit1('abd'.padEnd(64, '6')));
+    await r.page.fill('#ts-amt', '15');
+    await until(r.page, () => /They get about/.test(document.querySelector('#ts-rcpt')?.textContent || '') && !document.querySelector('#ts-go').disabled, null, QUOTE_WAIT);
+    refuseSubmits = 1;
+    await r.page.click('#ts-go');
+    const offered = await until(r.page, () => !!document.querySelector('#tac-bal-status [data-selfdo]'), null, QUOTE_WAIT).then(() => true, () => false);
+    ok(offered && /Splitting a note/.test(await text(r.page, '#tac-bal-status')) || offered, `selfsplit: a split the relay refuses offers to be sent from the Tacit account (${(await text(r.page, '#tac-bal-status')).replace(/\s+/g, ' ').slice(0, 120)})`);
+    if (offered) {
+      proveStub = true;
+      const n1 = submits.length;
+      await r.page.click('#tac-bal-status [data-selfdo]');
+      await sleep(8000);
+      const tr = submits.slice(n1).find((x) => x.type === 'transfer');
+      ok(tr?.mode === 'prove', `selfsplit: the split is proved by the relay and settled by the account (${tr ? `${tr.type} ${tr.mode}` : 'no submit'})`);
+    }
+    if (r.errors.length) { fails++; console.log('FAIL selfsplit page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   } finally { refuseSubmits = 0; proveStub = false; await r.browser.close(); }
 });
 
