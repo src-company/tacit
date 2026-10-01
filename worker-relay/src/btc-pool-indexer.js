@@ -420,7 +420,9 @@ async function main() {
   const ix = createIndexer({ store, esplora: makeEsplora(esploraBases, { hashQuorum }), verifier, network, startHeight, confirmations, log, chain });
   log(`resuming at ${ix.state.tip ?? `(empty, start ${startHeight})`}; verifier ${verifier.enabled ? 'enabled' : `DISABLED: ${verifier.reason}`}`);
 
-  createServer(await withRelayer(createHandler(ix, store), { ix, store, verifier, network, esploraBases, log })).listen(Number(env.PORT || 10000), () => log(`listening on ${env.PORT || 10000}`));
+  let handler = await withRelayer(createHandler(ix, store), { ix, store, verifier, network, esploraBases, log });
+  if (env.BTC_POOL_SP_HINTS === '1') handler = (await import('./lib/sp-hints.js')).makeSpHints({ db: store.db }).wrap(handler);
+  createServer(handler).listen(Number(env.PORT || 10000), () => log(`listening on ${env.PORT || 10000}`));
 
   for (;;) {
     try {

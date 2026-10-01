@@ -371,9 +371,17 @@ try {
       }
       return r.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: 'not found' });
     };
+    // The hint service (worker-relay/src/lib/sp-hints.js), in memory: routed after the catch-all, so it answers first.
+    const HINTS = [];
+    const hintService = (r) => {
+      const u = new URL(r.request().url());
+      if (r.request().method() === 'POST') { const b = JSON.parse(r.request().postData()); HINTS.push([HINTS.length + 1, b.e, b.c]); return json(r, { id: HINTS.length }); }
+      return json(r, { hints: HINTS.filter(([id]) => id > Number(u.searchParams.get('after') || 0)), next: null });
+    };
     const route = async (c) => {
       await c.route(/mempool\.space|blockstream\.info|mempool\.emzy\.de|mempool\.bitaroo\.net/, explorer);
       await c.route(/api\.tacit\.finance|onrender\.com|workers\.dev/, (r) => json(r, []));
+      await c.route(/tacit-btc-pool-relay-mainnet\.onrender\.com\/sp\/hints/, hintService);
     };
     for (const form of ['unified', 'legacy']) {
       const { ctx, p, errors } = await page(browser, { route });
@@ -394,8 +402,10 @@ try {
       await p.fill('#f-to', to); await p.fill('#f-amt', '0.0005');
       await p.waitForFunction(() => /Silent payment/.test(document.querySelector('#f-rcpt')?.textContent || '') && !document.querySelector('#f-go').disabled, null, { timeout: 60e3 }).catch(() => {});
       ok(/Silent payment/.test(await p.textContent('#f-rcpt')) && /ID/.test(await p.textContent('#f-rcpt')), `${form} tacit1 (${to.length} chars): routed as a silent payment, with its ID`);
+      const hints0 = HINTS.length;
       await p.click('#f-go');
       await p.waitForFunction(() => /Sent 0\.0005 BTC/.test(document.querySelector('#status')?.textContent || '') || document.querySelector('#status .err'), null, { timeout: 120e3 }).catch(() => {});
+      for (let i = 0; i < 40 && HINTS.length === hints0; i++) await sleep(250);
       const tx = sent.at(-1);
       ok(/Sent 0\.0005 BTC/.test(await p.textContent('#status')) && tx?.vout.some((y) => y.value === 50000 && /^5120/.test(y.scriptpubkey)), `${form}: the page signed it, to a fresh taproot output (captured, not broadcast)`);
       current = tx;
@@ -406,8 +416,17 @@ try {
         return (await t.discoverSilentPaymentFromTxid(txid)).map((g) => ({ vout: g.vout, sats: g.sats, xonly: d.bytesToHex(d.secp.getPublicKey(t.spCreditSpendingKey({ tweakHex: g.tweakHex, keyVersion: g.keyVersion }, t.wallet.priv), true).slice(1)) }));
       }, { B, txid: tx?.txid });
       ok(found.length === 1 && found[0].sats === 50000 && tx.vout[found[0].vout].scriptpubkey === '5120' + found[0].xonly, `${form}: the recipient's key alone finds it, and derives the key that spends it`);
+      ok(HINTS.length === hints0 + 1, `${form}: the send posted one hint for its recipient (${HINTS.length - hints0})`);
       ok(!errors.length, `${form}: no page errors ${errors.join(' | ').slice(0, 160)}`);
       await ctx.close();
+      // The recipient opens /pay with no link: the hint brings the payment in.
+      const R = await page(browser, { route });
+      await R.p.goto(new URL(URL_).origin + '/pay/');
+      await openKey(R.p, B);
+      await R.p.waitForFunction(() => /0\.0005 by silent payment/.test(document.querySelector('#bal')?.textContent || ''), null, { timeout: 120e3 }).catch(() => {});
+      ok(/0\.0005 by silent payment/.test(await R.p.textContent('#bal')), `${form}: the recipient sees it on opening /pay, from the hint: ${(await R.p.textContent('#bal .u')).replace(/\s+/g, ' ').trim()}`);
+      ok(!R.errors.length, `${form}: recipient page, no errors ${R.errors.join(' | ').slice(0, 160)}`);
+      await R.ctx.close();
     }
   }
 

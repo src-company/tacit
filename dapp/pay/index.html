@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-W5cyf94hO8NDP+oQddBlG+xZKT9IjfAlR7FKA1+hl6o=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-VwQmxMNuVpmpo/3FNq3tJa5JM+FnRlVAtHe953qAEdQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Simple, private payments: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key and one tacit1 address, every payment made on your device, recovered from the key alone.">
@@ -806,6 +806,8 @@ function loadBtc(force = false) {
     }).filter((a) => a.balance > 0n);
     Object.assign(BTC, { held, got: Math.max(BTC.got, 2) });
     render();
+    await hintsForMe(t, pub).catch(() => {});
+    if (!live()) return;
     // Silent payments found for this key, still unspent.
     const todo = [];
     for (const e of Object.entries(t.loadSpCredits() || {}).filter(([, c]) => !c.coinClass)) {
@@ -916,6 +918,7 @@ function btcSend(f) {
       say(status, html`<span class="spin" aria-hidden="true"></span>Sending…`);
       const txid = await withKey(async (t) => (await t.buildAndBroadcastSatsSend({ recipientAddr: r.to, amountSats: Number(v) })).txid);
       markPaid('btc', to.value, v, txid);
+      if (r.kind === 'sp') hintTo(r.to, txid);
       BTC.share = r.kind === 'sp' ? { url: `${location.origin}/pay/#sp=${txid}`, what: 'A silent payment leaves no address on chain that points at them.' } : null;
       amt.value = '';
       toast(`Sent ${fmt(v, 8, 8)} BTC`);
@@ -942,7 +945,7 @@ function btcReceive(f) {
   mount(f, html`
     ${row('Your Tacit address', 'the one to share', S.key.tacit, 'From any Tacit wallet: BTC arrives as a silent payment, and TAC shielded. The same address takes ETH privately in Tacit apps.' + (S.key.tacit ? ' A payer sees the same ID before sending, so the two of you can check the address matches.' : ''))}
     ${askView('btc')}
-    ${row('Silent payments', 'BIP‑352', BTC.sp, 'From any wallet that sends silent payments. A payment from one shows here once you open the link its sender shares, or paste its transaction id below.')}
+    ${row('Silent payments', 'BIP‑352', BTC.sp, 'From any wallet that sends silent payments. Payments from Tacit apps show here on their own; from another wallet, open the link its sender shares or paste its transaction id below.')}
     ${row('Bitcoin address', 'public', b?.addr, 'From an exchange or any wallet. What arrives here is public; it funds your sends.')}
     <div class="lbl"><span>Add BTC from your Bitcoin wallet</span><span>Xverse, Leather or UniSat</span></div>
     <div class="amt"><input id="f-famt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="BTC to add"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-btc"/></svg>BTC</span></div>
@@ -983,6 +986,31 @@ function btcReceive(f) {
 // this key's Bitcoin address).
 const TAC_ROUTE = 'tacit-pay-tac-route-v1';
 const TAC = { pub: null, at: 0, loading: null, err: null, pool: null, top2: 0n, settling: 0n, notes: null, pw: null, fee: null, relay: false, share: null, route: readJson(TAC_ROUTE) === 'self' ? 'self' : 'relay' };
+// Silent-payment hints (dapp/sp-hints.js): a silent payment sent from here also posts its txid sealed to the
+// recipient's scan key, and each Bitcoin read opens the hints sealed to this key's, so payments from Tacit apps show up
+// without a link. The service cannot tell who a hint is for.
+const SP_HINTS = 'https://tacit-btc-pool-relay-mainnet.onrender.com', HINT_AT = 'tacit-sp-hints-v1:';
+const getHints = lazy(() => import('/sp-hints.js?cb=9d914fee'));
+async function hintTo(sp, txid) {
+  try { const d = (await loadTacit()).decodeSilentPaymentAddress(sp); if (d?.scanPub) await (await getHints()).postHint(SP_HINTS, d.scanPub, txid); } catch {}
+}
+async function hintsForMe(t, pub) {
+  const H = await getHints(), k = HINT_AT + pub, st = readJson(k) || {};
+  const privs = t.SP_KEY_VERSIONS.map((v) => t.deriveWalletSilentPaymentKeys(hexToBytes(S.key.priv), v).scanPriv);
+  const todo = new Set(st.retry || []);
+  let n = 0;
+  const after = await H.readHints(SP_HINTS, st.after || 0, async (id, e, c) => {
+    const tx = H.openHint(privs, e, c);
+    if (tx) todo.add(tx);
+    if (++n % 20 === 0) await new Promise((r) => setTimeout(r, 0));
+  });
+  // A transaction the explorer does not know yet is looked for again next time; one that does not exist is dropped.
+  const retry = [];
+  for (const tx of todo) {
+    try { await t.discoverSilentPaymentFromTxid(tx); } catch (e) { if (!/missing or malformed/.test(e?.message || '')) retry.push(tx); }
+  }
+  if (S.key?.pubHex === pub) writeJson(k, { after, retry: retry.slice(-50) });
+}
 const getSecret = lazy(() => import('/sats/secret.js?cb=47c283a4'));
 function loadTac(force = false) {
   if (!S.key) return Promise.resolve();
@@ -1255,7 +1283,7 @@ async function scanForMe() {
       return r.discovered.length;
     });
     await loadMode(true);
-    say(status, n ? html`<span class="ok">Found ${n} payment${n === 1 ? '' : 's'} to you.</span>` : 'None for you among the latest transfers. A silent BTC payment is found from the link its sender shares.');
+    say(status, n ? html`<span class="ok">Found ${n} payment${n === 1 ? '' : 's'} to you.</span>` : 'None for you among the latest transfers. Silent BTC payments from Tacit apps show up on their own; from another wallet, open the link its sender shares.');
   } catch (e) { sayErr(status, e); }
 }
 
@@ -1316,7 +1344,7 @@ const askView = (mode) => html`<div class="blk"><div class="lbl"><span>Ask to be
     <div class="amt text"><input id="f-qname" placeholder="Your name, like you.wei (optional)" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Your name"></div>
     <p class="note err" id="f-qerr" hidden></p>
     <div class="row2"><button class="btn" type="button" id="f-qcopy">Copy payment link</button><button class="btn ghost" type="button" id="f-qshare">Share</button></div>
-    <p class="note">Whoever opens it pays you from their own Tacit wallet, ${mode === 'tac' ? 'inside the shielded pool' : 'as a silent payment'}, and finds the amount filled in. A name in the link is checked against your Tacit address now, and again as they pay. What you receive shows here on its own.</p></div>`;
+    <p class="note">Whoever opens it pays you from their own Tacit wallet, ${mode === 'tac' ? 'inside the shielded pool' : 'as a silent payment'}, and finds the amount filled in. A name in the link is checked against your Tacit address now, and again as they pay. What they send shows here on its own.</p></div>`;
 function wireAsk(f, mode) {
   const amtEl = $('#f-qamt', f), forEl = $('#f-qfor', f), nameEl = $('#f-qname', f), err = $('#f-qerr', f), copyB = $('#f-qcopy', f), shareB = $('#f-qshare', f);
   const build = async () => {

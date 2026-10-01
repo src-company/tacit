@@ -530,6 +530,9 @@ services:
       mountPath: /var/lib/tacit-btc-pool
       sizeGB: 1
     envVars:
+      # Silent-payment hints (src/lib/sp-hints.js): POST/GET /sp/hints, opaque sealed blobs kept 45 days.
+      - key: BTC_POOL_SP_HINTS
+        value: "1"
       # DELIBERATELY NOT `fromGroup: tacit-relay-shared`: it will hold only its own mainnet relayer keys.
       - key: BTC_POOL_NETWORK
         value: mainnet
