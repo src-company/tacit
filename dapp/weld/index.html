@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-6LkEDfertXubDMXdUZ0X1jAv8dY3zEaJ19isFcsmdE0=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-U5fETejbYPAjbiYW+0zeJzlj27emZYcbcA7fIhPUKFc=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -141,6 +141,7 @@ a.di { color: inherit; text-decoration: none; }
 .di-k .dot { margin-left: auto; }
 .di-v { display: block; font: 500 19px/1.25 var(--mono); letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .di-m { display: block; font-size: 11.5px; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.di-m.wrap { white-space: normal; }
 .di-m .up { color: var(--ok); }
 .di-v small { font-size: 12px; font-weight: 400; color: var(--mute); letter-spacing: 0; }
 
@@ -248,6 +249,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 input::placeholder { color: var(--mute); opacity: .7; }
 
 .kv { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--mute); padding: 5px 0; }
+.kv > span:first-child { flex: none; max-width: 60%; }
 .kv b { font-weight: 400; color: var(--ink); text-align: right; overflow-wrap: anywhere; }
 .kv b.err { color: var(--err); }
 .kv b.warn { color: var(--warn); }
@@ -2721,12 +2723,15 @@ async function noteFor(run, t, priv, amount, fits, status, k = 'eth') {
 }
 // What the Max button offers: the private balance free to spend, and any part of it an action here is still spending.
 const inUse = (k, dec, dp, unit) => { const v = onItsWay(k); return v > 0n ? ` · ${fmt(v, dec, dp)} ${unit} in use` : ''; };
+// Until a scan has read the private notes, the balance is unknown, not zero.
+const heldLabel = (k, dec, dp, unit) => P.scan ? html`Private ${fmt(spendable(k), dec, dp)} ${unit}${inUse(k, dec, dp, unit)}` : P.err ? html`Private balance unavailable` : html`Reading private balance…`;
+const overBalance = () => P.scan ? 'More than your private balance.' : P.err ? 'Your private balance could not be read: press retry above.' : 'Still reading your private balance.';
 function v1Send(el, status) {
   const held = spendable('eth');
   mount(el, html`
     <div class="lbl"><span>To</span></div>
     <div class="amt text"><input id="s-to" placeholder="tacit1… or name.wei" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Recipient"></div>
-    <div class="lbl"><span>Amount</span><button type="button" id="s-max">Private ${fmt(held, 8, 6)} tETH${inUse('eth', 8, 6, 'tETH')}</button></div>
+    <div class="lbl"><span>Amount</span><button type="button" id="s-max">${heldLabel('eth', 8, 6, 'tETH')}</button></div>
     <div class="amt"><input id="s-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="tETH to send"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-teth"/></svg>tETH</span></div>
     <div class="rcpt" id="s-rcpt" hidden></div>
     <button class="btn" type="button" id="s-go" disabled>Send privately</button>
@@ -2757,7 +2762,7 @@ function v1Send(el, status) {
       rc.hidden = false;
       const small = units && units <= claim * 2n;
       go.disabled = !units || units + split > held || small;
-      if (units && units + split > held) warn(rc, 'More than your private balance.');
+      if (units && units + split > held) warn(rc, overBalance());
       else if (small) warn(rc, `Send more than ${fmt(claim * 2n, 8, 6)} tETH: the recipient's claim costs a relay fee of about ${fmt(claim, 8, 6)}.`);
     } catch (e) { if (my === seq) quoteErr(rc, e); }
   };
@@ -2795,7 +2800,7 @@ function v1Out(el, status) {
   mount(el, html`
     <div class="lbl"><span>To</span><span><button type="button" id="o-dev">On this device</button> · <button type="button" id="o-me">${mine()}</button></span></div>
     <div class="amt text"><input id="o-to" placeholder="0x… (a fresh address keeps it unlinked)" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Recipient address"></div>
-    <div class="lbl"><span>Amount</span><button type="button" id="o-max">Private ${fmt(held, 8, 6)} tETH${inUse('eth', 8, 6, 'tETH')}</button></div>
+    <div class="lbl"><span>Amount</span><button type="button" id="o-max">${heldLabel('eth', 8, 6, 'tETH')}</button></div>
     <div class="amt"><input id="o-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="tETH to withdraw"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-teth"/></svg>tETH</span></div>
     <div class="rcpt" id="o-rcpt" hidden></div>
     <button class="btn" type="button" id="o-go" disabled>Withdraw ETH</button>`);
@@ -2830,7 +2835,7 @@ function v1Out(el, status) {
         ${dev ? html`<div class="kv"><span>Lands in</span><b>private ETH on this device, less at most 0.25%</b></div>` : ''}`);
       rc.hidden = false;
       go.disabled = units + size > held || units <= fee || !raw || !!bad;
-      if (units + size > held) warn(rc, 'More than your private balance.');
+      if (units + size > held) warn(rc, overBalance());
       else if (bad && !/^0(x[0-9a-fA-F]{0,39})?$/.test(raw)) warn(rc, bad.message);            // not while an address is still being typed
       else if (!bad && !dev && ownAccount(raw)) rc.insertAdjacentHTML('beforeend', linkNote());
     } catch (e) { if (my === seq) quoteErr(rc, e); }
@@ -3566,20 +3571,21 @@ function renderTacBal(el) {
     ['On Ethereum', TACB.who === who ? TACB.erc : null],
     ...(k ? [['Private', P.scan?.tac ? P.scan.tac.value * E10 : null]] : []),
   ];
-  const total = parts.reduce((sum, [, v]) => sum + (v || 0n), 0n), known = parts.every(([, v]) => v != null);
+  const total = parts.reduce((sum, [, v]) => sum + (v || 0n), 0n), known = parts.every(([, v]) => v != null), failed = !!k && !P.scan && !!P.err;
   mount(el, html`
     <div class="bal">
       <svg class="tk md" aria-hidden="true"><use href="#tk-tac"/></svg>
-      <div><div class="v num">${known || total ? fmt(total, 18, 2) : html`<span class="sk" style="--w:8ch"></span>`}</div><div class="u">TAC${known ? '' : ', still reading'}</div></div>
+      <div><div class="v num">${known || total ? fmt(total, 18, 2) : html`<span class="sk" style="--w:8ch"></span>`}</div><div class="u">TAC${known ? '' : failed ? ', private balance unavailable' : ', still reading'}</div></div>
       <div class="side"><button class="link" type="button" data-asset="tac">About TAC</button></div>
     </div>
-    <div class="parts">${parts.map(([label, v]) => html`<span>${label} <b class="num">${v == null ? html`<span class="sk" style="--w:4ch"></span>` : fmt(v, 18, 2)}</b></span>`)}</div>
+    <div class="parts">${parts.map(([label, v]) => html`<span>${label} <b class="num">${v != null ? fmt(v, 18, 2) : failed && label === 'Private' ? html`<span class="err">—</span> <button class="link" type="button" id="tac-rescan">retry</button>` : html`<span class="sk" style="--w:4ch"></span>`}</b></span>`)}</div>
     ${k ? depositCallout('tac', 'tac-finish') : ''}
     ${k ? html`<div id="tac-shield"></div>` : ''}
     ${k && spendable('tac') ? html`<div class="callout"><span>${fmt(spendable('tac') * E10, 18, 2)} TAC is in private notes. Make it public TAC in ${your()} to sell or farm it here, all at once.</span><button class="btn ghost" type="button" id="tac-pub">Make public</button></div>` : ''}
     <div id="tac-send"></div>
     <div class="status" role="status" id="tac-bal-status"></div>`);
   wireFinish(el, 'tac', 'tac-finish', 'tac-bal-status');
+  const re = $('#tac-rescan'); if (re) re.onclick = () => busy(re, async () => { try { await scanPrivate(true); } catch (e) { sayErr($('#tac-bal-status'), e); } rerender('tac'); });
   if (k) tacShield($('#tac-shield'), $('#tac-bal-status'), TACB.who === who ? TACB.acct : null, TACB.who === who ? TACB.erc - (TACB.acct || 0n) : null);
   tacSend($('#tac-send'), $('#tac-bal-status'));
   const pub = $('#tac-pub', el);
@@ -5544,7 +5550,7 @@ function paintDash() {
     const value = it.v != null ? html`${show(it.v)}${it.unit ? html` <small>${it.unit}</small>` : ''}` : prev != null && !it.err ? html`<span class="stale">${show(prev)}</span>`
       : it.err || it.lazy ? '—' : html`<span class="sk" style="--w:7ch"></span>`;
     const body = html`<span class="di-k"><svg class="tk" aria-hidden="true"><use href="#${it.icon}"/></svg>${it.label}${it.live ? html`<span class="dot live"></span>` : ''}</span>
-      <span class="di-v num">${value}</span><span class="di-m">${delta}${it.err ? 'could not read · open to retry' : it.meta || (it.v == null ? html`<span class="sk" style="--w:12ch"></span>` : '')}</span>`;
+      <span class="di-v num">${value}</span><span class="di-m${it.err ? ' wrap' : ''}">${delta}${it.err ? 'could not read · open to retry' : it.meta || (it.v == null ? html`<span class="sk" style="--w:12ch"></span>` : '')}</span>`;
     return it.href ? html`<li><a class="di" href="${it.href}">${body}</a></li>`
       : html`<li><button class="di" type="button" ${it.asset ? html`data-asset="${it.asset}"` : html`data-dash-open="${it.open}"`}>${body}</button></li>`;
   };
