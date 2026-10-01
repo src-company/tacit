@@ -5089,9 +5089,16 @@ const { encodeTacitAddress, decodeTacitAddress } = makeTacitAddress({ secp });
 // wallet pubkey; the domain-separated EVM material is the gas EOA + note secret,
 // not the note owner). Deterministic, no new key material. On mainnet it also
 // carries the pool keys every shielded pool pays (tacit-unified.js), once that
-// module has loaded for this wallet; until then, and on other networks, the
-// address without them.
-const _unified = { pub: null, addr: null };
+// module has loaded for this wallet. Until then mainnet returns null (callers
+// show a placeholder and repaint when it lands) rather than the address
+// without them, which a user would copy or publish and the pool could not pay;
+// only if the module fails to load does it fall back to that form. Other
+// networks always use the address without them.
+const _unified = { pub: null, addr: null, failed: null };
+let _unifiedMod = null;
+const _unifiedModule = () => (_unifiedMod ||= import('./tacit-unified.js').catch((e) => { _unifiedMod = null; throw e; }));
+// Loaded up front so an unlock rarely waits on it.
+if (typeof window !== 'undefined') setTimeout(() => { _unifiedModule().catch(() => {}); }, 0);
 function tacitAddressForWallet(wallet, network = currentNetworkName()) {
   const spendPriv = wallet.priv;
   const btcSpendPub = secp.getPublicKey(spendPriv, true);
@@ -5099,6 +5106,7 @@ function tacitAddressForWallet(wallet, network = currentNetworkName()) {
     const pub = bytesToHex(btcSpendPub);
     if (_unified.pub === pub && _unified.addr) return _unified.addr;
     if (_unified.pub !== pub) _loadUnifiedAddress(spendPriv, pub);
+    if (_unified.failed !== pub) return null;
   }
   const { scanPub } = deriveSilentPaymentKeys(spendPriv);
   return encodeTacitAddress({ network, btcSpendPub, btcScanPub: scanPub, evmOwnerPub: btcSpendPub });
@@ -5106,11 +5114,19 @@ function tacitAddressForWallet(wallet, network = currentNetworkName()) {
 function _loadUnifiedAddress(spendPriv, pub) {
   Object.assign(_unified, { pub, addr: null });
   const priv = typeof spendPriv === 'string' ? hexToBytes(spendPriv.replace(/^0x/, '')) : Uint8Array.from(spendPriv);
-  import('./tacit-unified.js').then((m) => {
+  const repaint = () => {
+    try { _renderWalletTacitAddress(); } catch {}
+    try { if (document.getElementById('tab-csend')?.classList.contains('active')) _renderCsendTab(); } catch {}
+  };
+  _unifiedModule().then((m) => {
     if (_unified.pub !== pub) return;
     _unified.addr = m.unifiedAddress(priv).address;
-    try { _renderWalletTacitAddress(); } catch {}
-  }).catch(() => { if (_unified.pub === pub) _unified.pub = null; }).finally(() => priv.fill(0));
+    _unified.failed = null;
+    repaint();
+  }).catch(() => {
+    // The next call tries again; meanwhile the address without the pool keys is shown rather than none.
+    if (_unified.pub === pub) { _unified.pub = null; _unified.failed = pub; repaint(); }
+  }).finally(() => priv.fill(0));
 }
 
 // Resolve a Send-tab recipient string to a confidential-pool pubkey. Accepts a unified
@@ -48153,7 +48169,15 @@ function _renderWalletTacitAddress() {
     return;
   }
   try {
-    tacitAddrEl.textContent = tacitAddressForWallet(wallet);
+    const addr = tacitAddressForWallet(wallet);
+    if (!addr) {
+      tacitAddrEl.textContent = 'deriving your tacit1 address…';
+      if (noteEl) { noteEl.textContent = 'universal address'; noteEl.title = 'Your universal Tacit address, derived from your key in this browser.'; }
+      setIcon({ on: false, title: 'Deriving your universal Tacit address', clickable: false });
+      setCopyDisabled(true);
+      return;
+    }
+    tacitAddrEl.textContent = addr;
     if (noteEl) {
       noteEl.textContent = 'universal address';
       noteEl.title = 'Share this tacit1... identity for Tacit asset sends and V1 shielded pool receives; use the Bitcoin row for plain BTC.';
@@ -60338,7 +60362,7 @@ async function renderHoldings() {
       if (hadAssetsBefore && ethHeld) {
         list.innerHTML = `
           <div class="empty" style="padding:12px 14px;text-align:left;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-            <div class="muted" style="font-size:11px;line-height:1.6;flex:1;min-width:200px;">Nothing on the Bitcoin side at your address right now. Balances held on Ethereum show above. If you expected Bitcoin-side assets, rescan.</div>
+            <div class="muted" style="font-size:11px;line-height:1.6;flex:1;min-width:200px;">No Tacit assets on the Bitcoin side right now; plain BTC shows in your wallet balance. Balances held on Ethereum show above. If you expected Bitcoin-side assets, rescan.</div>
             <button type="button" id="btn-holdings-rescan-empty" class="btn-go" style="font-size:11px;padding:5px 12px;">↻ Rescan</button>
           </div>`;
       } else if (hadAssetsBefore) {

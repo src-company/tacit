@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-RD7lUXg0LGp/WtfTQCKNZgax/Whn4CrPUhGJAbiN99o=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-U5/RtMMZStActKvWqqwseg5LA9DUjNpbgjZ5nQt2nXE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -664,6 +664,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
 <script type="module">
 import { secp, keccak_256, sha256, hmac, bytesToHex, hexToBytes, concatBytes } from '/vendor/tacit-deps.min.js';
 import { prfBytesToScalar, prfLogin, prfRegister, loadPrfMap, savePrfMap, isPasskeyAvailable } from '/prf-wallet.js';
+import { knownWallets } from '/tacit-wallet-known.js?cb=49410363';
 import { makeTacitAddress } from '/tacit-address.js';
 import { bip352TaggedHash } from '/bip352.js';
 import { makeEvmWallet } from '/evm-wallet.js?cb=fb89e585';
@@ -1647,29 +1648,11 @@ function tacitAddress(privHex) {
   return encodeTacitAddress({ network: 'mainnet', btcSpendPub: spendPub, btcScanPub: secp.getPublicKey(hexToBytes(scan.toString(16).padStart(64, '0')), true), evmOwnerPub: spendPub });
 }
 
-// The wallet a returning user already has here: this page's last one, else the one tacit.finance opens. A record of
-// a key tacit.finance saved counts only while that key is still the one saved. Blocked storage means none.
-const savedPub = (addr) => String(readJson(addr ? `tacit-wallet-v1:mainnet:by:${String(addr).toLowerCase()}` : 'tacit-wallet-v1:mainnet')?.pub || '').toLowerCase();
-function knownWallet() {
-  try {
-    const own = readJson(LITE_ID);
-    if (own && isPub(own.pubHex) && (own.mode === 'local' ? savedPub() === own.pubHex : own.mode === 'ext' ? savedPub(own.address) === own.pubHex : true)) return own;
-    const mode = localStorage.getItem('tacit-active-mode-v1');
-    // tacit.finance keeps the Ethereum wallet's address as 40 hex characters, without 0x.
-    if (mode === 'eth') { const r = readJson('tacit-eth-identity:mainnet'); if (r?.address && isPub(r.pubkey)) return { mode, pubHex: r.pubkey, address: '0x' + String(r.address).replace(/^0x/i, '').toLowerCase() }; }
-    if (mode === 'btc') { const r = readJson('tacit-btc-identity:mainnet'); if (r?.address && isPub(r.tacitPubkey)) return { mode, pubHex: r.tacitPubkey, address: r.address, btc: r }; }
-    if (mode === 'ext') {
-      const ext = readJson('tacit-ext-state-v1'), blob = ext?.address && readJson(`tacit-wallet-v1:mainnet:by:${ext.address.toLowerCase()}`);
-      if (blob && isPub(blob.pub)) return { mode, pubHex: blob.pub, address: ext.address, ext };
-    }
-    if (!mode || mode === 'passkey') {
-      const m = loadPrfMap(), l = Object.keys(m).sort((a, b) => (m[b]?.lastUsed || 0) - (m[a]?.lastUsed || 0))[0];
-      if (l && isPub(m[l]?.pubkey)) return { mode: 'passkey', pubHex: m[l].pubkey, label: l, credentialId: m[l].credentialId };
-    }
-    if (!mode || mode === 'local') { const b = readJson('tacit-wallet-v1:mainnet'); if (b && isPub(b.pub)) return { mode: 'local', pubHex: b.pub }; }
-  } catch {}
-  return null;
-}
+// The wallet a returning visitor already has (tacit-wallet-known.js, shared by weld, /pay and /pay/eth): the one
+// tacit.finance is logged in with first, then a different key one of these pages opened before, offered second.
+const KNOWN_IDS = [LITE_ID, 'tacit-pay-hub-id-v1', 'tacit-pay-id-v1'];
+function knownWallet() { return knownWallets(KNOWN_IDS).primary; }
+function otherWallet() { return knownWallets(KNOWN_IDS).other; }
 // How a key was opened, for the wallet sheet; an address never breaks across lines.
 const viaText = (k) => {
   const a = (n) => html`<span class="nw">${short(k.address || '', n)}</span>`;
@@ -1706,7 +1689,7 @@ function setKey(k) {
 // tacit.js opens the passphrase-locked and Bitcoin-signed keys exactly as tacit.finance does. It loads only for
 // those paths, as a library: it reads the shared network once at import, so this page pins mainnet for its visit,
 // and any call that rewrites the app's linked-wallet records is run with them put back afterwards.
-const TACIT_URL = '/tacit.js?cb=eae1805c';
+const TACIT_URL = '/tacit.js?cb=7c0488a5';
 const SHARED_NET = 'tacit-network-v1', PREV_NET = 'tacit-lite-prev-net-v1';
 const SHARED_WALLET_KEYS = ['tacit-eth-identity', 'tacit-btc-identity', 'tacit-active-mode-v1', 'tacit-ext-mode-v1', 'tacit-ext-state-v1',
   ...['mainnet', 'signet'].flatMap((n) => [`tacit-eth-identity:${n}`, `tacit-btc-identity:${n}`])];
@@ -1812,12 +1795,13 @@ const open = {
 // Every way in, as one list: the wallet already known here first. `id` prefixes the element ids so the same list
 // can sit in the wallet sheet and inside any private card.
 function signIn(id) {
-  const known = knownWallet();
+  const known = knownWallet(), other = otherWallet();
   const saved = known?.mode !== 'local' && isPub(readJson('tacit-wallet-v1:mainnet')?.pub);
   const pk = isPasskeyAvailable();
   const opt = (k, title, sub, cls = '') => html`<button class="opt ${cls}" type="button" data-in="${k}"><span class="opt-t">${title}</span><span class="opt-m">${sub}</span></button>`;
   return html`<div class="opts" id="${id}-in">
     ${known ? opt('known', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>${known.tacit ? html`Continue as <b>${short(known.tacit, 7)}</b>` : 'Continue with your Tacit wallet'}`, html`Opens with ${viaText(known)}, as on tacit.finance. The same key handles Bitcoin, TAC and ETH here.`, 'main') : ''}
+    ${other ? opt('other', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>${other.tacit ? html`Continue as <b>${short(other.tacit, 7)}</b>` : 'Your other Tacit key'}`, html`A different key, opened here before with ${viaText(other)}. Not the one tacit.finance has open.`) : ''}
     ${opt('eth', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Ethereum wallet`, 'MetaMask, Rabby, Rainbow or any browser wallet. One signature.')}
     ${opt('btc', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-btc"/></svg>Bitcoin wallet`, 'Xverse, Leather or UniSat. One signature, two the first time.')}
     ${pk ? opt('passkey', html`<svg class="tk sm" aria-hidden="true"><use href="#i-key"/></svg>Passkey`, 'Already made one? Touch ID, Windows Hello or a security key.') : ''}
@@ -1831,13 +1815,14 @@ function wireSignIn(root, id, after) {
   loadUnified().catch(() => {});
   const box = root.querySelector(`#${id}-in`);
   if (!box) return;
-  const known = knownWallet();
+  const known = knownWallet(), other = otherWallet();
   for (const b of box.querySelectorAll('[data-in]')) b.onclick = () => {
     const k = b.dataset.in;
     if (k === 'paste') { const p = box.querySelector(`#${id}-paste`); p.hidden = false; p.querySelector('input').focus(); return; }
     busy(b, async () => {
       try {
         if (k === 'known') await open[known.mode](known);
+        else if (k === 'other') await open[other.mode](other);
         else if (k === 'key') open.key(box.querySelector(`#${id}-hex`).value);
         else if (k === 'new') await open.newPasskey();
         else if (k === 'local') await open.local({ pubHex: readJson('tacit-wallet-v1:mainnet')?.pub });
