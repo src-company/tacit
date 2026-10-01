@@ -7,7 +7,7 @@ import { parseCategoryWeights, categoryWeightsForDay, parseEngagementSchedule, e
 
 {
   const skipped = [];
-  const s = parseCategoryWeights('20760:off; 20730:cbtcmint=3,cusdmint=2 ;bad;20740:x=0;20741:cbtcmint=21', (m) => skipped.push(m));
+  const s = parseCategoryWeights('20760:off; 20730:cbtcmint=3,cusdmint=2 ;bad;20740:x=-1;20741:cbtcmint=21', (m) => skipped.push(m));
   assert.deepEqual(s.map((e) => e.fromDay), [20730, 20760], 'sorted, and the malformed entries are left out');
   assert.equal(skipped.length, 3, 'each malformed entry is reported');
   assert.deepEqual(categoryWeightsForDay(s, 20729), {}, 'nothing before the first day');
@@ -16,6 +16,7 @@ import { parseCategoryWeights, categoryWeightsForDay, parseEngagementSchedule, e
   assert.deepEqual(categoryWeightsForDay(s, 20760), {}, 'off ends them');
   assert.deepEqual(categoryWeightsForDay(parseCategoryWeights('20730:cbtcmint=3;20740:cusdmint=2'), 20745), { cusdmint: 2 }, 'a later entry replaces an earlier one');
   assert.deepEqual(categoryWeightsForDay(parseCategoryWeights(''), 20730), {});
+  assert.deepEqual(categoryWeightsForDay(parseCategoryWeights('20730:cbtcmint=0'), 20730), { cbtcmint: 0 }, 'a weight of 0 counts the activity for nothing');
   console.log('ok - weights apply from a day forward, a later entry replaces, off ends them');
 }
 
@@ -75,10 +76,14 @@ import { parseCategoryWeights, categoryWeightsForDay, parseEngagementSchedule, e
   const e = Object.fromEntries(countedRows({ dayRows, weekRows, spec }).map((r) => [r.address, r]));
   assert.equal(e[A].kinds, 2); assert.equal(e[A].activeDays, 1); assert.equal(e[A].factor, 1.25, 'two kinds, one day');
   assert.equal(e[A].dayPoints, 250);
-  assert.equal(e[B].kinds, 1, 'a kind under minPoints (5 of names) does not count'); assert.equal(e[B].activeDays, 3); assert.equal(e[B].factor, 1.25, 'returning on other days');
+  assert.equal(e[B].kinds, 1, 'a kind under minPoints (5 of names) does not count'); assert.equal(e[B].activeDays, 2, 'nor does a day under minPoints (5 points on day 8)'); assert.equal(e[B].factor, 1.25, 'returning on another day');
   assert.equal(e[C].kinds, 2); assert.equal(e[C].activeDays, 2); assert.equal(e[C].factor, 1.5, 'two kinds and returning');
   assert.equal(e[C].dayPoints, 60);
 
+  const zero = countedRows({ dayRows, weekRows, weights: { cbtcmint: 0 } }).find((r) => r.address === B);
+  assert.deepEqual([zero.dayPoints, zero.rawPoints], [0, 100], 'a weight of 0 leaves the raw points and counts none');
+  const dust = countedRows({ dayRows: [{ address: A, activity: 'wrap', points: 100 }], weekRows: [{ address: A, day: 10, activity: 'wrap', points: 100 }, { address: A, day: 9, activity: 'wrap', points: 1e-12 }], spec });
+  assert.equal(dust[0].factor, 1, 'a day with next to no points does not make an address a returning one');
   const both = Object.fromEntries(countedRows({ dayRows, weekRows, spec, weights: { cbtcmint: 3 } }).map((r) => [r.address, r.dayPoints]));
   assert.equal(both[B], 375, 'the weight and the multiplier compose: 100 × 3 × 1.25');
   const order = countedRows({ dayRows: [...dayRows].reverse(), weekRows: [...weekRows].reverse(), spec, weights: { cbtcmint: 3 } });

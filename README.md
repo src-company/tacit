@@ -290,11 +290,12 @@ A time-limited launch program, not a protocol feature.
   one-time reward for whoever is first. Wrapping ETH from an address that has ever received a Privacy Pools
   withdrawal earns an extra 1.2x. Holding 100 / 1,000 / 10,000 public TAC at the sending address through the
   previous 24 hours multiplies its points by 1.25x / 1.5x / 2x ([`docs/TAC.md`](./docs/TAC.md)). From
-  2026-10-04 (UTC) a day counts cBTC bonds at 3x and cUSD loans at 2x; an address's points for the day are
-  multiplied by 1.25x for each other kind of activity it has had in the past 7 days (private ETH, swaps, borrowing,
-  names and markets; up to 1.5x) and by another 1.25x if it was active on more than one of those days; and a cBTC
-  bond counts if its escrow is still posted when the day settles. A bond on a Bitcoin lock also earns 500 points per
-  wstETH for each further day it stays posted. zSwap
+  2026-10-04 (UTC) an address's points for the day are raised by 25% for each other kind of activity it has had in the past 7 days (private ETH, swaps, borrowing,
+  names and markets; up to +50%, and a kind counts once it has earned 25 points that week) and by another 25%
+  if it was active on more than one of those days, 1.75x at most. A cBTC bond counts if its escrow is still posted
+  when its day settles, shortly after the day ends; and a bond on a Bitcoin lock also earns a flat 500 points per
+  wstETH for each further day it stays posted (no early bonus or holder boost, and counted as activity for the
+  week's multiplier). zSwap
   activity counts from launch only, with no retroactive credit. Claims run through
   [`PointsDistributor`](https://etherscan.io/address/0x000000C918e44A3a443937fA7594eA4f7C95D6b9).
 - **Farms.** LP positions in the confidential pool earn wTAC from

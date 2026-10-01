@@ -70,10 +70,35 @@ try {
   const a = counted.rows(D).find((x) => x.address === A);
   assert.equal(a.rawPoints, 1000);
   assert.equal(a.factor, 1.25, 'a holder that was active earlier in the week and is credited today is returning');
-  assert.match(holdTxHash(out(1), HELPER, D), /^0x[0-9a-f]{64}$/, 'the id is shaped like a transaction hash');
-  assert.notEqual(holdTxHash(out(1), HELPER, D), holdTxHash(out(1), HELPER, D + 1));
+  assert.match(holdTxHash(out(1), HELPER, A, D), /^0x[0-9a-f]{64}$/, 'the id is shaped like a transaction hash');
+  assert.notEqual(holdTxHash(out(1), HELPER, A, D), holdTxHash(out(1), HELPER, A, D + 1));
+  assert.notEqual(holdTxHash(out(1), HELPER, A, D), holdTxHash(out(1), HELPER, B, D));
   assert.equal(store.leaderboard(10).find((x) => x.address === A).points >= 1000, true);
   console.log('ok - a held bond counts as activity for the week and in the totals');
+
+  // Through a helper: the engine holds every depositor's share under the helper's address, so each depositor's own share is what counts.
+  const X = '0x' + 'd'.repeat(40), Y = '0x' + 'e'.repeat(40);
+  const shared = out(8), helperShare = { [X]: 10n * ETH, [Y]: 0n };
+  const hx = bond(store, X, D + 8, shared, HELPER), hy = bond(store, Y, D + 9, shared, HELPER);
+  lock[shared] = { vBtc: 400000n }; escrow[shared] = 10n * ETH;      // the engine's pooled share under the helper is not nil whoever reclaimed
+  const perDepositor = { readEscrow: async (o, f, who) => (o === shared ? helperShare[who] : escrow[o]), readLock: io.readLock };
+  const helped = await accrueBondHolds({ store, day: D + 10, perWstEthDay: 500, ...perDepositor });
+  const hrows = store.dayActivityPoints((D + 10) * DAY, (D + 11) * DAY).filter((x) => x.activity === 'cbtchold' && (x.address === X || x.address === Y));
+  assert.deepEqual(hrows.map((x) => [x.address, x.points]), [[X, 5000]], 'the depositor who holds is credited, and not whoever posted last');
+  const seenWho = [];
+  const hdec = await decideBondHolds({ store, day: D + 9, readEscrow: async (o, f, who) => { seenWho.push(who); return helperShare[who]; } });
+  assert.deepEqual(seenWho, [Y], 'the check reads the depositor\'s own share');
+  assert.equal(hdec.released, 1, 'a depositor who reclaimed is released though another depositor still has a share on the outpoint');
+  void hx; void hy; void helped;
+  console.log('ok - through a helper each depositor\'s own share decides, so another depositor\'s share can neither keep a reclaimed bond counted nor take its credit');
+
+  // A lock earns only on the escrow it needs.
+  const big = bond(store, A, D + 11, out(9), A);
+  const capped = await accrueBondHolds({ store, day: D + 12, perWstEthDay: 500, readEscrow: async (o) => (o === out(9) ? 1000n * ETH : 0n), readLock: async () => ({ vBtc: 1n, spent: false, redeemed: false, required: ETH / 10n }) });
+  assert.equal(capped.credited, 1);
+  assert.equal(store.dayActivityPoints((D + 12) * DAY, (D + 13) * DAY).find((x) => x.activity === 'cbtchold').points, 50, '1,000 wstETH on a lock that needs 0.1 earns on 0.1');
+  void big;
+  console.log('ok - escrow beyond what the lock needs earns nothing');
 
   // A bond that cannot be read: the day waits, until it is well past its end; then it stops holding rewards back.
   const flaky = bond(store, C, D + 6, out(7), C);

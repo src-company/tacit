@@ -18,6 +18,7 @@ const ACTIVITY_LABELS = {
   weiname: 'Registered a .wei name',
   zswapeth: 'Swapped ETH via zRouter',
   cbtcmint: 'Minted cBTC',
+  cbtchold: 'Kept a cBTC bond posted',
   cusdmint: 'Minted cUSD',
   pmbet: 'Placed a prediction-market bet',
   pmcreate: 'Created a prediction market',

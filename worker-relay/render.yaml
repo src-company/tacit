@@ -376,8 +376,10 @@ services:
       # kinds and days in the past week ("<day>:<step per other kind>,<step for a second day>,<most other kinds>,<points
       # a kind needs>"); and the day from which a cBTC bond counts only while its escrow is still posted when the day
       # settles. An entry can be changed or removed until its day arrives; never one whose day has passed.
+      # No weights at launch: scoring a bond or a loan once, when it is posted, rewards putting capital in and taking it out
+      # again, so weighting it up would pay that more. "<day>:off" is an entry that weights nothing.
       - key: POINTS_CATEGORY_WEIGHTS
-        value: "20730:cbtcmint=3,cusdmint=2"
+        value: "20730:off"
       - key: POINTS_ENGAGEMENT
         value: "20730:0.25,0.25,2,25"
       - key: POINTS_BOND_HOLD_FROM_DAY

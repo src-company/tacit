@@ -25,7 +25,7 @@ export function programTerms({ cfg, dayBudgetWei, rateCapSchedule = [], tiers = 
   if (Object.values(cfg.evmPoolPointsStartBlocks || {}).some(Boolean)) rates.evmpooldeposit = cfg.pointsBasePerEvmPoolEth;
   if (cfg.weinameEnabled) rates.weiname = cfg.pointsBasePerWeiname;
   if (cfg.btcPoolPointsStartHeight) rates.btcpool = cfg.pointsBasePerBtcPoolTac;
-  if (cfg.pointsCbtcHoldRate > 0) rates.cbtchold = cfg.pointsCbtcHoldRate;
+  if (cfg.pointsCbtcHoldRate > 0 && cfg.pointsCbtcHoldFromDay) rates.cbtchold = cfg.pointsCbtcHoldRate;
   return {
     startDay,
     days: cfg.pointsProgramDays,

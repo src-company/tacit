@@ -80,3 +80,9 @@ const tiers = parseBoostTiers('100:1.25,1000:1.5,10000:2');
   assert.equal(off.cbtcHoldFromDay, null);
   console.log('ok - the terms state the daily credit for a bond that stays posted, and none when it is off');
 }
+
+{
+  const t = programTerms({ cfg: { ...cfg, pointsCbtcHoldRate: 500, pointsCbtcHoldFromDay: 0 }, dayBudgetWei: budget });
+  assert.equal('cbtchold' in t.rates, false, 'a daily credit with no day to start from is not stated, as the service would not pay it');
+  console.log('ok - a daily credit is stated only with the day it starts');
+}

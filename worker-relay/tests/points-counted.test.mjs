@@ -82,6 +82,29 @@ try {
   assert.equal(store.bondsToCheck((D + 3) * DAY, (D + 4) * DAY).length, 0);
   assert.equal(by(bondCounted.rows(D + 3))[A].dayPoints, 12);
   console.log('ok - an unreadable escrow leaves the day undecided, and a bond with no reference is left as it was');
+
+  // One-off markers, and an address's listed activity ordered by when it happened.
+  assert.equal(store.getMeta('x'), null);
+  store.setMeta('x', 1);
+  assert.equal(store.getMeta('x'), '1');
+  store.setMeta('x', 2);
+  assert.equal(store.getMeta('x'), '2');
+  const recent = dep(A, D + 20, 'wrap', 5, { blockNumber: 1 }), earlier = dep(A, D + 19, 'wrap', 5, { blockNumber: 999999 });
+  store.recordDeposit(earlier); store.recordDeposit(recent);
+  assert.equal(store.depositsFor(A, 2)[0].tx_hash, recent.txHash, 'the newest by time comes first, whatever its block number');
+  console.log('ok - markers are kept by name, and activity is listed newest by time');
+
+  // A day's rewards and its settled mark are one write.
+  const state = { lastSettledDay: D, publishedRoot: null, publishedTotalWei: null, knobs: null };
+  store.commitDay(new Map([[A, 5n * 10n ** 18n]]), state);
+  assert.equal(store.rewardFor(A), (5n * 10n ** 18n).toString());
+  assert.equal(store.loadSettleState().lastSettledDay, D);
+  store.commitDay(null, { ...state, lastSettledDay: D + 1 });
+  assert.equal(store.loadSettleState().lastSettledDay, D + 1, 'a day with nothing to pay still moves the mark');
+  assert.equal(store.rewardFor(A), (5n * 10n ** 18n).toString());
+  assert.throws(() => store.commitDay(new Map([[A, 1n]]), { lastSettledDay: 'x'.repeat(1), publishedRoot: {}, publishedTotalWei: null, knobs: null }));
+  assert.equal(store.rewardFor(A), (5n * 10n ** 18n).toString(), 'a write that fails takes the day\'s rewards back with it');
+  console.log('ok - a day\'s rewards and its settled mark commit together');
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

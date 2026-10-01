@@ -123,11 +123,23 @@ const POOL_LOCK_ABI = [
   { type: 'function', name: 'cbtcLockSpent', stateMutability: 'view', inputs: [{ name: 'outpoint', type: 'bytes32' }], outputs: [{ type: 'bool' }] },
   { type: 'function', name: 'cbtcLockRedeemed', stateMutability: 'view', inputs: [{ name: 'outpoint', type: 'bytes32' }], outputs: [{ type: 'bool' }] },
 ];
-const readEscrowOf = (outpoint, funder) => publicClient.readContract({ address: ADDR.collateralEngine, abi: ESCROW_OF_ABI, functionName: 'escrowOf', args: [outpoint, funder] });
+const HELPER_ESCROW_OF_ABI = [
+  { type: 'function', name: 'helperEscrowOf', stateMutability: 'view', inputs: [{ name: 'outpoint', type: 'bytes32' }, { name: 'depositor', type: 'address' }], outputs: [{ type: 'uint256' }] },
+];
+const REQUIRED_ESCROW_ABI = [
+  { type: 'function', name: 'requiredEscrow', stateMutability: 'view', inputs: [{ name: 'vBtc', type: 'uint256' }], outputs: [{ type: 'uint256' }] },
+];
+const escrowHelpers = new Set(ADDR.cbtcEscrowHelpers.map((a) => a.toLowerCase()));
+// What a depositor has posted on an outpoint now. Through a helper the engine holds every depositor's share under the helper's one
+// address, and one depositor's reclaim posts the others' part straight back, so the helper's own record of the depositor is what is read.
+const readEscrowOf = (outpoint, funder, depositor) => (escrowHelpers.has(String(funder).toLowerCase())
+  ? publicClient.readContract({ address: funder, abi: HELPER_ESCROW_OF_ABI, functionName: 'helperEscrowOf', args: [outpoint, depositor] })
+  : publicClient.readContract({ address: ADDR.collateralEngine, abi: ESCROW_OF_ABI, functionName: 'escrowOf', args: [outpoint, funder] }));
 const readBondLock = async (outpoint) => {
   const call = (functionName) => publicClient.readContract({ address: ADDR.pool, abi: POOL_LOCK_ABI, functionName, args: [outpoint] });
   const [vBtc, spent, redeemed] = await Promise.all([call('cbtcLockVBtc'), call('cbtcLockSpent'), call('cbtcLockRedeemed')]);
-  return { vBtc, spent, redeemed };
+  const required = vBtc > 0n ? await publicClient.readContract({ address: ADDR.collateralEngine, abi: REQUIRED_ESCROW_ABI, functionName: 'requiredEscrow', args: [vBtc] }) : 0n;
+  return { vBtc, spent, redeemed, required };
 };
 const CLAIMED_ABI = [
   { type: 'function', name: 'claimed', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }], outputs: [{ type: 'uint256' }] },
@@ -290,7 +302,10 @@ function pointsForCusdMint(debtValueRaw, priorCount) {
 // keccak256("HelperEscrowPosted(bytes32,address,uint256)") — CbtcEscrowHelper.sol; outpoint and depositor are indexed.
 const HELPER_ESCROW_POSTED_TOPIC = keccak256(toBytes('HelperEscrowPosted(bytes32,address,uint256)'));
 async function scanCollateralEngineCycle(store) {
-  const priorCursor = store.loadCeCursor();
+  // Bonds posted before their references were kept have none: one walk from the engine's first block fills them in. Rows
+  // already recorded are left as they are (recordDeposit ignores them); only the references are added.
+  const backfillRefs = store.getMeta('bond_refs_backfilled') == null;
+  const priorCursor = backfillRefs ? null : store.loadCeCursor();
   const deployBlock = BigInt(CFG.collateralEngineDeployBlock);
   let newestSeen = null;
   let params = '';
@@ -304,7 +319,7 @@ async function scanCollateralEngineCycle(store) {
   async function realCbtcDepositor(txHash, rawFrom) {
     if (!cbtcEscrowHelperSet.has(rawFrom.toLowerCase())) return rawFrom;
     const res = await blockscoutFetch(`${PP_BLOCKSCOUT_BASE}/transactions/${txHash}/logs`);
-    if (!res.ok) return rawFrom; // fail open to the helper's own address rather than lose the row
+    if (!res.ok) throw new Error(`blockscout tx logs ${res.status}`); // retried with the whole page, never recorded under the helper's address
     const data = await res.json();
     for (const item of data.items || []) {
       if (item.decoded && item.decoded.method_call.startsWith('HelperEscrowPosted(')) {
@@ -393,6 +408,7 @@ async function scanCollateralEngineCycle(store) {
   }
 
   if (newestSeen != null && (priorCursor == null || newestSeen > priorCursor)) store.saveCeCursor(newestSeen);
+  if (backfillRefs) store.setMeta('bond_refs_backfilled', String(Math.floor(Date.now() / 1000)));
 }
 
 function pointsForPmBet(amountWei, priorCount) {
@@ -1413,15 +1429,16 @@ export async function settleCycle(store, coverage = null) {
       if (r.credited) log(`settle: day ${d}: ${r.credited} bond(s) credited for staying posted`);
     }
     const rows = countedFor(store).rows(d);
+    let deltas = null;
     if (rows.length) {
       const budget = dayBudgetWei(dayIndex);
       if (budget > 0n) {
-        const deltas = splitDayBudget(rows, budget, rateCapForDay(rateCapSchedule, d));
-        if (deltas.size) store.applyDayRewards(deltas);
+        deltas = splitDayBudget(rows, budget, rateCapForDay(rateCapSchedule, d));
       }
     }
+    // The day's rewards and the mark that it is settled go in together, so a crash cannot pay a day and leave it to be paid again.
     state.lastSettledDay = d;
-    store.saveSettleState(state);
+    store.commitDay(deltas, state);
   }
 
   for (const adj of ledgerAdjustments) {

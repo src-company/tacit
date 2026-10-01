@@ -1842,11 +1842,11 @@ await step('ptsview', async () => {
   const hex = (c) => '0x' + c.repeat(40);
   const pointsBody = (count) => ({ address: A0.toLowerCase(), points: 1234.5, deposit_count: count,
     today: { points: 100, totalPoints: 1000, dayBudgetWei: '1111111111111111111111', factor: 1.25, rawPoints: 80, kinds: 2, activeDays: 3 },
-    deposits: [dep('b', 8453, 52000000, 7200, 'evmpooldeposit', 90, 1), dep('a', 1, 26090000, 60, 'wrap', 125, 1.5), dep('c', 1, 26080000, 90000, 'zswapeth', 100, 1), { ...dep('d', 1, 26070000, 200000, 'cbtchold', 80, 1), amount_wei: '0' }] });
+    deposits: [dep('b', 8453, 52000000, 7200, 'evmpooldeposit', 90, 1), dep('a', 1, 26090000, 60, 'wrap', 125, 1.5), dep('c', 1, 26080000, 90000, 'zswapeth', 100, 1), { ...dep('d', 1, 26070000, 200000, 'cbtchold', 80, 1), amount_wei: '0' }, dep('e', 1, 26060000, 300000, 'cbtcmint', 10000, 1)] });
   // Each day of the program, as the service gives it: today an estimate, a settled day with its TAC, and a day that carries points only (its TAC is null).
   const daysBody = { address: A0.toLowerCase(), startDay: today - 8, programDays: 90, today, lastSettledDay: today - 1, earnedWei: '8000000000000000000', days: [
-    { day: today, points: 215, factor: 1.25, tacWei: '4500000000000000000', settled: false }, { day: today - 1, points: 100, tacWei: '2000000000000000000', settled: true }, { day: today - 5, points: 40, tacWei: null, settled: true }] };
-  await r.ctx.route(/api\.tacit\.finance\/points\/0x/, (route) => json(route, /\/days$/.test(route.request().url()) ? daysBody : pointsBody(4)));
+    { day: today, points: 215, raw: 172, factor: 1.25, tacWei: '4500000000000000000', settled: false }, { day: Math.floor((t0 - 200000) / 86400), points: 80, raw: 80, tacWei: '1000000000000000000', settled: true }, { day: today - 1, points: 100, tacWei: '2000000000000000000', settled: true }, { day: today - 5, points: 40, tacWei: null, settled: true }] };
+  await r.ctx.route(/api\.tacit\.finance\/points\/0x/, (route) => json(route, /\/days$/.test(route.request().url()) ? daysBody : pointsBody(5)));
   await r.ctx.route(/api\.tacit\.finance\/claim\/0x/, (route) => json(route, { cumulativeAmount: '8000000000000000000', claimedWei: '5000000000000000000', unclaimedWei: '3000000000000000000', proof: null }));
   const dShort = (d) => new Date(d * 864e5).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
   // Terms that differ from the page's own, so a pass shows they are read and not echoed: another ceiling that lifts later, a dearer wrap, no cUSD row, other holder tiers.
@@ -1887,7 +1887,8 @@ await step('ptsview', async () => {
     `ptsview: the early bonus and the holder tiers are the service's (${v.body.slice(-330)})`);
   ok(/Hold 50 public TAC here through a day and what it does next earns 1\.1×/.test(v.body), 'ptsview: the next holder tier is read from the same tiers');
   ok(/1,000 per wstETH · ×3(?! from)/.test(v.body), 'ptsview: a weight in force shows on its way of earning');
-  ok(new RegExp(`1,000 per wstETH · ×3, then 500 for each day it stays posted from ${dShort(today + 1)}`).test(v.body), 'ptsview: the bond\'s daily credit and the day it starts show on its way of earning');
+  ok(new RegExp(`1,000 per wstETH · ×3; 500 a day while a bond on a Bitcoin lock stays posted from ${dShort(today + 1)}`).test(v.body), 'ptsview: the bond\'s daily credit and the day it starts show on its way of earning');
+  ok(v.days.some((d) => /\+0\s*not counted/.test(d)), `ptsview: a day whose listed points were not counted (a released bond) says so instead of adding them up (${v.days.join(' | ')})`);
   ok(/Kept a cBTC bond posted/.test(v.body) && !v.links.some((h) => h.includes('d'.repeat(64))), 'ptsview: a day\'s bond credit is listed as activity and links to no transaction');
   ok(/This week\s*×1\.25 · 2 kinds of activity · 3 days/.test(v.body), `ptsview: an address whose points were multiplied for the week is told so (${v.body.slice(500, 900)})`);
   await r.page.click('#pts-body summary:has-text("Terms")');
@@ -1897,8 +1898,9 @@ await step('ptsview', async () => {
   ok(new RegExp(`Runs\\s*${dShort(today - 8)} to ${lastD} \\(UTC\\), 90 days`).test(terms) && /Each day’s pot\s*up to 1,111 TAC, of 100,000 in all/.test(terms)
     && new RegExp(`Limit\\s*0\\.02 TAC per point, no limit from ${nextD}`).test(terms)
     && /Weights\s*cBTC bond ×3(?! from)/.test(terms)
-    && new RegExp(`Each week\\s*25% more for each other kind of activity in the past 7 days \\(up to 50%\\), and 25% more for activity on more than one day, from ${dShort(today + 1)}`).test(terms)
-    && new RegExp(`Bonds\\s*a cBTC bond counts while it stays posted through the day, from ${dShort(today + 1)}; a bond on a Bitcoin lock earns 500 per wstETH for each further day it stays posted, credited when the day settles, from ${dShort(today + 1)}`).test(terms) && /Points go to\s*the address that sent the transaction/.test(terms) && /Settled\s*each day, shortly after it ends/.test(terms) && /Claim\s*any time once a day is settled/.test(terms),
+    && new RegExp(`Each week\\s*25% more for each other kind of activity in the past 7 days \\(up to 50%; a kind counts once it has earned 25 points that week\\), and 25% more for activity on more than one day, from ${dShort(today + 1)}`).test(terms)
+    && new RegExp(`Bonds\\s*a cBTC bond counts if it is still posted when its day settles, shortly after the day ends, from ${dShort(today + 1)}; a bond on a Bitcoin lock earns a flat 500 points per wstETH for each further day it stays posted, credited when the day settles and counted as activity for the week, from ${dShort(today + 1)}`).test(terms)
+    && /Counting\s*each activity at its weight, times the week’s multiplier\. A day’s pot is split by these counted points; the all-time total is points as scored/.test(terms) && /Points go to\s*the address that sent the transaction/.test(terms) && /Settled\s*each day, shortly after it ends/.test(terms) && /Claim\s*any time once a day is settled/.test(terms),
     `ptsview: the terms list the days, the pot, the limit, who is paid and when (${terms.slice(0, 300)})`);
   await r.page.click('.ptd-b:last-child');
   const said = (await r.page.textContent('.ptd-r')).trim();
@@ -1927,7 +1929,7 @@ await step('ptsview', async () => {
     await until(l.page, () => !!document.querySelector('#pts-body .pt .ptlog'), null, 60000);
     await l.page.click('#pts-body .ptlog summary');
     const n250 = await l.page.evaluate(() => ({ bars: document.querySelectorAll('#pts-body .ptd-b').length, body: document.querySelector('#pts-body').textContent.replace(/\s+/g, ' ') }));
-    ok(route ? n250.bars >= 2 : n250.bars === 0 && /The latest 4 of 250 are listed/.test(n250.body), `ptsview: ${route ? 'a history past the 100 listed still draws its days' : 'without the days route, a history past the 100 listed draws no bars and says so'} (${n250.bars} bars)`);
+    ok(route ? n250.bars >= 2 : n250.bars === 0 && /The latest 5 of 250 are listed/.test(n250.body), `ptsview: ${route ? 'a history past the 100 listed still draws its days' : 'without the days route, a history past the 100 listed draws no bars and says so'} (${n250.bars} bars)`);
     if (l.errors.length) { fails++; console.log('FAIL ptsview page errors: ' + l.errors.slice(0, 3).join(' | ')); }
     await l.browser.close();
   }

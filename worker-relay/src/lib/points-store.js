@@ -1,6 +1,7 @@
 // SQLite ledger for the points program (src/points-indexer.js). One file on the service's
-// persistent disk; losing it means re-scanning from pointsStartBlock, not a soundness issue —
-// every row here is re-derivable from the chain, this is just a cache with a leaderboard view on top.
+// persistent disk. Rows of activity are re-derivable from the chain, but not everything here is: the reward ledger, the
+// days already settled and each cBTC bond's answer (bond_checks) record what was read at the time, and a rebuild would read
+// today's chain instead. Keep the disk backed up; a rebuilt ledger can differ from what was published and claimed.
 
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -117,6 +118,12 @@ export function openStore(dbPath, { excluded = [] } = {}) {
       tx_hash    TEXT PRIMARY KEY,
       held       INTEGER NOT NULL,
       checked_at INTEGER NOT NULL
+    );
+
+    -- One-off markers (a backfill that has been done), by name.
+    CREATE TABLE IF NOT EXISTS meta (
+      k TEXT PRIMARY KEY,
+      v TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS reward_adjustments (
@@ -280,7 +287,7 @@ export function openStore(dbPath, { excluded = [] } = {}) {
   const countByActivityStmt = db.prepare(`SELECT COUNT(*) AS n FROM deposits WHERE activity = ?`);
   const depositsForStmt = db.prepare(`
     SELECT tx_hash, block_number, block_time, amount_wei, prior_deposit_count, points, tip_wei, tip_recipient, pp_boosted, activity, tac_boost, z_share_boost, chain_id
-    FROM deposits WHERE depositor = ? ORDER BY block_number DESC LIMIT ?
+    FROM deposits WHERE depositor = ? ORDER BY block_time DESC, block_number DESC LIMIT ?
   `);
   const dayPointsStmt = db.prepare(`
     SELECT depositor AS address, SUM(points) AS dayPoints
@@ -303,13 +310,14 @@ export function openStore(dbPath, { excluded = [] } = {}) {
   `);
   const saveBondRefStmt = db.prepare(`INSERT OR IGNORE INTO bond_refs (tx_hash, outpoint, funder) VALUES (?, ?, ?)`);
   const bondsToCheckStmt = db.prepare(`
-    SELECT r.tx_hash AS txHash, r.outpoint AS outpoint, r.funder AS funder
+    SELECT r.tx_hash AS txHash, r.outpoint AS outpoint, r.funder AS funder, d.depositor AS depositor
     FROM bond_refs r JOIN deposits d ON d.tx_hash = r.tx_hash LEFT JOIN bond_checks b ON b.tx_hash = r.tx_hash
     WHERE d.activity = 'cbtcmint' AND d.block_time >= ? AND d.block_time < ? AND b.tx_hash IS NULL
     ORDER BY d.block_number
   `);
-  // Each bond's latest poster per (outpoint, funder) before a day: the bonds that may still be posted on it. A bond already
-  // found released on its own day is left out.
+  // The bonds that may still be posted on a day, one per (outpoint, funder, depositor): the latest row of each posted before
+  // it. A funder that is a helper holds many depositors' shares, so each depositor is its own bond. A bond already found
+  // released on its own day is left out.
   const bondPairsStmt = db.prepare(`
     SELECT r.outpoint AS outpoint, r.funder AS funder, d.depositor AS depositor, d.block_number AS blockNumber
     FROM bond_refs r JOIN deposits d ON d.tx_hash = r.tx_hash LEFT JOIN bond_checks b ON b.tx_hash = r.tx_hash
@@ -454,6 +462,14 @@ export function openStore(dbPath, { excluded = [] } = {}) {
   function dayPointsByAddress(dayStartSec, dayEndSec) {
     return dayPointsStmt.all(dayStartSec, dayEndSec);
   }
+  const commitDayTx = db.transaction((deltas, state) => {
+    if (deltas && deltas.size) applyDayRewards(deltas);
+    saveSettleState(state);
+  });
+  const getMetaStmt = db.prepare(`SELECT v FROM meta WHERE k = ?`);
+  const setMetaStmt = db.prepare(`INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v`);
+  const getMeta = (k) => getMetaStmt.get(k)?.v ?? null;
+  const setMeta = (k, v) => { setMetaStmt.run(k, String(v)); };
   function dayActivityPoints(dayStartSec, dayEndSec) {
     return dayActivityStmt.all(dayStartSec, dayEndSec);
   }
@@ -470,11 +486,15 @@ export function openStore(dbPath, { excluded = [] } = {}) {
   }
   function bondPairsBefore(beforeSec) {
     const latest = new Map();
-    for (const r of bondPairsStmt.all(beforeSec)) latest.set(`${r.outpoint}:${r.funder}`, r);
+    for (const r of bondPairsStmt.all(beforeSec)) latest.set(`${r.outpoint}:${r.funder}:${r.depositor}`, r);
     return [...latest.values()];
   }
   function bondsToCheck(dayStartSec, dayEndSec) {
     return bondsToCheckStmt.all(dayStartSec, dayEndSec);
+  }
+  // One day's rewards and the settled-through mark in a single write, so a crash cannot leave a day paid and still open.
+  function commitDay(deltas, state) {
+    return commitDayTx(deltas, state);
   }
   // The first answer to a bond stands, so a settled day cannot move.
   function saveBondCheck(txHash, held, checkedAt) {
@@ -643,7 +663,7 @@ export function openStore(dbPath, { excluded = [] } = {}) {
 
   return {
     db, recordDeposit, loadCursor, saveCursor, leaderboard, totalFor, depositsFor, countByActivity,
-    dayPointsByAddress, dayActivityPoints, weekActivityPoints, saveBondRef, bondPairsBefore, bondsToCheck, saveBondCheck, applyDayRewards, applyAdjustment, listAdjustments: () => listAdjustmentsStmt.all(), allRewards, rewardFor,
+    dayPointsByAddress, dayActivityPoints, weekActivityPoints, commitDay, getMeta, setMeta, saveBondRef, bondPairsBefore, bondsToCheck, saveBondCheck, applyDayRewards, applyAdjustment, listAdjustments: () => listAdjustmentsStmt.all(), allRewards, rewardFor,
     savePoolSnapshot, poolSnapshots: (fromDay) => poolSnapshotsStmt.all(fromDay), poolDepositWeiByDay,
     loadSettleState, saveSettleState, savePublishedClaims, claimFor,
     recordPpWithdrawal, hasEarlierPpWithdrawal, loadPpCursor, savePpCursor,

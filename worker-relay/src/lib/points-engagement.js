@@ -6,7 +6,8 @@
 // later entry replaces an earlier one, and "off" ends them.
 // Engagement: "20730:0.25,0.25,2,25;20760:off" — from each day, an address's counted points are multiplied by
 // 1 + kindStep for each other kind of activity it has had in the past 7 days (up to maxKinds of them) + returnStep when
-// it was active on more than one of those days. A kind counts once it has earned minPoints in the week.
+// it was active on more than one of those days. A kind counts once it has earned minPoints in the week, and a day counts
+// as active once the address has earned minPoints on it.
 
 // The kinds of activity: where the program is used, not which contract. An activity that is not listed is its own kind.
 export const KIND_OF = {
@@ -33,7 +34,7 @@ export function parseCategoryWeights(raw, log = () => {}) {
         for (const kv of m[2].split(',').map((s) => s.trim()).filter(Boolean)) {
           const [act, w] = kv.split('=').map((s) => s.trim());
           const weight = Number(w);
-          if (!/^[a-z0-9_]+$/.test(act || '') || !(weight > 0) || weight > 20 || !Number.isFinite(weight)) throw new Error(`"${kv}" is not <activity>=<weight between 0 and 20>`);
+          if (!/^[a-z0-9_]+$/.test(act || '') || !(weight >= 0) || weight > 20 || !Number.isFinite(weight)) throw new Error(`"${kv}" is not <activity>=<weight from 0 to 20>`);
           weights[act] = weight;
         }
       }
@@ -99,8 +100,8 @@ export function countedRows({ dayRows, weekRows = [], weights = {}, spec = null 
   const week = new Map();
   if (spec) {
     for (const r of weekRows) {
-      const w = week.get(r.address) ?? { kinds: new Map(), days: new Set() };
-      if (r.points > 0) w.days.add(r.day);
+      const w = week.get(r.address) ?? { kinds: new Map(), days: new Map() };
+      w.days.set(r.day, (w.days.get(r.day) ?? 0) + r.points);
       w.kinds.set(kindOf(r.activity), (w.kinds.get(kindOf(r.activity)) ?? 0) + r.points);
       week.set(r.address, w);
     }
@@ -109,7 +110,7 @@ export function countedRows({ dayRows, weekRows = [], weights = {}, spec = null 
   for (const [address, e] of byAddress) {
     const w = week.get(address);
     const kinds = w ? [...w.kinds.values()].filter((p) => p >= spec.minPoints && p > 0).length : 0;
-    const activeDays = w ? w.days.size : 0;
+    const activeDays = w ? [...w.days.values()].filter((p) => p >= spec.minPoints && p > 0).length : 0;
     const factor = engagementFactor(spec, { kinds, activeDays });
     out.push({ address, dayPoints: e.counted * factor, rawPoints: e.raw, factor, kinds, activeDays });
   }

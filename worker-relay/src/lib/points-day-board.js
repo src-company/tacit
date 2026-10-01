@@ -6,7 +6,8 @@ import { POINTS_SCALE, applyRateCeiling } from './points-rate-cap.js';
 // dayRows: [{ address, dayPoints }] (dayPoints: the points the day is split by). The pot is the day's budget, or less where the TAC-per-point ceiling binds.
 export function dayPot(dayRows, budgetWei, maxWeiPerPoint = null) {
   const totalPoints = dayRows.reduce((s, r) => s + r.dayPoints, 0);
-  return { totalPoints, pot: applyRateCeiling(budgetWei, BigInt(Math.round(totalPoints * POINTS_SCALE)), maxWeiPerPoint) };
+  // Before the day's first point nothing has been split, so the pot is its budget; the ceiling only trims a pot there are points to split.
+  return { totalPoints, pot: totalPoints > 0 ? applyRateCeiling(budgetWei, BigInt(Math.round(totalPoints * POINTS_SCALE)), maxWeiPerPoint) : budgetWei };
 }
 
 export function dayBoard(dayRows, { budgetWei, maxWeiPerPoint = null, limit = 100 }) {
@@ -52,7 +53,7 @@ export function dayHistory({ dayRowsFor, budgetFor, capFor, ledgerFor }) {
     if (settled && final.has(day)) return final.get(day);
     const rows = dayRowsFor(day), budget = budgetFor(day);
     const paid = budget > 0n ? splitDayBudget(rows, budget, capFor(day)) : new Map();
-    const by = new Map(rows.map((r) => [r.address.toLowerCase(), { points: r.dayPoints, factor: r.factor ?? 1, wei: paid.get(r.address) ?? 0n }]));
+    const by = new Map(rows.map((r) => [r.address.toLowerCase(), { points: r.dayPoints, raw: r.rawPoints ?? r.dayPoints, factor: r.factor ?? 1, wei: paid.get(r.address) ?? 0n }]));
     if (settled) final.set(day, by);
     return by;
   };
@@ -63,12 +64,12 @@ export function dayHistory({ dayRowsFor, budgetFor, capFor, ledgerFor }) {
       const settled = day <= lastSettledDay, e = split(day, settled).get(a);
       if (!e || !(e.points > 0)) continue;
       if (settled) resplit += e.wei;
-      days.push({ day, points: e.points, factor: e.factor, wei: e.wei, settled });
+      days.push({ day, points: e.points, raw: e.raw, factor: e.factor, wei: e.wei, settled });
     }
     const earnedWei = BigInt(ledgerFor(a) ?? 0), reconciled = resplit === earnedWei;
     return {
       earnedWei: earnedWei.toString(), reconciled,
-      days: days.reverse().map((d) => ({ day: d.day, points: d.points, factor: d.factor, tacWei: d.settled && !reconciled ? null : d.wei.toString(), settled: d.settled })),
+      days: days.reverse().map((d) => ({ day: d.day, points: d.points, raw: d.raw, factor: d.factor, tacWei: d.settled && !reconciled ? null : d.wei.toString(), settled: d.settled })),
     };
   };
 }

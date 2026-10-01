@@ -101,3 +101,18 @@ import { splitDayBudget, dayHistory } from '../src/lib/points-day-board.js';
   assert.equal(history('0xa', span).days[0].points, 150, 'the points are the ones the day was split by');
   console.log('ok - the history carries the multiplier a day was counted at');
 }
+
+{
+  // Before a day's first point there is nothing to split under the ceiling, so its pot is its budget.
+  const empty = dayPot([], 1000n, 10n);
+  assert.deepEqual([empty.totalPoints, empty.pot], [0, 1000n], 'the day\'s pot before any points is its budget');
+  assert.equal(dayPot([{ address: '0xa', dayPoints: 5 }], 1000n, 10n).pot, 50n, 'with points the ceiling trims it: 5 points at 10 wei a point');
+  assert.equal(dayBoard([], { budgetWei: 1000n, maxWeiPerPoint: 10n }).dayBudgetWei, '1000');
+  // The history says what a day's points were scored at, beside what they were counted at.
+  const days = { 10: [{ address: '0xa', dayPoints: 300, rawPoints: 100 }, { address: '0xb', dayPoints: 50 }] };
+  const history = dayHistory({ dayRowsFor: (d) => days[d] || [], budgetFor: () => 350n, capFor: () => null, ledgerFor: () => 0n });
+  const e = history('0xa', { fromDay: 10, throughDay: 10, lastSettledDay: 10 }).days[0];
+  assert.deepEqual([e.points, e.raw], [300, 100]);
+  assert.equal(history('0xb', { fromDay: 10, throughDay: 10, lastSettledDay: 10 }).days[0].raw, 50, 'a row with no raw figure counts at what it scored');
+  console.log('ok - an empty day\'s pot is its budget, and the history carries the points a day was scored at');
+}
