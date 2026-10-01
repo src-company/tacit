@@ -26188,7 +26188,7 @@ async function _routeFetch(req, env, ctx) {
       if (url.pathname === '/tacit.js') return handleDappBundle(req, env, url);
       return fetch(req); // any other zone-routed path → origin passthrough
     }
-    // /points/0x… and /claim/0x… carry the address as a path segment, not a query param like every other
+    // /points/0x…(/days) and /claim/0x… carry the address as a path segment, not a query param like every other
     // OPEN_ORIGIN_PATHS entry, so a plain Set.has() can't match them — check the prefix instead.
     const openOrigin = OPEN_ORIGIN_PATHS.has(url.pathname)
       || url.pathname === '/leaderboard' || url.pathname.startsWith('/points/') || url.pathname.startsWith('/claim/');
@@ -26207,7 +26207,7 @@ async function _routeFetch(req, env, ctx) {
     if (url.pathname === '/prover-heartbeat' && req.method === 'POST') return handleProverHeartbeat(req, env, cors);
     if (url.pathname === '/prover-health' && req.method === 'GET') return handleProverHealth(env, cors, url, checkConfidentialAuth(req, env));
 
-    if (req.method === 'GET' && (url.pathname === '/leaderboard' || /^\/(points|claim)\/0x[0-9a-fA-F]{40}$/.test(url.pathname))) {
+    if (req.method === 'GET' && (url.pathname === '/leaderboard' || /^\/(points\/0x[0-9a-fA-F]{40}(\/days)?|claim\/0x[0-9a-fA-F]{40})$/.test(url.pathname))) {
       return handlePointsProxy(url.pathname, url.search, cors);
     }
 

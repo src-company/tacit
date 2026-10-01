@@ -11,8 +11,8 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { CFG, ADDR } from './lib/config.js';
 import { publicClient, clientForChain } from './lib/chain.js';
 import { withNonceRetry } from './lib/nonce-retry.js';
-import { POINTS_SCALE, parseRateCapSchedule, rateCapForDay, applyRateCeiling } from './lib/points-rate-cap.js';
-import { dayPot, dayBoard } from './lib/points-day-board.js';
+import { parseRateCapSchedule, rateCapForDay } from './lib/points-rate-cap.js';
+import { dayPot, dayBoard, dayHistory, splitDayBudget } from './lib/points-day-board.js';
 import Database from 'better-sqlite3';
 import { openStore } from './lib/points-store.js';
 import { parseBoostTiers, openTacBoost, scanTacTransfers } from './lib/tac-holder-boost.js';
@@ -1230,24 +1230,6 @@ export function dayBudgetWei(dayIndex) {
   return cumulativeTargetWei(dayIndex + 1) - cumulativeTargetWei(dayIndex);
 }
 
-// Splits `budgetWei` pro-rata across `rows` ([{address, dayPoints}], dayPoints a JS float — a WEIGHT, never a
-// wei amount). Scaling both sides of the ratio by the same factor before doing BigInt division means the
-// float's imprecision only ever affects the last few bits of the ratio, never the wei-scale result, and never
-// compounds across days (each day's split is independent). Integer division leaves a few wei of dust
-// unallocated per day — negligible at TAC's scale and not worth the complexity of redistributing.
-export function splitDayBudget(rows, budgetWei, maxWeiPerPoint = null) {
-  const scaled = rows.map((r) => BigInt(Math.round(r.dayPoints * POINTS_SCALE)));
-  const totalScaled = scaled.reduce((s, v) => s + v, 0n);
-  const deltas = new Map();
-  if (totalScaled <= 0n) return deltas;
-  const pot = applyRateCeiling(budgetWei, totalScaled, maxWeiPerPoint);
-  rows.forEach((r, i) => {
-    const share = (pot * scaled[i]) / totalScaled;
-    if (share > 0n) deltas.set(r.address, share);
-  });
-  return deltas;
-}
-
 export function buildRewardTree(rewards) {
   return buildMerkleTree(rewards.map((r) => ({ address: r.address, cumulativeAmountWei: BigInt(r.cumulativeWei) })));
 }
@@ -1379,6 +1361,11 @@ export async function settleCycle(store) {
 }
 
 function startHttp(store, evmState) {
+  const history = dayHistory({
+    dayRowsFor: (d) => store.dayPointsByAddress(d * 86400, (d + 1) * 86400),
+    budgetFor: (d) => dayBudgetWei(d - Math.floor(CFG.pointsProgramStartSec / 86400)),
+    capFor: (d) => rateCapForDay(rateCapSchedule, d),
+  });
   const server = createServer(async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'application/json');
@@ -1465,6 +1452,20 @@ function startHttp(store, evmState) {
           today = { points: row ? row.dayPoints : 0, totalPoints, dayBudgetWei: pot.toString() };
         }
         res.end(JSON.stringify({ ...total, today, deposits }));
+        return;
+      }
+      // What each UTC day of the program paid (or, for today, would pay so far) this address, from the same split
+      // settlement uses, so a client can show points and TAC by day without the 100-activity limit /points has.
+      const daysMatch = url.pathname.match(/^\/points\/(0x[0-9a-fA-F]{40})\/days$/);
+      if (daysMatch) {
+        if (!CFG.pointsProgramStartSec) { res.statusCode = 404; res.end(JSON.stringify({ error: 'no reward program' })); return; }
+        const startDay = Math.floor(CFG.pointsProgramStartSec / 86400);
+        const todayDay = Math.floor(Date.now() / 1000 / 86400);
+        const lastSettledDay = store.loadSettleState()?.lastSettledDay ?? startDay - 1;
+        res.end(JSON.stringify({
+          address: daysMatch[1].toLowerCase(), startDay, programDays: CFG.pointsProgramDays, today: todayDay, lastSettledDay,
+          ...history(daysMatch[1], { fromDay: startDay, throughDay: todayDay, lastSettledDay }),
+        }));
         return;
       }
       // The claim proof for the LAST on-chain-published root (see savePublishedClaims) PLUS what the
