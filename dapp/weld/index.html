@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Jxj7ueCxA4PJ3+cxznmXM0ogX6duxZCGkNxEkP9PaLs=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ooTZrS7JV8//khXBMt75oPLZ38X6pT15IAfMtDJHD7g=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -4321,7 +4321,10 @@ function renderFarmNotes(el) {
         await t.farmRedeem({ walletPriv: priv, note: n, to, wait: true, waitOpts: run.wait(`Unwrap ${fmt(BigInt(n.value), 8, 2)} wTAC of farm rewards`, 15 * 60e3) });
       }
       // WrappedTac turns the wTAC ERC20 in the paying account into TAC, one for one: what is there now, whatever its source.
-      const bal = wordAt(await ethCall(WTAC, SEL.balanceOf + addrWord(to)), 0);
+      const wtacNow = async () => wordAt(await ethCall(WTAC, SEL.balanceOf + addrWord(to)), 0);
+      let bal = await wtacNow();
+      for (let i = 0; !bal && mine.length && i < 10; i++) { await sleep(3000); bal = await wtacNow(); }   // a read behind the chain
+      if (!bal && mine.length) throw new Error('The unwrap landed, but the wTAC is not visible yet. Press Turn into TAC again in a minute; it picks up from here.');
       if (bal > 0n) { const h = await sendTx({ to: WTAC, data: SEL.wtacWithdraw + word(bal) + addrWord(to), label: `Turn ${fmt(bal, 18, 2)} wTAC into TAC` }); say(status, html`Turning wTAC into TAC… ${txLink(h)}`); await waitTx(h); }
       toast('Rewards turned into TAC');
       await done(`Your rewards are TAC in ${your()}.`);
@@ -4804,7 +4807,7 @@ function bondNotes(r = bondsNow()) {
   const out = [];
   for (const l of r?.locks || []) {
     const take = l.bonds.filter((b) => b.take && bondVia(b.account));
-    if (take.length) out.push({ id: `take:${l.op}`, kind: 'take', l, amt: take.reduce((s, b) => s + b.share, 0n) });
+    if (take.length) out.push({ id: `take:${l.op}:${l.state}`, kind: 'take', l, amt: take.reduce((s, b) => s + b.share, 0n) });
     if (l.state === 'forfeit') out.push({ id: `lost:${l.op}`, kind: 'lost', l, amt: l.total });
     if (l.health && !l.health.healthy) out.push({ id: `short:${l.op}:${l.health.flaggedAt}`, kind: 'short', l, amt: l.health.want - l.health.have });
   }
@@ -4817,7 +4820,7 @@ const bondText = (n) => (n.kind === 'take' ? `A bond of ${fmt(n.amt, 18, 5)} wst
 // Each notice is announced once: a toast here, and a system notification while this tab is in the background and
 // notifications are on. The dashboard keeps showing it for as long as it holds.
 function bondNews(r) {
-  const seen = new Set(store.get(bondSeen())?.ids || []), fresh = bondNotes(r).filter((n) => !seen.has(n.id));
+  const seen = new Set(store.get(bondSeen())?.ids || []), fresh = bondNotes(r).filter((n) => !seen.has(n.id) && !(n.kind === 'take' && n.l.state === 'pending'));
   if (!fresh.length) return;
   for (const n of fresh) {
     toast(bondText(n), n.kind !== 'take', 12000);
