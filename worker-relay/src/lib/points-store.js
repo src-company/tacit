@@ -308,6 +308,14 @@ export function openStore(dbPath, { excluded = [] } = {}) {
     WHERE d.activity = 'cbtcmint' AND d.block_time >= ? AND d.block_time < ? AND b.tx_hash IS NULL
     ORDER BY d.block_number
   `);
+  // Each bond's latest poster per (outpoint, funder) before a day: the bonds that may still be posted on it. A bond already
+  // found released on its own day is left out.
+  const bondPairsStmt = db.prepare(`
+    SELECT r.outpoint AS outpoint, r.funder AS funder, d.depositor AS depositor, d.block_number AS blockNumber
+    FROM bond_refs r JOIN deposits d ON d.tx_hash = r.tx_hash LEFT JOIN bond_checks b ON b.tx_hash = r.tx_hash
+    WHERE d.activity = 'cbtcmint' AND d.block_time < ? AND COALESCE(b.held, 1) = 1
+    ORDER BY d.block_time, d.block_number
+  `);
   const saveBondCheckStmt = db.prepare(`INSERT OR IGNORE INTO bond_checks (tx_hash, held, checked_at) VALUES (?, ?, ?)`);
   const getRewardStmt = db.prepare(`SELECT cumulative_wei FROM reward_ledger WHERE address = ?`);
   const upsertRewardStmt = db.prepare(`
@@ -452,8 +460,18 @@ export function openStore(dbPath, { excluded = [] } = {}) {
   function weekActivityPoints(fromSec, toSec) {
     return weekActivityStmt.all(fromSec, toSec);
   }
+  // A reference that is not a 32-byte outpoint and an address is not kept, so a bond whose event came back half decoded
+  // is left as it was and never becomes something the settle step cannot read.
   function saveBondRef({ txHash, outpoint, funder }) {
-    saveBondRefStmt.run(txHash, String(outpoint).toLowerCase(), String(funder).toLowerCase());
+    const o = String(outpoint).toLowerCase(), f = String(funder).toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(o) || !/^0x[0-9a-f]{40}$/.test(f)) return false;
+    saveBondRefStmt.run(txHash, o, f);
+    return true;
+  }
+  function bondPairsBefore(beforeSec) {
+    const latest = new Map();
+    for (const r of bondPairsStmt.all(beforeSec)) latest.set(`${r.outpoint}:${r.funder}`, r);
+    return [...latest.values()];
   }
   function bondsToCheck(dayStartSec, dayEndSec) {
     return bondsToCheckStmt.all(dayStartSec, dayEndSec);
@@ -625,7 +643,7 @@ export function openStore(dbPath, { excluded = [] } = {}) {
 
   return {
     db, recordDeposit, loadCursor, saveCursor, leaderboard, totalFor, depositsFor, countByActivity,
-    dayPointsByAddress, dayActivityPoints, weekActivityPoints, saveBondRef, bondsToCheck, saveBondCheck, applyDayRewards, applyAdjustment, listAdjustments: () => listAdjustmentsStmt.all(), allRewards, rewardFor,
+    dayPointsByAddress, dayActivityPoints, weekActivityPoints, saveBondRef, bondPairsBefore, bondsToCheck, saveBondCheck, applyDayRewards, applyAdjustment, listAdjustments: () => listAdjustmentsStmt.all(), allRewards, rewardFor,
     savePoolSnapshot, poolSnapshots: (fromDay) => poolSnapshotsStmt.all(fromDay), poolDepositWeiByDay,
     loadSettleState, saveSettleState, savePublishedClaims, claimFor,
     recordPpWithdrawal, hasEarlierPpWithdrawal, loadPpCursor, savePpCursor,

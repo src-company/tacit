@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-m99G04ltS/dqlCja38p2j+zcbMWgDn0NMPTC1XhNn6s=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-gPgHxaDwR2hnpZHhgJ+RATxaeYJxdfrwXd0Y91KAwbo=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -2711,7 +2711,7 @@ function holderTier(addr) {
 }
 // `kind`: 'v1' (a wrap into the Tacit pool) or 'dev' (a deposit into the ETH pool on any chain).
 let PTSINFO = false;
-const ptsWhy = () => `Points share each day’s pot of up to ${potTac()} TAC. You earn ${rateStr(ethBase())} per ETH, times an early bonus that shrinks as deposits add up, times more for holding TAC for a day (and ${PGM.wrapBoost} for a wrap into the Tacit pool). This is an estimate: the program counts deposits from its own records.`;
+const ptsWhy = () => `Points share each day’s pot of up to ${potTac()} TAC. You earn ${rateStr(ethBase())} per ETH, times an early bonus that shrinks as deposits add up, times more for holding TAC for a day (and ${PGM.wrapBoost} for a wrap into the Tacit pool).${weekMax() > 1 ? ` The day’s points are then multiplied by up to ${weekMax()} for activity across kinds and days in the week.` : ''} This is an estimate: the program counts deposits from its own records.`;
 document.addEventListener('click', (e) => {
   if (!e.target.closest?.('[data-ptsinfo]')) return;
   PTSINFO = !PTSINFO;
@@ -4124,7 +4124,7 @@ const PGM = { startDay: Date.UTC(2026, 8, 23) / 864e5, days: 90, totalWei: 10000
   rateCap: [{ fromDay: Date.UTC(2026, 9, 3) / 864e5, wei: 3n * 10n ** 16n }], early: { max: 5, half: 200 }, wrapBoost: 1.25,
   tiers: [[100, 1.25], [1000, 1.5], [10000, 2]], windowHours: 24,
   rates: { wrap: 1250, evmpooldeposit: 1000, zswapeth: 1000, cbtcmint: 1000, cusdmint: 2 },
-  weights: [], engagement: [], bondHoldFromDay: null };
+  weights: [], engagement: [], bondHoldFromDay: null, cbtcHoldFromDay: null };
 const ptsDays = () => PGM.days, ptsEnd = () => (PGM.startDay + PGM.days) * 86400;   // the first second after the program's last day
 const potTac = () => fmt(PGM.dayWei, 18, 0), rateStr = (n) => Number(n).toLocaleString('en-US');
 const ethBase = () => PGM.rates.evmpooldeposit ?? PGM.rates.zswapeth ?? 1000;
@@ -4141,6 +4141,8 @@ function capText(day) {
 const ACT_NAME = { wrap: 'Tacit-pool wrap', evmpooldeposit: 'ETH-pool deposit', zswapeth: 'ETH swap', weiname: '.wei name', cbtcmint: 'cBTC bond', cusdmint: 'cUSD loan', pmbet: 'bet', pmcreate: 'market' };
 const scheduled = (list, day) => { const eff = [...list].reverse().find((e) => e.fromDay <= day), next = list.find((e) => e.fromDay > day); return eff ? { e: eff, from: null } : next ? { e: next, from: next.fromDay } : null; };
 const pct = (x) => `${Math.round(x * 100)}%`;
+// The most the week's multiplier can reach, from the schedule's latest entry that applies.
+const weekMax = () => { const sp = PGM.engagement.at(-1)?.spec; return sp ? Math.round((1 + sp.kindStep * sp.maxKinds + sp.returnStep) * 1e4) / 1e4 : 1; };
 const weightNote = (act, day) => { const s = scheduled(PGM.weights, day), w = s?.e.weights[act]; return w && w !== 1 ? ` · ×${w}${s.from ? ` from ${dayShort(s.from)}` : ''}` : ''; };
 // Takes the service's terms where they are well-formed and leaves what the page has for the rest.
 function takeProgram(p) {
@@ -4167,13 +4169,14 @@ function takeProgram(p) {
     return k == null || r == null || m == null ? null : { fromDay: f, spec: { kindStep: k, returnStep: r, maxKinds: m } };
   }).filter(Boolean).sort((a, b) => a.fromDay - b.fromDay);
   if ('bondHoldFromDay' in p) next.bondHoldFromDay = num(p.bondHoldFromDay, 1, 1e6);
+  if ('cbtcHoldFromDay' in p) next.cbtcHoldFromDay = num(p.cbtcHoldFromDay, 1, 1e6);
   if (p.rates && typeof p.rates === 'object') next.rates = Object.fromEntries(Object.entries(p.rates).filter(([, v]) => num(v, 0, 1e9) != null && Number(v) > 0).map(([k, v]) => [k, Number(v)]));
   Object.assign(PGM, next);
   for (const e of $$('[data-pgm="pot"]')) e.textContent = potTac();
 }
 // Each kind of activity the program scores: what it was, and what its amount is counted in (none where it is not an amount).
 const PT_ACTS = { wrap: ['Wrapped ETH into the Tacit pool', 'ETH'], evmpooldeposit: ['Deposited ETH', 'ETH'], zswapeth: ['Swapped ETH', 'ETH'],
-  weiname: ['Registered a .wei name', 'ETH'], cbtcmint: ['Posted a bond toward cBTC', 'wstETH'], cusdmint: ['Borrowed cUSD'], pmbet: ['Bet with ETH', 'ETH'], pmcreate: ['Opened a market'] };
+  weiname: ['Registered a .wei name', 'ETH'], cbtcmint: ['Posted a bond toward cBTC', 'wstETH'], cbtchold: ['Kept a cBTC bond posted'], cusdmint: ['Borrowed cUSD'], pmbet: ['Bet with ETH', 'ETH'], pmcreate: ['Opened a market'] };
 const ptChain = (id) => (Number(id || 1) === 1 ? { name: 'Ethereum', explorer: SCAN } : DEVICE_CHAINS.find((c) => c.chainId === Number(id)) || null);
 const dayLeft = () => { const s = 86400 - (now() % 86400), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h} h ${m} min` : `${Math.max(1, m)} min`; };
 const pointsWho = () => [...new Map([[S.acct?.address, 'Tacit account'], [S.wallet, 'Wallet']].filter(([a]) => a).map(([a, l]) => [a.toLowerCase(), l]))];
@@ -4256,7 +4259,7 @@ const earnRows = () => {
     r.wrap && ['private', 'teth', 'Wrap ETH into the Tacit pool', `${n(r.wrap)} points per ETH${weightNote('wrap', day)}`],
     r.evmpooldeposit && ['device', 'eth', 'Deposit ETH on this device', `${n(r.evmpooldeposit)} per ETH, on Ethereum, Base or Robinhood Chain${weightNote('evmpooldeposit', day)}`],
     r.zswapeth && ['buy', 'tac', 'Buy TAC with ETH', `${n(r.zswapeth)} per ETH, through the Precision pool${weightNote('zswapeth', day)}`],
-    r.cbtcmint && ['borrow', 'cbtc', 'Post a bond toward cBTC', `${n(r.cbtcmint)} per wstETH${weightNote('cbtcmint', day)}`],
+    r.cbtcmint && ['borrow', 'cbtc', 'Post a bond toward cBTC', `${n(r.cbtcmint)} per wstETH${weightNote('cbtcmint', day)}${r.cbtchold ? `, then ${n(r.cbtchold)} for each day it stays posted${PGM.cbtcHoldFromDay > day ? ` from ${dayShort(PGM.cbtcHoldFromDay)}` : ''}` : ''}`],
     r.cusdmint && ['borrow', 'cusd', 'Borrow cUSD', `${n(r.cusdmint)} per dollar, when you send the loan yourself${weightNote('cusdmint', day)}`],
   ].filter(Boolean);
 };
@@ -4321,7 +4324,10 @@ function terms() {
   const mix = names?.length ? `${names.join(', ')}${w.from ? ` from ${dayShort(w.from)}` : ''}` : null;
   const g = scheduled(PGM.engagement, today), sp = g?.e.spec;
   const week = sp ? `${pct(sp.kindStep)} more for each other kind of activity in the past 7 days${sp.maxKinds ? ` (up to ${pct(sp.kindStep * sp.maxKinds)})` : ''}, and ${pct(sp.returnStep)} more for activity on more than one day${g.from ? `, from ${dayShort(g.from)}` : ''}` : null;
-  const bonds = PGM.bondHoldFromDay ? `a cBTC bond counts while it stays posted through the day${PGM.bondHoldFromDay > today ? `, from ${dayShort(PGM.bondHoldFromDay)}` : ''}` : null;
+  const bonds = [
+    PGM.bondHoldFromDay ? `a cBTC bond counts while it stays posted through the day${PGM.bondHoldFromDay > today ? `, from ${dayShort(PGM.bondHoldFromDay)}` : ''}` : null,
+    PGM.rates.cbtchold ? `a bond on a Bitcoin lock earns ${rateStr(PGM.rates.cbtchold)} per wstETH for each further day it stays posted, credited when the day settles${PGM.cbtcHoldFromDay > today ? `, from ${dayShort(PGM.cbtcHoldFromDay)}` : ''}` : null,
+  ].filter(Boolean).join('; ') || null;
   const kv = (k, v) => html`<div class="kv"><span>${k}</span><b>${v}</b></div>`;
   return html`<details class="lockmore ptlog"><summary>Terms</summary>
     ${kv('Runs', `${dayShort(PGM.startDay)} to ${dayShort(last)} (UTC), ${PGM.days} days`)}
@@ -4365,7 +4371,7 @@ render.pts = () => {
     return html`<details class="lockmore ptlog"><summary>Points by day</summary><ul class="ptl">${[...days].map(([k, list]) => html`
       <li class="day"><span>${dayName(k)}</span><b class="num">+${ptsFmt(r.hist?.get(k)?.p ?? list.reduce((s, d) => s + Number(d.points || 0), 0))}${r.hist?.get(k)?.f > 1 ? html` <small class="mute">×${r.hist.get(k).f}</small>` : ''}${r.hist?.get(k)?.wei ? html` <small class="mute">${r.hist.get(k).settled ? '' : 'about '}${fmt(r.hist.get(k).wei, 18, 2)} TAC</small>` : ''}</b></li>${list.map((d) => {
         const [what, unit] = PT_ACTS[d.activity] || ['Activity'], c = ptChain(d.chain_id), amt = unit && big(d.amount_wei);
-        return html`<li><span class="ptl-w">${what}${c && c.name !== 'Ethereum' ? ` on ${c.name}` : ''}<span class="ptl-m">${amt ? `${fmt(amt, 18, 4)} ${unit} · ` : ''}${ago(Number(d.block_time) * 1000)}${d.tac_boost > 1 ? ` · ${d.tac_boost}× holder` : ''}${c && d.tx_hash ? html` · ${txLink(d.tx_hash, c.explorer)}` : ''}</span></span><b class="num">+${ptsFmt(d.points)}</b></li>`;
+        return html`<li><span class="ptl-w">${what}${c && c.name !== 'Ethereum' ? ` on ${c.name}` : ''}<span class="ptl-m">${amt ? `${fmt(amt, 18, 4)} ${unit} · ` : ''}${ago(Number(d.block_time) * 1000)}${d.tac_boost > 1 ? ` · ${d.tac_boost}× holder` : ''}${c && d.tx_hash && d.activity !== 'cbtchold' ? html` · ${txLink(d.tx_hash, c.explorer)}` : ''}</span></span><b class="num">+${ptsFmt(d.points)}</b></li>`;
       })}`)}</ul>${r.count > r.recent.length ? html`<p class="note">The latest ${r.recent.length} of ${r.count.toLocaleString('en-US')} are listed.</p>` : ''}</details>`;
   };
   mount(el, html`

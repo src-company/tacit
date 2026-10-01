@@ -382,6 +382,10 @@ services:
         value: "20730:0.25,0.25,2,25"
       - key: POINTS_BOND_HOLD_FROM_DAY
         value: "20730"
+      - key: POINTS_CBTC_HOLD_RATE
+        value: "500"
+      - key: POINTS_CBTC_HOLD_FROM_DAY
+        value: "20730"
       # PointsDistributor (CreateX CREATE3, deployed 2026-09-23, salt sender-guarded to the deployer key,
       # verified on Etherscan + Sourcify). ROOT_SETTER = 0x5c1aBec44465f305f2F1AE492eEd191327EbdF3f, its
       # own dedicated key (never RELAY_KEY/SETTLE_KEY — see the contract's own header for why). Publishing

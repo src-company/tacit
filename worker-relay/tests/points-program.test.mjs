@@ -14,7 +14,7 @@ const cfg = {
   pointsBasePerEth: 1000, tethWrapBoostMultiplier: 1.25, pointsBasePerZswapEth: 1000, pointsBasePerCbtc: 1000, pointsBasePerCusd: 1, cusdMintBonusMultiplier: 2,
   pointsBasePerPmBet: 1000, pointsPerPmCreate: 50, pointsBasePerEvmPoolEth: 1000, evmPoolPointsStartBlocks: { 1: '24000000', 8453: '', 4663: '' },
   weinameEnabled: true, pointsBasePerWeiname: 1000, btcPoolPointsStartHeight: '', pointsBasePerBtcPoolTac: 1,
-  pointsBonusScale: 4, pointsBonusHalfLife: 200, tacBoostWindowBlocks: 7200, pointsBondHoldFromDay: 0,
+  pointsBonusScale: 4, pointsBonusHalfLife: 200, tacBoostWindowBlocks: 7200, pointsBondHoldFromDay: 0, pointsCbtcHoldRate: 0, pointsCbtcHoldFromDay: 0,
 };
 const budget = (i) => (cfg.pointsProgramTotalWei * BigInt(i + 1)) / 90n - (cfg.pointsProgramTotalWei * BigInt(i)) / 90n;
 const schedule = parseRateCapSchedule('20729:0.03');
@@ -69,4 +69,14 @@ const tiers = parseBoostTiers('100:1.25,1000:1.5,10000:2');
   assert.deepEqual([none.weights, none.engagement, none.bondHoldFromDay], [[], [], null], 'none configured states none');
   JSON.stringify(t);
   console.log('ok - the terms state the weights, the week multiplier and the bond hold, and none when none is set');
+}
+
+{
+  const t = programTerms({ cfg: { ...cfg, pointsCbtcHoldRate: 500, pointsCbtcHoldFromDay: 20730 }, dayBudgetWei: budget });
+  assert.equal(t.rates.cbtchold, 500);
+  assert.equal(t.cbtcHoldFromDay, 20730);
+  const off = programTerms({ cfg: { ...cfg, pointsCbtcHoldRate: 0, pointsCbtcHoldFromDay: 20730 }, dayBudgetWei: budget });
+  assert.equal('cbtchold' in off.rates, false, 'a rate of 0 offers nothing');
+  assert.equal(off.cbtcHoldFromDay, null);
+  console.log('ok - the terms state the daily credit for a bond that stays posted, and none when it is off');
 }

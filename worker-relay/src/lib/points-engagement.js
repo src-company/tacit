@@ -12,7 +12,7 @@
 export const KIND_OF = {
   wrap: 'private', evmpooldeposit: 'private', btcpool: 'private',
   zswapeth: 'swap',
-  cbtcmint: 'borrow', cusdmint: 'borrow',
+  cbtcmint: 'borrow', cbtchold: 'borrow', cusdmint: 'borrow',
   weiname: 'names',
   pmbet: 'markets', pmcreate: 'markets',
 };

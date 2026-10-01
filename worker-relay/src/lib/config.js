@@ -627,6 +627,10 @@ export const CFG = {
   pointsCategoryWeights: opt('POINTS_CATEGORY_WEIGHTS', ''),
   pointsEngagement: opt('POINTS_ENGAGEMENT', ''),
   pointsBondHoldFromDay: num('POINTS_BOND_HOLD_FROM_DAY', 0),
+  // Points per wstETH for each further UTC day a cBTC bond on a real Bitcoin lock stays posted (lib/points-bond-hold.js),
+  // from the given day. 0 means none.
+  pointsCbtcHoldRate: num('POINTS_CBTC_HOLD_RATE', 0),
+  pointsCbtcHoldFromDay: num('POINTS_CBTC_HOLD_FROM_DAY', 0),
   // A UTC day settles once, so it waits until it is over, this margin has passed and every scanner has read past
   // its end (lib/points-settle-gate.js). A scanner that stays behind no longer holds rewards back after the
   // maximum wait.

@@ -18,7 +18,7 @@ import { fundingStatus, fundingVerdict } from './lib/points-funding.js';
 import { tvlSeries } from './lib/points-tvl.js';
 import { programTerms } from './lib/points-program.js';
 import { makeCounted } from './lib/points-counted.js';
-import { decideBondHolds } from './lib/points-bond-hold.js';
+import { decideBondHolds, accrueBondHolds } from './lib/points-bond-hold.js';
 import { parseCategoryWeights, parseEngagementSchedule } from './lib/points-engagement.js';
 import { dayPot, dayBoard, dayHistory, splitDayBudget } from './lib/points-day-board.js';
 import Database from 'better-sqlite3';
@@ -118,6 +118,17 @@ const ERC20_BALANCEOF_ABI = [
 const ESCROW_OF_ABI = [
   { type: 'function', name: 'escrowOf', stateMutability: 'view', inputs: [{ name: 'outpoint', type: 'bytes32' }, { name: 'funder', type: 'address' }], outputs: [{ type: 'uint256' }] },
 ];
+const POOL_LOCK_ABI = [
+  { type: 'function', name: 'cbtcLockVBtc', stateMutability: 'view', inputs: [{ name: 'outpoint', type: 'bytes32' }], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'cbtcLockSpent', stateMutability: 'view', inputs: [{ name: 'outpoint', type: 'bytes32' }], outputs: [{ type: 'bool' }] },
+  { type: 'function', name: 'cbtcLockRedeemed', stateMutability: 'view', inputs: [{ name: 'outpoint', type: 'bytes32' }], outputs: [{ type: 'bool' }] },
+];
+const readEscrowOf = (outpoint, funder) => publicClient.readContract({ address: ADDR.collateralEngine, abi: ESCROW_OF_ABI, functionName: 'escrowOf', args: [outpoint, funder] });
+const readBondLock = async (outpoint) => {
+  const call = (functionName) => publicClient.readContract({ address: ADDR.pool, abi: POOL_LOCK_ABI, functionName, args: [outpoint] });
+  const [vBtc, spent, redeemed] = await Promise.all([call('cbtcLockVBtc'), call('cbtcLockSpent'), call('cbtcLockRedeemed')]);
+  return { vBtc, spent, redeemed };
+};
 const CLAIMED_ABI = [
   { type: 'function', name: 'claimed', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }], outputs: [{ type: 'uint256' }] },
 ];
@@ -1393,8 +1404,13 @@ export async function settleCycle(store, coverage = null) {
     const dayIndex = d - startDay;
     // A bond counts only if its escrow is still posted now that its day is over; an escrow that cannot be read leaves the day unsettled.
     if (CFG.pointsBondHoldFromDay && d >= CFG.pointsBondHoldFromDay) {
-      const r = await decideBondHolds({ store, day: d, readEscrow: (outpoint, funder) => publicClient.readContract({ address: ADDR.collateralEngine, abi: ESCROW_OF_ABI, functionName: 'escrowOf', args: [outpoint, funder] }) });
+      const r = await decideBondHolds({ store, day: d, readEscrow: readEscrowOf, failAfterSecs: CFG.pointsSettleMaxWaitSecs, log });
       if (r.checked) log(`settle: day ${d}: ${r.checked} bond(s) checked, ${r.released} no longer posted`);
+    }
+    // A bond still posted on a real lock earns for each further day; its credit is recorded before the day is read.
+    if (CFG.pointsCbtcHoldRate > 0 && CFG.pointsCbtcHoldFromDay && d >= CFG.pointsCbtcHoldFromDay) {
+      const r = await accrueBondHolds({ store, day: d, readEscrow: readEscrowOf, readLock: readBondLock, perWstEthDay: CFG.pointsCbtcHoldRate, failAfterSecs: CFG.pointsSettleMaxWaitSecs, log });
+      if (r.credited) log(`settle: day ${d}: ${r.credited} bond(s) credited for staying posted`);
     }
     const rows = countedFor(store).rows(d);
     if (rows.length) {
