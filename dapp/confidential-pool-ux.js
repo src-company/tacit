@@ -339,9 +339,12 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     bpp: { H: bppGens().H, G: BPP_G },
   }));
   const _rev = (h) => (String(h).replace(/^0x/, '').match(/../g) || []).reverse().join('');
-  const _bridgeFound = new Map();   // `${wallet}:${leaf}` -> bridge-mint note already recovered this session (the walk skips a searched leaf, so a rescan must re-add it)
-  const _bridgeFastTried = new Set(); // leaves the cheap balance-read pass already searched (a leaf's answer never changes, so a rescan skips it)
-  const _bridgeTried = new Set();   // empty-memo leaves already searched for a bridge-mint destination (no amount hints)
+  // Bridge-mint walk memo, all keyed `${wallet}:${leaf}` (a leaf's answer for one key never changes, and a second wallet in
+  // the same tab must search afresh): notes already recovered, which a rescan re-adds without searching, and leaves the
+  // cheap balance-read pass / the full pass already searched without a match.
+  const _bridgeFound = new Map();
+  const _bridgeFastTried = new Set();
+  const _bridgeTried = new Set();
   const _btcHistoryCache = new Map();
   const BTC_HISTORY_TTL_MS = 10 * 60 * 1000;
   function _defaultBtcHistory(priv) {
@@ -604,11 +607,13 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     const fast = !deep && !hints;
     if (bridge) {
       const todo = new Map();
+      const wk = _hex(privBytes(id.priv));
+      const triedSet = fast ? _bridgeFastTried : _bridgeTried;
       for (const l of unexplained()) {
         const lf = lc(l.leaf);
-        const kept = _bridgeFound.get(_hex(privBytes(id.priv)) + ':' + lf);
+        const kept = _bridgeFound.get(wk + ':' + lf);
         if (kept) { if (addDerived(kept, 'bridge-mint', { burnNullifier: kept.burnNullifier })) diag.bridge.found++; continue; }
-        if (!hints && (fast ? _bridgeFastTried.has(lf) : _bridgeTried.has(lf))) continue;
+        if (!hints && triedSet.has(wk + ':' + lf)) continue;
         const t = tx.txOfLeaf.get(lf);
         if (!t || !(tx.nullifiersOfTx.get(t) || []).length) continue;
         if (!todo.has(t)) todo.set(t, []);
@@ -618,11 +623,11 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       if (todo.size) {
         diag.bridge.attempted = true;
         try {
-          const r = R.walkBridgeMints({ priv: id.priv, tx, unexplained: todo, assets: [...new Map(_poolAssets.filter((a) => a.bitcoinLink && (!fast || a.ticker === 'TAC' || a.ticker === 'cTAC')).map((a) => [lc(a.assetId), { assetId: a.assetId }])).values()], values: bridgeAmounts || [], destIndexes: fast ? 1 : 8, maxExp: fast ? 15 : 18 });
+          const r = await R.walkBridgeMints({ priv: id.priv, tx, unexplained: todo, assets: [...new Map(_poolAssets.filter((a) => a.bitcoinLink && (!fast || a.ticker === 'TAC' || a.ticker === 'cTAC')).map((a) => [lc(a.assetId), { assetId: a.assetId }])).values()], values: bridgeAmounts || [], destIndexes: fast ? 1 : 8, maxExp: fast ? 15 : 18, maxNullifiers: fast ? 4096 : 16 });
           diag.bridge.candidatesTried = r.tried;
-          const wk = _hex(privBytes(id.priv));
           for (const n of r.found) { _bridgeFound.set(wk + ':' + lc(n.leaf), n); if (addDerived(n, 'bridge-mint', { burnNullifier: n.burnNullifier })) diag.bridge.found++; }
-          if (!hints) for (const lfs of todo.values()) for (const lf of lfs) (fast ? _bridgeFastTried : _bridgeTried).add(lf);
+          // Only transactions the walk fully tried are settled; ones past its cap stay open for the next pass.
+          if (!hints) for (const [t, lfs] of todo) if (!r.searched || r.searched.has(t)) for (const lf of lfs) triedSet.add(wk + ':' + lf);
         } catch (e) { diag.errors.bridge = String(e && e.message || e); }
       }
     }

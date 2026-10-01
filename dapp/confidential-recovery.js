@@ -251,6 +251,25 @@ export function makeConfidentialRecovery({ pool, memo, keccak256, secp, hmac, sh
     return { found, skipped };
   }
 
+  // Affine coordinates for many projective points with one field inversion (Montgomery's trick); noble's per-point
+  // toAffine inverts each one, which dominated the bridge-mint search. Falls back per point for any other point shape.
+  const FIELD_P = 2n ** 256n - 0x1000003d1n;
+  const _fieldInv = (x) => { let a = ((x % FIELD_P) + FIELD_P) % FIELD_P, m = FIELD_P, u = 1n, v = 0n; while (a) { const q = m / a; [a, m] = [m - q * a, a]; [u, v] = [v - q * u, u]; } return ((v % FIELD_P) + FIELD_P) % FIELD_P; };
+  function _toAffineBatch(ps) {
+    if (!ps.length || ps.some((q) => typeof q.pz !== 'bigint' || q.pz === 0n)) return ps.map((q) => q.toAffine());
+    const pre = new Array(ps.length);
+    let acc = 1n;
+    for (let k = 0; k < ps.length; k++) { pre[k] = acc; acc = (acc * ps[k].pz) % FIELD_P; }
+    let inv = _fieldInv(acc);
+    const out = new Array(ps.length);
+    for (let k = ps.length - 1; k >= 0; k--) {
+      const zi = (inv * pre[k]) % FIELD_P;
+      inv = (inv * ps[k].pz) % FIELD_P;
+      out[k] = { x: (ps[k].px * zi) % FIELD_P, y: (ps[k].py * zi) % FIELD_P };
+    }
+    return out;
+  }
+
   // ── bridge-mint destination notes ──
   // A burn's destination note is pre-committed on Bitcoin; the mint re-creates it with owner nkToOwner(deriveNote(key,
   // asset, DEST_INDEX).secret) and blinding HMAC(key, burn nullifier) (bridge-mint-recovery.js). The burn nullifier is
@@ -260,14 +279,24 @@ export function makeConfidentialRecovery({ pool, memo, keccak256, secp, hmac, sh
   // false, every m·10^k for m < 100: the burns a wallet makes are whole-unit amounts. A candidate counts only when its leaf
   // equals one the chain inserted, so an amount outside the set is not found — never mis-found.
   // `unexplained` maps txHash -> the leaves of that transaction no other channel accounted for.
-  function walkBridgeMints({ priv, tx, unexplained, assets, values = [], roundValues = true, destIndexes = 8, maxNullifiers = 16, maxExp = 18 }) {
+  async function walkBridgeMints({ priv, tx, unexplained, assets, values = [], roundValues = true, destIndexes = 8, maxNullifiers = 16, maxExp = 18 }) {
     const p = privBytes(priv);
-    const nulls = [];
+    const groups = [];
     for (const [txHash, leaves] of unexplained) {
-      for (const n of tx.nullifiersOfTx.get(txHash) || []) nulls.push({ n, want: new Set(leaves) });
+      const ns = tx.nullifiersOfTx.get(txHash) || [];
+      if (ns.length) groups.push({ txHash, ns, want: new Set(leaves) });
     }
-    if (nulls.length > maxNullifiers) nulls.length = maxNullifiers;
-    if (!nulls.length || !(assets || []).length) return { found: [], tried: 0 };
+    // Newest first, whole transactions only: a fresh mint is the note a wallet is most likely missing, and the cap must
+    // not starve it behind older empty-memo traffic. `searched` names the transactions fully tried, so a caller can
+    // skip exactly those next time and leave the rest for a later pass.
+    groups.reverse();
+    const nulls = [], searched = new Set();
+    for (const g of groups) {
+      if (nulls.length + g.ns.length > maxNullifiers) break;
+      for (const n of g.ns) nulls.push({ n, want: g.want });
+      searched.add(g.txHash);
+    }
+    if (!nulls.length || !(assets || []).length) return { found: [], tried: 0, searched };
     // Value points: caller values by multiplication; round values by repeated addition of one base per exponent.
     const points = new Map();
     for (const v of values) { const b = BigInt(v); if (b > 0n && !points.has(b)) points.set(b, H.multiply(b)); }
@@ -281,33 +310,38 @@ export function makeConfidentialRecovery({ pool, memo, keccak256, secp, hmac, sh
     const found = [];
     let tried = 0;
     const buf = new Uint8Array(128);
+    const owners = assets.map((asset) => ({ asset, idBytes: hexToBytes(asset.assetId).subarray(0, 32), notes: Array.from({ length: destIndexes }, (_, i) => {
+      const dn = pool.deriveNote(p, asset.assetId, i); const owner = pool.nkToOwner(dn.secret);
+      return { i, secret: dn.secret, owner, ownerBytes: hexToBytes(owner) };
+    }) }));
+    const pts = [...points];
+    const same = (d, w) => { for (let j = 0; j < 32; j++) if (d[j] !== w[j]) return false; return true; };
     for (const { n, want } of nulls) {
+      // One nullifier's candidates in a few milliseconds of hashing; yield between them so a long search never freezes the page.
+      await new Promise((r) => setTimeout(r, 0));
       const b = deriveBridgeMintBlinding(p, n);
       const Gb = G.multiply(b);
-      const cands = [];
-      for (const [v, Pv] of points) {
-        const a = Pv.add(Gb).toAffine();
+      const wanted = [...want].map((w) => hexToBytes(w));
+      const cands = _toAffineBatch(pts.map(([, Pv]) => Pv.add(Gb))).map((a, k) => {
         const xy = new Uint8Array(64);
         xy.set(hexToBytes(a.x.toString(16).padStart(64, '0')), 0); xy.set(hexToBytes(a.y.toString(16).padStart(64, '0')), 32);
-        cands.push({ v, x: a.x, y: a.y, xy });
-      }
-      for (const asset of assets) {
-        buf.set(hexToBytes(asset.assetId).subarray(0, 32), 0);
-        for (let i = 0; i < destIndexes; i++) {
-          const dn = pool.deriveNote(p, asset.assetId, i);
-          const owner = pool.nkToOwner(dn.secret);
-          buf.set(hexToBytes(owner), 96);
+        return { v: pts[k][0], x: a.x, y: a.y, xy };
+      });
+      for (const { asset, idBytes, notes } of owners) {
+        buf.set(idBytes, 0);
+        for (const dn of notes) {
+          buf.set(dn.ownerBytes, 96);
           for (const c of cands) {
             tried++;
             buf.set(c.xy, 32);
-            const leaf = '0x' + bytesToHex(keccak256(buf));
-            if (!want.has(leaf)) continue;
-            found.push({ value: c.v, blinding: w32(b), secret: dn.secret, asset: asset.assetId, owner, cx: w32(c.x), cy: w32(c.y), leaf, burnNullifier: n, destIndex: i });
+            const d = keccak256(buf);
+            if (!wanted.some((w) => same(d, w))) continue;
+            found.push({ value: c.v, blinding: w32(b), secret: dn.secret, asset: asset.assetId, owner: dn.owner, cx: w32(c.x), cy: w32(c.y), leaf: '0x' + bytesToHex(d), burnNullifier: n, destIndex: dn.i });
           }
         }
       }
     }
-    return { found, tried };
+    return { found, tried, searched };
   }
   // Shared with whatever builds the burn envelope's own destination blinding (bridge-mint-recovery.js) —
   // was reimplemented inline here, which is exactly the kind of drift risk a shared helper exists to avoid.

@@ -232,6 +232,32 @@ test('balance: a bridge-mint destination note (empty memo) is derived from the w
   assert.equal(hinted.notes.length, 1); assert.equal(hinted.notes[0].leafIndex, 0);
 });
 
+test('balance: a bridge-mint note behind more than 16 older empty-memo spends is still found, and stays found on rescan', async () => {
+  const ux = mkUx();
+  const TAC = ux.assetByTicker.TAC.assetId;
+  const rec = makeBridgeMintRecovery({ hmac, sha256: nobleSha256, curveOrder: secp.CURVE.n });
+  const id = ux.identity(walletPriv);
+  const burnNu = '0x' + '5a17c0de'.repeat(8);
+  const blinding = '0x' + rec.deriveBridgeMintBlinding({ privkey: id.priv, nullifier: burnNu }).toString(16).padStart(64, '0');
+  const owner = ux.pool.nkToOwner(ux.pool.deriveNote(id.priv, TAC, 0).secret);
+  const VALUE = 25000000000n; // 250 TAC
+  const c = ux.pool.commitXY(VALUE, blinding);
+  const leaf = ux.pool.leaf(TAC, c.cx, c.cy, owner);
+  const events = [];
+  for (let i = 0; i < 40; i++) {
+    const decoy = ux.pool.leaf(TAC, '0x' + (i + 1).toString(16).padStart(64, '0'), '0x' + '22'.repeat(32), '0x' + '33'.repeat(32));
+    events.push(leavesEv(i, [decoy], null, tx(100 + i)), nullifiersEv(['0x' + (i + 1).toString(16).padStart(8, '0').repeat(8)], tx(100 + i)));
+  }
+  events.push(leavesEv(40, [leaf], null, tx(999)), nullifiersEv([burnNu], tx(999)));
+  const ux2 = mkUx(chainHandler(events));
+  const b = await ux2.balance(walletPriv, { cbtc: false });
+  assert.equal(b.notes.length, 1);
+  assert.equal(b.notes[0].leafIndex, 40); assert.equal(BigInt(b.notes[0].value), VALUE);
+  const again = await ux2.balance(walletPriv, { cbtc: false });
+  assert.equal(again.notes.length, 1);
+  assert.equal(BigInt(again.byAsset[TAC.toLowerCase()].value), VALUE);
+});
+
 // ── cBTC bearer notes ──
 test('balance: a cBTC bearer note is found from the wallet key, its funding prevout and the pool lock record', async () => {
   const ux0 = mkUx();
