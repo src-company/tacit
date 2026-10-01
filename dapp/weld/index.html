@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-t85f4Oqa+haVkP+DnkpNWXZGwWQWteHH7VRAc7/Er2s=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-XGO1q5fFjpK8siqzai3eldr+iFof+HhG3hLM38hk9NQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -524,7 +524,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <a class="tile" href="#pts" data-open="pts" aria-haspopup="dialog">
       <span class="pair"><svg class="tk" aria-hidden="true"><use href="#i-pts"/></svg></span>
       <h2>Points</h2>
-      <p>Earn TAC just for using Tacit: making ETH private, swapping, borrowing and more. Up to 1,111 TAC is shared out every day.</p>
+      <p>Earn TAC just for using Tacit: making ETH private, swapping, borrowing and more. Up to <span data-pgm="pot">1,111</span> TAC is shared out every day.</p>
       <span class="tile-foot"><span class="dot" data-dot="pts"></span><span data-foot="pts">100,000 TAC over 90 days</span><span class="go" aria-hidden="true">→</span></span>
     </a>
     <a class="tile" href="#farm" data-open="farm" aria-haspopup="dialog">
@@ -2672,7 +2672,7 @@ function readOutlook() {
     for (const x of d.dev || []) if (x.bal != null && x.dep != null) OUT.dev[x.chain] = { held: n(x.bal), in: n(x.dep), deposits: Number(x.nd) || 0 };   // a chain it could not read is unknown, not empty
   }).catch(() => {}).finally(() => { OUT.p = null; OUT.at = Date.now(); outlookPaint(); });
 }
-const tierOf = (wei) => { const t = Number(wei / 10n ** 18n); return t >= 10000 ? 2 : t >= 1000 ? 1.5 : t >= 100 ? 1.25 : 1; };
+const tierOf = (wei) => { const t = Number(wei / 10n ** 18n); let m = 1; for (const [min, x] of PGM.tiers) if (t >= min) m = x; return m; };
 // The program credits the tier of the LOWEST public TAC balance the depositor held over the trailing 7,200 blocks (about
 // a day), so TAC bought just now counts for nothing yet. The account's TAC transfers over that window are replayed
 // backwards from its balance now. → { now, held }: the tier by the balance now, and the tier it has held all day (1
@@ -2708,7 +2708,7 @@ function holderTier(addr) {
 }
 // `kind`: 'v1' (a wrap into the Tacit pool) or 'dev' (a deposit into the ETH pool on any chain).
 let PTSINFO = false;
-const PTS_WHY = 'Points share each day’s pot of up to 1,111 TAC. You earn 1,000 per ETH, times an early bonus that shrinks as deposits add up, times more for holding TAC for a day (and 1.25 for a wrap into the Tacit pool). This is an estimate: the program counts deposits from its own records.';
+const ptsWhy = () => `Points share each day’s pot of up to ${potTac()} TAC. You earn ${rateStr(ethBase())} per ETH, times an early bonus that shrinks as deposits add up, times more for holding TAC for a day (and ${PGM.wrapBoost} for a wrap into the Tacit pool). This is an estimate: the program counts deposits from its own records.`;
 document.addEventListener('click', (e) => {
   if (!e.target.closest?.('[data-ptsinfo]')) return;
   PTSINFO = !PTSINFO;
@@ -2719,11 +2719,11 @@ function pointsRow(wei, kind) {
   readOutlook();
   const v1 = kind === 'v1', dev = Object.values(OUT.dev);
   const known = v1 ? !!OUT.v1 : dev.length === DEVICE_CHAINS.length, n = v1 ? OUT.v1?.deposits ?? 0 : dev.reduce((a, x) => a + x.deposits, 0);
-  const early = known ? 1 + 4 / (1 + n / 200) : 1, tier = holderTier(S.address), hold = tier.held, wrap = v1 ? 1.25 : 1;
-  const why = [known ? `×${early.toFixed(1)} early` : '', v1 ? '×1.25 tETH' : '', hold > 1 ? `×${hold} TAC holder` : '', tier.now > hold ? `×${tier.now} once your TAC is held a day` : ''].filter(Boolean).join(' · ');
-  const pts = Math.round((Number(wei) / 1e18) * 1000 * early * wrap * hold).toLocaleString('en-US');
+  const early = known ? 1 + (PGM.early.max - 1) / (1 + n / PGM.early.half) : 1, tier = holderTier(S.address), hold = tier.held;
+  const why = [known ? `×${early.toFixed(1)} early` : '', v1 ? `×${PGM.wrapBoost} tETH` : '', hold > 1 ? `×${hold} TAC holder` : '', tier.now > hold ? `×${tier.now} once your TAC is held a day` : ''].filter(Boolean).join(' · ');
+  const pts = Math.round((Number(wei) / 1e18) * (v1 ? PGM.rates.wrap ?? ethBase() * PGM.wrapBoost : ethBase()) * early * hold).toLocaleString('en-US');
   return html`<div class="kv" data-pts><span class="pts-line"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>TAC points <button class="link" type="button" data-ptsinfo aria-expanded="${PTSINFO}">how?</button></span><b class="num">${known ? '≈ ' : 'at least '}${pts}${why ? html` <small class="mute">${why}</small>` : ''}</b></div>
-    <p class="note mute" data-ptsnote ${PTSINFO ? '' : 'hidden'}>${PTS_WHY}</p>`;
+    <p class="note mute" data-ptsnote ${PTSINFO ? '' : 'hidden'}>${ptsWhy()}</p>`;
 }
 // `where`: 'v1', or a chain id for the ETH pool there.
 function poolLine(where) {
@@ -4085,15 +4085,51 @@ function renderSell(el) {
 }
 
 // ── Points: the live TAC rewards program ─────────────────────────────────────────────────────────────────
-// 100,000 TAC over 90 days; each UTC day's pot (today.dayBudgetWei), up to 1,111 TAC, is split by that day's points. Points and TAC belong to the address
+// Each UTC day's pot (today.dayBudgetWei) is split by that day's points; the program's terms are PGM below. Points and TAC belong to the address
 // that sent each transaction, so the connected wallet and the Tacit account are read, and claimed, on their own. The board and the day's pot are public
 // and shown to anyone; the figures under them are this key's own.
 const DISTRIBUTOR = '0x000000C918e44A3a443937fA7594eA4f7C95D6b9', ZROUTER = '0x000000000000FB114709235f1ccBFfb925F600e4';
 const WNS = '0x0000000000696760E15f265e828DB644A0c242EB', ZSWAP = 'https://zswap.wei.limo';
-const PTS = { at: 0, key: '', rows: null, board: null, day: null, pulse: null, view: 'all' }, PTS_BOARD = 500, PTS_DAYS = 90, PTS_SEEN = 'tacit-weld-pts-seen-v1';
-const PTS_END = Date.UTC(2026, 11, 22) / 1000;                    // the program's last day is Dec 21 (UTC)
-// The holder boost's tiers: the least public TAC an address held through the day before an activity, and its multiplier.
-const BOOST_TIERS = [[100n, 1.25], [1000n, 1.5], [10000n, 2]];
+const PTS = { at: 0, key: '', rows: null, board: null, day: null, pulse: null, view: 'all' }, PTS_BOARD = 500, PTS_SEEN = 'tacit-weld-pts-seen-v1';
+// The program's terms: its days, the day's pot, the ceiling on TAC per point, what each activity earns, the early bonus and the
+// holder tiers (the least public TAC an address held through the day before an activity, and its multiplier). The service's
+// day board carries them and takeProgram() replaces these, which are what the program began with, so a change there reaches
+// this page without a new build.
+const PGM = { startDay: Date.UTC(2026, 8, 23) / 864e5, days: 90, totalWei: 100000n * 10n ** 18n, dayWei: 1111111111111111111111n,
+  rateCap: [{ fromDay: Date.UTC(2026, 9, 3) / 864e5, wei: 3n * 10n ** 16n }], early: { max: 5, half: 200 }, wrapBoost: 1.25,
+  tiers: [[100, 1.25], [1000, 1.5], [10000, 2]], windowHours: 24,
+  rates: { wrap: 1250, evmpooldeposit: 1000, zswapeth: 1000, cbtcmint: 1000, cusdmint: 2 } };
+const ptsDays = () => PGM.days, ptsEnd = () => (PGM.startDay + PGM.days) * 86400;   // the first second after the program's last day
+const potTac = () => fmt(PGM.dayWei, 18, 0), rateStr = (n) => Number(n).toLocaleString('en-US');
+const ethBase = () => PGM.rates.evmpooldeposit ?? PGM.rates.zswapeth ?? 1000;
+const listOr = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} or ${xs.at(-1)}`);
+// The ceiling on TAC per point: the one in force on `day` and the next change, as "0.03 TAC per point from 3 Oct"; null when none applies.
+function capText(day) {
+  const eff = [...PGM.rateCap].reverse().find((e) => e.fromDay <= day), next = PGM.rateCap.find((e) => e.fromDay > day);
+  const lim = (e) => (e.wei ? `${(Number(e.wei / 10n ** 12n) / 1e6).toLocaleString('en-US', { maximumFractionDigits: 4 })} TAC per point` : null);
+  const now = eff && lim(eff), later = next && `${lim(next) || 'no limit'} from ${dayShort(next.fromDay)}`;
+  return now ? (later ? `${now}, ${later}` : now) : later && lim(next) ? later : null;
+}
+// Takes the service's terms where they are well-formed and leaves what the page has for the rest.
+function takeProgram(p) {
+  if (!p || typeof p !== 'object') return;
+  const num = (x, lo, hi) => (x != null && x !== '' && Number.isFinite(Number(x)) && Number(x) >= lo && Number(x) <= hi ? Number(x) : null);
+  const wei = (x) => { try { const v = BigInt(x); return v >= 0n ? v : null; } catch { return null; } };
+  const startDay = num(p.startDay, 1, 1e6), days = num(p.days, 1, 1000), dayWei = wei(p.dayBudgetWei), totalWei = wei(p.totalWei);
+  if (startDay == null || days == null || dayWei == null || dayWei === 0n) return;
+  const next = { startDay, days, dayWei, totalWei: totalWei ?? PGM.totalWei };
+  if (Array.isArray(p.rateCap)) next.rateCap = p.rateCap.map((e) => { const f = num(e?.fromDay, 1, 1e6), w = e?.maxWeiPerPoint == null ? 0n : wei(e.maxWeiPerPoint); return f == null || w == null ? null : { fromDay: f, wei: w || null }; }).filter(Boolean).sort((a, b) => a.fromDay - b.fromDay);
+  if (num(p.earlyBonus?.max, 1, 100) != null && num(p.earlyBonus?.halfLife, 1, 1e9) != null) next.early = { max: Number(p.earlyBonus.max), half: Number(p.earlyBonus.halfLife) };
+  if (num(p.tethWrapBoost, 1, 100) != null) next.wrapBoost = Number(p.tethWrapBoost);
+  if ('holder' in p) {
+    const t = Array.isArray(p.holder?.tiers) ? p.holder.tiers.map((x) => [num(x?.tac, 1, 1e12), num(x?.multiplier, 1, 100)]).filter(([a, b]) => a != null && b != null) : [];
+    next.tiers = t.sort((a, b) => a[0] - b[0]);
+    if (num(p.holder?.windowHours, 1, 24 * 30) != null) next.windowHours = Number(p.holder.windowHours);
+  }
+  if (p.rates && typeof p.rates === 'object') next.rates = Object.fromEntries(Object.entries(p.rates).filter(([, v]) => num(v, 0, 1e9) != null && Number(v) > 0).map(([k, v]) => [k, Number(v)]));
+  Object.assign(PGM, next);
+  for (const e of $$('[data-pgm="pot"]')) e.textContent = potTac();
+}
 // Each kind of activity the program scores: what it was, and what its amount is counted in (none where it is not an amount).
 const PT_ACTS = { wrap: ['Wrapped ETH into the Tacit pool', 'ETH'], evmpooldeposit: ['Deposited ETH', 'ETH'], zswapeth: ['Swapped ETH', 'ETH'],
   weiname: ['Registered a .wei name', 'ETH'], cbtcmint: ['Posted a bond toward cBTC', 'wstETH'], cusdmint: ['Borrowed cUSD'], pmbet: ['Bet with ETH', 'ETH'], pmcreate: ['Opened a market'] };
@@ -4143,6 +4179,7 @@ async function readPoints(current) {
       hist: Array.isArray(hist?.days) ? new Map(hist.days.map((x) => [x.day, { p: Number(x.points) || 0, wei: big(x.tacWei), settled: !!x.settled }])) : null };
   }));
   const [lb, day] = await Promise.all([board, dayB]);
+  if (day?.program) takeProgram(day.program);
   for (const r of rows) {
     const i = lb ? lb.findIndex((e) => String(e.address).toLowerCase() === r.addr) : -1, j = day ? day.rows.findIndex((e) => String(e.address).toLowerCase() === r.addr) : -1;
     r.rank = i >= 0 ? i + 1 : lb && lb.length >= PTS_BOARD ? 0 : null;
@@ -4151,7 +4188,7 @@ async function readPoints(current) {
   // The day's pot and points: from its own board, else from any address's reading, else from a reading of nobody (the pot is the same for all).
   const tod = day || rows.find((r) => r.tod)?.tod || (await get(`points/0x${'0'.repeat(40)}`))?.today || null;
   const pulse = tod ? { total: Number(tod.totalPoints) || 0, pot: big(tod.dayBudgetWei) || 0n, n: day?.taking ?? null,
-    day: Math.min(PTS_DAYS, day?.programDay ?? Math.floor((now() - (PTS_END - PTS_DAYS * 86400)) / 86400) + 1) } : null;
+    day: Math.min(ptsDays(), day?.programDay ?? Math.floor((now() - PGM.startDay * 86400) / 86400) + 1) } : null;
   if (key !== pointsWho().map(([a]) => a).join() || !current()) return;
   noteSeen(rows);
   Object.assign(PTS, { at: Date.now(), key, rows, board: lb, day, pulse });
@@ -4161,7 +4198,7 @@ load.pts = () => loadPoints();
 RETRY.points = () => loadPoints(true).then(() => rerender('pts')).catch(() => {});
 function paintPointsFoot() {
   const rows = PTS.key && PTS.key === pointsWho().map(([a]) => a).join() ? PTS.rows : null;
-  if (!rows || !rows.some((r) => r.read)) { setFoot('pts', '100,000 TAC over 90 days'); return; }
+  if (!rows || !rows.some((r) => r.read)) { setFoot('pts', `${fmt(PGM.totalWei, 18, 0)} TAC over ${PGM.days} days`); return; }
   const pts = rows.reduce((s, r) => s + r.points, 0), owed = rows.reduce((s, r) => s + r.owed, 0n), rank = Math.min(...rows.map((r) => r.rank || Infinity));
   setFoot('pts', owed > 0n ? `${fmt(owed, 18, 2)} TAC to claim` : `${rank < Infinity ? `#${rank} · ` : ''}${ptsFmt(pts)} points`, owed > 0n ? 'live' : pts ? 'on' : '');
 }
@@ -4171,20 +4208,24 @@ async function claimPoints(r) {
   await ethCall(DISTRIBUTOR, data, { from: r.addr });        // fail closed on a stale proof (a root rotated since load) before ever asking for a signature
   return sendTx({ to: DISTRIBUTOR, data, via: r.addr === S.acct?.address.toLowerCase() ? 'tacit' : 'wallet', label: `Claim ${fmt(r.owed, 18, 2)} TAC from points` });
 }
-const EARN = [
-  ['private', 'teth', 'Wrap ETH into the Tacit pool', '1,250 points per ETH'],
-  ['device', 'eth', 'Deposit ETH on this device', '1,000 per ETH, on Ethereum, Base or Robinhood Chain'],
-  ['buy', 'tac', 'Buy TAC with ETH', '1,000 per ETH, through the Precision pool'],
-  ['borrow', 'cbtc', 'Post a bond toward cBTC', '1,000 per wstETH'],
-  ['borrow', 'cusd', 'Borrow cUSD', '2 per dollar, when you send the loan yourself'],
-];
+// What each way of earning pays, at the rates the program states; one it is not scoring is not offered.
+const earnRows = () => {
+  const r = PGM.rates, n = rateStr;
+  return [
+    r.wrap && ['private', 'teth', 'Wrap ETH into the Tacit pool', `${n(r.wrap)} points per ETH`],
+    r.evmpooldeposit && ['device', 'eth', 'Deposit ETH on this device', `${n(r.evmpooldeposit)} per ETH, on Ethereum, Base or Robinhood Chain`],
+    r.zswapeth && ['buy', 'tac', 'Buy TAC with ETH', `${n(r.zswapeth)} per ETH, through the Precision pool`],
+    r.cbtcmint && ['borrow', 'cbtc', 'Post a bond toward cBTC', `${n(r.cbtcmint)} per wstETH`],
+    r.cusdmint && ['borrow', 'cusd', 'Borrow cUSD', `${n(r.cusdmint)} per dollar, when you send the loan yourself`],
+  ].filter(Boolean);
+};
 // Today's pot and how it is being split: the same for everyone, so shown before anyone connects.
 function pulse() {
   const p = PTS.pulse;
   if (!p) return '';
   const per = p.total > 0 ? Number(p.pot / 10n ** 12n) / 1e6 / p.total * 1000 : null;
   return html`<div class="pulse">
-    <div class="kv"><span>Today’s pot</span><b>${fmt(p.pot, 18, p.pot >= 100n * 10n ** 18n ? 0 : 2)} TAC · day ${p.day} of ${PTS_DAYS}</b></div>
+    <div class="kv"><span>Today’s pot</span><b>${fmt(p.pot, 18, p.pot >= 100n * 10n ** 18n ? 0 : 2)} TAC · day ${p.day} of ${ptsDays()}${p.pot < PGM.dayWei ? html` <small class="mute">at the limit per point</small>` : ''}</b></div>
     <div class="kv"><span>Points so far today</span><b>${ptsFmt(p.total)}${p.n ? ` · ${p.n.toLocaleString('en-US')} taking part` : ''}</b></div>
     <div class="kv"><span>So far, each 1,000 points earn</span><b>${per == null ? 'nothing yet' : `${per.toLocaleString('en-US', { maximumFractionDigits: per < 10 ? 2 : 1 })} TAC`}</b></div></div>`;
 }
@@ -4218,7 +4259,7 @@ function leaderboard(connected) {
 // address's own activity list serves, but only when it is the whole of it (the service sends the latest 100).
 function dayStrip(r) {
   if (!r.read || (!r.hist && (!r.recent.length || r.count > r.recent.length))) return '';
-  const today = utcDay(now()), from = Math.max(today - 13, utcDay(PTS_END) - PTS_DAYS);
+  const today = utcDay(now()), from = Math.max(today - 13, PGM.startDay);
   let by = r.hist;
   if (!by) {
     by = new Map();
@@ -4232,13 +4273,25 @@ function dayStrip(r) {
     <div class="ptd-bars">${days.map((x) => html`<button type="button" class="ptd-b${x.d === today ? ' now' : ''}" data-ptd="${said(x)}" aria-label="${said(x)}"><i style="--h:${x.p / max}"></i></button>`)}</div>
     <div class="ptd-x"><span>${dayShort(days[0].d)}</span><output class="ptd-r" data-d="Best day ${dayShort(best.d)} · ${ptsFmt(best.p)}">Best day ${dayShort(best.d)} · ${ptsFmt(best.p)}</output><span>Today</span></div></div>`;
 }
+// The program's terms in one place, closed until asked for: its days, the pot, the limit per point, who is paid and when.
+function terms() {
+  const last = PGM.startDay + PGM.days - 1, cap = capText(utcDay(now()));
+  const kv = (k, v) => html`<div class="kv"><span>${k}</span><b>${v}</b></div>`;
+  return html`<details class="lockmore ptlog"><summary>Terms</summary>
+    ${kv('Runs', `${dayShort(PGM.startDay)} to ${dayShort(last)} (UTC), ${PGM.days} days`)}
+    ${kv('Each day’s pot', `up to ${potTac()} TAC, of ${fmt(PGM.totalWei, 18, 0)} in all`)}
+    ${cap ? kv('Limit', cap) : ''}
+    ${kv('Points go to', 'the address that sent the transaction')}
+    ${kv('Settled', 'each day, shortly after it ends')}
+    ${kv('Claim', 'any time once a day is settled')}</details>`;
+}
 render.pts = () => {
-  const el = $('#pts-body'), connected = !!(S.wallet || S.key), on = now() < PTS_END;
+  const el = $('#pts-body'), connected = !!(S.wallet || S.key), on = now() < ptsEnd();
   const rows = PTS.rows && PTS.key === pointsWho().map(([a]) => a).join() ? PTS.rows : null;
   if (!rows) loadPoints().then(() => rerender('pts')).catch(() => {});
   // The next holder tier this address could reach from what it holds now; it counts once held through a day.
   const nextTier = (r) => {
-    const n = r.held == null ? null : BOOST_TIERS.find(([min]) => r.held < min * 10n ** 18n);
+    const n = r.held == null ? null : PGM.tiers.find(([min]) => r.held < BigInt(min) * 10n ** 18n);
     return !n ? '' : html`<p class="note">${r.held > 0n ? `${fmt(r.held, 18, 2)} public TAC here. ` : ''}Hold ${n[0].toLocaleString('en-US')} public TAC here through a day and what it does next earns ${n[1]}×. <button class="link" type="button" data-earn="buy">Buy TAC</button></p>`;
   };
   // How far this address is from the one above it, and what has changed since this browser last looked on an earlier day.
@@ -4267,7 +4320,7 @@ render.pts = () => {
       })}`)}</ul>${r.count > r.recent.length ? html`<p class="note">The latest ${r.recent.length} of ${r.count.toLocaleString('en-US')} are listed.</p>` : ''}</details>`;
   };
   mount(el, html`
-    <p class="lede-s">Every day through Dec 21 (UTC), up to 1,111 TAC is split by that day’s points, at most 0.03 TAC per point from Oct 3.${on ? ` Today’s split closes in ${dayLeft()}; its TAC is yours to claim once the day is settled.` : ' Claim any time.'}</p>
+    <p class="lede-s">Every day through ${dayShort(PGM.startDay + PGM.days - 1)} (UTC), up to ${potTac()} TAC is split by that day’s points${capText(utcDay(now())) ? `, at most ${capText(utcDay(now()))}` : ''}.${on ? ` Today’s split closes in ${dayLeft()}; its TAC is yours to claim once the day is settled.` : ' Claim any time.'}</p>
     ${on ? pulse() : ''}
     ${!connected ? gate('Points go to the address that made each transaction. Connect it to see yours, or open your Tacit wallet.', 'Connect wallet', 'pts-connect')
       : rows ? rows.map((r, i) => html`
@@ -4289,11 +4342,12 @@ render.pts = () => {
         <div class="side"><span class="sk" style="--w:8ch"></span><br><span class="sk" style="--w:11ch"></span></div></div></div>`)}
     ${leaderboard(connected)}
     <div class="lbl"><span>Earn more</span></div>
-    <div class="opts">${EARN.map(([go, ic, t, m]) => html`<button class="opt" type="button" data-earn="${go}"><span class="opt-t"><svg class="tk sm" aria-hidden="true"><use href="#tk-${ic}"/></svg>${t}</span><span class="opt-m">${m}</span></button>`)}
-      <a class="opt" href="${ZSWAP}" target="_blank" rel="noopener"><span class="opt-t"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Swap or bet with ETH on zSwap ↗</span><span class="opt-m">1,000 per ETH</span></a></div>
+    <div class="opts">${earnRows().map(([go, ic, t, m]) => html`<button class="opt" type="button" data-earn="${go}"><span class="opt-t"><svg class="tk sm" aria-hidden="true"><use href="#tk-${ic}"/></svg>${t}</span><span class="opt-m">${m}</span></button>`)}
+      <a class="opt" href="${ZSWAP}" target="_blank" rel="noopener"><span class="opt-t"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Swap or bet with ETH on zSwap ↗</span><span class="opt-m">${PGM.rates.zswapeth ? `${rateStr(PGM.rates.zswapeth)} per ETH` : ''}</span></a></div>
     ${connected ? html`<div class="lbl"><span>Get a .wei name</span></div>
     <div id="wei-form"></div>` : ''}
-    <p class="note">Early activity counts up to five times over. Holding 100, 1,000 or 10,000 public TAC at the same address through the past day multiplies its points by 1.25, 1.5 or 2. <a href="https://github.com/src-company/tacit#points-and-farms" target="_blank" rel="noopener">The program ↗</a></p>
+    ${terms()}
+    <p class="note">Early activity counts up to ${PGM.early.max}×. ${PGM.tiers.length ? `Holding ${listOr(PGM.tiers.map(([m]) => m.toLocaleString('en-US')))} public TAC at the same address through ${PGM.windowHours === 24 ? 'the past day' : `the past ${PGM.windowHours} hours`} multiplies its points by ${listOr(PGM.tiers.map(([, x]) => x))}. ` : ''}<a href="https://github.com/src-company/tacit#points-and-farms" target="_blank" rel="noopener">The program ↗</a></p>
     <div class="status" role="status" id="pts-status"></div>`);
   const status = $('#pts-status');
   wireConnect('pts-connect', () => rerender('pts'));

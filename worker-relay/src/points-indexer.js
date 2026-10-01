@@ -16,6 +16,7 @@ import { settleThroughDay as gateThroughDay } from './lib/points-settle-gate.js'
 import { parseAdjustments } from './lib/points-adjustments.js';
 import { fundingStatus, fundingVerdict } from './lib/points-funding.js';
 import { tvlSeries } from './lib/points-tvl.js';
+import { programTerms } from './lib/points-program.js';
 import { dayPot, dayBoard, dayHistory, splitDayBudget } from './lib/points-day-board.js';
 import Database from 'better-sqlite3';
 import { openStore } from './lib/points-store.js';
@@ -1518,8 +1519,9 @@ function startHttp(store, evmState) {
       }
       if (url.pathname === '/leaderboard') {
         const limit = Math.min(Number(url.searchParams.get('limit')) || 100, 500);
-        // ?day=today ranks the UTC day so far instead of the whole program, with the pot those points split. It is
-        // an object where the default is an array, so a service that predates it is told apart by its array.
+        // ?day=today ranks the UTC day so far instead of the whole program, with the pot those points split, and the
+        // program's own terms (lib/points-program.js) so a page shows them as the service holds them. It is an object
+        // where the default is an array, so a service that predates it is told apart by its array.
         if (url.searchParams.get('day') === 'today') {
           if (!CFG.pointsProgramStartSec) { res.statusCode = 404; res.end(JSON.stringify({ error: 'no reward program' })); return; }
           const startDay = Math.floor(CFG.pointsProgramStartSec / 86400);
@@ -1527,6 +1529,7 @@ function startHttp(store, evmState) {
           const dayStart = todayDay * 86400;
           res.end(JSON.stringify({
             day: todayDay, programDay: todayDay - startDay + 1, programDays: CFG.pointsProgramDays,
+            program: programTerms({ cfg: CFG, dayBudgetWei, rateCapSchedule, tiers: CFG.tacBoostTiers ? parseBoostTiers(CFG.tacBoostTiers) : [] }),
             ...dayBoard(store.dayPointsByAddress(dayStart, dayStart + 86400), { budgetWei: dayBudgetWei(todayDay - startDay), maxWeiPerPoint: rateCapForDay(rateCapSchedule, todayDay), limit }),
           }));
           return;

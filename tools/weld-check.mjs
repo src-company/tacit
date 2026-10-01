@@ -37,7 +37,9 @@
 //   ptsview  the points sheet from a stubbed service: recent activity in time order across chains grouped by day, each
 //            linked to its chain's explorer, the newest activity's holder boost, rank, claimed so far, today's share and
 //            countdown; the day's pot and rate, the gap to the rank above, the change since an earlier day, the points-per-day
-//            bars, the all-time and Today boards; and, with nobody connected, the public board and finding an address in it
+//            bars, the all-time and Today boards; the program's terms as the service states them (dates, the limit per point and its
+//            next change, what each way of earning pays, the early bonus, the holder tiers) and the page's own where it states none or
+//            something unreadable; and, with nobody connected, the public board and finding an address in it
 //   csend    the Borrow sheet's Send: private cUSD/cBTC (notes stubbed into the balance) go privately to a tacit1 address
 //            or out as tacUSD to an 0x… address, with fees shown first and an amount over the balance refused
 //   tacsend  the TAC sheet's own Send, private-only: a stubbed cTAC note goes privately to a tacit1 address, shown as
@@ -1791,8 +1793,14 @@ await step('ptsview', async () => {
     { day: today, points: 215, tacWei: '4500000000000000000', settled: false }, { day: today - 1, points: 100, tacWei: '2000000000000000000', settled: true }, { day: today - 5, points: 40, tacWei: null, settled: true }] };
   await r.ctx.route(/api\.tacit\.finance\/points\/0x/, (route) => json(route, /\/days$/.test(route.request().url()) ? daysBody : pointsBody(3)));
   await r.ctx.route(/api\.tacit\.finance\/claim\/0x/, (route) => json(route, { cumulativeAmount: '8000000000000000000', claimedWei: '5000000000000000000', unclaimedWei: '3000000000000000000', proof: null }));
+  const dShort = (d) => new Date(d * 864e5).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  // Terms that differ from the page's own, so a pass shows they are read and not echoed: another ceiling that lifts later, a dearer wrap, no cUSD row, other holder tiers.
+  const program = { startDay: today - 8, days: 90, lastDay: today + 81, totalWei: '100000000000000000000000', dayBudgetWei: '1111111111111111111111',
+    rateCap: [{ fromDay: today - 2, maxWeiPerPoint: '20000000000000000' }, { fromDay: today + 20, maxWeiPerPoint: null }], settleGraceSecs: 1800,
+    earlyBonus: { max: 3, halfLife: 100 }, tethWrapBoost: 1.25, holder: { tiers: [{ tac: 50, multiplier: 1.1 }, { tac: 500, multiplier: 1.3 }], windowHours: 24 },
+    rates: { wrap: 1500, evmpooldeposit: 1000, zswapeth: 1000, cbtcmint: 1000 } };
   await r.ctx.route(/api\.tacit\.finance\/leaderboard/, (route) => json(route, /day=today/.test(route.request().url())
-    ? { day: today, programDay: 9, programDays: 90, totalPoints: 1000, dayBudgetWei: '1111111111111111111111', taking: 2, rows: [{ address: A0.toLowerCase(), points: 100 }, { address: hex('2'), points: 50 }] }
+    ? { day: today, programDay: 9, programDays: 90, program, totalPoints: 1000, dayBudgetWei: '1111111111111111111111', taking: 2, rows: [{ address: A0.toLowerCase(), points: 100 }, { address: hex('2'), points: 50 }] }
     : [{ address: hex('1'), points: 9e9 }, { address: A0.toLowerCase(), points: 1234.5 }]));
   await r.page.goto(r.url + '#pts');
   await r.page.click('#pts-connect');
@@ -1812,6 +1820,21 @@ await step('ptsview', async () => {
   ok(/Since \d+ \w+\s*\+235 points · up 3 places/.test(v.body), `ptsview: the change since an earlier day this browser saw (${v.body.slice(0, 700)})`);
   ok(/Today’s pot\s*1,111 TAC · day 9 of 90/.test(v.body) && /Points so far today\s*1,000 · 2 taking part/.test(v.body) && /each 1,000 points earn\s*1,111\.1 TAC/.test(v.body), `ptsview: the day's pot, points and rate (${v.body.slice(0, 500)})`);
   ok(v.bars >= 2, `ptsview: points per day are drawn as bars (${v.bars})`);
+  const lastD = dShort(today + 81), nextD = dShort(today + 20);
+  ok(new RegExp(`Every day through ${lastD} \\(UTC\\), up to 1,111 TAC is split by that day’s points, at most 0\\.02 TAC per point, no limit from ${nextD}\\.`).test(v.body),
+    `ptsview: the lede states the days, the pot and the limit per point with its next change as the service gives them (${v.body.slice(0, 260)})`);
+  ok(/1,500 points per ETH/.test(v.body) && /1,000 per ETH, on Ethereum, Base or Robinhood Chain/.test(v.body) && /1,000 per wstETH/.test(v.body) && !/Borrow cUSD/.test(v.body),
+    'ptsview: each way of earning pays what the service says, and one it does not list is not offered');
+  ok(/Early activity counts up to 3×\. Holding 50 or 500 public TAC at the same address through the past day multiplies its points by 1\.1 or 1\.3\./.test(v.body),
+    `ptsview: the early bonus and the holder tiers are the service's (${v.body.slice(-330)})`);
+  ok(/Hold 50 public TAC here through a day and what it does next earns 1\.1×/.test(v.body), 'ptsview: the next holder tier is read from the same tiers');
+  await r.page.click('#pts-body summary:has-text("Terms")');
+  await r.page.evaluate(() => document.querySelector('#pts-body details:has(> summary)').closest('#pts-body').lastElementChild.scrollIntoView({ block: 'end' }));
+  await shot(r.page, 'ptsview-terms');
+  const terms = await r.page.$eval('#pts-body details:has(> summary:has-text("Terms"))', (d) => d.textContent.replace(/\s+/g, ' '));
+  ok(new RegExp(`Runs\\s*${dShort(today - 8)} to ${lastD} \\(UTC\\), 90 days`).test(terms) && /Each day’s pot\s*up to 1,111 TAC, of 100,000 in all/.test(terms)
+    && new RegExp(`Limit\\s*0\\.02 TAC per point, no limit from ${nextD}`).test(terms) && /Points go to\s*the address that sent the transaction/.test(terms) && /Settled\s*each day, shortly after it ends/.test(terms) && /Claim\s*any time once a day is settled/.test(terms),
+    `ptsview: the terms list the days, the pot, the limit, who is paid and when (${terms.slice(0, 300)})`);
   await r.page.click('.ptd-b:last-child');
   const said = (await r.page.textContent('.ptd-r')).trim();
   ok(/^Today · 215 points · about 4\.5 TAC$/.test(said), `ptsview: pressing a bar names its day, its points and its TAC (${said})`);
@@ -1840,6 +1863,25 @@ await step('ptsview', async () => {
     await l.page.click('#pts-body .ptlog summary');
     const n250 = await l.page.evaluate(() => ({ bars: document.querySelectorAll('#pts-body .ptd-b').length, body: document.querySelector('#pts-body').textContent.replace(/\s+/g, ' ') }));
     ok(route ? n250.bars >= 2 : n250.bars === 0 && /The latest 3 of 250 are listed/.test(n250.body), `ptsview: ${route ? 'a history past the 100 listed still draws its days' : 'without the days route, a history past the 100 listed draws no bars and says so'} (${n250.bars} bars)`);
+    if (l.errors.length) { fails++; console.log('FAIL ptsview page errors: ' + l.errors.slice(0, 3).join(' | ')); }
+    await l.browser.close();
+  }
+  // Terms the page cannot read leave its own in place; a pot below the nominal one says it is at the limit per point.
+  {
+    const l = await openPage({ account: A0 });
+    await l.ctx.route(/api\.tacit\.finance\/points\/0x/, (rt) => json(rt, { address: A0.toLowerCase(), points: 10, deposit_count: 1, today: { points: 10, totalPoints: 100, dayBudgetWei: '500000000000000000000' }, deposits: [] }));
+    await l.ctx.route(/api\.tacit\.finance\/claim\/0x/, (rt) => json(rt, { cumulativeAmount: '0', claimedWei: '0', unclaimedWei: '0', proof: null }));
+    await l.ctx.route(/api\.tacit\.finance\/leaderboard/, (rt) => json(rt, /day=today/.test(rt.request().url())
+      ? { day: today, programDay: 9, programDays: 90, program: { startDay: 'soon', days: -1, dayBudgetWei: 'a lot', rates: 7 }, totalPoints: 100, dayBudgetWei: '500000000000000000000', taking: 1, rows: [{ address: A0.toLowerCase(), points: 10 }] }
+      : [{ address: A0.toLowerCase(), points: 10 }]));
+    await l.page.goto(l.url + '#pts');
+    await l.page.click('#pts-connect');
+    await until(l.page, () => !!document.querySelector('#pts-body .pulse'), null, 60000);
+    const d = await l.page.evaluate(() => document.querySelector('#pts-body').textContent.replace(/\s+/g, ' '));
+    const capped = today >= Math.floor(Date.UTC(2026, 9, 3) / 864e5);
+    ok(new RegExp(`Every day through 21 Dec \\(UTC\\), up to 1,111 TAC is split by that day’s points, at most 0\\.03 TAC per point${capped ? '' : ' from 3 Oct'}\\.`).test(d) && /1,250 points per ETH/.test(d) && /Borrow cUSD/.test(d) && /Holding 100, 1,000 or 10,000 public TAC/.test(d),
+      `ptsview: terms the page cannot read leave its own (${d.slice(0, 240)})`);
+    ok(/Today’s pot\s*500 TAC · day 9 of 90 at the limit per point/.test(d), `ptsview: a pot below the nominal one says it is at the limit per point (${d.slice(0, 300)})`);
     if (l.errors.length) { fails++; console.log('FAIL ptsview page errors: ' + l.errors.slice(0, 3).join(' | ')); }
     await l.browser.close();
   }
