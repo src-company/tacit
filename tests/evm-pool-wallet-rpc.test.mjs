@@ -1,6 +1,6 @@
 // jsonRpc over several nodes, and the wallet's log scan against nodes with different eth_getLogs range limits.
 import assert from 'node:assert/strict';
-import { jsonRpc, makeEvmPoolWallet, evmPoolKeys, sealNote, openNote, paymentKey, sealState, openState } from '../dapp/evm-pool-wallet.js';
+import { jsonRpc, makeEvmPoolWallet, evmPoolKeys, recipientOf, sealNote, openNote, paymentKey, sealState, openState } from '../dapp/evm-pool-wallet.js';
 import { poolAsset } from '../dapp/evm-pool-zk.js';
 import { makeEvmPoolZk } from '../dapp/evm-pool-zk.js';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7 } from 'poseidon-lite';
@@ -153,6 +153,40 @@ await check('the router log read names no receive box, so a node does not see wh
   const router = seen.filter((f) => f.address === ROUTERA);
   assert.ok(router.length > 0);
   for (const f of router) assert.equal(f.topics.length, 1, 'only the event signature');
+});
+
+await check('a call starts at the node that answered last, so one that stopped answering costs one timeout, not one per call', async () => {
+  const calls = [];
+  const hang = (url, init) => new Promise((res, rej) => { calls.push(url); init.signal?.addEventListener('abort', () => rej(init.signal.reason)); });
+  const rpc = jsonRpc(['silent', 'drpc'], (url, init) => (url === 'silent' ? hang(url, init) : (calls.push(url), nodes(SPEC, [])(url, init))), { timeoutMs: 50 });
+  const alive = setInterval(() => {}, 1000);
+  try { await rpc('eth_blockNumber'); await rpc('eth_blockNumber'); await rpc('eth_blockNumber'); } finally { clearInterval(alive); }
+  assert.deepEqual(calls, ['silent', 'drpc', 'drpc', 'drpc']);
+});
+
+await check('a recipient address is decoded once and read back the same', async () => {
+  const keys = evmPoolKeys(zk, new Uint8Array(32).fill(7));
+  let decodes = 0;
+  const pool = { decodeAddress: (a) => { decodes++; return keys.pool.decodeAddress(a); } };
+  const first = recipientOf({ pool }, keys.address), again = recipientOf({ pool }, `  ${keys.address}\n`);
+  assert.equal(decodes, 1);
+  assert.deepEqual(again, first);
+  assert.notEqual(again, first, 'each caller gets its own record');
+});
+
+await check('a relayed spend whose quote is above the fee shown is refused before anything is built', async () => {
+  const POOLA = '0x000000c2A20657CE25f2Ba99737933D031AFBEE9', RELAYER = '0xfA2afbaB631C7Eda7CeA6AE1440605C504E322Ec';
+  const keys = evmPoolKeys(zk, new Uint8Array(32).fill(5));
+  const rpc = async (m) => (m === 'eth_blockNumber' ? '0x64' : m === 'eth_getLogs' ? [] : '0x0');
+  const w = makeEvmPoolWallet({
+    zk, keys, prove: null, store: null, keeper: 'https://k.test',
+    fetchImpl: async () => ({ ok: true, status: 200, headers: new Map(), json: async () => ({ chainId: 8453, pool: POOLA, relayer: RELAYER, fee: '5000000000000' }) }),
+    chain: { chainId: 8453, pool: POOLA, router: '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5', rpc, deployBlock: 0, confirmations: 0, relayer: RELAYER },
+  });
+  const to = evmPoolKeys(zk, new Uint8Array(32).fill(6)).address;
+  await assert.rejects(() => w.send({ to, amount: 1n, via: 'relay', maxFee: 4_000_000_000_000n }), (e) => e.feeMoved === 5_000_000_000_000n && /fee went up/.test(e.message));
+  await assert.rejects(() => w.withdraw({ to: '0x1111111111111111111111111111111111111111', amount: 1n, via: 'relay', maxFee: 1n }), (e) => e.feeMoved === 5_000_000_000_000n);
+  await assert.rejects(() => w.send({ to, amount: 1n, via: 'relay', maxFee: 6_000_000_000_000n }), (e) => e.feeMoved === undefined);
 });
 
 console.log(`\n${n} checks passed`);

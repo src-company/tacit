@@ -173,9 +173,17 @@ export function verifyPayment(zk, keys, { to, e, memo, leaf, asset }) {
 }
 
 // A recipient from a Secret Sats address string.
+const RECIPIENTS = new Map();
 export function recipientOf(keys, address) {
-  const d = keys.pool.decodeAddress(String(address).trim());
-  return { V: d.V, A: d.A, N: d.N };
+  const a = String(address).trim();
+  let r = RECIPIENTS.get(a);
+  if (!r) {
+    const d = keys.pool.decodeAddress(a);
+    r = { V: d.V, A: d.A, N: d.N };
+    if (RECIPIENTS.size >= 256) RECIPIENTS.delete(RECIPIENTS.keys().next().value);
+    RECIPIENTS.set(a, r);
+  }
+  return { ...r };
 }
 
 // ── chain ──
@@ -183,19 +191,21 @@ export function recipientOf(keys, address) {
 const TRANSACT_TOPIC = hex(keccak_256(te.encode('Transact(bytes32,bytes32,bytes32,bytes32,uint256,bytes32,address,int256,address,uint256,bytes,bytes)')));
 const RECEIVED_TOPIC = hex(keccak_256(te.encode('Received(address,uint256,uint256,uint256,uint256,uint256)')));
 
-// A JSON-RPC reader over one or more URLs: each call tries them in turn and fails only when all do (a revert is
-// final at the first). The error thrown carries every node's error as `all`. A node gets `timeoutMs` to answer
-// before the next is tried, so one that stops responding cannot stall every read behind it.
+// A JSON-RPC reader over one or more URLs: each call tries them in turn, starting at the one that answered last, and
+// fails only when all do (a revert is final at the first). The error thrown carries every node's error as `all`. A node
+// gets `timeoutMs` to answer before the next is tried, so one that stops responding cannot stall every read behind it.
 export function jsonRpc(urls, fetchImpl = globalThis.fetch.bind(globalThis), { timeoutMs = 25_000 } = {}) {
   const list = Array.isArray(urls) ? urls : [urls];
-  let id = 0;
+  let id = 0, first = 0;
   return async (method, params = []) => {
     const all = [];
-    for (const url of list) {
+    for (let k = 0; k < list.length; k++) {
+      const at = (first + k) % list.length, url = list[at];
       try {
         const r = await fetchImpl(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }), signal: AbortSignal.timeout?.(timeoutMs) });
         const j = await r.json();
         if (j.error) throw Object.assign(new Error(j.error.message || 'rpc error'), { rpc: j.error });
+        first = at;
         return j.result;
       } catch (e) {
         if (e.rpc && /revert/i.test(e.message) && (method === 'eth_call' || method === 'eth_estimateGas')) throw e;
@@ -653,7 +663,11 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       let h;
       if (q) {
         onStep('sending through the relayer');
-        const r = await keeperPost('/relay', { tx, ...extra, ...(slot ? { reservation: slot } : {}) });
+        // An unanswered request may still have been sent: read the chain again, and say so rather than invite a blind retry.
+        const r = await keeperPost('/relay', { tx, ...extra, ...(slot ? { reservation: slot } : {}) }).catch(() => {
+          sync().catch(() => {});
+          throw Object.assign(new Error('The relay did not answer, and it may still have sent your payment. Check Activity before sending again.'), { said: true });
+        });
         if (r.status === 409 && r.body.stale) continue;
         if (r.status === 429) { if (slot) await releaseSlot(slot); await sleep(5000); continue; }
         if (r.status !== 200 || !r.body.txHash) { if (slot) await releaseSlot(slot); throw new Error(r.body.error || `relayer returned ${r.status}`); }
@@ -687,14 +701,19 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     try { return await sync(); } finally { feed = f; }
   }
 
+  // A quote above `maxFee`, the most the caller showed for it, is refused so the spend never costs more than shown.
+  function withinFee(q, maxFee) {
+    if (maxFee == null || BigInt(q.fee) <= BigInt(maxFee)) return q;
+    throw Object.assign(new Error('The relay fee went up since it was shown. Check the new fee and try again.'), { feeMoved: BigInt(q.fee) });
+  }
   // The relayer's quote for a spend, or null when the signer submits it.
-  async function quoteFor(via, gas = null) {
+  async function quoteFor(via, gas = null, maxFee = null) {
     if (via === 'relay' && !keeper) throw new Error('no relayer is configured for this chain');
     if (via === 'self' || !keeper) {
       if (!signer) throw new Error('no relayer and no wallet to send from');
       return null;
     }
-    return keeperGet(gas ? `/quote?gas=${gas}` : '/quote');
+    return withinFee(await keeperGet(gas ? `/quote?gas=${gas}` : '/quote'), maxFee);
   }
 
   // Merges the two largest notes into one, repeatedly, until two notes cover `need` (each merge pays a fee).
@@ -754,11 +773,11 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     watchReceive: (index = RECEIVE_INDEX) => keeperPost('/receive', { chainId: chain.chainId, npk: receiveKeys(zk, keys.zkWallet, index).npk.toString(), feeBps: RECEIVE_FEE_BPS }),
 
     // Pays `amount` wei (or 'max') out of the pool to `to` (0x…). → tx hash.
-    async withdraw({ to, amount, via = null, onStep = () => {} }) {
+    async withdraw({ to, amount, via = null, maxFee = null, onStep = () => {} }) {
       if (!/^0x[0-9a-fA-F]{40}$/.test(String(to)) || BigInt(to) === 0n) throw new Error('enter a 0x address');
       if (amount !== 'max' && BigInt(amount) <= 0n) throw new Error('enter an amount');
       await sync();
-      const q = await quoteFor(via);
+      const q = await quoteFor(via, null, maxFee);
       const fee = q ? BigInt(q.fee) : 0n, a = amount === 'max' ? maxOf(fee) : BigInt(amount);
       const ins = await prepare(a + fee, q, onStep);
       const change = ins.reduce((s, n) => s + BigInt(n.v), 0n) - a - fee;
@@ -787,11 +806,11 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     // Withdraws `amount` wei into `intent`'s escrow (gateway callIntent) and has the relayer run it in the same
     // transaction (router.withdrawAndCall). → tx hash.
     // gas: what the withdrawal and its calls need; by default the relay's plus 250k per call.
-    async withdrawAndCall({ intent, amount, gas = null, onStep = () => {} }) {
+    async withdrawAndCall({ intent, amount, gas = null, maxFee = null, onStep = () => {} }) {
       const a = BigInt(amount);
       if (a <= 0n) throw new Error('enter an amount');
       await sync();
-      const q = await keeperGet(`/quote?gas=${gas ?? 450_000 + 250_000 * (intent.calls?.length ?? 1)}`);
+      const q = withinFee(await keeperGet(`/quote?gas=${gas ?? 450_000 + 250_000 * (intent.calls?.length ?? 1)}`), maxFee);
       const fee = BigInt(q.fee);
       const ins = await prepare(a + fee, q, onStep);
       const change = ins.reduce((s, n) => s + BigInt(n.v), 0n) - a - fee;
@@ -802,11 +821,11 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     },
 
     // Sends `amount` wei (or 'max') privately to a Secret Sats address. → tx hash.
-    async send({ to, amount, via = null, onStep = () => {} }) {
+    async send({ to, amount, via = null, maxFee = null, onStep = () => {} }) {
       const recipient = recipientOf(keys, to);
       if (amount !== 'max' && BigInt(amount) <= 0n) throw new Error('enter an amount');
       await sync();
-      const q = await quoteFor(via);
+      const q = await quoteFor(via, null, maxFee);
       const fee = q ? BigInt(q.fee) : 0n, a = amount === 'max' ? maxOf(fee) : BigInt(amount);
       const ins = await prepare(a + fee, q, onStep);
       const change = ins.reduce((s, n) => s + BigInt(n.v), 0n) - a - fee;
@@ -863,7 +882,7 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     // sweeps it into a note there (watchReceive on the L2 wallet). Arrives in minutes. The amount and the address
     // are public on Ethereum; which note paid is not. l2Rpc (a jsonRpc on the L2) is needed for Robinhood Chain,
     // whose retryable is priced from the L2. → tx hash.
-    async bridgeOut({ toChainId, amount, l2Rpc = null, onStep = () => {} }) {
+    async bridgeOut({ toChainId, amount, l2Rpc = null, maxFee = null, onStep = () => {} }) {
       if (Number(chain.chainId) !== 1) throw new Error('bridging out starts from the Ethereum pool');
       const b = L2_BRIDGES[Number(toChainId)];
       if (!b) throw new Error(`no bridge to chain ${toChainId}`);
@@ -893,7 +912,7 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       const nonce = BigInt(hex(globalThis.crypto.getRandomValues(new Uint8Array(16))));
       const intent = callIntent({ calls: [c], refund, deadline: BigInt(Math.floor(Date.now() / 1000) + 3600), nonce });
       // The OP portal burns L1 gas to buy the deposit's L2 gas (~620k in all); a retryable costs ~100k.
-      return api.withdrawAndCall({ intent, amount: value, gas: b.kind === 'op' ? 1_300_000 : 700_000, onStep });
+      return api.withdrawAndCall({ intent, amount: value, gas: b.kind === 'op' ? 1_300_000 : 700_000, maxFee, onStep });
     },
 
     // Moves `amount` wei (a multiple of 1e10) from this Ethereum pool into a V1 tETH note with commitment `commit`,

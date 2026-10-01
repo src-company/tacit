@@ -8,6 +8,8 @@
 //   hub    tacit.finance/pay read-only against mainnet with KEY: links made for the ETH page before it moved open on
 //          /pay/eth/; BTC and TAC balances read; each kind of address routes as it should, a tacit1 from before the pool
 //          lane included (a silent payment in BTC, a shielded transfer in TAC); the receive addresses
+//   saved  no network: the key saved in this browser, behind a passphrase, opens on /pay/ and /pay/eth/ through the passphrase
+//          dialog (Escape closes it quietly, a wrong passphrase asks again)
 //   anyone the same fork with a real keeper relaying: pay an 0x address now, or hold it until it blends in (after a
 //          deposit made for it when the balance is short); save a name for an address; pay by link, taken by a keyless
 //          recipient to their address and into another key's private balance, or taken back; the links found again
@@ -22,7 +24,7 @@ import { extname, join, normalize } from 'node:path';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'live,hub,fork,anyone').split(','));
+const ONLY = new Set((process.argv[2] || 'live,hub,saved,fork,anyone').split(','));
 const SHOTS = process.env.SHOTS || null;
 const WEB = 21000 + Math.floor(Math.random() * 2000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -145,7 +147,7 @@ try {
       if (/Arrives/.test(rc)) ok(/Blends in well|Could blend in better|Easy to link to you/.test(rc) && /hides among \d+ notes from \d+ deposits/.test(rc), `withdraw privacy check: ${(await p.textContent('.pv')).replace(/\s+/g, ' ').trim().slice(0, 160)}`);
       ok((/Arrives/.test(rc) && /Stays private/.test(rc)) || /More than/.test(rc), `withdraw receipt: ${rc.replace(/\s+/g, ' ').trim()}`);
       const link = await getPaidLink(p, '0.01', 'coffee & cake');
-      ok(/#pay=tacit1qzz[a-z0-9]{267}&n=[0-9a-f]{64}&amount=0\.01&chain=base&for=coffee/.test(link), `payment link: ${link.slice(0, 60)}…${link.slice(-50)}`);
+      ok(/#pay=tacit1qzz[a-z0-9]{267}&n=[0-9a-f]{64}&ns=[0-9a-f]{128}&amount=0\.01&chain=base&for=coffee/.test(link), `payment link: ${link.slice(0, 60)}…${link.slice(-50)}`);
       const q = await readQr(p);
       ok(q === null || q === link, q === null ? 'QR present (install jsqr to decode it)' : 'the QR code decodes to the same link');
       const recv = await p.$$eval('.addr code', (x) => x.map((c) => c.textContent));
@@ -262,6 +264,49 @@ try {
     ok(/\/pay\/eth\//.test(p.url()), 'the ETH chip opens /pay/eth/');
     ok(!errors.length, `no page errors ${errors.join(' | ')}`);
     await ctx.close();
+  }
+
+  if (ONLY.has('saved')) {
+    // The key saved in this browser, behind a passphrase, opens on both pages through the passphrase dialog: no network.
+    console.log('saved key (/pay and /pay/eth, passphrase dialog)');
+    const origin = new URL(URL_).origin, PASS = 'correct horse battery staple 123';
+    for (const path of ['/pay/', '/pay/eth/']) {
+      const { ctx, p, errors } = await page(browser, { route: (c) => c.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort()) });
+      await p.goto(origin + path);
+      const pub = await p.evaluate(async (pass) => {
+        const d = await import('/vendor/tacit-deps.min.js'), hex = (u) => [...u].map((b) => b.toString(16).padStart(2, '0')).join('');
+        const priv = d.secp.utils.randomPrivateKey(), salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+        const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveBits']);
+        const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 600000, hash: 'SHA-256' }, base, 256));
+        const key = await crypto.subtle.importKey('raw', bits, 'AES-GCM', false, ['encrypt']);
+        const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, priv)), pub = hex(d.secp.getPublicKey(priv, true));
+        localStorage.setItem('tacit-wallet-v1:mainnet', JSON.stringify({ v: 1, kdf: 'pbkdf2', iter: 600000, salt: hex(salt), iv: hex(iv), ct: hex(ct), pub }));
+        return pub;
+      }, PASS);
+      await p.reload();
+      await p.waitForSelector('#g-in [data-in="known"]');
+      ok(/saved in this browser/i.test(await p.textContent('#g-in [data-in="known"]')), `${path}: Continue offers the saved key`);
+      const toasts = () => p.$$eval('.toast', (x) => x.map((e) => e.textContent));
+      await p.click('#g-in [data-in="known"]');
+      await p.waitForSelector('#pass-dialog[open]', { timeout: 30e3 });
+      ok(true, `${path}: the passphrase dialog opens`);
+      await p.keyboard.press('Escape');
+      await p.waitForFunction(() => !document.querySelector('#pass-dialog').open, null, { timeout: 10e3 });
+      await sleep(500);
+      ok(!(await toasts()).some((t) => /passphrase modal|cancel/i.test(t)) && !(await p.$('#wallet-dot.on')), `${path}: Escape closes it quietly and leaves the wallet locked`);
+      await p.click('#g-in [data-in="known"]');
+      await p.waitForSelector('#pass-dialog[open]');
+      await p.fill('#pass-input-1', 'not the passphrase at all');
+      await p.press('#pass-input-1', 'Enter');
+      await p.waitForFunction(() => /wrong passphrase/i.test(document.querySelector('#pass-hint-1')?.textContent || ''), null, { timeout: 30e3 });
+      ok(true, `${path}: a wrong passphrase says so and asks again`);
+      await p.fill('#pass-input-1', PASS);
+      await p.press('#pass-input-1', 'Enter');
+      await p.waitForFunction(() => /^tacit1/.test(document.querySelector('#wallet-label')?.textContent || ''), null, { timeout: 60e3 });
+      ok(!(await p.$eval('#pass-dialog', (d) => d.open)), `${path}: the right passphrase opens the key: ${await p.textContent('#wallet-label')}`);
+      ok(!errors.some((e) => !/ERR_FAILED|net::/.test(e)), `${path}: no page errors ${errors.join(' | ').slice(0, 200)}`);
+      await ctx.close();
+    }
   }
 
   if (ONLY.has('fork')) {
@@ -564,9 +609,8 @@ try {
     }
     await makeLink('0.0015', 'back');
     await p.waitForSelector('[data-gback]', { timeout: 300e3 });
-    const backs = await p.$$('[data-gback]');
     await p.evaluate(() => { document.querySelector('#status').textContent = ''; });
-    await backs[0].click();
+    await p.locator('[data-gback]').first().click();
     await waitStatus(p, /Taken back/);
     ok(/Taken back into your private balance/.test(await p.textContent('#status')), `a link taken back: ${await text(p, '#status')}`);
     // The links, found again from the key alone: this browser's own record of them wiped, history rebuilt.

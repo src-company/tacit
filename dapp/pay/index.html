@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-xG64iqoncE+VEBP/xWqZ4Rg3omsGXnR9Nbch1OCrK/8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Fosg8+K7kVDXSppS20TC4/ptCE5q9Y4iz/Lu+tR/60k=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Pay anyone privately: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key, proved on your device, recovered from the key alone.">
@@ -30,12 +30,13 @@
   --card: #F2EBD4;
   --field: #FAF6EA;
   --ink: #1A1A1A;
-  --mute: #6B6557;
+  --mute: #625C4F;
   --hair: rgba(26,26,26,.12);
   --hair-2: rgba(26,26,26,.28);
   --orange: #f7931a;
   --eth: #627eea;
   --ok: #0a7234;
+  --warn: #9a4a00;
   --err: #b8341d;
   --scrim: rgba(26,26,26,.36);
   --lift: 0 22px 44px -28px rgba(26,26,26,.45);
@@ -57,6 +58,7 @@
     --hair-2: rgba(237,229,207,.28);
     --eth: #8ea2f0;
     --ok: #8fcf9a;
+    --warn: #f7931a;
     --err: #f08a6c;
     --scrim: rgba(0,0,0,.6);
     --lift: 0 22px 44px -28px rgba(0,0,0,.9);
@@ -83,7 +85,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .mute { color: var(--mute); }
 .err { color: var(--err); }
 .ok { color: var(--ok); }
-.warn { color: var(--orange); }
+.warn { color: var(--warn); }
 .nw { white-space: nowrap; }
 
 .shell { max-width: 600px; margin: 0 auto; padding-bottom: 56px; }
@@ -101,7 +103,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .brand b { font: italic 400 30px/1 var(--serif); letter-spacing: -.01em; }
 .brand i { font: 500 10px/1 var(--mono); font-style: normal; letter-spacing: .16em; text-transform: uppercase; color: var(--mute);
   border: 1px solid var(--hair-2); padding: 4px 6px 3px; margin-left: 2px; }
-.chip { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; min-width: 0; padding: 0 14px; background: var(--card);
+.chip { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; min-width: 0; padding: 0 14px; background: var(--card);
   border: 1px solid var(--hair-2); cursor: pointer; white-space: nowrap; }
 .chip:hover { border-color: var(--ink); }
 .chip span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -133,7 +135,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .seg button[aria-selected="true"] { background: var(--ink); color: var(--card); }
 .seg button:disabled { cursor: not-allowed; }
 .seg.sub { border-color: var(--hair); margin-bottom: 16px; }
-.seg.sub button { min-height: 36px; font-size: 12.5px; }
+.seg.sub button { min-height: var(--tap); font-size: 12.5px; }
 .seg.sub button + button { border-color: var(--hair); }
 
 .bal { display: flex; align-items: center; gap: 14px; padding: 14px 0; margin-bottom: 16px; border-top: 1px solid var(--hair); border-bottom: 1px solid var(--hair); }
@@ -161,7 +163,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .amt .u { display: inline-flex; align-items: center; gap: 8px; padding: 0 14px 0 4px; color: var(--mute); white-space: nowrap; }
 .amt.text input { font: 400 14px/1.4 var(--mono); padding: 14px; }
 .amt .link { flex: none; padding: 0 14px; }
-input::placeholder { color: var(--mute); opacity: .7; }
+input::placeholder { color: var(--mute); opacity: 1; }
 
 .kv { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--mute); padding: 5px 0; }
 .kv b { font-weight: 400; color: var(--ink); text-align: right; overflow-wrap: anywhere; }
@@ -181,8 +183,9 @@ input::placeholder { color: var(--mute); opacity: .7; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .row2 .btn { margin-top: 10px; }
-.link { background: none; border: 0; padding: 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; font-size: 12.5px; }
+.link { position: relative; background: none; border: 0; padding: 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; font-size: 12.5px; }
 .link:hover { color: var(--ink); }
+.link::after { content: ''; position: absolute; inset: -12px -6px; }
 
 .status { font-size: 12.5px; min-height: 20px; margin-top: 12px; overflow-wrap: anywhere; }
 .status:empty { display: none; }
@@ -284,8 +287,8 @@ input::placeholder { color: var(--mute); opacity: .7; }
 
 footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; margin-top: 36px; padding-top: 18px;
   border-top: 1px solid var(--hair-2); color: var(--mute); font-size: 12px; }
-footer nav { display: flex; flex-wrap: wrap; gap: 6px 18px; }
-footer a { color: var(--mute); }
+footer nav { display: flex; flex-wrap: wrap; gap: 0 18px; }
+footer a { display: inline-block; padding: 12px 0; color: var(--mute); }
 footer a:hover { color: var(--ink); }
 
 /* ── sheets ── */
@@ -304,14 +307,19 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 .who { text-align: center; padding: 4px 0 16px; margin-bottom: 6px; border-bottom: 1px solid var(--hair); }
 .who .a { font: 500 16px/1.4 var(--mono); overflow-wrap: anywhere; }
 .who .u { font-size: 12px; color: var(--mute); margin-top: 4px; }
+.who .u b { font-weight: 500; color: var(--ink); }
 .picker { display: grid; gap: 8px; }
 .picker button { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 14px; background: var(--field); border: 1px solid var(--hair-2); cursor: pointer; text-align: left; }
 .picker button:hover { border-color: var(--ink); }
 .picker img { width: 28px; height: 28px; }
+dialog.layer { width: min(460px, calc(100vw - 32px)); }
+#pass-modal .pass-hint { font-size: 12px; min-height: 18px; margin-top: 4px; color: var(--mute); }
+#pass-modal .pass-hint.error { color: var(--err); }
+#pass-modal .pass-hint.ok { color: var(--ok); }
 
 .toasts { position: fixed; inset: auto 16px max(16px, env(safe-area-inset-bottom)) 16px; width: auto; height: auto; margin: 0; padding: 0; border: 0; background: transparent; overflow: visible; display: grid; gap: 8px; justify-items: center; pointer-events: none; }
 .toasts:not(:popover-open) { display: none; }
-.toast { max-width: 520px; padding: 10px 16px; font-size: 12.5px; color: var(--card); background: var(--ink); pointer-events: auto; box-shadow: var(--lift); animation: rise .2s ease-out; }
+.toast { max-width: min(520px, 100%); overflow-wrap: anywhere; padding: 10px 16px; font-size: 12.5px; color: var(--card); background: var(--ink); pointer-events: auto; box-shadow: var(--lift); animation: rise .2s ease-out; }
 .toast.error { background: var(--err); color: var(--card); }
 
 @media (max-width: 640px) {
@@ -423,17 +431,13 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 
 <script type="module">
 // Links made by the ETH page before it moved to /pay/eth/ (payment requests, links that carry the money, payment
-// proofs) open there.
-{
-  const h = location.hash;
-  if (/(^#|&)(gift|proof)=/.test(h) || (/(^#|&)pay=/.test(h) && /(^#|&)(n|chain)=/.test(h))) location.replace('/pay/eth/' + h);
-}
-import { secp, keccak_256, sha256, hmac, bytesToHex, hexToBytes, concatBytes } from '/vendor/tacit-deps.min.js';
-import { prfBytesToScalar, prfLogin, prfRegister, loadPrfMap, savePrfMap, isPasskeyAvailable } from '/prf-wallet.js';
-import { knownWallets } from '/tacit-wallet-known.js?cb=49410363';
-import { makeEvmWallet } from '/evm-wallet.js?cb=fb89e585';
-import { makeTacitAddress } from '/tacit-address.js';
-import { bip352TaggedHash } from '/bip352.js';
+// proofs, a payment to an address or name) open there. The check runs before any import, so nothing else loads first.
+const forwardOld = (h) => { if (!/(^#|&)(gift|proof|pay)=/.test(h)) return false; location.replace('/pay/eth/' + h); return true; };
+if (forwardOld(location.hash)) await new Promise(() => {});
+const [{ secp, keccak_256, sha256, hmac, bytesToHex, hexToBytes, concatBytes }, { prfBytesToScalar, prfLogin, prfRegister, loadPrfMap, savePrfMap, isPasskeyAvailable }, { knownWallets },
+  { makeEvmWallet }, { makeTacitAddress }, { bip352TaggedHash }, { addressId }] = await Promise.all([
+  import('/vendor/tacit-deps.min.js'), import('/prf-wallet.js'), import('/tacit-wallet-known.js?cb=49410363'),
+  import('/evm-wallet.js?cb=1c8e8d61'), import('/tacit-address.js'), import('/bip352.js'), import('/address-id.js?cb=5963b663')]);
 
 if (!secp.etc.hmacSha256Sync) secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, concatBytes(...m));
 
@@ -449,12 +453,38 @@ const writeJson = (k, v) => { try { v == null ? localStorage.removeItem(k) : loc
 const isPub = (h) => /^(0x)?0[23][0-9a-f]{64}$/i.test(String(h || ''));
 const pubOf = (privHex) => bytesToHex(secp.getPublicKey(hexToBytes(privHex), true));
 const within = (ms) => (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(ms) : undefined);
+const addrish = (s) => /^((tacit|tcs|bp|sp|bc)1|0x)/i.test(s);
+// A recipient resolves to the same route while its text is unchanged and the answer is under 15 s old: a name costs
+// three lookups, and the amount typed beside it re-checks the form on every key. `fresh` asks again.
+function memoRoute(fn) {
+  let last = null;
+  return (raw, fresh = false) => {
+    const k = String(raw || '').replace(/\s/g, '');
+    if (!fresh && last?.k === k && Date.now() - last.at < 15e3) return last.p;
+    const e = last = { k, at: Date.now(), p: fn(raw) };
+    e.p.catch(() => { if (last === e) last = null; });
+    return e.p;
+  };
+}
 
 const escMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 class Raw { constructor(s) { this.s = s; } }
 const part = (v) => v instanceof Raw ? v.s : Array.isArray(v) ? v.map(part).join('') : v == null || v === false ? '' : String(v).replace(/[&<>"']/g, (c) => escMap[c]);
 const html = (strs, ...vals) => new Raw(strs.reduce((a, s, i) => a + part(vals[i - 1]) + s));
 const mount = (el, view) => { if (el) el.innerHTML = view.s; };
+// Redraws a region and puts back the focus, caret, selection and scroll of the field in it that had them.
+function keepFocus(root, draw) {
+  const a = document.activeElement, id = a?.id && root.contains(a) ? a.id : null, y = scrollY;
+  let at = null;
+  try { at = id && { s: a.selectionStart, e: a.selectionEnd, d: a.selectionDirection, x: a.scrollLeft }; } catch {}
+  draw();
+  const n = id && $('#' + id, root);
+  if (!n) return;
+  n.focus({ preventScroll: true });
+  try { if (at?.s != null) n.setSelectionRange(at.s, at.e, at.d || 'none'); } catch {}
+  if (at) n.scrollLeft = at.x;
+  if (scrollY !== y) scrollTo(scrollX, y);
+}
 
 function fmt(v, dec = 8, max = 8) {
   const x = BigInt(v), neg = x < 0n, a = neg ? -x : x, base = 10n ** BigInt(dec);
@@ -536,6 +566,7 @@ let T = null;
 const loadTacit = lazy(async () => {
   try { if (sessionStorage.getItem(PREV_NET) === null) sessionStorage.setItem(PREV_NET, localStorage.getItem(SHARED_NET) ?? ''); localStorage.setItem(SHARED_NET, 'mainnet'); } catch {}
   globalThis.__TACIT_NO_INIT__ = true;
+  (await import('/pass-dialog.js?cb=033f3fbd')).mountPassDialog();     // tacit.js asks for a saved key's passphrase through it
   T = await import(TACIT_URL);
   return T;
 });
@@ -543,10 +574,16 @@ window.addEventListener('pagehide', () => {
   if (!T) return;
   try { const p = sessionStorage.getItem(PREV_NET); if (p !== null) { p === '' ? localStorage.removeItem(SHARED_NET) : localStorage.setItem(SHARED_NET, p); sessionStorage.removeItem(PREV_NET); } } catch {}
 });
+// A record another tab writes while the turn runs is theirs: it is left as they wrote it.
 async function keepShared(fn) {
   let snap = [];
   try { snap = SHARED_WALLET_KEYS.map((k) => [k, localStorage.getItem(k)]); } catch {}
-  try { return await fn(); } finally { for (const [k, v] of snap) { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } }
+  const theirs = new Set(), seen = (e) => { if (e.storageArea === localStorage) theirs.add(e.key); };
+  window.addEventListener('storage', seen);
+  try { return await fn(); } finally {
+    window.removeEventListener('storage', seen);
+    for (const [k, v] of snap) { if (theirs.has(k) || theirs.has(null)) continue; try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} }
+  }
 }
 let tacitQ = Promise.resolve();
 function tacitTurn(fn) {
@@ -574,28 +611,28 @@ function dropTacitKey() {
 const mainnetBtc = (a) => { if (!/^(bc1|[13])/i.test(String(a || ''))) throw new Error('Your Bitcoin wallet is on a test network. Switch it to mainnet.'); };
 const tPriv = () => { const h = bytesToHex(T.wallet.priv); T.wallet.priv.fill(0); T.wallet.priv = null; return h; };
 
-// The address this page shows: the unified one (with the pool lane, so the pools pay it too) once its module has
-// loaded, which starts as soon as a way in is on screen; the one without the pool lane until then.
+// The address this page shows: the unified one (with the pool lane, so the pools pay it too). Its module starts loading as
+// soon as a way in is on screen; until it has, an opened key has no address to show or copy (key.tacit is null), and if it
+// cannot load, the one without the pool lane stands in.
 let UNI = null;
 const loadUnified = lazy(async () => (UNI = await import('/tacit-unified.js?cb=a5b3a042')));
 const addressFor = (privHex) => { try { if (UNI) return UNI.unifiedAddress(privHex).address; } catch {} return tacitAddress(privHex); };
-const rememberKey = (key) => { const { priv, ...pub } = key; writeJson(PAY_ID, key.mode === 'key' ? null : pub); };
+const rememberKey = (key) => { const { priv, tacit, ...pub } = key; writeJson(PAY_ID, key.mode === 'key' ? null : { ...pub, ...(tacit ? { tacit } : {}) }); };
 function setKey(k) {
   const pubHex = lc(String(k.pubHex || pubOf(k.priv)).replace(/^0x/, ''));
   if (pubOf(k.priv) !== pubHex) throw new Error('That wallet opened a different key than expected. Nothing was changed.');
   forget();
-  const key = S.key = { ...k, pubHex, tacit: addressFor(k.priv) };
+  const key = S.key = { ...k, pubHex, tacit: UNI ? addressFor(k.priv) : null };
   rememberKey(key);
   paintWallet(); render();
-  const opened = () => { if (S.key === key) toast(`Opened ${short(key.tacit, 8)}`); };
-  if (UNI) opened();
-  else loadUnified().then(() => { if (S.key !== key) return; key.tacit = addressFor(key.priv); rememberKey(key); paintWallet(); render(); }).catch(() => {}).finally(opened);
+  if (key.tacit) toast(`Opened ${short(key.tacit, 8)}`);
+  else loadUnified().catch(() => {}).then(() => { if (S.key !== key) return; key.tacit = addressFor(key.priv); rememberKey(key); paintWallet(); render(); toast(`Opened ${short(key.tacit, 8)}`); });
   loadMode(true);
   if (FOUND.v) checkFound();
 }
 function forget() {
   S.key = null;
-  Object.assign(BTC, { pub: null, at: 0, loading: null, err: null, sp: null, held: [], addr: null, share: null });
+  Object.assign(BTC, { pub: null, at: 0, loading: null, err: null, sp: null, held: [], addr: null, share: null, got: 0, part: false });
   Object.assign(TAC, { pub: null, at: 0, loading: null, err: null, pool: null, notes: null, pw: null, share: null });
   dropTacitKey();
 }
@@ -614,8 +651,7 @@ function pickWallet(list) {
 // The ways in, each ending in setKey.
 const open = {
   async eth(k) {
-    const id = await evm.deriveIdentity({ pick: pickWallet });
-    if (k?.address && '0x' + lc(id.address).replace(/^0x/, '') !== lc(k.address)) throw new Error(`Switch your wallet to ${short(k.address)}, the account this Tacit wallet was opened with.`);
+    const id = await evm.deriveIdentity({ pick: pickWallet, expect: k?.address });
     S.provider = id.provider; S.wallet = '0x' + lc(id.address).replace(/^0x/, '');
     setKey({ mode: 'eth', priv: id.priv, pubHex: k?.pubHex || id.pubHex, address: S.wallet });
   },
@@ -624,7 +660,7 @@ const open = {
     const r = await prfLogin({ credentialId: k?.credentialId });
     const pubHex = bytesToHex(r.pub), m = loadPrfMap();
     const label = k?.label || Object.keys(m).find((l) => m[l]?.credentialId === r.credentialId) || `passkey-${pubHex.slice(0, 6)}`;
-    m[label] = { credentialId: r.credentialId, pubkey: pubHex, createdAt: m[label]?.createdAt || Date.now(), lastUsed: Date.now() };
+    m[label] = { credentialId: r.credentialId, pubkey: pubHex, createdAt: m[label]?.createdAt || Date.now(), lastUsed: m[label]?.lastUsed ?? Date.now() };
     savePrfMap(m);
     const priv = bytesToHex(r.priv); r.priv.fill(0);
     setKey({ mode: 'passkey', priv, pubHex, label, credentialId: r.credentialId });
@@ -688,12 +724,13 @@ function signIn(id) {
     ${known ? opt('known', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>Continue with your Tacit wallet`, `Opens with ${viaText(known)}, the same key as on tacit.finance and weld.`, 'main') : ''}
     ${other ? opt('other', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>${other.tacit ? html`Continue as <b>${short(other.tacit, 7)}</b>` : 'Your other Tacit key'}`, html`A different key, opened here before with ${viaText(other)}. Not the one tacit.finance has open.`) : ''}
     ${opt('btc', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-btc"/></svg>Bitcoin wallet`, 'Xverse, Leather or UniSat. One signature, two the first time.')}
-    ${opt('eth', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Ethereum wallet`, 'MetaMask, Rabby, Rainbow or any browser wallet. One signature.')}
+    ${opt('eth', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Ethereum wallet`, 'MetaMask, Rabby, Rainbow or any browser wallet. One signature, two the first time on this browser.')}
     ${pk ? opt('passkey', html`<svg class="tk sm" aria-hidden="true"><use href="#i-key"/></svg>Passkey`, 'Touch ID, Windows Hello or a security key.') : ''}
     <p class="more">${pk ? html`<button class="link" type="button" data-in="new">New passkey wallet</button>` : ''}${saved ? html`<button class="link" type="button" data-in="local">Saved in this browser</button>` : ''}<button class="link" type="button" data-in="paste">Paste a key</button></p>
     <div class="amt text" id="${id}-paste" hidden><input id="${id}-hex" type="password" placeholder="64-character Tacit key" autocomplete="off" spellcheck="false" aria-label="Tacit key"><button class="link" type="button" data-in="key">Open</button></div>
   </div>`;
 }
+let signing = false;                                    // one way in at a time: two wallet prompts must not race
 function wireSignIn(root, id, after) {
   loadUnified().catch(() => {});
   const box = root.querySelector(`#${id}-in`);
@@ -702,7 +739,11 @@ function wireSignIn(root, id, after) {
   for (const b of box.querySelectorAll('[data-in]')) b.onclick = () => {
     const k = b.dataset.in;
     if (k === 'paste') { const p = box.querySelector(`#${id}-paste`); p.hidden = false; p.querySelector('input').focus(); return; }
+    if (signing) return;
     busyBtn(b, async () => {
+      signing = true;
+      const rest = $$('[data-in]').filter((x) => x !== b && !x.disabled);
+      rest.forEach((x) => { x.disabled = true; });
       try {
         if (k === 'known') await open[known.mode](known);
         else if (k === 'other') await open[other.mode](other);
@@ -712,40 +753,72 @@ function wireSignIn(root, id, after) {
         else await open[k]();
         after?.();
       } catch (e) { if (!/cancel/i.test(e?.message || '') && e?.name !== 'NotAllowedError' && !e?.unlockCancelled) toast(errText(e), true); }
+      finally { signing = false; rest.forEach((x) => { x.disabled = false; }); }
     });
   };
   box.querySelector(`#${id}-hex`)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') box.querySelector('[data-in="key"]').click(); });
 }
 function lock() { forget(); writeJson(PAY_ID, null); paintWallet(); render(); }
+// The wallet that opened this key is the proof of it: when it moves to another account, or locks, the key is locked too.
+window.addEventListener('tacit:evm-accounts', (e) => {
+  if (S.key?.mode !== 'eth') return;
+  const a = (e.detail?.accounts || [])[0];
+  if (a && lc(a) === lc(S.key.address)) return;
+  lock();
+  toast(a ? 'Your wallet switched accounts, so the key it opened was locked.' : 'Your wallet locked, so the key it opened was locked.');
+});
 
 // ── BTC: silent payments from the key's own Bitcoin address ──────────────────────────────────────────────
-const BTC = { pub: null, at: 0, loading: null, err: null, sp: null, held: [], addr: null, share: null };
+// got: how much of this key's read is in (1 sats, 2 held assets, 3 silent payments); part: a read is still filling it in.
+const BTC = { pub: null, at: 0, loading: null, err: null, sp: null, held: [], addr: null, share: null, got: 0, part: false };
 const SATS_DUST = 546n, ASSET_SEND_SATS = 3000n, TAC_ID = 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
+// Silent-payment outputs seen spent and confirmed, and each other one's last answer: a failed lookup keeps the last one.
+const SPENT = new Set(), SPENT_LAST = new Map();
 function loadBtc(force = false) {
   if (!S.key) return Promise.resolve();
   if (BTC.loading) return BTC.loading;
   if (!force && BTC.pub === S.key.pubHex && Date.now() - BTC.at < 60e3) return Promise.resolve();
-  const pub = S.key.pubHex;
-  return (BTC.loading = withKey(async (t) => {
-    const addr = t.wallet.address();
-    const [utxos, h] = await Promise.all([t.getUtxos(addr), t.scanHoldings(force)]);
+  const pub = S.key.pubHex, live = () => S.key?.pubHex === pub;
+  const run = withKey(async (t) => {
+    const addr = t.wallet.address(), scan = t.scanHoldings(force);
+    scan.catch(() => {});
+    const utxos = await t.getUtxos(addr);
     let sats = 0n, pending = 0n, silent = 0n;
     // At or below dust an output is a Tacit asset note: it counts with the assets, never as BTC.
     for (const u of utxos || []) { const v = BigInt(u.value || 0); if (v <= SATS_DUST) continue; if (u.status?.confirmed) sats += v; else pending += v; }
-    // Silent payments found for this key, still unspent.
-    const credits = Object.entries(t.loadSpCredits() || {}).filter(([, c]) => !c.coinClass);
-    for (let i = 0; i < credits.length; i += 6) {
-      const outs = await Promise.all(credits.slice(i, i + 6).map(([k]) => { const [txid, vout] = k.split(':'); return esplora(`/tx/${txid}/outspend/${vout}`).catch(() => null); }));
-      outs.forEach((o, j) => { if (!o?.spent) silent += BigInt(credits[i + j][1].sats || 0); });
-    }
+    if (!live()) return;
+    // The plain balance shows as soon as it is read; the assets and the silent payments fill in as the scan finishes.
+    const same = BTC.pub === pub;
+    Object.assign(BTC, { pub, addr, sats, pending, err: null, part: true, got: Math.max(same ? BTC.got : 0, 1), silent: same ? BTC.silent : 0n, held: same ? BTC.held : [] });
+    render();
+    if (!BTC.sp) { try { BTC.sp = await t.walletSilentPaymentAddress(); } catch {} if (BTC.sp && live()) render(); }
+    const h = await scan;
+    if (!live()) return;
     const held = [...(h instanceof Map ? h.entries() : [])].map(([id, x]) => {
       const aid = lc(x.assetIdHex || id);
       return { id: aid, decimals: Number.isInteger(x.decimals) ? x.decimals : aid === TAC_ID ? 8 : 0, balance: typeof x.balance === 'bigint' ? x.balance : 0n, utxos: x.utxos || [] };
     }).filter((a) => a.balance > 0n);
-    if (!BTC.sp) try { BTC.sp = await t.walletSilentPaymentAddress(); } catch {}
-    if (S.key?.pubHex !== pub) return;
-    Object.assign(BTC, { pub, at: Date.now(), addr, sats, pending, silent, held, err: null });
-  }, pub).catch((e) => { if (S.key?.pubHex === pub) BTC.err = e; }).finally(() => { BTC.loading = null; if (S.key?.pubHex === pub) render(); }));
+    Object.assign(BTC, { held, got: Math.max(BTC.got, 2) });
+    render();
+    // Silent payments found for this key, still unspent.
+    const todo = [];
+    for (const e of Object.entries(t.loadSpCredits() || {}).filter(([, c]) => !c.coinClass)) {
+      const [txid, vout] = e[0].split(':');
+      if (SPENT.has(e[0])) t.removeSpCredit(txid, Number(vout)); else todo.push(e);
+    }
+    for (let i = 0; i < todo.length; i += 6) {
+      const outs = await Promise.all(todo.slice(i, i + 6).map(([k]) => { const [txid, vout] = k.split(':'); return esplora(`/tx/${txid}/outspend/${vout}`).catch(() => null); }));
+      outs.forEach((o, j) => {
+        const [k, c] = todo[i + j], [txid, vout] = k.split(':');
+        if (o) SPENT_LAST.set(k, !!o.spent);
+        if (o?.spent && o.status?.confirmed) { SPENT.add(k); t.removeSpCredit(txid, Number(vout)); }
+        if (!SPENT_LAST.get(k)) silent += BigInt(c.sats || 0);
+      });
+    }
+    if (!live()) return;
+    Object.assign(BTC, { at: Date.now(), silent, got: 3 });
+  }, pub).catch((e) => { if (live()) BTC.err = e; }).finally(() => { if (BTC.loading === run) BTC.loading = null; if (live()) { BTC.part = false; render(); } });
+  return (BTC.loading = run);
 }
 const getNames = lazy(async () => {
   const { makeConfidentialNames, makeMainnetCall } = await import('/confidential-names.js');
@@ -754,35 +827,39 @@ const getNames = lazy(async () => {
 const isName = (s) => /^[^\s]+\.(g?wei|eth)$/i.test(s);
 // Where a BTC payment goes. A tacit1 address, or a name publishing one: a silent payment to its keys. sp1: a silent
 // payment. bc1: a plain payment, public on chain.
-async function btcRoute(raw) {
+const btcRoute = memoRoute(async (raw) => {
   let s = String(raw || '').trim().replace(/\s/g, ''), name = null;
   if (isName(s)) { const r = await (await getNames()).resolveName(lc(s)); name = r.name; s = r.address; if (!s) throw new Error(`${r.name} has no Tacit address with Bitcoin keys.`); }
-  const lo = lc(s), t = await loadTacit(), shown = short(lo, 10);
+  const lo = lc(s), t = await loadTacit(), shown = short(lo, 10), id = addressId(lo);
   if (/^0x[0-9a-f]{40}$/.test(lo)) throw new Error('That is an Ethereum address. Pay it in ETH.');
   if (/^tacit1/.test(lo)) {
     let d;
-    try { d = decodeTacitAddress(lo); } catch { throw new Error('Not a valid Tacit address.'); }
+    try { d = decodeTacitAddress(lo); } catch (e) { throw new Error(name && /Bitcoin lane/.test(e?.message) ? `${name} has no Bitcoin address.` : 'Not a valid Tacit address.'); }
     if (d.network !== 'mainnet') throw new Error('That Tacit address is for a test network.');
     const { spendPub, scanPub } = d.lanes.btc;
-    return { kind: 'sp', to: t.encodeSilentPaymentAddress({ scanPub, spendPub, network: 'mainnet' }), name, shown };
+    return { kind: 'sp', to: t.encodeSilentPaymentAddress({ scanPub, spendPub, network: 'mainnet' }), name, shown, addressId: id };
   }
   if (/^bp1/.test(lo)) throw new Error('That is a pool address: it takes TAC and ETH. Pay BTC to a tacit1…, sp1… or bc1… address.');
   const sp = t.decodeSilentPaymentAddress(lo);
-  if (sp) { if (sp.network !== 'mainnet') throw new Error('That silent-payment address is for a test network.'); return { kind: 'sp', to: lo, name, shown }; }
+  if (sp) { if (sp.network !== 'mainnet') throw new Error('That silent-payment address is for a test network.'); return { kind: 'sp', to: lo, name, shown, addressId: id }; }
   const a = t.decodeP2wpkhAddress(lo) || t.decodeP2trAddress(lo);
-  if (a) { if (a.hrp !== 'bc') throw new Error('That address is for a test network.'); return { kind: 'addr', to: lo, name, shown }; }
+  if (a) { if (a.hrp !== 'bc') throw new Error('That address is for a test network.'); return { kind: 'addr', to: lo, name, shown, addressId: id }; }
   throw new Error('Enter a tacit1…, sp1… or bc1… address, or a name.');
-}
+});
 const getUx = lazy(async () => {
   const [{ makeConfidentialPoolUx }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=f9cb0645'), import('/confidential-deployments.js')]);
   dep.setActiveNetwork('mainnet');
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
 });
+// What the send form measures an amount against. Until a read has included the silent payments the total is not known,
+// and an amount is not refused for exceeding a number that may be smaller than the final one: tacit.js checks again as
+// it sends.
+const btcAvail = (b) => (b?.got === 3 ? b.sats + b.silent : null);
 function btcBal() {
-  const b = BTC.pub === S.key.pubHex ? BTC : null;
+  const b = BTC.pub === S.key.pubHex ? BTC : null, more = !b || b.got === 3 ? '' : b.part ? ' · checking silent payments…' : ' · couldn’t check silent payments';
   return html`<svg class="tk md" aria-hidden="true"><use href="#tk-btc"/></svg>
     <div><div class="v num">${b ? fmt(b.sats + b.silent, 8, 8) : BTC.err ? html`<span class="err">—</span>` : html`<span class="sk" style="--w:9ch"></span>`}</div>
-      <div class="u">${!b && BTC.err ? html`<span class="err">Couldn’t read your BTC: ${errText(BTC.err)}</span>` : html`BTC${b?.pending ? ` · ${fmt(b.pending, 8, 8)} arriving` : ''}${b?.silent ? ` · ${fmt(b.silent, 8, 8)} by silent payment` : ''}`}</div></div>
+      <div class="u">${!b && BTC.err ? html`<span class="err">Couldn’t read your BTC: ${errText(BTC.err)}</span>` : html`BTC${b?.pending ? ` · ${fmt(b.pending, 8, 8)} arriving` : ''}${b?.silent ? ` · ${fmt(b.silent, 8, 8)} by silent payment` : ''}${more}`}</div></div>
     <div class="side">${b || BTC.err ? html`<button class="link" type="button" id="bal-re">${b ? 'refresh' : 'retry'}</button>` : 'reading…'}</div>`;
 }
 function btcSend(f) {
@@ -799,29 +876,35 @@ function btcSend(f) {
   wireShare(f);
   const to = $('#f-to'), amt = $('#f-amt'), go = $('#f-go'), rc = $('#f-rcpt');
   $('#f-paste').onclick = async () => { try { to.value = (await navigator.clipboard.readText()).trim(); to.dispatchEvent(new Event('input')); } catch { to.focus(); } };
-  let route = null, seq = 0;
+  let route = null, seq = 0, timer = 0;
   const check = async () => {
     route = null; go.disabled = true;
-    const raw = to.value.trim(), v = parseUnits(amt.value, 8);
+    const raw = to.value.trim(), v = parseUnits(amt.value, 8), my = ++seq;
     if (!raw) { rc.hidden = true; return; }
-    const my = ++seq;
     try {
       const r = await btcRoute(raw);
       if (my !== seq || !to.isConnected) return;
       route = r;
       const how = { sp: 'Silent payment · a fresh output only they can find', addr: 'Plain payment · public on chain' }[r.kind];
-      const avail = b ? b.sats + b.silent : null;
-      mount(rc, html`<div class="kv"><span>${r.name || 'To'}</span><b>${r.shown}</b></div><div class="kv"><span>How</span><b>${how}</b></div>
+      const avail = btcAvail(BTC.pub === S.key?.pubHex ? BTC : null);
+      mount(rc, html`<div class="kv"><span>${r.name || 'To'}</span><b>${r.shown}</b></div>${idRow(r)}<div class="kv"><span>How</span><b>${how}</b></div>
         ${avail != null && v > avail ? html`<p class="note err">More than you hold.</p>` : v && v <= SATS_DUST ? html`<p class="note err">Send more than 546 sats.</p>` : ''}`);
       rc.hidden = false;
       go.disabled = !v || (avail != null && v > avail) || v <= SATS_DUST;
     } catch (e) { if (my === seq) { mount(rc, html`<p class="note err">${errText(e)}</p>`); rc.hidden = false; } }
   };
-  to.addEventListener('input', check); amt.addEventListener('input', check);
+  // An address is checked as it is typed; a name waits for a pause, as each check of one is three lookups.
+  to.addEventListener('input', () => {
+    clearTimeout(timer); route = null; go.disabled = true; seq++;
+    const s = to.value.replace(/\s/g, '');
+    if (!s || addrish(s)) check(); else timer = setTimeout(() => { if (to.isConnected) check(); }, 250);
+  });
+  amt.addEventListener('input', check);
   go.onclick = () => busyBtn(go, async () => {
     const r = route, v = parseUnits(amt.value, 8), status = $('#status');
     if (!r || !v) return;
     try {
+      await pinned(r, to.value, btcRoute, check);
       say(status, 'Checking which of your outputs are cBTC locks…');
       await (await getUx()).syncCbtcLockReservations(hexToBytes(S.key.priv));        // a live lock is never spent as change
       say(status, html`<span class="spin" aria-hidden="true"></span>Sending…`);
@@ -834,14 +917,23 @@ function btcSend(f) {
     } catch (e) { sayErr(status, e); }
   });
 }
+const idRow = (r) => (r.addressId ? html`<div class="kv"><span>ID</span><b class="num">${r.addressId}</b></div>` : '');
+// A name is resolved again as the money goes, and refused when its record has moved since the preview.
+async function pinned(r, raw, routeOf, recheck) {
+  if (!r.name) return;
+  const n = await routeOf(raw, true);
+  if (n.kind === r.kind && n.to === r.to && n.stealthAddress === r.stealthAddress && n.addressId === r.addressId) return;
+  recheck();
+  throw new Error('Where that name points changed. Check it and send again.');
+}
 const shareView = (s) => html`<div class="callout"><span>${s.what} Send them this link so their wallet finds it at once.</span><button class="btn ghost sm" type="button" data-copy="${s.url}">Copy link</button></div>`;
 const wireShare = (f) => $$('[data-copy]', f).forEach((x) => x.onclick = () => copy(x.dataset.copy, x.dataset.done || 'Copied'));
 function btcReceive(f) {
   const b = BTC.pub === S.key.pubHex ? BTC : null;
   const row = (label, sub, v, note) => html`<div class="blk"><div class="lbl"><span>${label}</span><span>${sub}</span></div>
-    <div class="addr"><code>${v || '…'}</code>${v ? html`<button class="link" type="button" data-copy="${v}">copy</button>` : ''}</div><p class="note">${note}</p></div>`;
+    <div class="addr"><code>${v || '…'}</code>${v ? html`<button class="link" type="button" data-copy="${v}">copy</button>` : ''}</div>${v ? idRow({ addressId: addressId(v) }) : ''}<p class="note">${note}</p></div>`;
   mount(f, html`
-    ${row('Your Tacit address', 'the one to share', S.key.tacit, 'From any Tacit wallet: BTC arrives as a silent payment, and TAC shielded. The same address takes ETH privately in Tacit apps.')}
+    ${row('Your Tacit address', 'the one to share', S.key.tacit, 'From any Tacit wallet: BTC arrives as a silent payment, and TAC shielded. The same address takes ETH privately in Tacit apps.' + (S.key.tacit ? ' A payer sees the same ID before sending, so the two of you can check the address matches.' : ''))}
     ${row('Silent payments', 'BIP‑352', BTC.sp, 'From any wallet that sends silent payments.')}
     ${row('Bitcoin address', 'public', b?.addr, 'From an exchange or any wallet. What arrives here is public; it funds your sends.')}
     <div class="lbl"><span>Add BTC from your Bitcoin wallet</span><span>Xverse, Leather or UniSat</span></div>
@@ -885,15 +977,17 @@ function loadTac(force = false) {
   if (!force && TAC.pub === S.key.pubHex && Date.now() - TAC.at < 60e3) return Promise.resolve();
   const pub = S.key.pubHex;
   return (TAC.loading = (async () => {
+    loadBtc(force);                                     // the Bitcoin read runs beside this one; the shielded balance does not wait for it
     const X = await getSecret();
     const pw = TAC.pw || X.poolWalletFor(hexToBytes(S.key.priv), 'mainnet');
-    const [notes, info] = await Promise.all([X.poolNotes(pw, X.TAC_ASSET_MAINNET), X.poolClientFor('mainnet').relayInfo().catch(() => null), loadBtc(force)]);
+    const [notes, info] = await Promise.all([X.poolNotes(pw, X.TAC_ASSET_MAINNET), X.poolClientFor('mainnet').relayInfo().catch(() => null)]);
     if (S.key?.pubHex !== pub) return;
     const f = info?.fees?.['0x' + X.TAC_ASSET_MAINNET];
     Object.assign(TAC, { pub, at: Date.now(), pw, notes, pool: notes.filter((n) => !n.spent).reduce((t, n) => t + BigInt(n.value), 0n), relay: !!info, fee: f == null ? null : BigInt(f), err: null });
   })().catch((e) => { if (S.key?.pubHex === pub) TAC.err = e; }).finally(() => { TAC.loading = null; if (S.key?.pubHex === pub) render(); }));
 }
 const tacOnBtc = () => (BTC.pub === S.key?.pubHex ? BTC.held.find((a) => a.id === TAC_ID) : null);
+const btcHeld = () => BTC.pub === S.key?.pubHex && BTC.got >= 2;      // what the Bitcoin address holds has been read
 const shieldable = () => (tacOnBtc()?.utxos || []).filter((u) => !u.stealthTweakedSk);
 function tacBal() {
   const ok = TAC.pub === S.key.pubHex, pub = tacOnBtc();
@@ -902,29 +996,33 @@ function tacBal() {
       <div class="u">${!ok && TAC.err ? html`<span class="err">Couldn’t read your TAC: ${errText(TAC.err)}</span>` : html`TAC, shielded${pub ? ` · ${fmt(pub.balance, 8, 4)} more at your Bitcoin address` : ''}`}</div></div>
     <div class="side">${ok || TAC.err ? html`<button class="link" type="button" id="bal-re">${ok ? 'refresh' : 'retry'}</button>` : 'reading…'}</div>`;
 }
-async function tacRoute(raw) {
+async function checkPool(pool, msg) {
+  const X = await getSecret();
+  try { X.pool.decodeAddress(pool); } catch { throw new Error(msg); }
+}
+const tacRoute = memoRoute(async (raw) => {
   let s = String(raw || '').trim().replace(/\s/g, ''), name = null;
   if (isName(s)) {
     const r = await (await getNames()).resolveName(lc(s));
     name = r.name;
-    if (r.pool) return { kind: 'pool', to: r.pool, name, shown: short(r.pool, 10) };
+    if (r.pool) { await checkPool(r.pool, `${r.name}’s record carries an invalid pool key.`); return { kind: 'pool', to: r.pool, name, shown: short(r.pool, 10), addressId: addressId(r.address) }; }
     if (!r.address) throw new Error(`${r.name} has no Tacit address.`);
     s = r.address;
   }
-  const lo = lc(s), shown = short(lo, 10);
+  const lo = lc(s), shown = short(lo, 10), id = addressId(lo);
   if (/^0x[0-9a-f]{40}$/.test(lo)) throw new Error('That is an Ethereum address. TAC here goes to a Tacit or pool address.');
   if (/^bp1/.test(lo)) {
     const X = await getSecret();
     try { X.pool.decodeAddress(lo); } catch { throw new Error('Not a valid pool address.'); }
-    return { kind: 'pool', to: lo, name, shown };
+    return { kind: 'pool', to: lo, name, shown, addressId: id };
   }
   if (/^tacit1/.test(lo)) {
     let d;
     try { d = decodeTacitAddress(lo); } catch { throw new Error('Not a valid Tacit address.'); }
     if (d.network !== 'mainnet') throw new Error('That Tacit address is for a test network.');
-    if (d.lanes.pool) return { kind: 'pool', to: d.lanes.pool.poolAddress, name, shown };
+    if (d.lanes.pool) { await checkPool(d.lanes.pool.poolAddress, 'That Tacit address carries an invalid pool key.'); return { kind: 'pool', to: d.lanes.pool.poolAddress, name, shown, addressId: id }; }
     const t = await loadTacit();
-    return { kind: 'stealth', stealthAddress: t.encodeStealthAddress({ network: 'mainnet', recipientPub: d.lanes.btc.spendPub }), name, shown };
+    return { kind: 'stealth', stealthAddress: t.encodeStealthAddress({ network: 'mainnet', recipientPub: d.lanes.btc.spendPub }), name, shown, addressId: id };
   }
   if (/^tcs1/.test(lo)) {
     const t = await loadTacit(), r = t.parseRecipientInput(lo);
@@ -932,7 +1030,7 @@ async function tacRoute(raw) {
   }
   if (/^(bc1|sp1|[13])/.test(lo)) throw new Error('That is a Bitcoin address: it takes BTC. Pay TAC to a Tacit address or a pool address (bp1…).');
   throw new Error('Enter a tacit1… or bp1… address, or a name.');
-}
+});
 // A spend of a note younger than the pool's settled anchor can wait for it, or go now against the newest block.
 function waitView(w, retry) {
   const st = $('#status');
@@ -954,31 +1052,37 @@ function tacSend(f) {
   const to = $('#f-to'), amt = $('#f-amt'), go = $('#f-go'), rc = $('#f-rcpt');
   $('#f-paste').onclick = async () => { try { to.value = (await navigator.clipboard.readText()).trim(); to.dispatchEvent(new Event('input')); } catch { to.focus(); } };
   $('#f-max')?.addEventListener('click', () => { const v = TAC.pool - (fee || 0n); amt.value = v > 0n ? plain(v) : ''; amt.dispatchEvent(new Event('input')); });
-  let route = null, seq = 0;
+  let route = null, seq = 0, timer = 0;
   const check = async () => {
     route = null; go.disabled = true;
-    const raw = to.value.trim(), v = parseUnits(amt.value, 8);
+    const raw = to.value.trim(), v = parseUnits(amt.value, 8), my = ++seq;
     if (!raw) { rc.hidden = true; return; }
-    const my = ++seq;
     try {
       const r = await tacRoute(raw);
       if (my !== seq || !to.isConnected) return;
       route = r;
-      const pub = tacOnBtc(), avail = r.kind === 'pool' ? (ok ? TAC.pool - (fee || 0n) : null) : pub ? pub.balance : 0n;
+      // What the Bitcoin address holds is read beside the pool: until it has been, nothing is refused against it.
+      const pub = tacOnBtc(), seen = btcHeld(), avail = r.kind === 'pool' ? (ok ? TAC.pool - (fee || 0n) : null) : seen ? (pub ? pub.balance : 0n) : null;
       const how = r.kind === 'pool' ? 'Inside the shielded pool · sender, recipient and amount hidden' : 'Shielded transfer from your Bitcoin address · the recipient stays hidden';
-      mount(rc, html`<div class="kv"><span>${r.name || 'To'}</span><b>${r.shown}</b></div><div class="kv"><span>How</span><b>${how}</b></div>
+      mount(rc, html`<div class="kv"><span>${r.name || 'To'}</span><b>${r.shown}</b></div>${idRow(r)}<div class="kv"><span>How</span><b>${how}</b></div>
         ${r.kind === 'pool' && fee != null && v ? html`<div class="kv"><span>Relay fee</span><b class="num">${fmt(fee, 8, 4)} TAC</b></div>` : ''}
-        ${r.kind === 'stealth' ? html`<p class="note">This address is from before pool payments, so the TAC goes from your Bitcoin address, not the pool${pub ? '' : ', which holds none'}.</p>` : ''}
+        ${r.kind === 'stealth' ? html`<p class="note">This address is from before pool payments, so the TAC goes from your Bitcoin address, not the pool${seen && !pub ? ', which holds none' : ''}.</p>` : ''}
         ${avail != null && v > avail ? html`<p class="note err">More than you hold${r.kind === 'pool' && fee ? ' with the relay’s fee' : ''}.</p>` : ''}`);
       rc.hidden = false;
       go.disabled = !v || (avail != null && v > avail);
     } catch (e) { if (my === seq) { mount(rc, html`<p class="note err">${errText(e)}</p>`); rc.hidden = false; } }
   };
-  to.addEventListener('input', check); amt.addEventListener('input', check);
+  to.addEventListener('input', () => {
+    clearTimeout(timer); route = null; go.disabled = true; seq++;
+    const s = to.value.replace(/\s/g, '');
+    if (!s || addrish(s)) check(); else timer = setTimeout(() => { if (to.isConnected) check(); }, 250);
+  });
+  amt.addEventListener('input', check);
   const send = async (anchor = null) => {
     const r = route, v = parseUnits(amt.value, 8), status = $('#status');
     if (!r || !v) return;
     try {
+      await pinned(r, to.value, tacRoute, check);
       if (r.kind === 'pool') {
         const X = await getSecret();
         const res = await withKey((t) => X.payPrivately(t, { poolWallet: TAC.pw, to: r.to, amount: v, asset: X.TAC_ASSET_MAINNET, anchor, say: (m) => say(status, html`<span class="spin" aria-hidden="true"></span>${m}`) }));
@@ -1006,15 +1110,15 @@ function tacSend(f) {
   go.onclick = () => busyBtn(go, () => send());
 }
 function tacReceive(f) {
-  const addr = TAC.pw?.addressString || null;
+  const addr = TAC.pw?.addressString || null, mine = S.key.tacit;
   let pooled = false;
-  try { pooled = !!decodeTacitAddress(S.key.tacit).lanes.pool; } catch {}
+  try { pooled = !!(mine && decodeTacitAddress(mine).lanes.pool); } catch {}
   mount(f, html`
     <div class="blk"><div class="lbl"><span>Your Tacit address</span><span>the one to share</span></div>
-      <div class="addr"><code>${S.key.tacit}</code><button class="link" type="button" data-copy="${S.key.tacit}">copy</button></div>
-      <p class="note">${pooled ? 'Tacit apps pay TAC to it inside the shielded pool: it never appears on chain, and your key finds it on its own. The same address takes BTC and ETH.' : 'A shielded transfer to it arrives at your Bitcoin address, where you can shield it into the pool.'}</p></div>
+      <div class="addr"><code>${mine || '…'}</code>${mine ? html`<button class="link" type="button" data-copy="${mine}">copy</button>` : ''}</div>${mine ? idRow({ addressId: addressId(mine) }) : ''}
+      <p class="note">${!mine ? '' : pooled ? 'Tacit apps pay TAC to it inside the shielded pool: it never appears on chain, and your key finds it on its own. The same address takes BTC and ETH.' : 'A shielded transfer to it arrives at your Bitcoin address, where you can shield it into the pool.'}${mine ? ' A payer sees the same ID before sending, so the two of you can check the address matches.' : ''}</p></div>
     <div class="blk"><div class="lbl"><span>Pool address</span><span>the pool part alone</span></div>
-      <div class="addr"><code>${addr || '…'}</code>${addr ? html`<button class="link" type="button" data-copy="${addr}">copy</button>` : ''}</div>
+      <div class="addr"><code>${addr || '…'}</code>${addr ? html`<button class="link" type="button" data-copy="${addr}">copy</button>` : ''}</div>${addr ? idRow({ addressId: addressId(addr) }) : ''}
       <p class="note">For an app that asks for a bp1… address. What it receives lands in the same shielded balance.</p></div>
     <div class="foot-a"><span class="mute">Paid by a shielded transfer from an older app?</span><button class="link" type="button" id="f-scan">Look for payments to me</button></div>`);
   wireShare(f);
@@ -1029,7 +1133,7 @@ function tacMove(f) {
       ${notes.length ? html`<div class="kv"><span>Next note</span><b class="num">${fmt(BigInt(notes[0].amount), 8, 4)} TAC</b></div>
         <button class="btn" type="button" id="f-shield">Shield ${fmt(BigInt(notes[0].amount), 8, 4)} TAC</button>
         <p class="note">One transaction per note, from your Bitcoin address, which pays its network fee.${notes.length > 1 ? ` ${notes.length - 1} more after this.` : ''}</p>`
-        : html`<p class="note">${stealthOnly ? 'Your TAC at the Bitcoin address came by shielded transfer; spend it from tacit.finance to shield it.' : 'No TAC at your Bitcoin address to shield.'}</p>`}</div>
+        : html`<p class="note">${!btcHeld() ? (BTC.err ? 'Couldn’t read your Bitcoin address. Refresh to try again.' : 'Reading your Bitcoin address…') : stealthOnly ? 'Your TAC at the Bitcoin address came by shielded transfer; spend it from tacit.finance to shield it.' : 'No TAC at your Bitcoin address to shield.'}</p>`}</div>
     <div class="blk"><div class="lbl"><span>Take out</span><span>from the pool to your Bitcoin address</span></div>
       <div class="amt"><input id="f-xamt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="Amount to take out"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</span></div>
       <button class="btn ghost" type="button" id="f-exit" ${ok && TAC.pool > 0n ? '' : 'disabled'}>Take out</button>
@@ -1127,30 +1231,47 @@ function paintModes() {
 }
 function paintWallet() {
   $('#wallet-dot').className = 'dot' + (S.key ? ' on' : '');
-  $('#wallet-label').textContent = S.key ? short(S.key.tacit, 6) : knownWallet() ? 'Open wallet' : 'Connect';
+  $('#wallet-label').textContent = S.key ? (S.key.tacit ? short(S.key.tacit, 6) : 'Opening…') : knownWallet() ? 'Open wallet' : 'Connect';
   if ($('#sheet-wallet').open) renderWalletSheet();
 }
+function paintBal() {
+  keepFocus($('#bal'), () => {
+    mount($('#bal'), S.mode === 'tac' ? tacBal() : btcBal());
+    $('#bal-re')?.addEventListener('click', (e) => { e.currentTarget.disabled = true; (S.mode === 'tac' ? (BTC.err = null, TAC.err = null) : (BTC.err = null)); loadMode(true); });
+  });
+}
+// What a form draws from the loaded data. A redraw with these unchanged leaves the form alone, and what is typed in it.
+const formReads = () => (S.mode === 'tac'
+  ? [S.key.tacit, TAC.pub === S.key.pubHex, TAC.pool, TAC.relay, TAC.fee, TAC.pw?.addressString, TAC.share?.url, BTC.pub === S.key.pubHex, BTC.got, BTC.err != null, tacOnBtc()?.balance, shieldable().map((u) => `${u.utxo?.txid}:${u.utxo?.vout}:${u.amount}`)]
+  : [S.key.tacit, BTC.pub === S.key.pubHex, BTC.sats, BTC.silent, BTC.addr, BTC.sp, BTC.got, BTC.share?.url]).join('|');
 function render() {
   paintModes(); paintFound();
   const f = $('#form'), bal = $('#bal'), tabs = $('#tabs');
   if (!S.key) {
     mount(bal, html`<svg class="tk md" aria-hidden="true"><use href="#tk-${S.mode}"/></svg>
       <div><div class="v t">${S.mode === 'tac' ? 'Shielded TAC' : 'Silent BTC'}</div><div class="u">yours shows once a wallet is open</div></div>`);
-    tabs.hidden = true; S.drawn = null;
+    tabs.hidden = true; S.drawn = S.reads = S.tabs = null;
     mount(f, html`<p class="gate-p">Open your Tacit wallet. One key holds your BTC, TAC and ETH, and nothing else needs backing up.</p>${signIn('g')}`);
     return wireSignIn(f, 'g');
   }
-  mount(bal, S.mode === 'tac' ? tacBal() : btcBal());
-  $('#bal-re')?.addEventListener('click', (e) => { e.currentTarget.disabled = true; (S.mode === 'tac' ? (BTC.err = null, TAC.err = null) : (BTC.err = null)); loadMode(true); });
-  const tab = S.tab[S.mode];
+  paintBal();
+  const tab = S.tab[S.mode], drawn = `${S.mode}:${tab}`, reads = formReads();
   tabs.hidden = false;
-  mount(tabs, html`${TABS[S.mode].map(([k, l]) => html`<button type="button" role="tab" data-tab="${k}" aria-selected="${k === tab}">${l}</button>`)}`);
-  $$('#tabs [data-tab]').forEach((b) => b.onclick = () => { S.tab[S.mode] = b.dataset.tab; say($('#status'), ''); render(); });
-  // A redraw of the same form keeps what was typed.
-  const same = S.drawn === `${S.mode}:${tab}`, kept = same ? Object.fromEntries($$('#form input[id]').map((i) => [i.id, i.value])) : {};
-  S.drawn = `${S.mode}:${tab}`;
-  ({ btc: { send: btcSend, receive: btcReceive }, tac: { send: tacSend, receive: tacReceive, move: tacMove } })[S.mode][tab](f);
-  for (const [id, v] of Object.entries(kept)) { const i = $('#' + id, f); if (i && v && !i.value) { i.value = v; i.dispatchEvent(new Event('input')); } }
+  if (S.tabs !== drawn) {
+    S.tabs = drawn;
+    mount(tabs, html`${TABS[S.mode].map(([k, l]) => html`<button type="button" role="tab" data-tab="${k}" aria-selected="${k === tab}">${l}</button>`)}`);
+    $$('#tabs [data-tab]').forEach((b) => b.onclick = () => { S.tab[S.mode] = b.dataset.tab; say($('#status'), ''); render(); $('#tabs [aria-selected="true"]')?.focus(); });
+  }
+  // A redraw of the same form keeps what was typed and where the caret was; one that would change nothing does not happen.
+  const same = S.drawn === drawn;
+  if (same && S.reads === reads) return;
+  const kept = same ? Object.fromEntries($$('#form input[id]').map((i) => [i.id, i.value])) : {};
+  S.drawn = drawn; S.reads = reads;
+  const draw = () => {
+    ({ btc: { send: btcSend, receive: btcReceive }, tac: { send: tacSend, receive: tacReceive, move: tacMove } })[S.mode][tab](f);
+    for (const [id, v] of Object.entries(kept)) { const i = $('#' + id, f); if (i && v && !i.value) { i.value = v; i.dispatchEvent(new Event('input')); } }
+  };
+  same ? keepFocus(f, draw) : draw();
 }
 function setMode(m) {
   if (!MODES.includes(m) || m === S.mode) return;
@@ -1168,10 +1289,11 @@ function renderWalletSheet() {
   }
   const k = S.key;
   mount(el, html`
-    <div class="who"><div class="a num">${short(k.tacit, 12)}</div><div class="u">Your Tacit address · opened with ${viaText(k)}</div>
-      <div class="row2"><button class="btn ghost" type="button" id="w-copy">Copy address</button><button class="btn ghost" type="button" id="w-lock">Lock</button></div></div>
+    <div class="who"><div class="a num">${k.tacit ? short(k.tacit, 12) : '…'}</div><div class="u">Your Tacit address · opened with ${viaText(k)}</div>
+      ${k.tacit ? html`<div class="u">ID <b class="num">${addressId(k.tacit)}</b> · a payer sees the same ID</div>` : ''}
+      <div class="row2"><button class="btn ghost" type="button" id="w-copy" ${k.tacit ? '' : 'disabled'}>Copy address</button><button class="btn ghost" type="button" id="w-lock">Lock</button></div></div>
     <p class="note">Your wallet or passkey is the only way back to these funds: keep it safe. The key stays in this tab; payments to your addresses reach you here, on weld and on tacit.finance.</p>`);
-  $('#w-copy').onclick = () => copy(k.tacit, 'Address copied');
+  $('#w-copy').onclick = () => k.tacit && copy(k.tacit, 'Address copied');
   $('#w-lock').onclick = () => { lock(); renderWalletSheet(); };
 }
 $('#wallet').onclick = () => { renderWalletSheet(); $('#sheet-wallet').showModal(); };
@@ -1180,6 +1302,7 @@ $$('dialog.sheet').forEach((d) => d.addEventListener('click', (e) => { if (e.tar
 
 // #btc, #tac, #sp=<txid>, #st=<txid>
 function applyHash() {
+  if (forwardOld(location.hash)) return true;
   const h = location.hash.replace(/^#/, '');
   if (!h) return;
   const f = parseFound('#' + h);
@@ -1187,7 +1310,7 @@ function applyHash() {
   else if (MODES.includes(h)) S.mode = h;
   try { history.replaceState(null, '', `/pay/#${S.mode}`); } catch {}
 }
-window.addEventListener('hashchange', () => { applyHash(); render(); if (S.key) { loadMode(); if (FOUND.v && !FOUND.res) checkFound(); } });
+window.addEventListener('hashchange', () => { if (applyHash()) return; render(); if (S.key) { loadMode(); if (FOUND.v && !FOUND.res) checkFound(); } });
 setInterval(() => { if (!document.hidden && S.key) loadMode(); }, 60e3);
 
 applyHash();

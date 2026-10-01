@@ -110,8 +110,10 @@ export function makeEvmWallet({ secp, sha256, keccak256, bytesToHex, hexToBytes,
     try { localStorage.setItem(ANCHOR_KEY + String(address).toLowerCase(), pubHex); } catch { /* best effort */ }
   }
 
-  async function deriveIdentity({ pick } = {}) {
+  async function deriveIdentity({ pick, expect } = {}) {
     const { provider, address } = await connect({ pick });
+    const want = expect && String(expect).toLowerCase().replace(/^0x/, '');
+    if (want && address !== want) throw new Error(`Switch your wallet to 0x${want.slice(0, 4)}…${want.slice(-4)}, the account this Tacit wallet was opened with.`);
     let code = '0x'; try { code = await provider.request({ method: 'eth_getCode', params: ['0x' + address, 'latest'] }); } catch { /* treat as EOA */ }
     if (isContractCode(code)) throw new Error('Smart-contract wallets produce non-deterministic signatures and cannot derive a stable tacit identity — use a passkey, seed, or an EOA wallet.');
     const msg = derivationMsg();
