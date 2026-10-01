@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-BsdCmVwowT6YoD10CgMJOO5vs97AYb8zaZwr4x4MSZE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Y+3G6kdJnnJyUqPTmcY4lndCvSsdFdML5rQktfuPNU8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -1541,6 +1541,51 @@ async function selfFinish(id) {
   } catch (e) { actPut(id, { selfErr: errText(e) }); }
   finally { SELF.delete(id); endRun(run); paintAct(); afterActivity(); }
 }
+// An exit the relay refused at submit (its fee floor moved, its day's free settles are used up, it cannot take one right
+// now) has queued nothing, so there is no receipt to offer the self-settle from. The same exit goes out from the paying
+// account instead: the relay proves it, which is all it is asked for, and the account sends the settle and pays the
+// network fee, so the relay's fee is not charged. `spec`: { note, to, units, label, status } (status: its status line).
+const relayRefused = (e) => /fee below the current floor|FEE_MOVED|can.t take this one|free relayed settles|relay (5\d\d|429)\b|temporarily unavailable/i.test(`${e?.code || ''} ${e?.message || e || ''}`);
+const SELFX = {};
+let selfxSeq = 0;
+async function selfGasWei() {
+  const gas = BigInt(await rpc('eth_gasPrice', []).catch(() => '0x0') || 0);
+  return 700000n * (gas > 0n ? gas * 3n / 2n : 2000000000n);                  // a settle's gas, at a price that can move
+}
+function offerSelfExit(spec, e) {
+  const id = String(++selfxSeq);
+  spec.id = id; SELFX[id] = spec;
+  say(spec.status(), html`<span class="err">${errText(e)}</span>
+    <div class="actr-f"><button class="link" type="button" data-selfexit="${id}">Send it from ${your()} instead</button>
+    no relay fee; ${your()} pays the network fee, and its address shows on the withdrawal.</div>`);
+}
+async function selfExit(run, spec) {
+  const status = () => spec.status();
+  try {
+    await payingAccount();
+    const need = await selfGasWei(), have = await ethBalance();
+    if (have != null && have < need) {
+      say(status(), html`<span class="err">Sending it yourself pays the network fee, about ${fmt(need, 18, 4)} ETH, from ${your()} (${short(S.address, 6)}). It holds ${fmt(have, 18, 4)}. Add a little ETH there, then press the button again.</span>
+        <div class="actr-f"><button class="link" type="button" data-selfexit="${spec.id}">Send it from ${your()} instead</button></div>`);
+      return;
+    }
+    const t = await getUx(), priv = walletPriv();
+    run.take(kNote(spec.note));
+    run.say(status(), 'The relay is proving it for you to send, about a minute…');
+    const tell = (v) => run.say(status(), v);
+    const r = await t.sendUnwrap({ note: spec.note, walletPriv: priv, recipient: spec.to, amount: BigInt(spec.units), waitOpts: run.wait(null, 15 * 60e3),
+      selfSettle: settleFrom(t, { label: spec.label, say: tell }) });
+    toast(`${spec.label}: done`);
+    say(status(), html`<span class="ok">Done.</span> ${r?.txHash ? txLink(r.txHash) : ''}`);
+    await Promise.allSettled([scanPrivate(true), loadTacHoldings()]);
+    rerender(spec.sheet);
+  } catch (e) { run.fail(status(), e); }
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest?.('[data-selfexit]');
+  const spec = b && SELFX[b.dataset.selfexit];
+  if (spec) busy(b, (run) => selfExit(run, spec));
+});
 // The list is this browser's, whichever key is open: an entry another key made says so, since what it points to
 // (a Finish, a balance) is that key's.
 const otherKey = (it) => !!(it.pub && S.key && it.pub !== S.key.pubHex);
@@ -3484,16 +3529,31 @@ function renderTacBal(el) {
       const t = await getUx(), priv = walletPriv(), to = await payingAccount();
       const minFee = BigInt(await t.quoteOpFee('cTAC', 'sendunwrap'));
       const worth = freeNotes(P.scan?.tac?.notes).sort(byValue).reverse().filter((n) => BigInt(n.value) > t.quoteUnwrapFee(BigInt(n.value), 'cTAC', { minFee }).fee);
-      if (!worth.length) throw new Error('Each private TAC note is worth less than the relay fee to move it.');
+      if (!worth.length) {
+        // No note is worth the relay's fee, which is what a small balance runs into: sent from the account it carries none.
+        const biggest = freeNotes(P.scan?.tac?.notes).sort(byValue).reverse()[0];
+        const small = new Error('Each private TAC note is worth less than the relay fee to move it.');
+        if (!biggest) throw small;
+        offerSelfExit({ note: biggest, to, units: String(biggest.value), label: `Make ${fmt(BigInt(biggest.value), 8, 2)} TAC public`, sheet: 'tac', status: () => $('#tac-bal-status') }, small);
+        return;
+      }
       run.take(...worth.map(kNote));
       const sum = worth.reduce((a, n) => a + BigInt(n.value), 0n);
       run.go({ label: `Making ${fmt(sum * E10, 18, 2)} TAC public`, one: false, status: () => $('#tac-bal-status') });
+      let offered = false;
       for (const [i, n] of worth.entries()) {
         if (run.switched()) { run.fail(status, new Error('Another Tacit key was opened, so the rest stopped.')); break; }
         run.say(status, `The relay is moving your TAC${worth.length > 1 ? ` (${i + 1} of ${worth.length})` : ''}…`);
         try { await t.unwrap({ note: n, walletPriv: priv, recipient: to, wait: true, waitOpts: run.wait(`Make ${fmt(BigInt(n.value), 8, 2)} TAC public`, 15 * 60e3, { exit: { to, units: String(n.value), note: kNote(n), from: 'tac', sheet: 'tac' } }) }); }
-        catch (e) { if (!run.away) throw e; run.fail(status, e); }
+        catch (e) {
+          if (relayRefused(e) && !run.away) {
+            offerSelfExit({ note: n, to, units: String(n.value), label: `Make ${fmt(BigInt(n.value), 8, 2)} TAC public`, sheet: 'tac', status: () => $('#tac-bal-status') }, e);
+            offered = true; break;
+          }
+          if (!run.away) throw e; run.fail(status, e);
+        }
       }
+      if (offered) return;
       if (!run.away) { toast('Private TAC made public'); say(status, html`<span class="ok">Public TAC in ${your()}.</span>`); }
       await Promise.allSettled([scanPrivate(true), loadTacHoldings()]); rerender('tac');
     } catch (e) { run.fail(status, e); }
@@ -5224,7 +5284,12 @@ function assetSendForm(el, status, { prefix, sheet, statusId, sources, pick }) {
       if (x.out) {
         const note = await noteFor(run, t, priv, x.units, (n) => BigInt(n.value) >= x.units, status, k);
         run.say(status, `The relay is proving your transfer, which arrives as ${a.out}…`);
-        r = await t.sendUnwrap({ note, walletPriv: priv, recipient: x.recipient, amount: x.units, waitOpts: run.wait(null, 15 * 60e3, { exit: { to: x.recipient, units: String(x.units), note: kNote(note), from: k, sheet } }) });
+        try { r = await t.sendUnwrap({ note, walletPriv: priv, recipient: x.recipient, amount: x.units, waitOpts: run.wait(null, 15 * 60e3, { exit: { to: x.recipient, units: String(x.units), note: kNote(note), from: k, sheet } }) }); }
+        catch (e) {
+          if (!relayRefused(e) || run.away) throw e;
+          offerSelfExit({ note, to: x.recipient, units: String(x.units), label: `Send ${show(x.units)} ${dtk} to ${short(raw, 6)} as ${a.out}`, sheet, status: out }, e);
+          return;
+        }
       } else {
         const note = await noteFor(run, t, priv, x.units, (n) => BigInt(n.value) === x.units, status, k);          // a lock spends a note of its exact size
         const { makeStealthSendStore } = await import('/confidential-secret-store.js');

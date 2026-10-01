@@ -45,6 +45,8 @@
 //            about again and flips to done, an older one is not; a system notification goes out only while hidden
 //   dash     the "your Tacit" dashboard: the first paint at phone width has no sideways scroll; a connected wallet's
 //            dashboard shows placeholders first, then values, and what changed since the last visit's snapshot
+//   selfexit  an exit the relay refuses at submit offers to be sent from the paying account at once: told what the network fee
+//            needs when the account has no ETH, then, funded, a proof-only job with no relay fee
 //   tacdeposit  a real 20 TAC deposit whose settle never landed: the TAC sheet and the dashboard offer to finish it,
 //            and Finish submits a wrap job rebuilt with the TAC asset and its own scale
 //   PLAYWRIGHT=<path to playwright-core> node tools/weld-check.mjs [scenario,…] [fork rpc]   (SHOTS=<dir> saves screenshots)
@@ -64,7 +66,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,farmjoin,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,apr,pair,farm,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,selfexit,farmjoin,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -1001,6 +1003,68 @@ await step('tacsend', async () => {
     ok(/Make public/.test(await text(r.page, '#tac-bal')), 'tacsend: the all-at-once "Make public" action is unchanged');
     if (r.errors.length) { fails++; console.log('FAIL tacsend page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   } finally { await r.browser.close(); }
+});
+
+await step('selfexit', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  const hex = 'ac5e5'.padEnd(64, '4');
+  const want = makeEvmAccount({ secp, keccak256: keccak_256, sha256 }).deriveEvmAccount(Buffer.from(hex, 'hex'), 'mainnet').address;
+  const TACID = '0xf0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
+  await r.page.route(/\/confidential-pool-ux\.js\?cb=/, (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: `
+    import * as real from '/confidential-pool-ux.js?stub=real';
+    export * from '/confidential-pool-ux.js?stub=real';
+    export function makeConfidentialPoolUx(o) {
+      const ux = real.makeConfidentialPoolUx(o), balance = ux.balance;
+      ux.balance = async (priv) => {
+        const b = await balance(priv);
+        // A real note for this key (a wrap's own output, recovered), so the exit builds; it is not in the pool, so the
+        // proof the relay is asked for is a stand-in below.
+        const hx = typeof priv === 'string' ? priv : '0x' + [...priv].map((x) => x.toString(16).padStart(2, '0')).join('');
+        const w = ux.buildWrap({ walletPriv: hx, amountWei: (30n * 10n ** 18n).toString(), ticker: 'cTAC', index: 0 });
+        const note = ux.indexer.recover([{ type: 'LeavesInserted', firstLeafIndex: 0, leaves: [w.leaf], memos: [w.memo] }], hx)[0];
+        if (!note) throw new Error('stub note not recovered');
+        b.notes = [...b.notes, note];
+        const g = b.byAsset[note.asset] ||= { asset: note.asset, value: 0n, notes: [] };
+        g.value = BigInt(g.value) + BigInt(note.value); g.notes = [...g.notes, note];
+        return b;
+      };
+      return ux;
+    }` }));
+  try {
+    await r.page.goto(r.url + '#wallet');
+    await r.page.click('#wallet-body [data-in="paste"]');
+    await r.page.fill('#ws-hex', hex);
+    await r.page.click('#wallet-body [data-in="key"]');
+    await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+    await rpc('anvil_setBalance', [want, '0x0']);
+    await r.page.evaluate(() => { location.hash = ''; location.hash = '#tac'; });
+    await r.page.waitForSelector('#tac-pub', { timeout: 240000 }).catch(async (e) => {
+      throw new Error(`${e.message.split('\n')[0]} | sheet: ${(await r.page.evaluate(() => (document.querySelector('#tac-bal')?.textContent || '').replace(/\s+/g, ' ').slice(0, 300)))} | errors: ${r.errors.slice(0, 2).join(' | ')}`);
+    });
+    // The relay refuses the exit at submit: nothing is queued, so the offer is on the status line itself.
+    refuseSubmits = 1;
+    await sleep(3000);                                               // the sheet's reads repaint it once more
+    await r.page.click('#tac-pub');
+    const offered = await until(r.page, () => !!document.querySelector('#tac-bal-status [data-selfexit]'), null, 300000).then(() => true, () => false);
+    ok(offered && /free settles for today/.test(await text(r.page, '#tac-bal-status')), `selfexit: a relay refusal at submit offers to send it from the Tacit account (${(await text(r.page, '#tac-bal-status')).replace(/\s+/g, ' ').slice(0, 140)})`);
+    if (offered) {
+      // An account with no ETH is told what it needs and where, not left with a failure.
+      await r.page.click('#tac-bal-status [data-selfexit]');
+      await until(r.page, () => /Add a little ETH/.test(document.querySelector('#tac-bal-status')?.textContent || ''), null, 120000);
+      const need = await text(r.page, '#tac-bal-status');
+      ok(/network fee, about [\d.]+ ETH/.test(need) && need.includes(want.slice(0, 8)) || /Tacit account/.test(need), `selfexit: an account without ETH is told the fee and to add some (${need.replace(/\s+/g, ' ').slice(0, 160)})`);
+      // Funded, it asks the relay for the proof only (no fee in the op) and sends settle() itself.
+      await rpc('anvil_setBalance', [want, '0x' + (10n ** 17n).toString(16)]);
+      proveStub = true;
+      const n1 = submits.length;
+      await r.page.click('#tac-bal-status [data-selfexit]');
+      await until(r.page, () => !/Add a little ETH/.test(document.querySelector('#tac-bal-status')?.textContent || ''), null, 60000).catch(() => {});
+      await sleep(4000);
+      const prove = submits.slice(n1).find((x) => x.type === 'unwrap' || x.type === 'sendunwrap');
+      ok(prove?.mode === 'prove' && BigInt(prove.op.fee) === 0n, `selfexit: funded, the relay is asked for the proof only, with no relay fee (${prove ? `${prove.type} ${prove.mode} fee ${prove.op.fee}` : 'no submit'})`);
+    }
+    if (r.errors.length) { fails++; console.log('FAIL selfexit page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { refuseSubmits = 0; proveStub = false; await r.browser.close(); }
 });
 
 await step('keys', async () => {
