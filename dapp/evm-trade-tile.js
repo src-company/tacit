@@ -1,17 +1,19 @@
-// TAC's Ethereum trading lane — a swap tile trading ETH against the public TAC ERC20
-// (mainnet) alongside the Bitcoin-native order book, for the one asset (TAC) that also
-// has real liquidity on Ethereum. Calldata/quoting logic lives entirely in
-// evm-trade-venues.js (fork-verified, unit-tested); this module is the DOM half: render
-// the tile, debounce quoting, drive the connect → approve → re-quote → simulate → send
-// flow, and show a plain-language route summary + venue comparison.
+// TAC's Ethereum trading lane: the ticket that trades ETH against the public TAC ERC20 on
+// Ethereum mainnet, mounted by btc-market.js beside the Bitcoin order book for the one asset
+// (TAC) that also has real liquidity there. Quoting and calldata are evm-trade-venues.js
+// (fork-verified, unit-tested); this module is the DOM half, in the same language as the
+// Bitcoin ticket: Buy / Sell, an amount with balance chips, a quote that names what you get,
+// the least you can get, the price, its impact and the venue, then a review dialog whose
+// numbers are what runs.
 //
-// Mount contract: mountEvmTradeLane(host, opts) fills `host` once and is idempotent on
-// repeat calls against the same node (guards on host.dataset.evmLaneMounted) — the caller
-// can call it unconditionally on every re-render, same as tacit.js's _wireSwapTile does for
-// the Bitcoin tile. `opts` is the wallet seam: { address(), connect(), sendTx({from,to,data,
-// value}) }. No wallet is required to quote — only to execute.
+// Mount contract: mountEvmTradeLane(host, opts) fills `host` once and is idempotent on repeat
+// calls against the same node. `opts` is the wallet seam { address(), connect(), sendTx({from,
+// to,data,value}) } plus, optionally, `market` ({ markUnit(), btcUsd(), iconHtml() } — the
+// Bitcoin lane's last price, for the cross-lane comparison), `txUrl(hash)`, and test seams
+// `venues` / `rpc` / `ethUsd` that replace the live quoting and RPC. No wallet is needed to
+// quote — only to execute.
 
-import { getConfidentialDeployment, esc, formatErr, notify } from './confidential-deployments.js';
+import { getConfidentialDeployment, esc, notify } from './confidential-deployments.js';
 import {
   TAC_ERC20, VENUES, makeEvmTradeVenues, zswapDeepLink,
   encErc20Allowance, encErc20Approve, encErc20BalanceOf, decUint256,
@@ -19,61 +21,77 @@ import {
 import { keccak_256 } from './vendor/tacit-deps.min.js';
 
 const DEBOUNCE_MS = 300;
-const BG_REQUOTE_MS = 20000;
+const BG_REQUOTE_MS = 20_000;
+const SPOT_REFRESH_MS = 30_000;
+const ZQUOTER_WAIT_MS = 4000;
 const RECEIPT_POLL_MS = 3000;
-const RECEIPT_TIMEOUT_MS = 240000;
+const RECEIPT_TIMEOUT_MS = 240_000;
 const ETHERSCAN_TX = (h) => `https://etherscan.io/tx/${h}`;
 const ETHERSCAN_TOKEN = `https://etherscan.io/token/${TAC_ERC20}`;
-// zswap.wei.limo — zfi's own deploy, confirmed live today (v0.3): reads #token=/out=/amount=,
-// no #chain= support yet (mainnet-only page anyway, so that's moot here). Used only as an
-// informational "fill there instead" link for resting board orders this tile doesn't execute
-// itself — never for the venues this tile already quotes and sends directly.
 const ZSWAP_HOST = 'https://zswap.wei.limo';
+const SLIPPAGE_CHOICES = [[10, '0.1%'], [50, '0.5%'], [100, '1%'], [300, '3%']];
+const DEFAULT_SLIPPAGE_BPS = 50;
+// Price impact past these marks is called out; past the second it must be acknowledged.
+const IMPACT_WARN_BPS = 300;
+const IMPACT_BLOCK_BPS = 1000;
+// A tiny trade's rate is the market's spot price; impact is how far a real trade falls from it.
+const SPOT_PROBE = { ETH_TO_TAC: 10n ** 15n, TAC_TO_ETH: 10n ** 18n };
+// Gas a swap takes, used for the fee estimate before a wallet is connected and for the ETH
+// a "Max" buy keeps back. Both are generous.
+const GAS_GUESS = { ETH_TO_TAC: 220_000n, TAC_TO_ETH: 260_000n, approve: 55_000n };
+const ETH_RESERVE_FALLBACK = 2n * 10n ** 15n; // 0.002 ETH
+const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+const PREF_KEY = 'tacit-eth-lane-v1';
+const ETH_USD_KEY = 'tacit-eth-usd-v1';
 
-// ── mainnet RPC — same fallback list confidential-pool-ux.js uses, called
-// directly here since this module has no pool deployment and doesn't want to
-// pull the whole pool UX in just to reach getConfidentialDeployment('mainnet').rpcs. ──
-function _mainnetRpcs() {
+// ── live RPC (mainnet) ────────────────────────────────────────────────────────
+function mainnetRpcs() {
   const d = getConfidentialDeployment('mainnet');
   return (d && Array.isArray(d.rpcs)) ? d.rpcs : [];
 }
 async function rpcCall(method, params, { retryPasses = 2 } = {}) {
-  const urls = _mainnetRpcs();
+  const urls = mainnetRpcs();
   if (!urls.length) throw new Error('no mainnet RPC endpoints configured');
   let lastErr;
   const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
   for (let pass = 0; pass < retryPasses; pass++) {
-    if (pass > 0) await new Promise((r) => setTimeout(r, 400 * pass));
+    if (pass > 0) await sleep(400 * pass);
     for (const url of urls) {
       try {
         const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(12000) });
         if (!r.ok) { lastErr = new Error(`rpc ${r.status}`); continue; }
         const j = await r.json();
-        if (j && j.error) { lastErr = Object.assign(new Error(j.error.message || 'rpc error'), { data: j.error.data }); continue; }
+        if (j && j.error) { lastErr = Object.assign(new Error(j.error.message || 'rpc error'), { data: j.error.data, code: j.error.code }); continue; }
         return j ? j.result : undefined;
       } catch (e) { lastErr = e; }
     }
   }
   throw lastErr || new Error('all mainnet RPCs failed');
 }
-// ethCall(to, data, block, opts) — the shape evm-trade-venues.js's quoteZQuoter needs
-// (opts.gas, kept OUT of any Multicall3 batch — the module handles that split itself).
-// Also supports opts.from/opts.value so this same helper serves the pre-send simulate step.
-function ethCall(to, data, block = 'latest', callOpts = {}) {
-  const call = { to: String(to).toLowerCase(), data };
-  if (callOpts.from) call.from = callOpts.from;
-  if (callOpts.value) call.value = callOpts.value;
-  if (callOpts.gas) call.gas = callOpts.gas;
-  const opts = callOpts.retryPasses != null ? { retryPasses: callOpts.retryPasses } : undefined;
-  return rpcCall('eth_call', [call, block], opts);
-}
+const liveRpc = {
+  // call(to, data, block, opts) — the shape evm-trade-venues.js's quoteZQuoter needs
+  // (opts.gas, kept out of any Multicall3 batch — the module handles that split itself).
+  call(to, data, block = 'latest', callOpts = {}) {
+    const call = { to: String(to).toLowerCase(), data };
+    if (callOpts.from) call.from = callOpts.from;
+    if (callOpts.value) call.value = callOpts.value;
+    if (callOpts.gas) call.gas = callOpts.gas;
+    const opts = callOpts.retryPasses != null ? { retryPasses: callOpts.retryPasses } : undefined;
+    return rpcCall('eth_call', [call, block], opts);
+  },
+  getBalance: (addr) => rpcCall('eth_getBalance', [addr, 'latest']).then((h) => (h ? BigInt(h) : 0n)),
+  gasPrice: () => rpcCall('eth_gasPrice', []).then((h) => (h ? BigInt(h) : null)),
+  receipt: (hash) => rpcCall('eth_getTransactionReceipt', [hash]),
+};
 
-const venues = makeEvmTradeVenues({ ethCall, keccak256: keccak_256 });
+// ── helpers ───────────────────────────────────────────────────────────────────
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const hex = (v) => '0x' + v.toString(16);
+const short = (addr) => (addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '');
 
-// ── amount helpers — string round-trip (never through Number) so amounts above
-// 2^53-1 don't lose precision, same caution confidential-swap-tab.js takes on BigInt(string). ──
-function parseUnitsStr(str, decimals) {
-  const s = String(str == null ? '' : str).trim();
+// Amount strings round-trip through BigInt, never Number, so nothing above 2^53 loses precision.
+export function parseUnitsStr(str, decimals = 18) {
+  const s = String(str == null ? '' : str).trim().replace(/[,_\s]/g, '');
   if (s === '' || s === '.' || !/^[0-9]*\.?[0-9]*$/.test(s)) return null;
   const [whole, frac = ''] = s.split('.');
   if (!whole && !frac) return null;
@@ -81,431 +99,713 @@ function parseUnitsStr(str, decimals) {
   try { return BigInt(whole || '0') * (10n ** BigInt(decimals)) + BigInt(fracPadded || '0'); }
   catch { return null; }
 }
-function formatUnitsStr(value, decimals, maxFrac = 6) {
+export function formatUnitsStr(value, decimals = 18, maxFrac = 6) {
   if (value == null) return '';
   const neg = value < 0n;
   const v = neg ? -value : value;
   const base = 10n ** BigInt(decimals);
   const whole = v / base;
-  let frac = (v % base).toString().padStart(decimals, '0').slice(0, maxFrac);
-  frac = frac.replace(/0+$/, '');
+  const frac = (v % base).toString().padStart(decimals, '0').slice(0, maxFrac).replace(/0+$/, '');
   return (neg ? '-' : '') + whole.toString() + (frac ? '.' + frac : '');
 }
-function short(addr) { return addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : ''; }
+// For display: thousands separators and a precision that suits the size.
+export function fmtTok(value, ticker) {
+  if (value == null) return '';
+  const n = Number(formatUnitsStr(value, 18, 12));
+  if (!Number.isFinite(n)) return formatUnitsStr(value, 18, 6);
+  const digits = ticker === 'ETH'
+    ? (n >= 1 ? 4 : n >= 0.01 ? 5 : 6)
+    : (n >= 1000 ? 0 : n >= 1 ? 2 : 4);
+  return n.toLocaleString('en-US', { maximumFractionDigits: digits });
+}
+function fmtRate(n) {
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  if (n >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  if (n >= 1) return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  return n.toPrecision(3).replace(/\.?0+$/, '');
+}
+function fmtUsd(v) {
+  if (v == null || !Number.isFinite(v)) return '';
+  if (v >= 10_000) return '$' + Math.round(v).toLocaleString('en-US');
+  if (v >= 1) return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (v >= 0.01) return '$' + Number(v.toPrecision(3));
+  if (v > 0) return '$' + Number(v.toPrecision(2));
+  return '$0';
+}
+const toNum = (value, decimals = 18) => Number(formatUnitsStr(value, decimals, 12));
+const fmtPct = (bps) => (bps < 1 ? '< 0.01' : (bps / 100).toFixed(2)) + '%';
+
+// What a user needs to read, not what the node said.
+function decodeRevertReason(err) {
+  const raw = (err && (err.data || (err.data && err.data.data))) || '';
+  const h = String(raw || '').replace(/^0x/, '');
+  if (h.slice(0, 8) !== '08c379a0' || h.length < 8 + 128) return null;
+  try {
+    const len = parseInt(h.slice(8 + 64, 8 + 128), 16);
+    const bytes = (h.slice(8 + 128, 8 + 128 + len * 2).match(/../g) || []).map((b) => parseInt(b, 16));
+    return new TextDecoder().decode(new Uint8Array(bytes)) || null;
+  } catch { return null; }
+}
+export function isUserRejection(e) {
+  const code = e && typeof e === 'object' ? (e.code ?? e.cause?.code) : null;
+  if (code === 4001 || code === 'ACTION_REJECTED') return true;
+  return /user rejected|user denied|rejected the request|denied transaction|cancelled by user|canceled by user/i.test(String(e?.message || e || ''));
+}
+export function friendlyEthError(e) {
+  if (isUserRejection(e)) return 'Cancelled in your wallet — nothing was sent.';
+  const m = String(e?.message || e || '');
+  if (/insufficient funds/i.test(m)) return 'Not enough ETH to cover the amount and the network fee.';
+  if (/Switch your wallet/i.test(m)) return m;
+  if (/no Ethereum wallet|no wallet selected|install MetaMask/i.test(m)) return 'No Ethereum wallet found — install MetaMask, Rabby, Rainbow or Coinbase Wallet, or open this page in its browser.';
+  if (/timed out waiting/i.test(m)) return m;
+  if (/slippage|minOut|too little received|INSUFFICIENT_OUTPUT/i.test(m)) return 'The price moved past your slippage before the swap ran — nothing was swapped. Quote again or allow more slippage.';
+  if (/deadline|expired/i.test(m)) return 'The quote expired before the swap ran — nothing was swapped. Try again.';
+  return m.replace(/^Error:\s*/, '') || 'Something went wrong.';
+}
+
+// ETH/USD for the dollar hints. Coinbase's spot endpoint is public and CORS-open, the same
+// source the dapp uses for BTC/USD; a miss just hides the dollar figures.
+let ethUsdCache = { price: null, at: 0 };
+async function fetchEthUsd() {
+  if (ethUsdCache.price && Date.now() - ethUsdCache.at < 60_000) return ethUsdCache.price;
+  try {
+    const r = await fetch('https://api.coinbase.com/v2/prices/ETH-USD/spot', { signal: AbortSignal.timeout(6000) });
+    const j = r.ok ? await r.json() : null;
+    const p = Number(j?.data?.amount);
+    if (p > 0) {
+      ethUsdCache = { price: p, at: Date.now() };
+      try { localStorage.setItem(ETH_USD_KEY, JSON.stringify(ethUsdCache)); } catch {}
+      return p;
+    }
+  } catch {}
+  if (ethUsdCache.price) return ethUsdCache.price;
+  try {
+    const s = JSON.parse(localStorage.getItem(ETH_USD_KEY) || 'null');
+    if (s && s.price > 0 && Date.now() - s.at < 86_400_000) { ethUsdCache = s; return s.price; }
+  } catch {}
+  return null;
+}
+
+const ETH_LOGO_SVG = `<svg viewBox="0 0 32 32" width="16" height="16" style="flex-shrink:0;border-radius:50%;display:block;">
+  <circle cx="16" cy="16" r="16" fill="#627eea"/>
+  <polygon points="16,5 24,16 16,20.5 8,16" fill="#fff"/>
+  <polygon points="16,5 8,16 16,20.5" fill="#fff" fill-opacity="0.55"/>
+  <polygon points="16,21.8 24,17.3 16,27 8,17.3" fill="#fff" fill-opacity="0.85"/>
+</svg>`;
+const TAC_LOGO_IMG = `<img src="tac-logo.png" alt="" width="16" height="16" style="flex-shrink:0;border-radius:50%;display:block;">`;
 function venueLabel(v) {
   if (v === VENUES.PRECISION) return 'Precision';
   if (v === VENUES.TACIT_AMM) return 'Tacit AMM';
   if (v === VENUES.ZQUOTER) return 'zQuoter';
   return v || 'unknown';
 }
-// Error(string) revert — the common case (slippage guards, deadline checks, standard
-// ERC20 reverts). Custom errors without an ABI on hand still fall through to the
-// generic "would revert" message rather than a raw hex blob.
-function decodeRevertReason(err) {
-  const raw = (err && (err.data || (err.data && err.data.data))) || '';
-  const hex = String(raw || '').replace(/^0x/, '');
-  if (hex.slice(0, 8) !== '08c379a0' || hex.length < 8 + 128) return null;
-  try {
-    const len = parseInt(hex.slice(8 + 64, 8 + 128), 16);
-    const strHex = hex.slice(8 + 128, 8 + 128 + len * 2);
-    const bytes = (strHex.match(/../g) || []).map((b) => parseInt(b, 16));
-    return new TextDecoder().decode(new Uint8Array(bytes)) || null;
-  } catch { return null; }
+// Precision's lens reports its fee in millionths; the Tacit AMM and zQuoter in basis points.
+function feePct(q) {
+  if (!q || q.feeBps == null) return null;
+  const f = Number(q.feeBps);
+  return q.venue === VENUES.PRECISION ? f / 10_000 : f / 100;
 }
-async function waitForReceipt(hash, { intervalMs = RECEIPT_POLL_MS, timeoutMs = RECEIPT_TIMEOUT_MS } = {}) {
-  const start = Date.now();
-  for (;;) {
-    let r = null;
-    try { r = await rpcCall('eth_getTransactionReceipt', [hash]); } catch { /* transient — keep polling */ }
-    if (r) return r;
-    if (Date.now() - start > timeoutMs) throw new Error('Timed out waiting for confirmation — check Etherscan for the transaction status.');
-    await new Promise((res) => setTimeout(res, intervalMs));
-  }
+function venueWhy(v) {
+  if (v === VENUES.PRECISION) return 'A concentrated ETH/TAC pool on Ethereum, routed through zRouter.';
+  if (v === VENUES.TACIT_AMM) return "Tacit's own public TAC/cETH pool.";
+  if (v === VENUES.ZQUOTER) return 'An aggregator over Uniswap, Sushi, Curve and zAMM.';
+  return '';
 }
 
-// Same circle-badge language as tacit.js's _ethLogoSvg/_btcLogoSvg (a separate
-// ES module, not worth an import for one inline SVG — keep both in sync if the
-// glyphs change) so the pair label + pills read as the same mark as the lane
-// switch above them. TAC is the token's own image (dapp/tac-logo.png, the same bytes
-// as its on-chain metadata image), never a redrawn protocol mark.
-const ETH_LOGO_SVG = `<svg viewBox="0 0 32 32" width="20" height="20" style="flex-shrink:0;border-radius:50%;display:block;">
-  <circle cx="16" cy="16" r="16" fill="#627eea"/>
-  <polygon points="16,5 24,16 16,20.5 8,16" fill="#fff"/>
-  <polygon points="16,5 8,16 16,20.5" fill="#fff" fill-opacity="0.55"/>
-  <polygon points="16,21.8 24,17.3 16,27 8,17.3" fill="#fff" fill-opacity="0.85"/>
-</svg>`;
-const TAC_LOGO_SVG = `<img src="tac-logo.png" alt="TAC" width="20" height="20" style="flex-shrink:0;border-radius:50%;display:block;">`;
-function pillIconFor(ticker) { return ticker === 'ETH' ? ETH_LOGO_SVG : TAC_LOGO_SVG; }
-const ACTION_BTN_STYLE = 'display:block;width:100%;padding:13px;font-size:13px;font-weight:500;text-transform:uppercase;letter-spacing:0.04em;background:var(--green-positive);color:#F2EBD4;border:0;cursor:pointer;';
-const SLIPPAGE_SELECT_STYLE = 'box-sizing:border-box;min-width:78px;height:28px;font-family:var(--mono);font-size:11px;line-height:1.2;padding:4px 22px 4px 8px;border:1px solid var(--ink);background:var(--bg);color:var(--ink);-webkit-appearance:none;-moz-appearance:none;appearance:none;cursor:pointer;';
-
-function tileHtml() {
-  const flipSvg = `<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="M4 1 L4 11 M1.5 8.5 L4 11 L6.5 8.5"></path>
-    <path d="M10 13 L10 3 M7.5 5.5 L10 3 L12.5 5.5"></path>
-  </svg>`;
-  return `
-    <div class="evm-lane-tile" data-evm-lane-root>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
-      <div style="display:flex;align-items:center;gap:8px;font-size:15px;font-weight:bold;">
-        <span style="display:inline-flex;gap:3px;">${ETH_LOGO_SVG}${TAC_LOGO_SVG}</span><span>ETH / TAC</span>
-      </div>
-    </div>
-    <div class="evm-lane-side" data-lane-side="pay">
-      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;">
-        <span style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink-mid);">You pay</span>
-        <span data-lane-bal="pay" class="muted" style="font-size:10px;"></span>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <input data-lane-input="pay" type="text" inputmode="decimal" placeholder="0" class="evm-lane-input">
-        <div class="evm-lane-pill" data-lane-pill="pay"><span data-lane-pill-icon="pay">${ETH_LOGO_SVG}</span><span data-lane-pill-label="pay">ETH</span></div>
-      </div>
-    </div>
-    <div class="swap-flip-wrap">
-      <button data-lane-flip class="swap-flip-btn" type="button" title="Flip direction (ETH ↔ TAC)" aria-label="Flip swap direction">${flipSvg}</button>
-    </div>
-    <div class="evm-lane-side" data-lane-side="receive">
-      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;">
-        <span style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink-mid);">You receive (est.)</span>
-        <span data-lane-bal="receive" class="muted" style="font-size:10px;"></span>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <input data-lane-input="receive" type="text" inputmode="decimal" placeholder="0" class="evm-lane-input" readonly>
-        <div class="evm-lane-pill" data-lane-pill="receive"><span data-lane-pill-icon="receive">${TAC_LOGO_SVG}</span><span data-lane-pill-label="receive">TAC</span></div>
-      </div>
-    </div>
-    <div class="evm-lane-route muted" data-lane-route>Enter an amount to see the best route.</div>
-    <details class="evm-lane-compare" data-lane-compare>
-      <summary>Compare venues</summary>
-      <div data-lane-compare-body></div>
-    </details>
-    <div style="display:flex;align-items:center;gap:8px;margin:10px 0;">
-      <label style="font-size:10px;display:flex;align-items:center;gap:8px;">
-        <span class="muted" style="text-transform:uppercase;letter-spacing:0.08em;">Slippage</span>
-        <select data-lane-slippage style="${SLIPPAGE_SELECT_STYLE}">
-          <option value="10">0.1%</option>
-          <option value="50" selected>0.5%</option>
-          <option value="100">1%</option>
-          <option value="300">3%</option>
-        </select>
-      </label>
-    </div>
-    <button data-lane-action type="button" class="evm-lane-action" disabled style="${ACTION_BTN_STYLE}">Enter an amount</button>
-    <div data-lane-status class="muted evm-lane-status"></div>
-    <div class="evm-lane-fine muted">TAC (ERC20): <a href="${ETHERSCAN_TOKEN}" target="_blank" rel="noopener noreferrer">${esc(short(TAC_ERC20))}</a></div>
-    </div>`;
-}
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
 
 export function mountEvmTradeLane(host, opts) {
   if (!host) return null;
-  // Idempotent: the market page's auto-refresh preserves this node across
-  // re-renders (data-evm-trade-lane in tacit.js's preserved-nodes list), and
-  // tacit.js calls this on every render regardless — a real rebuild here would
-  // wipe an in-progress typed amount + reset the debounce/poll timers.
   if (host.__evmLane) { host.__evmLane.setOpts(opts); return host.__evmLane; }
-
-  host.innerHTML = tileHtml();
+  const ctl = createLane(host, opts || {});
+  host.__evmLane = ctl;
   host.dataset.evmLaneMounted = '1';
-  const $ = (sel) => host.querySelector(sel);
+  return ctl;
+}
 
-  const state = {
-    dir: 'ETH_TO_TAC',
+function createLane(host, opts0) {
+  const pref = LS.get(PREF_KEY, {});
+  const S = {
+    opts: opts0,
+    side: pref.side === 'sell' ? 'sell' : 'buy',
+    slippageBps: SLIPPAGE_CHOICES.some(([b]) => b === pref.slippageBps) ? pref.slippageBps : DEFAULT_SLIPPAGE_BPS,
     amountStr: '',
-    slippageBps: 50,
-    quote: null,
-    quoting: false,
-    busy: false,
-    debTimer: null,
-    bgTimer: null,
-    ethBal: null,
-    tacBal: null,
-    opts,
+    quote: null, quoting: false, quoteSeq: 0,
+    spot: null, spotAt: 0, spotDir: null,
+    ethBal: null, tacBal: null, balAddr: null,
+    gasPrice: null, gasAt: 0,
+    ethUsd: null,
+    busy: false, destroyed: false,
+    ackImpact: false,
+    debTimer: null, bgTimer: null,
   };
+  const savePref = () => LS.set(PREF_KEY, { side: S.side, slippageBps: S.slippageBps });
+  const dir = () => (S.side === 'buy' ? 'ETH_TO_TAC' : 'TAC_TO_ETH');
+  const inTicker = () => (S.side === 'buy' ? 'ETH' : 'TAC');
+  const outTicker = () => (S.side === 'buy' ? 'TAC' : 'ETH');
+  const rpc = () => S.opts.rpc || liveRpc;
+  let liveVenues = null;
+  const venues = () => S.opts.venues || (liveVenues ||= makeEvmTradeVenues({ ethCall: (to, data, block, o) => rpc().call(to, data, block, o), keccak256: keccak_256 }));
+  const txUrl = (h) => (S.opts.txUrl ? S.opts.txUrl(h) : ETHERSCAN_TX(h));
+  const tacIcon = () => { try { return S.opts.market?.iconHtml?.() || TAC_LOGO_IMG; } catch { return TAC_LOGO_IMG; } };
+  const iconFor = (t) => (t === 'ETH' ? ETH_LOGO_SVG : tacIcon());
+  const slipLabel = () => SLIPPAGE_CHOICES.find(([b]) => b === S.slippageBps)?.[1] || '0.5%';
 
-  function getAddress() {
-    try { return state.opts && typeof state.opts.address === 'function' ? state.opts.address() : null; }
-    catch { return null; }
+  host.innerHTML = `
+    <div class="bm-grid bm-ethgrid">
+      <div class="bm-left">
+        <div class="bm-ticket bm-eth" data-k="eticket" data-side="${S.side}">
+          <div class="bm-sides" role="tablist">
+            <button type="button" role="tab" data-act="eside" data-v="buy">Buy</button>
+            <button type="button" role="tab" data-act="eside" data-v="sell">Sell</button>
+          </div>
+          <p class="bm-mode-note" data-k="emode"></p>
+          <div class="bm-spot" data-k="espot" aria-live="polite"></div>
+          <label class="bm-field">
+            <span class="bm-label" data-k="elabel">You spend</span>
+            <span class="bm-inputrow">
+              <input data-k="eamount" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="Amount">
+              <span class="bm-unit bm-unit-static" data-k="eunit"></span>
+            </span>
+          </label>
+          <div class="bm-chips" data-k="echips"></div>
+          <div class="bm-bal" data-k="ebal"></div>
+          <div class="bm-quote" data-k="equote" aria-live="polite"></div>
+          <details class="bm-opts" data-k="eopts"><summary data-k="eopts-sum"></summary><div data-k="eopts-body"></div></details>
+          <button type="button" class="bm-go" data-k="ego" data-act="ego" disabled>Enter an amount</button>
+          <p class="bm-fine" data-k="efine"></p>
+        </div>
+      </div>
+      <div class="bm-book bm-venues" data-k="evenues"></div>
+    </div>`;
+  const $ = (sel) => host.querySelector(sel);
+  const $$ = (sel) => Array.from(host.querySelectorAll(sel));
+  const el = {
+    ticket: $('[data-k=eticket]'), mode: $('[data-k=emode]'), spot: $('[data-k=espot]'), label: $('[data-k=elabel]'),
+    amount: $('[data-k=eamount]'), unit: $('[data-k=eunit]'), chips: $('[data-k=echips]'), bal: $('[data-k=ebal]'),
+    quote: $('[data-k=equote]'), optsSum: $('[data-k=eopts-sum]'), optsBody: $('[data-k=eopts-body]'),
+    go: $('[data-k=ego]'), fine: $('[data-k=efine]'), venues: $('[data-k=evenues]'),
+  };
+  const ac = new AbortController();
+  const sig = { signal: ac.signal };
+
+  // ── wallet + balances ─────────────────────────────────────────────────────
+  function address() {
+    try { return typeof S.opts.address === 'function' ? S.opts.address() : null; } catch { return null; }
   }
-
-  function updateActionButton() {
-    const btn = $('[data-lane-action]');
-    if (!btn || state.busy) return;
-    const amt = parseUnitsStr(state.amountStr, 18);
-    if (!amt || amt <= 0n) { btn.disabled = true; btn.textContent = 'Enter an amount'; return; }
-    // Connecting doesn't depend on the quote at all, so it must stay clickable even while a
-    // quote is in flight (or found no route) — a slow/rate-limited RPC used to block the button
-    // entirely, which looked exactly like a hung wallet connection.
-    if (!getAddress()) { btn.disabled = false; btn.textContent = 'Connect wallet'; return; }
-    if (state.quoting) { btn.disabled = true; btn.textContent = 'Quoting…'; return; }
-    if (!state.quote || !state.quote.best) { btn.disabled = true; btn.textContent = 'No route available'; return; }
-    btn.disabled = false; btn.textContent = 'Swap';
-  }
-
-  function renderCompareRows(q) {
-    const outTicker = state.dir === 'ETH_TO_TAC' ? 'TAC' : 'ETH';
-    const row = (label, out) => `<div class="evm-lane-compare-row"><span>${esc(label)}</span><span>${out}</span></div>`;
-    const amt = (v) => v ? `${esc(formatUnitsStr(v.amountOut, 18, 6))} ${esc(outTicker)}` : 'no route';
-    const restingOrders = q.boards && q.boards.restingOrders > 0 ? q.boards.restingOrders : 0;
-    // Boards are quote-only here (no fill recipe ported — see evm-trade-venues.js), so a
-    // resting order that might beat the executed venue gets a "fill there instead" link rather
-    // than a number this tile can't act on itself.
-    const boardsOut = restingOrders > 0
-      ? (() => {
-          const link = zswapDeepLink({ host: ZSWAP_HOST, dir: state.dir, amount: state.amountStr || undefined });
-          const label = `${restingOrders} resting order${restingOrders === 1 ? '' : 's'}`;
-          return link ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(label)} — fill on zSwap ↗</a>` : esc(label);
-        })()
-      : 'no resting orders';
-    const rows = [
-      row('Precision', amt(q.precision)),
-      row('Tacit AMM', amt(q.tacitAmm)),
-      row('zQuoter', (q.zquoter && q.zquoter.status === 'ok') ? amt(q.zquoter) : 'no route'),
-      row('Order boards', boardsOut),
-    ];
-    return rows.join('');
-  }
-
-  function renderQuote() {
-    const routeEl = $('[data-lane-route]');
-    const receiveInput = $('[data-lane-input="receive"]');
-    const cmpBody = $('[data-lane-compare-body]');
-    const q = state.quote;
-    if (!q) {
-      if (routeEl) routeEl.textContent = state.quoting ? 'Finding the best route…' : 'Enter an amount to see the best route.';
-      if (receiveInput) receiveInput.value = '';
-      if (cmpBody) cmpBody.innerHTML = '';
-      return;
-    }
-    const outTicker = state.dir === 'ETH_TO_TAC' ? 'TAC' : 'ETH';
-    const inTicker = state.dir === 'ETH_TO_TAC' ? 'ETH' : 'TAC';
-    if (q.best) {
-      if (receiveInput) receiveInput.value = formatUnitsStr(q.best.amountOut, 18, 8);
-      // Display-only rate (a UI hint, not the trade's minOut — build() always derives
-      // minOut from the exact bigint quote, so float rounding here never touches funds).
-      const rate = Number(formatUnitsStr(q.best.amountOut, 18, 12)) / Number(formatUnitsStr(q.amountIn, 18, 12));
-      const feePct = q.best.feeBps != null ? `${(Number(q.best.feeBps) / 100).toFixed(2)}%` : null;
-      if (routeEl) routeEl.innerHTML = `via <strong>${esc(venueLabel(q.best.venue))}</strong>`
-        + (feePct ? ` · ${esc(feePct)}` : '')
-        + ` · 1 ${esc(inTicker)} ≈ ${esc(Number.isFinite(rate) ? rate.toFixed(6) : '?')} ${esc(outTicker)}`;
-    } else {
-      if (receiveInput) receiveInput.value = '';
-      if (routeEl) routeEl.textContent = 'No route found for this amount right now.';
-    }
-    if (cmpBody) cmpBody.innerHTML = renderCompareRows(q);
-  }
-
   async function refreshBalances() {
-    const addr = getAddress();
-    const payEl = $('[data-lane-bal="pay"]');
-    const recvEl = $('[data-lane-bal="receive"]');
-    if (!addr) {
-      state.ethBal = null; state.tacBal = null;
-      if (payEl) payEl.textContent = '';
-      if (recvEl) recvEl.textContent = '';
-      return;
-    }
+    const addr = address();
+    if (!addr) { S.ethBal = null; S.tacBal = null; S.balAddr = null; paintBalance(); paintGo(); return; }
     try {
-      const [ethHex, tacRaw] = await Promise.all([
-        rpcCall('eth_getBalance', [addr, 'latest']),
-        ethCall(TAC_ERC20, encErc20BalanceOf(addr)),
-      ]);
-      state.ethBal = ethHex ? BigInt(ethHex) : 0n;
-      state.tacBal = decUint256(tacRaw);
-    } catch { /* leave last-known balances on a transient RPC miss */ }
-    const balFor = (ticker) => (ticker === 'ETH' ? state.ethBal : state.tacBal);
-    const payTicker = state.dir === 'ETH_TO_TAC' ? 'ETH' : 'TAC';
-    const recvTicker = state.dir === 'ETH_TO_TAC' ? 'TAC' : 'ETH';
-    if (payEl) payEl.textContent = balFor(payTicker) != null ? `balance: ${formatUnitsStr(balFor(payTicker), 18, 6)} ${payTicker}` : '';
-    if (recvEl) recvEl.textContent = balFor(recvTicker) != null ? `balance: ${formatUnitsStr(balFor(recvTicker), 18, 6)} ${recvTicker}` : '';
+      const [eth, tacRaw] = await Promise.all([rpc().getBalance(addr), rpc().call(TAC_ERC20, encErc20BalanceOf(addr))]);
+      if (S.destroyed) return;
+      S.ethBal = eth; S.tacBal = decUint256(tacRaw); S.balAddr = addr;
+    } catch { /* keep the last known figures on a transient miss */ }
+    paintBalance(); paintQuote(); paintGo();
   }
-
-  function applyDirection() {
-    const payTicker = state.dir === 'ETH_TO_TAC' ? 'ETH' : 'TAC';
-    const recvTicker = state.dir === 'ETH_TO_TAC' ? 'TAC' : 'ETH';
-    const payLbl = $('[data-lane-pill-label="pay"]');
-    const recvLbl = $('[data-lane-pill-label="receive"]');
-    if (payLbl) payLbl.textContent = payTicker;
-    if (recvLbl) recvLbl.textContent = recvTicker;
-    const payIcon = $('[data-lane-pill-icon="pay"]');
-    const recvIcon = $('[data-lane-pill-icon="receive"]');
-    if (payIcon) payIcon.innerHTML = pillIconFor(payTicker);
-    if (recvIcon) recvIcon.innerHTML = pillIconFor(recvTicker);
-    const payPill = $('[data-lane-pill="pay"]');
-    const recvPill = $('[data-lane-pill="receive"]');
-    if (payPill) payPill.classList.toggle('eth', payTicker === 'ETH');
-    if (recvPill) recvPill.classList.toggle('eth', recvTicker === 'ETH');
-    refreshBalances();
+  async function refreshGas() {
+    if (S.gasPrice && Date.now() - S.gasAt < 30_000) return S.gasPrice;
+    try { const g = await rpc().gasPrice(); if (g) { S.gasPrice = g; S.gasAt = Date.now(); } } catch {}
+    return S.gasPrice;
   }
+  // ETH kept back from a "Max" buy so the swap itself can still pay for gas.
+  const ethReserve = () => (S.gasPrice ? (GAS_GUESS.ETH_TO_TAC * S.gasPrice * 3n) / 2n : ETH_RESERVE_FALLBACK);
+  const feeEstWei = (gasUnits) => (S.gasPrice ? gasUnits * S.gasPrice : null);
+  const balIn = () => (S.side === 'buy' ? S.ethBal : S.tacBal);
+  const ethUsdOf = (wei) => (S.ethUsd && wei != null ? toNum(wei) * S.ethUsd : null);
 
-  async function doQuote(amt, dirAtCall) {
-    state.quoting = true;
-    renderQuote(); updateActionButton();
-    const addr = getAddress();
+  // ── spot + quote ──────────────────────────────────────────────────────────
+  // The spot rate from a tiny probe through the deepest venue; the Tacit AMM answers when the
+  // band can't. Shown before any amount is typed and used for price impact.
+  async function refreshSpot(force = false) {
+    const d = dir();
+    if (!force && S.spot && S.spotDir === d && Date.now() - S.spotAt < SPOT_REFRESH_MS) return;
+    const probe = SPOT_PROBE[d];
+    let q = null;
+    try { q = await venues().quotePrecision({ dir: d, amountIn: probe }); } catch {}
+    if (!q) { try { q = await venues().quoteTacitAmm({ dir: d, amountIn: probe }); } catch {} }
+    if (S.destroyed || dir() !== d) return;
+    if (q && q.amountOut > 0n) {
+      // rate = out per 1 in, scaled 1e18
+      S.spot = { dir: d, rate: (q.amountOut * 10n ** 18n) / q.amountIn, venue: q.venue };
+      S.spotDir = d;
+    } else if (S.spotDir !== d) { S.spot = null; }
+    S.spotAt = Date.now();
+    paintSpot(); paintQuote(); paintVenues(); paintGo();
+  }
+  // TAC per ETH and ETH per TAC as floats, for display only.
+  function spotRates() {
+    if (!S.spot) return null;
+    const r = toNum(S.spot.rate);
+    if (!(r > 0)) return null;
+    return S.spot.dir === 'ETH_TO_TAC' ? { tacPerEth: r, ethPerTac: 1 / r } : { tacPerEth: 1 / r, ethPerTac: r };
+  }
+  function impactBps(q) {
+    if (!q || !q.best || !S.spot || S.spot.dir !== q.dir) return null;
+    const rate = (q.best.amountOut * 10n ** 18n) / q.amountIn;
+    if (rate >= S.spot.rate) return 0;
+    return Number(((S.spot.rate - rate) * 10000n) / S.spot.rate);
+  }
+  const minOutOf = (amountOut, bps) => (amountOut * BigInt(10000 - bps)) / 10000n;
+
+  // The pools answer in a second or two; the aggregator probe can take several and usually has
+  // no route, so it joins the quote when it answers instead of holding the whole quote back.
+  async function doQuote(amt, d) {
+    const seq = ++S.quoteSeq;
+    S.quoting = true; paintQuote(); paintGo();
+    const account = address() || undefined;
+    const v = venues();
+    const zq = typeof v.quoteZQuoter === 'function'
+      ? Promise.race([v.quoteZQuoter({ dir: d, amountIn: amt, account }).then((r) => r || { venue: VENUES.ZQUOTER, status: 'error' }, () => ({ venue: VENUES.ZQUOTER, status: 'error' })), sleep(ZQUOTER_WAIT_MS).then(() => ({ venue: VENUES.ZQUOTER, status: 'timeout' }))])
+      : Promise.resolve(null);
     try {
-      const result = await venues.quoteAll({ dir: dirAtCall, amountIn: amt, account: addr || undefined, includeZQuoter: true });
-      // Stale-response guard: discard if the input or direction moved on since this call started.
-      if (state.dir !== dirAtCall || parseUnitsStr(state.amountStr, 18) !== amt) return;
-      state.quote = result;
-    } catch { /* leave state.quote as-is on a transient failure */ }
+      const result = await v.quoteAll({ dir: d, amountIn: amt, account, includeZQuoter: false });
+      if (S.destroyed || seq !== S.quoteSeq) return;
+      result.zquoter = { venue: VENUES.ZQUOTER, status: 'pending' };
+      S.quote = result;
+    } catch { /* keep the last quote on a transient failure */ }
     finally {
-      state.quoting = false;
-      renderQuote(); updateActionButton();
+      if (seq === S.quoteSeq) { S.quoting = false; paintQuote(); paintVenues(); paintGo(); }
     }
+    refreshGas().then(() => { if (!S.destroyed && seq === S.quoteSeq) { paintQuote(); paintGo(); } });
+    const z = await zq;
+    if (S.destroyed || seq !== S.quoteSeq || !S.quote || !z) return;
+    S.quote.zquoter = z;
+    if (z.status === 'ok' && z.amountOut > 0n) {
+      S.quote.ranked = [...S.quote.ranked.filter((r) => r.venue !== VENUES.ZQUOTER), z].sort((a, b) => (a.amountOut === b.amountOut ? 0 : a.amountOut > b.amountOut ? -1 : 1));
+      S.quote.best = S.quote.ranked[0];
+    }
+    paintQuote(); paintVenues(); paintGo();
   }
-
   function scheduleQuote(immediate) {
-    if (state.debTimer) { clearTimeout(state.debTimer); state.debTimer = null; }
-    const amt = parseUnitsStr(state.amountStr, 18);
-    if (!amt || amt <= 0n) {
-      state.quote = null; state.quoting = false;
-      renderQuote(); updateActionButton();
-      return;
+    clearTimeout(S.debTimer); S.debTimer = null;
+    const amt = parseUnitsStr(S.amountStr);
+    if (!amt || amt <= 0n) { S.quote = null; S.quoting = false; S.quoteSeq++; paintQuote(); paintVenues(); paintGo(); return; }
+    const d = dir();
+    const run = () => doQuote(amt, d);
+    if (immediate) run(); else S.debTimer = setTimeout(run, DEBOUNCE_MS);
+  }
+
+  // ── paint ─────────────────────────────────────────────────────────────────
+  function paintFrame() {
+    $$('[data-act=eside]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.v === S.side)));
+    el.ticket.dataset.side = S.side;
+    el.mode.textContent = S.side === 'buy'
+      ? 'Buy TAC with ETH at the best price across Ethereum venues.'
+      : 'Sell TAC for ETH at the best price across Ethereum venues.';
+    el.label.textContent = S.side === 'buy' ? 'You spend' : 'You sell';
+    el.unit.innerHTML = `${iconFor(inTicker())}${inTicker()}`;
+    el.amount.setAttribute('aria-label', `Amount in ${inTicker()}`);
+    el.fine.innerHTML = `Settles on Ethereum mainnet from your own wallet. TAC (ERC20) <a href="${ETHERSCAN_TOKEN}" target="_blank" rel="noopener noreferrer">${esc(short(TAC_ERC20))}</a>`;
+    paintOpts();
+  }
+  function paintOpts() {
+    el.optsSum.innerHTML = `Slippage <b>${slipLabel()}</b>`;
+    const html = `<label class="bm-opt"><span>Slippage</span><select data-act="eslip">${SLIPPAGE_CHOICES.map(([b, l]) => `<option value="${b}"${b === S.slippageBps ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+      <p class="bm-q bm-muted">The swap reverts, spending only its network fee, if the price moves against you by more than this before it runs.</p>`;
+    if (el.optsBody.innerHTML !== html) el.optsBody.innerHTML = html;
+  }
+  function paintSpot() {
+    const r = spotRates();
+    let html = '';
+    if (r) {
+      const usd = S.ethUsd ? fmtUsd(r.ethPerTac * S.ethUsd) : '';
+      html = `<span><b>1 TAC</b> ≈ ${fmtRate(r.ethPerTac)} ETH${usd ? ` <em>${usd}</em>` : ''}</span><span><b>1 ETH</b> ≈ ${fmtRate(r.tacPerEth)} TAC${S.ethUsd ? ` <em>${fmtUsd(S.ethUsd)}</em>` : ''}</span>`;
+    } else if (S.spotAt === 0) html = `<span class="bm-muted">Fetching the Ethereum price…</span>`;
+    else html = `<span class="bm-muted">No Ethereum price right now.</span>`;
+    if (el.spot.innerHTML !== html) el.spot.innerHTML = html;
+  }
+  function paintBalance() {
+    const addr = address();
+    let bal = '';
+    const chips = [];
+    if (!addr) {
+      bal = `<button type="button" class="bm-link" data-act="econnect">Connect an Ethereum wallet</button> to see your balance`;
+    } else {
+      const b = balIn();
+      bal = b == null ? 'Balance: checking…' : `Balance: <b>${fmtTok(b, inTicker())}</b> ${inTicker()} <span class="bm-addr" title="${esc(addr)}">· ${esc(short(addr))}</span>`;
+      if (b != null && b > 0n) {
+        const spendable = S.side === 'buy' ? (b > ethReserve() ? b - ethReserve() : 0n) : b;
+        for (const p of [25, 50, 100]) {
+          const v = (spendable * BigInt(p)) / 100n;
+          if (v > 0n) chips.push(`<button type="button" data-act="echip" data-v="${formatUnitsStr(v, 18, 18)}" title="${p === 100 && S.side === 'buy' ? 'Everything but the ETH the network fee needs' : ''}">${p === 100 ? 'Max' : p + '%'}</button>`);
+        }
+      }
     }
-    const dirAtCall = state.dir;
-    const run = () => { doQuote(amt, dirAtCall); };
-    if (immediate) run();
-    else state.debTimer = setTimeout(run, DEBOUNCE_MS);
+    if (el.bal.innerHTML !== bal) el.bal.innerHTML = bal;
+    const ch = chips.join('');
+    if (el.chips.innerHTML !== ch) el.chips.innerHTML = ch;
   }
-
-  async function ensureAllowance(built, addr, setStatus) {
-    if (!built.approval) return;
-    setStatus('Checking TAC allowance…');
-    const allowRaw = await ethCall(built.approval.token, encErc20Allowance(addr, built.approval.spender));
-    const allowance = decUint256(allowRaw);
-    if (allowance >= built.approval.amount) return;
-    setStatus('Approve TAC spend — confirm in your wallet…');
-    const data = encErc20Approve(built.approval.spender, built.approval.amount);
-    const hash = await state.opts.sendTx({ from: addr, to: built.approval.token, data });
-    setStatus('Waiting for approval confirmation…');
-    await waitForReceipt(hash);
+  // The cross-lane line: what the Bitcoin book last paid per TAC, next to this quote.
+  function bitcoinCompare(usdPerTacHere) {
+    const m = S.opts.market;
+    if (!m || !usdPerTacHere) return '';
+    let mark = null, btcUsd = 0;
+    try { mark = m.markUnit?.(); btcUsd = m.btcUsd?.() || 0; } catch {}
+    if (!(mark > 0) || !(btcUsd > 0)) return '';
+    const usdBtc = (mark / 1e8) * btcUsd;
+    const diff = ((usdPerTacHere - usdBtc) / usdBtc) * 100;
+    const better = S.side === 'buy' ? diff < 0 : diff > 0;
+    const word = Math.abs(diff) < 0.5 ? 'about the same as' : `${Math.abs(diff).toFixed(Math.abs(diff) < 10 ? 1 : 0)}% ${diff < 0 ? 'below' : 'above'}`;
+    return `<div class="bm-q bm-muted">On Bitcoin the last trade was ${mark.toLocaleString('en-US', { maximumFractionDigits: 2 })} sats per TAC <em>(${fmtUsd(usdBtc)})</em> — this price is ${word} it${Math.abs(diff) >= 0.5 ? (better ? ', in your favour' : '') : ''}.</div>`;
   }
+  function quoteView() {
+    const q = S.quote;
+    if (!q || !q.best) return null;
+    const bps = impactBps(q);
+    const minOut = minOutOf(q.best.amountOut, S.slippageBps);
+    const rateOut = toNum(q.best.amountOut) / toNum(q.amountIn); // out per in
+    const ethPerTac = S.side === 'buy' ? 1 / rateOut : rateOut;
+    const tacPerEth = S.side === 'buy' ? rateOut : 1 / rateOut;
+    const gas = GAS_GUESS[q.dir] + (S.side === 'sell' ? GAS_GUESS.approve : 0n);
+    return { q, bps, minOut, ethPerTac, tacPerEth, feeWei: feeEstWei(gas), usdPerTac: S.ethUsd ? ethPerTac * S.ethUsd : null };
+  }
+  function paintQuote() {
+    if (S.busy) return;
+    const amt = parseUnitsStr(S.amountStr);
+    const row = (k, v, cls = '') => `<div class="bm-qr ${cls}"><span>${k}</span><span>${v}</span></div>`;
+    let html = '';
+    if (!amt || amt <= 0n) { el.quote.innerHTML = ''; return; }
+    const v = quoteView();
+    if (!v) {
+      if (S.quoting && !S.quote) html = `<div class="bm-q bm-muted">Finding the best price…</div>`;
+      else if (S.quote && !S.quote.best) html = `<div class="bm-q bm-warn">No venue can fill this amount right now.</div>${S.quote.boards?.restingOrders > 0 ? `<div class="bm-q bm-muted">${S.quote.boards.restingOrders} resting order${S.quote.boards.restingOrders === 1 ? '' : 's'} on zSwap's boards may — <a href="${esc(zswapDeepLink({ host: ZSWAP_HOST, dir: dir(), amount: S.amountStr }) || ZSWAP_HOST)}" target="_blank" rel="noopener noreferrer">fill there ↗</a>.</div>` : ''}`;
+      else html = `<div class="bm-q bm-warn">Couldn't reach Ethereum to price this — <button type="button" class="bm-link" data-act="erequote">try again</button>.</div>`;
+      el.quote.innerHTML = html; return;
+    }
+    const { q, bps, minOut, ethPerTac, tacPerEth, feeWei, usdPerTac } = v;
+    const outT = outTicker();
+    const usdOut = S.side === 'buy' ? (usdPerTac ? toNum(q.best.amountOut) * usdPerTac : null) : ethUsdOf(q.best.amountOut);
+    html += row('You get', `<b>${fmtTok(q.best.amountOut, outT)} ${outT}</b>${usdOut != null ? ` <em>${fmtUsd(usdOut)}</em>` : ''}${S.quoting ? ' <em class="bm-refreshing">updating…</em>' : ''}`, 'big');
+    html += row('At least', `${fmtTok(minOut, outT)} ${outT} <em>after ${slipLabel()} slippage</em>`);
+    html += row('Price', `1 TAC = ${fmtRate(ethPerTac)} ETH${usdPerTac ? ` <em>${fmtUsd(usdPerTac)}</em>` : ''} · 1 ETH = ${fmtRate(tacPerEth)} TAC`);
+    if (bps != null) {
+      const cls = bps >= IMPACT_BLOCK_BPS ? 'bm-bad' : bps >= IMPACT_WARN_BPS ? 'bm-warn' : '';
+      html += row('Price impact', `<span class="${cls}">${fmtPct(bps)}</span>`);
+    }
+    html += row('Route', `${esc(venueLabel(q.best.venue))}${feePct(q.best) != null ? ` <em>${feePct(q.best).toFixed(2)}% fee</em>` : ''}`);
+    html += row('Network fee', feeWei != null ? `≈ ${fmtTok(feeWei, 'ETH')} ETH${ethUsdOf(feeWei) != null ? ` <em>${fmtUsd(ethUsdOf(feeWei))}</em>` : ''}` : 'estimating…', 'muted');
+    if (q.best.dustIn > 0n) html += `<div class="bm-q bm-note">${fmtTok(q.best.dustIn, inTicker())} ${inTicker()} stays in your wallet — this venue trades in steps of 0.00000001.</div>`;
+    if (bps != null && bps >= IMPACT_BLOCK_BPS) {
+      html += `<div class="bm-callout">This trade moves the price by ${(bps / 100).toFixed(1)}%. A smaller amount, or several, would get a better price.
+        <label class="bm-check"><input type="checkbox" data-act="eack"${S.ackImpact ? ' checked' : ''}><span>I understand I'm trading well off the market price</span></label></div>`;
+    } else if (bps != null && bps >= IMPACT_WARN_BPS) {
+      html += `<div class="bm-q bm-note">A large trade for this pool — splitting it would get a better average price.</div>`;
+    }
+    html += bitcoinCompare(usdPerTac);
+    el.quote.innerHTML = html;
+  }
+  function paintVenues() {
+    const q = S.quote;
+    const r = spotRates();
+    const T = outTicker();
+    const rowOf = (label, out, fee, best, why) => `<div class="bm-vrow${best ? ' best' : ''}" title="${esc(why)}"><span class="v">${best ? '<i class="bm-tag best">best</i>' : ''}${esc(label)}</span><span class="o">${out}</span><span class="f">${fee}</span></div>`;
+    const amt = parseUnitsStr(S.amountStr);
+    let rows = '';
+    const head = `<div class="bm-book-head"><span>Venue</span><span>${amt && amt > 0n ? `You'd get <em>${T}</em>` : 'Price'}</span><span>Fee</span></div>`;
+    if (q && amt && amt > 0n) {
+      const ranked = q.ranked || [];
+      const bestVenue = q.best?.venue;
+      const seen = new Set();
+      for (const v of ranked) {
+        seen.add(v.venue);
+        rows += rowOf(venueLabel(v.venue), `${fmtTok(v.amountOut, T)}`, feePct(v) != null ? `${feePct(v).toFixed(2)}%` : '—', v.venue === bestVenue, venueWhy(v.venue));
+      }
+      for (const v of [VENUES.PRECISION, VENUES.TACIT_AMM, VENUES.ZQUOTER]) {
+        if (seen.has(v)) continue;
+        const st = v === VENUES.ZQUOTER ? q.zquoter?.status : null;
+        const note = st === 'pending' ? 'checking…' : st === 'timeout' ? 'slow to answer' : 'no route';
+        rows += rowOf(venueLabel(v), `<em>${note}</em>`, '', false, venueWhy(v));
+      }
+      const resting = q.boards?.restingOrders || 0;
+      const link = resting > 0 ? zswapDeepLink({ host: ZSWAP_HOST, dir: q.dir, amount: S.amountStr || undefined }) : null;
+      rows += rowOf('Order boards', resting > 0 ? (link ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer">${resting} resting · fill on zSwap ↗</a>` : `${resting} resting`) : '<em>no resting orders</em>', '', false, 'Limit orders resting on zSwap boards. This page quotes them but fills them on zSwap.');
+    } else if (r) {
+      rows += rowOf(venueLabel(S.spot.venue), `1 ETH ≈ ${fmtRate(r.tacPerEth)} TAC`, '', true, venueWhy(S.spot.venue));
+      rows += `<div class="bm-empty">Enter an amount to compare every venue.</div>`;
+    } else {
+      rows += `<div class="bm-empty">${S.spotAt === 0 ? 'Reading Ethereum venues…' : 'No venue is quoting right now.'}</div>`;
+    }
+    const note = `<div class="bm-book-note"><span>One venue fills the whole trade — the one paying most.</span><span>Prices move block to block; the review re-checks them.</span></div>`;
+    const html = head + rows + note;
+    if (el.venues.__html !== html) { el.venues.innerHTML = html; el.venues.__html = html; }
+  }
+  function paintGo() {
+    if (S.busy) return;
+    const set = (t, on, kind = '') => { el.go.textContent = t; el.go.disabled = !on; el.go.dataset.kind = kind; };
+    const amt = parseUnitsStr(S.amountStr);
+    if (!amt || amt <= 0n) return set('Enter an amount', false);
+    if (!address()) return set('Connect wallet', true, 'connect');
+    const b = balIn();
+    if (b != null && amt > b) return set(`Not enough ${inTicker()}`, false);
+    if (S.quoting && !S.quote?.best) return set('Finding the best price…', false);
+    if (!S.quote || !S.quote.best) return set('No price right now', false);
+    if (S.side === 'buy' && S.ethBal != null && S.gasPrice && amt + feeEstWei(GAS_GUESS.ETH_TO_TAC) > S.ethBal) return set('Not enough ETH for the network fee', false);
+    const bps = impactBps(S.quote);
+    if (bps != null && bps >= IMPACT_BLOCK_BPS && !S.ackImpact) return set('Confirm the price impact above', false);
+    return set(S.side === 'buy' ? 'Review buy' : 'Review sell', true, 'review');
+  }
+  function paintAll() { if (S.destroyed) return; paintFrame(); paintSpot(); paintBalance(); paintQuote(); paintVenues(); paintGo(); }
 
-  async function doConnect() {
-    const btn = $('[data-lane-action]');
-    if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
+  // ── review + execute ──────────────────────────────────────────────────────
+  function modal() {
+    const wrap = document.createElement('div');
+    wrap.className = 'bm-modal';
+    wrap.setAttribute('role', 'dialog'); wrap.setAttribute('aria-modal', 'true');
+    wrap.innerHTML = `<div class="bm-card" data-side="${S.side}"><div class="bm-mbody"></div><div class="bm-mfoot"></div></div>`;
+    document.body.appendChild(wrap);
+    const body = wrap.querySelector('.bm-mbody'), foot = wrap.querySelector('.bm-mfoot');
+    let onKey = null, escLocked = false;
+    return {
+      body, foot,
+      set(html) { body.innerHTML = html; },
+      buttons(btns) {
+        foot.innerHTML = btns.map((b, i) => `<button type="button" data-i="${i}" class="${b.primary ? 'bm-go' : ''}"${b.disabled ? ' disabled' : ''}>${esc(b.label)}</button>`).join('');
+        foot.querySelectorAll('button').forEach((n) => {
+          n.onclick = () => {
+            if (btns[+n.dataset.i].once !== false) {
+              foot.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+              if (n.classList.contains('bm-go')) n.textContent = 'Working…';
+            }
+            btns[+n.dataset.i].onClick();
+          };
+        });
+        foot.querySelector('.bm-go')?.focus();
+      },
+      close() { if (onKey) document.removeEventListener('keydown', onKey); wrap.remove(); },
+      onEscape(fn) { onKey = (e) => { if (e.key === 'Escape' && !escLocked) fn(); }; document.addEventListener('keydown', onKey); },
+      lockEscape() { escLocked = true; },
+    };
+  }
+  const stepsHtml = (steps) => `<ol class="bm-steps">${steps.map((s) => `<li class="${s.status}"><span class="st">${{ queued: '○', working: '◐', waiting: '◔', done: '✓', failed: '✕', skipped: '–' }[s.status] || '○'}</span><span class="lb">${s.label}${s.note ? `<em>${esc(s.note)}</em>` : ''}${s.hash ? ` <a href="${esc(txUrl(s.hash))}" target="_blank" rel="noopener">tx</a>` : ''}</span></li>`).join('')}</ol>`;
+  const row = (k, v) => `<div class="bm-qr"><span>${k}</span><span>${v}</span></div>`;
+
+  async function connect() {
+    el.go.disabled = true; el.go.textContent = 'Connecting…';
     try {
-      await state.opts.connect();
+      await S.opts.connect();
       await refreshBalances();
+      refreshGas().then(() => { if (!S.destroyed) { paintBalance(); paintGo(); } });
       scheduleQuote(true);
     } catch (e) {
-      notify(formatErr(e, 'Connect'), 'error');
-    } finally {
-      updateActionButton();
-    }
+      notify(friendlyEthError(e), 'error');
+    } finally { paintBalance(); paintGo(); }
   }
 
-  async function doExecute() {
-    const statusEl = $('[data-lane-status]');
-    const btn = $('[data-lane-action]');
-    const setStatus = (s) => { if (statusEl) statusEl.textContent = s; };
-    const setStatusHtml = (h) => { if (statusEl) statusEl.innerHTML = h; };
-    const addr = getAddress();
-    if (!addr) { return doConnect(); }
-    const amt = parseUnitsStr(state.amountStr, 18);
-    if (!amt || amt <= 0n) return;
-    const dirAtCall = state.dir;
-    state.busy = true;
-    if (btn) btn.disabled = true;
+  async function review() {
+    if (S.busy || S.destroyed) return;
+    if (el.go.dataset.kind === 'connect') return connect();
+    const v = quoteView();
+    const amt = parseUnitsStr(S.amountStr);
+    if (!v || !amt) return;
+    if (!address()) return connect();
+    const { q, bps, minOut, ethPerTac, tacPerEth, feeWei, usdPerTac } = v;
+    const outT = outTicker(), inT = inTicker();
+    const md = modal();
+    md.onEscape(() => md.close());
+    const needsApproval = S.side === 'sell';
+    const usdIn = S.side === 'buy' ? ethUsdOf(amt) : (usdPerTac ? toNum(amt) * usdPerTac : null);
+    md.set(`<h2>${S.side === 'buy' ? 'Buy' : 'Sell'} ${S.side === 'buy' ? fmtTok(q.best.amountOut, 'TAC') : fmtTok(amt, 'TAC')} TAC</h2>
+      ${row(S.side === 'buy' ? 'You pay' : 'You sell', `<b>${fmtTok(amt, inT)} ${inT}</b>${usdIn != null ? ` <em>${fmtUsd(usdIn)}</em>` : ''}`)}
+      ${row('You get', `≈ ${fmtTok(q.best.amountOut, outT)} ${outT}`)}
+      ${row('At least', `<b>${fmtTok(minOut, outT)} ${outT}</b> <em>or the swap reverts</em>`)}
+      ${row('Price', `1 TAC = ${fmtRate(ethPerTac)} ETH · 1 ETH = ${fmtRate(tacPerEth)} TAC`)}
+      ${bps != null ? row('Price impact', fmtPct(bps)) : ''}
+      ${row('Route', `${esc(venueLabel(q.best.venue))} on Ethereum`)}
+      ${row('Network fee', feeWei != null ? `≈ ${fmtTok(feeWei, 'ETH')} ETH${ethUsdOf(feeWei) != null ? ` <em>${fmtUsd(ethUsdOf(feeWei))}</em>` : ''}${needsApproval ? ' <em>(two transactions the first time)</em>' : ''}` : 'shown in your wallet')}
+      <p class="bm-q bm-muted">The price is checked again right before sending. If it has moved so you'd get less than the figure above, you'll be asked first.</p>
+      ${stepsHtml([...(needsApproval ? [{ status: 'queued', label: 'Allow the venue to take your TAC', note: 'skipped if already allowed' }] : []), { status: 'queued', label: 'Confirm in your wallet' }, { status: 'queued', label: 'Confirming on Ethereum' }])}`);
+    md.buttons([{ label: 'Cancel', onClick: () => md.close() }, { label: S.side === 'buy' ? 'Buy now' : 'Sell now', primary: true, onClick: () => run(md, { amt, dir: q.dir, reviewed: q.best, minOut, side: S.side }) }]);
+  }
+
+  async function waitForReceipt(hash) {
+    const start = Date.now();
+    for (;;) {
+      let r = null;
+      try { r = await rpc().receipt(hash); } catch {}
+      if (r) return r;
+      if (Date.now() - start > RECEIPT_TIMEOUT_MS) throw new Error('Timed out waiting for confirmation — check the transaction on Etherscan.');
+      await sleep(RECEIPT_POLL_MS);
+    }
+  }
+  // TAC paid to `account` in this receipt, from the token's Transfer logs.
+  function tacReceived(receipt, account) {
+    let total = 0n;
+    const me = String(account).toLowerCase().replace(/^0x/, '').padStart(64, '0');
+    for (const log of receipt?.logs || []) {
+      if (String(log.address).toLowerCase() !== TAC_ERC20.toLowerCase()) continue;
+      if (!log.topics || log.topics[0] !== ERC20_TRANSFER_TOPIC || log.topics.length < 3) continue;
+      if (String(log.topics[2]).toLowerCase().replace(/^0x/, '') !== me) continue;
+      try { total += BigInt(log.data); } catch {}
+    }
+    return total;
+  }
+  async function ensureAllowance(built, addr, step, paint) {
+    if (!built.approval) { if (step && step.status === 'queued') { step.status = 'skipped'; step.note = 'not needed for this route'; paint(); } return; }
+    if (step.status === 'done') return;
+    step.status = 'working'; step.note = 'checking what\'s already allowed'; paint();
+    const allowance = decUint256(await rpc().call(built.approval.token, encErc20Allowance(addr, built.approval.spender)));
+    if (allowance >= built.approval.amount) { step.status = 'skipped'; step.note = 'already allowed'; paint(); return; }
+    step.note = 'confirm the allowance in your wallet'; paint();
+    const hash = await S.opts.sendTx({ from: addr, to: built.approval.token, data: encErc20Approve(built.approval.spender, built.approval.amount) });
+    step.status = 'waiting'; step.note = 'waiting for it to confirm'; step.hash = hash; paint();
+    const r = await waitForReceipt(hash);
+    if (r && r.status !== '0x1') throw new Error('The allowance transaction reverted.');
+    step.status = 'done'; step.note = ''; paint();
+  }
+
+  // The reviewed floor (`minOut`) is what runs: a fresh quote that still clears it is sent
+  // with that same floor; one that can't asks the user before anything is signed.
+  async function run(md, { amt, dir: d, reviewed, minOut, side }) {
+    const addr = address();
+    if (!addr) { md.close(); return; }
+    if (S.busy) { md.set('<h2>Another swap is still running</h2><p class="bm-q">Wait for it to finish, then try again.</p>'); md.buttons([{ label: 'Close', primary: true, onClick: () => md.close() }]); return; }
+    S.busy = true; el.go.disabled = true; el.go.textContent = 'Working…';
+    md.lockEscape();
+    const outT = side === 'buy' ? 'TAC' : 'ETH';
+    const approveStep = side === 'sell' ? { status: 'queued', label: 'Allow the venue to take your TAC' } : null;
+    const signStep = { status: 'queued', label: 'Confirm in your wallet' };
+    const mineStep = { status: 'queued', label: 'Confirming on Ethereum' };
+    const steps = [...(approveStep ? [approveStep] : []), signStep, mineStep];
+    const title = side === 'buy' ? 'Buying…' : 'Selling…';
+    const paint = () => md.set(`<h2>${title}</h2>${stepsHtml(steps)}`);
+    md.buttons([]);
+    paint();
+    let err = null, hash = null, receipt = null, quoteUsed = reviewed, minUsed = minOut;
     try {
-      // Initial quote (reuse a fresh cached one if present) just to learn the venue
-      // shape well enough to know whether an approval is needed at all.
-      let quote = state.quote && state.quote.best;
-      if (!quote) {
-        setStatus('Quoting…');
-        const q0 = await venues.quoteAll({ dir: dirAtCall, amountIn: amt, account: addr });
-        quote = q0.best;
+      let built = venues().build({ quote: reviewed, dir: d, account: addr, slippageBps: S.slippageBps, minOut });
+      await ensureAllowance(built, addr, approveStep, paint);
+
+      signStep.status = 'working'; signStep.note = 're-checking the price'; paint();
+      const fresh = await venues().quoteAll({ dir: d, amountIn: amt, account: addr, includeZQuoter: false });
+      if (!fresh.best) throw new Error('No venue can fill this amount right now — nothing was sent.');
+      if (fresh.best.amountOut < minOut) {
+        const newMin = minOutOf(fresh.best.amountOut, S.slippageBps);
+        const accepted = await new Promise((resolve) => {
+          md.set(`<h2>The price moved</h2>
+            ${row('You were shown', `≈ ${fmtTok(reviewed.amountOut, outT)} ${outT} <em>at least ${fmtTok(minOut, outT)}</em>`)}
+            ${row('It is now', `<b>≈ ${fmtTok(fresh.best.amountOut, outT)} ${outT}</b> <em>at least ${fmtTok(newMin, outT)}</em>`)}
+            <p class="bm-q bm-muted">Nothing has been sent. Continue at the new price, or stop here.</p>`);
+          md.buttons([{ label: 'Stop — send nothing', onClick: () => resolve(false) }, { label: 'Continue at the new price', primary: true, onClick: () => resolve(true) }]);
+        });
+        if (!accepted) {
+          S.quote = fresh; S.busy = false; paintAll();
+          md.set('<h2>Nothing sent</h2><p class="bm-q">The quote on the page has been refreshed.</p>');
+          md.buttons([{ label: 'Done', primary: true, onClick: () => md.close() }]);
+          return;
+        }
+        quoteUsed = fresh.best; minUsed = newMin;
+        paint();
+      } else {
+        quoteUsed = fresh.best;
       }
-      if (!quote) throw new Error('No route available for this amount.');
-      let built = venues.build({ quote, dir: dirAtCall, account: addr, slippageBps: state.slippageBps });
-      await ensureAllowance(built, addr, setStatus);
+      built = venues().build({ quote: quoteUsed, dir: d, account: addr, slippageBps: S.slippageBps, minOut: minUsed });
+      // The winning venue may have changed between the two quotes; the allowance follows it.
+      if (approveStep) await ensureAllowance(built, addr, approveStep, paint);
 
-      // Precision's price can move block-to-block — always re-quote right before the
-      // real build, including right after an approval just confirmed.
-      setStatus('Re-quoting for the final price…');
-      if (btn) btn.textContent = 'Swap';
-      const fresh = await venues.quoteAll({ dir: dirAtCall, amountIn: amt, account: addr });
-      const freshQuote = fresh.best;
-      if (!freshQuote) throw new Error('No route available for this amount.');
-      built = venues.build({ quote: freshQuote, dir: dirAtCall, account: addr, slippageBps: state.slippageBps });
-      state.quote = fresh;
-      renderQuote();
-      // Defensive: only re-checks if the fresh route needs a different/larger approval
-      // than what's already granted (e.g. the winning venue flipped between quotes).
-      await ensureAllowance(built, addr, setStatus);
-
-      setStatus('Simulating…');
-      const valueHex = built.value && built.value > 0n ? '0x' + built.value.toString(16) : undefined;
-      try {
-        await ethCall(built.to, built.data, 'latest', { from: addr, value: valueHex });
-      } catch (simErr) {
+      signStep.status = 'working'; signStep.note = 'simulating'; paint();
+      const valueHex = built.value && built.value > 0n ? hex(built.value) : undefined;
+      try { await rpc().call(built.to, built.data, 'latest', { from: addr, value: valueHex }); }
+      catch (simErr) {
         const reason = decodeRevertReason(simErr);
-        throw new Error(reason || 'Simulation failed — this transaction would revert. Try re-quoting or raising slippage.');
+        if (/insufficient funds/i.test(String(simErr?.message || ''))) throw new Error('insufficient funds');
+        throw new Error(reason ? `It would fail: ${reason}` : 'This swap would fail right now — nothing was sent. Quote again or allow more slippage.');
       }
-
-      setStatus('Awaiting wallet signature…');
-      const txHash = await state.opts.sendTx({ from: addr, to: built.to, data: built.data, value: valueHex });
-      setStatusHtml(`Submitted — <a href="${ETHERSCAN_TX(txHash)}" target="_blank" rel="noopener noreferrer">view on Etherscan</a>. Waiting for confirmation…`);
-      const receipt = await waitForReceipt(txHash);
-      if (receipt && receipt.status !== '0x1') throw new Error('Transaction reverted on-chain.');
-      setStatusHtml(`Swap confirmed — <a href="${ETHERSCAN_TX(txHash)}" target="_blank" rel="noopener noreferrer">view on Etherscan</a>.`);
-      notify('Swap confirmed', 'ok');
-      state.amountStr = '';
-      const payInput = $('[data-lane-input="pay"]');
-      if (payInput) payInput.value = '';
-      state.quote = null;
-      renderQuote();
-      await refreshBalances();
+      signStep.note = 'confirm in your wallet'; paint();
+      hash = await S.opts.sendTx({ from: addr, to: built.to, data: built.data, value: valueHex });
+      signStep.status = 'done'; signStep.note = ''; signStep.hash = hash;
+      mineStep.status = 'waiting'; mineStep.note = 'usually under a minute'; paint();
+      receipt = await waitForReceipt(hash);
+      if (receipt && receipt.status !== '0x1') throw new Error('The swap reverted on Ethereum — your funds stayed where they were, only the network fee was spent.');
+      mineStep.status = 'done'; mineStep.note = '';
     } catch (e) {
-      const msg = formatErr(e, 'Swap');
-      setStatus(msg);
-      notify(msg, 'error');
-    } finally {
-      state.busy = false;
-      updateActionButton();
+      err = e;
+      const s = steps.find((x) => x.status === 'working' || x.status === 'waiting') || signStep;
+      s.status = 'failed'; s.note = friendlyEthError(e);
+      for (const x of steps) if (x.status === 'queued') x.status = 'skipped';
     }
+    S.busy = false;
+    if (err) {
+      md.set(`<h2>${hash ? 'Swap failed' : 'Nothing sent'}</h2><p class="bm-q">${esc(friendlyEthError(err))}</p>${stepsHtml(steps)}`);
+      md.buttons([{ label: 'Done', primary: true, onClick: () => md.close() }]);
+      if (!isUserRejection(err)) notify(friendlyEthError(err), 'error');
+      refreshBalances(); scheduleQuote(true); paintGo();
+      return;
+    }
+    const got = side === 'buy' ? tacReceived(receipt, addr) : null;
+    const before = side === 'sell' ? S.ethBal : null;
+    S.amountStr = ''; el.amount.value = ''; S.quote = null; S.ackImpact = false;
+    await refreshBalances();
+    const ethDelta = side === 'sell' && before != null && S.ethBal != null ? S.ethBal - before : null;
+    const headline = side === 'buy'
+      ? `Bought ${fmtTok(got > 0n ? got : quoteUsed.amountOut, 'TAC')} TAC`
+      : `Sold ${fmtTok(amt, 'TAC')} TAC`;
+    const detail = side === 'buy'
+      ? `${got > 0n ? 'It' : 'About that much'} is in your Ethereum wallet now.`
+      : (ethDelta != null && ethDelta > 0n ? `Your ETH balance rose by about ${fmtTok(ethDelta, 'ETH')} ETH after the network fee.` : `About ${fmtTok(quoteUsed.amountOut, 'ETH')} ETH is in your Ethereum wallet now.`);
+    md.set(`<h2>${headline}</h2><p class="bm-q">${detail} <a href="${esc(txUrl(hash))}" target="_blank" rel="noopener noreferrer">View on Etherscan ↗</a></p>${stepsHtml(steps)}`);
+    md.buttons([{ label: 'Done', primary: true, onClick: () => md.close() }]);
+    notify(headline, 'ok');
+    paintAll();
   }
 
-  // ── wire ──
-  const payInput = $('[data-lane-input="pay"]');
-  if (payInput) payInput.oninput = () => {
-    state.amountStr = payInput.value;
-    updateActionButton();
-    scheduleQuote(false);
-  };
-  const flipBtn = $('[data-lane-flip]');
-  if (flipBtn) flipBtn.onclick = () => {
-    state.dir = state.dir === 'ETH_TO_TAC' ? 'TAC_TO_ETH' : 'ETH_TO_TAC';
-    applyDirection();
-    state.quote = null;
-    renderQuote();
-    scheduleQuote(true);
-  };
-  const slipSel = $('[data-lane-slippage]');
-  if (slipSel) slipSel.onchange = (e) => { state.slippageBps = parseInt(e.target.value, 10) || 50; };
-  const actionBtn = $('[data-lane-action]');
-  if (actionBtn) actionBtn.onclick = () => {
-    if (!getAddress()) { doConnect(); return; }
-    doExecute();
-  };
+  // ── events ────────────────────────────────────────────────────────────────
+  host.addEventListener('click', (e) => {
+    if (S.destroyed) return;
+    const t = e.target.closest('[data-act]');
+    if (!t || !host.contains(t)) return;
+    const act = t.dataset.act;
+    if (act === 'eside') {
+      if (S.side !== t.dataset.v) {
+        S.side = t.dataset.v; S.amountStr = ''; el.amount.value = ''; S.quote = null; S.ackImpact = false; savePref();
+        paintAll(); refreshSpot(true); el.amount.focus({ preventScroll: true });
+      }
+      return;
+    }
+    if (act === 'echip') { S.amountStr = t.dataset.v; el.amount.value = t.dataset.v; S.ackImpact = false; paintGo(); scheduleQuote(true); return; }
+    if (act === 'econnect') { connect(); return; }
+    if (act === 'erequote') { scheduleQuote(true); return; }
+    if (act === 'ego') { review(); return; }
+  }, sig);
+  host.addEventListener('change', (e) => {
+    const t = e.target.closest('[data-act]');
+    if (!t) return;
+    if (t.dataset.act === 'eslip') { S.slippageBps = Number(t.value) || DEFAULT_SLIPPAGE_BPS; savePref(); paintOpts(); paintQuote(); }
+    if (t.dataset.act === 'eack') { S.ackImpact = t.checked; paintGo(); }
+  }, sig);
+  el.amount.addEventListener('input', () => { S.amountStr = el.amount.value; S.ackImpact = false; paintGo(); scheduleQuote(false); }, sig);
+  el.amount.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !el.go.disabled) review(); }, sig);
 
-  applyDirection();
-  renderQuote();
-  updateActionButton();
-  state.bgTimer = setInterval(() => {
-    if (state.busy) return;
+  // ── background ────────────────────────────────────────────────────────────
+  S.bgTimer = setInterval(() => {
+    if (S.destroyed || S.busy) return;
     if (typeof document !== 'undefined' && document.visibilityState && document.visibilityState !== 'visible') return;
-    const amt = parseUnitsStr(state.amountStr, 18);
-    if (!amt || amt <= 0n) return;
-    scheduleQuote(true);
+    if (!host.isConnected) { destroy(); return; }
+    if (address() !== S.balAddr) refreshBalances();
+    refreshSpot();
+    const amt = parseUnitsStr(S.amountStr);
+    if (amt && amt > 0n) scheduleQuote(true);
   }, BG_REQUOTE_MS);
+  function destroy() {
+    S.destroyed = true;
+    clearTimeout(S.debTimer); clearInterval(S.bgTimer);
+    ac.abort();
+  }
 
-  const ctl = {
-    setOpts(o) { state.opts = o; updateActionButton(); },
-    destroy() {
-      if (state.debTimer) clearTimeout(state.debTimer);
-      if (state.bgTimer) clearInterval(state.bgTimer);
-    },
+  // first paint
+  paintAll();
+  refreshSpot(true);
+  refreshBalances();
+  refreshGas().then(() => { if (!S.destroyed) { paintBalance(); paintQuote(); paintGo(); } });
+  (S.opts.ethUsd ? Promise.resolve(S.opts.ethUsd()) : fetchEthUsd()).then((p) => { if (!S.destroyed && p > 0) { S.ethUsd = p; paintSpot(); paintQuote(); } }).catch(() => {});
+
+  return {
+    setOpts(o) { S.opts = o || {}; paintBalance(); paintGo(); if (address() !== S.balAddr) refreshBalances(); },
+    refresh() { refreshSpot(true); refreshBalances(); scheduleQuote(true); },
+    destroy,
+    get state() { return S; },
   };
-  host.__evmLane = ctl;
-  return ctl;
 }

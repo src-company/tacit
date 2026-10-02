@@ -5191,11 +5191,22 @@ const ethNamesBridge = {
 // back to "Connect wallet" with no error) since every subsequent balance/quote/send call
 // treats the wallet as never having connected at all.
 let _evmTradeLaneAddr = null;
+let _evmTradeLaneWatched = null;
 const evmTradeLaneWallet = {
   address() { return _evmTradeLaneAddr; },
   async connect() {
-    const { address } = await ethWallet.connect();
+    const { provider, address } = await ethWallet.connect();
     _evmTradeLaneAddr = '0x' + String(address).replace(/^0x/, '');
+    // Follow the wallet's active account so the ticket's balance and sender stay the one shown.
+    if (provider && typeof provider.on === 'function' && _evmTradeLaneWatched !== provider) {
+      _evmTradeLaneWatched = provider;
+      try {
+        provider.on('accountsChanged', (accounts) => {
+          const a = Array.isArray(accounts) && accounts[0] ? String(accounts[0]).toLowerCase().replace(/^0x/, '') : '';
+          _evmTradeLaneAddr = /^[0-9a-f]{40}$/.test(a) ? '0x' + a : null;
+        });
+      } catch {}
+    }
     return _evmTradeLaneAddr;
   },
   async sendTx({ from, to, data, value }) {
@@ -70364,10 +70375,10 @@ function _btcMarketCtx(aid) {
       watchtower: { enabled: !!WATCHTOWER_SERVICE_PUB, maxSats: WATCHTOWER_MAX_BID_SATS },
     },
     icons: { btc: _btcLogoSvg(16), eth: _ethLogoSvg(16) },
-    mountEth: isTac ? (el) => {
+    mountEth: isTac ? (el, market) => {
       el.id = 'evm-trade-lane-host';
       el.setAttribute('data-evm-trade-lane', '');
-      mountEvmTradeLane(el, evmTradeLaneWallet);
+      mountEvmTradeLane(el, { ...evmTradeLaneWallet, market });
     } : null,
     initialLane: isTac ? _marketTacLane : 'btc',
     onLane: (lane) => { if (!isTac) return; _marketTacLane = lane; _saveMarketTacLane(lane); _writeMarketHash(aid); },

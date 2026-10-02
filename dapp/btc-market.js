@@ -139,7 +139,7 @@ function createMarket(host, ctx) {
     unitBtn: $('[data-k=unit]'), chips: $('[data-k=chips]'), bal: $('[data-k=bal]'), quote: $('[data-k=quote]'),
     go: $('[data-k=go]'), fine: $('[data-k=fine]'), opts: $('[data-k=opts]'),
     orders: $('[data-k=orders]'), trades: $('[data-k=trades]'),
-    laneBtc: $('[data-lane=btc]'), laneEth: $('[data-lane=eth]'), ethHost: $('[data-k=eth-host]'),
+    laneBtc: $('[data-lane=btc]'), laneEth: $('[data-lane=eth]'), ethHost: $('[data-k=eth-host]'), laneNote: $('[data-k=lane-note]'),
   };
 
   function shellHtml() {
@@ -172,6 +172,7 @@ function createMarket(host, ctx) {
         <div class="bm-chart-body" data-k="chart"></div>
       </div>
       ${lanes}
+      ${ctx.mountEth ? `<p class="bm-lane-note" data-k="lane-note"></p>` : ''}
       <div class="bm-lane" data-lane="btc">
         <div class="bm-grid">
           <div class="bm-left">
@@ -299,6 +300,7 @@ function createMarket(host, ctx) {
   }
 
   function paintLive() {
+    if (S.lane === 'eth') { el.live.className = 'bm-live ok'; el.live.textContent = 'Ethereum mainnet'; return; }
     if (S.lastErr && (!S.lastOk || Date.now() - S.lastOk > 45_000)) {
       el.live.className = 'bm-live bad';
       el.live.innerHTML = `offline — retrying <button type="button" data-act="refresh">retry now</button>`;
@@ -1489,8 +1491,17 @@ function createMarket(host, ctx) {
     $$('[data-act=lane]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.v === lane)));
     if (el.laneBtc) el.laneBtc.hidden = lane !== 'btc';
     if (el.laneEth) el.laneEth.hidden = lane !== 'eth';
-    if (lane === 'eth' && ctx.mountEth && el.ethHost) ctx.mountEth(el.ethHost);
+    if (el.laneNote) {
+      el.laneNote.textContent = lane === 'eth'
+        ? `ETH ⇄ ${asset0.ticker} (ERC20) at the best price across Ethereum venues, from your own Ethereum wallet.`
+        : 'Peer-to-peer order book — pay in sats, settle on Bitcoin. No custodian, no wrapped coins.';
+    }
+    // The Ethereum ticket gets the Bitcoin book's last price so it can say how the two compare.
+    if (lane === 'eth' && ctx.mountEth && el.ethHost) {
+      ctx.mountEth(el.ethHost, { markUnit: () => ctx.asset().markUnit, btcUsd: () => ctx.btcUsd(), iconHtml: () => ctx.asset().iconHtml });
+    }
     ctx.onLane?.(lane);
+    paintLive();
     if (lane === 'btc') refresh({ force: true });
   }
 
