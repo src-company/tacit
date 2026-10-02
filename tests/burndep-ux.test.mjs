@@ -13,7 +13,7 @@ import { sha256 as nobleSha256 } from '../node_modules/@noble/hashes/sha2.js';
 import * as secp from '../node_modules/@noble/secp256k1/index.js';
 import { makeConfidentialPool } from '../dapp/confidential-pool.js';
 import { makeBurnDepositUx, BURNDEP_BETA_CAP_RAW } from '../dapp/burndep-ux.js';
-import { makeBurnDepositKit } from '../dapp/burn-deposit-bitcoin.js';
+import { makeBurnDepositKit, classifyConfidentialTx } from '../dapp/burn-deposit-bitcoin.js';
 import { ripemd160 } from '../dapp/vendor/tacit-deps.min.js';
 
 let n = 0, failures = 0;
@@ -61,6 +61,11 @@ function makeWorld() {
   let migrateConfirmed = false, burnSubmitted = null, burnConfirmed = false, burnFolded = false, burnRegistered = false;
   let submitStatus = 'success';
   let registerConflict = false;
+  // The reflection's attested state as /reflection/dump serves it: the live set (outpoint keys) and the burns it
+  // recorded (destination leaves). A burn checked through /reflection/burndep/check is recorded once folded, unless
+  // recordBurns is off.
+  const liveKeys = new Set(), checkedDests = [];
+  let recordBurns = true, noteHeight = 800;
 
   const wpkhSpkOf = (pub) => bytesToHex(new Uint8Array([0x00, 0x14, ...ripemd160ish(pub)]));
   // A real HASH160 isn't needed for these tests — only byte-equality between "what the source pays" and
@@ -86,7 +91,17 @@ function makeWorld() {
       // burndep-ux's own logic) and the migrate-confirmed -> traced hop.
       return json({ ok: true, hops: 1, bundle: { etch: { tx: '0x00', blockHash: 'aa'.repeat(32) }, cxfers: [{ tx: '0x00', txid: withHex('bb'.repeat(32)), inputs: [{ prevTxid: withHex(NOTE_TXID), prevVout: 0 }], outputs: [], rangeProof: '0x', kernelSig: '0x' }] } });
     }
-    if (u.pathname === '/reflection/burndep/check') return json({ ok: true, admitted: true, reason: 'admitted' });
+    if (u.pathname === '/reflection/burndep/check') {
+      const d = body && body.burnTxHex ? classifyConfidentialTx(withHex(body.burnTxHex)) : null;
+      if (d && d.dest) checkedDests.push(String(d.dest).toLowerCase());
+      return json({ ok: true, admitted: true, reason: 'admitted' });
+    }
+    if (u.pathname === '/reflection/dump') {
+      const dests = burnFolded && recordBurns ? checkedDests : [];
+      return json({ attestedHeight: 1000, snapshot: { height: 1000, liveTriples: [...liveKeys].map((k) => [k, '0x00', ASSET, '0x00', 0]),
+        burnNodes: [['0x' + '00'.repeat(32), '0x' + '00'.repeat(32), '0x' + '00'.repeat(32), true], ...dests.map((d) => ['0x' + '11'.repeat(32), '0x' + '00'.repeat(32), d, true])],
+        pendingDepositRecords: [] } });
+    }
     if (u.pathname === '/reflection/burndep') {
       // A first-writer-wins conflict against a DIFFERENT bundle already stored for this exact burn txid — an
       // identical resubmission is never modeled here since the real door returns 200 {ok:true} for that case
@@ -98,7 +113,7 @@ function makeWorld() {
       const txid = u.searchParams.get('txid');
       if (txid === undefined) throw new Error('world: status needs txid');
       if (stripHex(txid) === stripHex(burnSubmitted || '')) {
-        if (burnFolded) return json({ ok: true, status: 'folded' });
+        if (burnFolded) return json({ ok: true, status: 'folded', burnBlockHeight: 900 });
         if (burnConfirmed) return json({ ok: true, status: burnRegistered ? 'pending' : 'awaiting-scan', registered: burnRegistered });
         return json({ ok: true, status: 'unconfirmed' });
       }
@@ -108,8 +123,10 @@ function makeWorld() {
     if (u.pathname.startsWith('/chain/tx/')) {
       const txid = u.pathname.slice('/chain/tx/'.length);
       const rec = chainTxs.get(stripHex(txid));
+      // Once the migrate confirms, its reveal (the burn-home) is on chain; its script is set by setBurnHomeOnChain.
+      if (!rec && migrateConfirmed) return json({ status: { confirmed: true, block_height: noteHeight }, vout: [] });
       if (!rec) throw new Error('world: unknown chain tx ' + txid);
-      return json({ status: { confirmed: rec.confirmed }, vout: rec.vout });
+      return json({ status: { confirmed: rec.confirmed, block_height: noteHeight }, vout: rec.vout });
     }
     throw new Error('world: unstubbed path ' + u.pathname + ' ' + u.hostname);
   };
@@ -150,6 +167,9 @@ function makeWorld() {
     setBurnHomeOnChain: (txid, spkHex) => chainTxs.set(stripHex(txid), { confirmed: true, vout: [{ scriptpubkey: stripHex(spkHex) }] }),
     setSubmitStatus: (s) => { submitStatus = s; },
     setRegisterConflict: (v) => { registerConflict = v; },
+    setLive: (txid, vout) => liveKeys.add(String(pool.outpointKey(withHex(stripHex(txid).match(/../g).reverse().join('')), vout)).toLowerCase()),
+    setRecordBurns: (v) => { recordBurns = v; },
+    setNoteHeight: (h) => { noteHeight = h; },
   };
 }
 
@@ -553,6 +573,115 @@ let rec;
   ok(ux.isReserved(NOTE_TXID, NOTE_VOUT) === true, 'the source note is reserved once a bridge exists for it');
   ok(ux.isReserved(FUND_TXID_1, 0) === true, "the migrate's own funding UTXO is reserved too, so Send can't spend it out from under the bridge");
   ok(ux.isReserved('ff'.repeat(32), 0) === false, 'an unrelated outpoint is not reserved');
+}
+
+
+// ==== TAC the reflection already tracks ====
+// Preflight: a tracked source note is refused before anything is signed.
+{
+  const world = makeWorld();
+  world.setLive(NOTE_TXID, NOTE_VOUT);
+  world.setBurnHomeOnChain(NOTE_TXID, '0014' + Buffer.from(ripemd160(nobleSha256(WALLET_PUB))).toString('hex'));   // the wallet's real P2WPKH
+  const ux = makeUx(world, makeMemStorage());
+  const pf = await ux.preflight({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPub: WALLET_PUB });
+  const st = pf.steps.find((x) => x.name === 'not-tracked');
+  ok(pf.ok === false && st && st.ok === false && /already tracked by the reflection/.test(st.detail), 'preflight refuses a note the reflection already tracks, with a plain reason');
+  ok(world.broadcasts.length === 0, 'nothing is broadcast for a tracked note');
+}
+// A bridge whose burn-home is tracked pauses before its burn; its TAC goes back to the wallet.
+{
+  const world = makeWorld();
+  const ux = makeUx(world, makeMemStorage());
+  let r = await ux.start({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE });
+  r = await ux.advance(r.walletPub, r.id);
+  world.setMigrateConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'migrate-confirmed', 'sanity: the migrate confirmed');
+  world.setLive(r.burnHome.txid, 0);
+  r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'stopped' && r.stoppedWhy === 'tracked', 'a tracked burn-home pauses the bridge before any burn is built');
+  const again = await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV });
+  ok(again.stage === 'stopped' && !world.broadcasts.some((b) => b.mara), 'a paused bridge never builds or sends a burn');
+  world.setBurnHomeOnChain(r.burnHome.txid, r.burnHome.spk);
+  const before = world.broadcasts.length;
+  r = await ux.reclaim({ rec: again, walletPriv: WALLET_PRIV });
+  ok(r.stage === 'reclaim-sent' && world.broadcasts.length === before + 2, 'reclaim builds and sends the move back to the wallet (commit and reveal)');
+  ok(classifyConfidentialTx(withHex(r.reclaim.revealHex))?.type === 'cxfer', 'the move back is an ordinary confidential transfer');
+}
+// A burn signed before the check is held back while its burn-home is tracked.
+{
+  const world = makeWorld();
+  const ux = makeUx(world, makeMemStorage());
+  let r = await ux.start({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE });
+  r = await ux.advance(r.walletPub, r.id); world.setMigrateConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id); r = await ux.advance(r.walletPub, r.id);
+  world.setBurnHomeOnChain(r.burnHome.txid, r.burnHome.spk);
+  r = await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV });
+  ok(r.stage === 'burn-signed', 'sanity: the burn was signed while the burn-home was untracked');
+  world.setLive(r.burnHome.txid, 0);
+  r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'stopped' && !world.broadcasts.some((b) => b.mara), 'a signed burn is not sent once its burn-home is tracked');
+}
+// A burn the reflection passed without recording is not offered for minting.
+{
+  const world = makeWorld();
+  const ux = makeUx(world, makeMemStorage());
+  let r = await ux.start({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE });
+  r = await ux.advance(r.walletPub, r.id); world.setMigrateConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id); r = await ux.advance(r.walletPub, r.id);
+  world.setBurnHomeOnChain(r.burnHome.txid, r.burnHome.spk);
+  r = await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV });
+  world.setBurnSubmitted(r.burn.txid);
+  r = await ux.advance(r.walletPub, r.id); world.setBurnConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id); r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'registered', 'sanity: registered');
+  world.setRecordBurns(false); world.setBurnFolded(true);
+  r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'not-recorded', 'a burn the attested state does not record is marked not mintable instead of ready to mint');
+  ok(world.bridgeMintCalls.length === 0, 'no mint is attempted for it');
+}
+// A record already at "ready to mint" (saved before the check) is corrected, by a click or by the background check.
+{
+  const world = makeWorld();
+  const ux = makeUx(world, makeMemStorage());
+  let r = await ux.start({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE });
+  r = await ux.advance(r.walletPub, r.id); world.setMigrateConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id); r = await ux.advance(r.walletPub, r.id);
+  world.setBurnHomeOnChain(r.burnHome.txid, r.burnHome.spk);
+  r = await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV });
+  world.setBurnSubmitted(r.burn.txid);
+  r = await ux.advance(r.walletPub, r.id); world.setBurnConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id); r = await ux.advance(r.walletPub, r.id);
+  world.setBurnFolded(true);
+  r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'folded', 'sanity: a recorded burn reaches ready to mint');
+  world.setRecordBurns(false);
+  const v = await ux.verify(r.walletPub, r.id);
+  ok(v.stage === 'not-recorded', 'the background check corrects a ready-to-mint record whose burn is not recorded');
+  ok(world.bridgeMintCalls.length === 0, 'and never mints it');
+}
+
+
+// A note newer than the attested state is not judged yet: preflight asks to wait, and a bridge holds before its burn.
+{
+  const world = makeWorld();
+  world.setBurnHomeOnChain(NOTE_TXID, '0014' + Buffer.from(ripemd160(nobleSha256(WALLET_PUB))).toString('hex'));
+  world.setNoteHeight(1005);                                   // the reflection is at 1000
+  const ux = makeUx(world, makeMemStorage());
+  const pf = await ux.preflight({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPub: WALLET_PUB });
+  const st = pf.steps.find((x) => x.name === 'not-tracked');
+  ok(pf.ok === false && st && /has not reached the block/.test(st.detail), 'preflight waits when the reflection has not reached the note’s block');
+  const world2 = makeWorld();
+  const ux2 = makeUx(world2, makeMemStorage());
+  let r = await ux2.start({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE });
+  r = await ux2.advance(r.walletPub, r.id); world2.setMigrateConfirmed(true);
+  r = await ux2.advance(r.walletPub, r.id);
+  world2.setNoteHeight(1005);
+  r = await ux2.advance(r.walletPub, r.id);
+  ok(r.stage === 'migrate-confirmed', 'a bridge holds before tracing and burning until the reflection reaches the move’s block');
+  world2.setNoteHeight(990);
+  r = await ux2.advance(r.walletPub, r.id);
+  ok(r.stage === 'traced', 'and continues once it has, the burn-home untracked');
 }
 
 function broadcastsSoFar(world) { return world.broadcasts.length; }

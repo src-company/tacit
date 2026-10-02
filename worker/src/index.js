@@ -1929,6 +1929,8 @@ async function getReflectionSnapshotForStatus(env, network) {
   const snap = {
     attestedHeight: Number.isInteger(s.attestedHeight) ? s.attestedHeight : null,
     pendingDepositRecords: Array.isArray(snapshot.pendingDepositRecords) ? snapshot.pendingDepositRecords : [],
+    // The destination leaves the attested state recorded as burns, so a status can say a burn is recorded, not infer it.
+    burnDests: new Set((Array.isArray(snapshot.burnNodes) ? snapshot.burnNodes : []).map((n) => String((n && n[2]) || '').toLowerCase())),
   };
   _burndepStatusSnapCache.set(network, { at: Date.now(), snap });
   return snap;
@@ -1999,9 +2001,14 @@ async function handleBurnDepositStatus(req, env, url, cors) {
   } else if (snap && Number.isInteger(snap.attestedHeight) && Number.isInteger(burnBlockHeight) && burnBlockHeight > snap.attestedHeight) {
     status = 'awaiting-scan';
     detail = `confirmed at height ${burnBlockHeight}, reflection has only attested up to ${snap.attestedHeight} — not reached yet`;
-  } else if (snap && Number.isInteger(snap.attestedHeight)) {
+  } else if (snap && Number.isInteger(snap.attestedHeight) && snap.burnDests.has(String(decode.dest || '').toLowerCase())) {
     status = 'folded';
-    detail = 'confirmed on Bitcoin, reflection has passed its block, and it is not in the pending-retry set — it folded directly on first scan';
+    detail = 'confirmed on Bitcoin, and the reflection recorded it as a burn on first scan';
+  } else if (snap && Number.isInteger(snap.attestedHeight)) {
+    // Passed and neither recorded nor pending: the burned note was one the reflection already tracked, which bridges
+    // through the reflected-note path, so this burn-deposit envelope was not recorded for a mint.
+    status = 'not-recorded';
+    detail = 'confirmed on Bitcoin and passed by the reflection, but not recorded for minting: the burned note was already tracked by the reflection, which uses the reflected-note bridge path';
   } else {
     status = 'unknown';
     detail = 'confirmed on Bitcoin, but no reflection state is available yet to compare against';

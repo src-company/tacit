@@ -22917,12 +22917,20 @@ const _BURNDEP_STAGE_LABEL = {
   'burn-signed': 'submitting to MARA…', 'burn-submitted': 'burn confirming on Bitcoin…',
   'burn-mined': 'registering with the reflection…', registered: 'waiting for the reflection to fold it…',
   folded: 'ready to mint',
+  stopped: 'paused before the burn — your TAC is safe', 'reclaim-sent': 'moving back to your wallet…',
+  'not-recorded': 'not mintable',
 };
 // What the button itself says while advance() is in flight FOR that stage — distinct from the row's resting
 // label above, and from PHASE_TEXT (below, in the click handler), which further refines 'folded' as its own
 // onProgress events arrive. A bare "…" for every stage is what made a real 10-60s mint read as hung.
 const _BURNDEP_BUSY_LABEL = {
   traced: 'Checking & signing…', 'burn-mined': 'Registering…', registered: 'Checking…', folded: 'Building…',
+  stopped: 'Moving…', 'not-recorded': 'Copying…',
+};
+// Plain words under a bridge that cannot go on the usual way, and what its holder can do.
+const _BURNDEP_NOTE = {
+  stopped: 'This TAC is already tracked by the reflection, which uses a different bridge path, so this one paused before the burn. Your TAC is untouched: move it back to your wallet to use it as before.',
+  'not-recorded': 'The burn confirmed, but this TAC was already tracked by the reflection, which uses a different bridge path, so the burn was not recorded for minting here. Copy its details to keep a verifiable record of the burn and its amount.',
 };
 // Known failure shapes seen in production, translated to text a holder can act on. Falls through to the raw
 // message for anything else — never hides a genuinely new error, only smooths the ones already understood.
@@ -22940,7 +22948,7 @@ function _burndepFriendlyError(e) {
 function _renderHoldingsBurndepBridges(listEl) {
   if (!wallet || !wallet.pub || !WORKER_BASE) return;
   let ux, records;
-  try { ux = _burndepUxSingleton(); records = ux.list(bytesToHex(wallet.pub)).filter((r) => r.stage !== 'minted'); }
+  try { ux = _burndepUxSingleton(); records = ux.list(bytesToHex(wallet.pub)).filter((r) => r.stage !== 'minted' && r.stage !== 'reclaimed'); }
   catch { return; }
   const existing = listEl.querySelector('.burndep-bridge-holdings');
   if (existing) existing.remove();
@@ -22969,9 +22977,13 @@ function _renderHoldingsBurndepBridges(listEl) {
     const watchTxid = (!preMinedBurn && rec.burn?.txid) || rec.migrate?.revealTxid;
     const watchNote = preMinedBurn ? ` · <span title="MARA Slipstream submits straight to a miner — this won't appear on mempool.space until it's mined">not on public explorers yet</span>` : '';
     const watchLink = watchTxid ? ` · <a href="https://mempool.space/${NET.name === 'signet' ? 'signet/' : ''}tx/${escapeHtml(watchTxid)}" target="_blank" rel="noopener noreferrer">view ↗</a>${watchNote}` : '';
-    const needsKey = rec.stage === 'traced' || rec.stage === 'folded';
-    const failing = !!rec.lastError;
-    const actLabel = rec.stage === 'traced' ? 'Burn' : rec.stage === 'folded' ? 'Mint' : failing ? 'Retry' : 'Refresh';
+    const settledOff = rec.stage === 'stopped' || rec.stage === 'not-recorded';
+    const needsKey = rec.stage === 'traced' || rec.stage === 'folded' || rec.stage === 'stopped';
+    const failing = !!rec.lastError && !settledOff;
+    const actLabel = rec.stage === 'traced' ? 'Burn' : rec.stage === 'folded' ? 'Mint' : rec.stage === 'stopped' ? 'Move back to my wallet'
+      : rec.stage === 'not-recorded' ? 'Copy details' : failing ? 'Retry' : 'Refresh';
+    const actKind = rec.stage === 'stopped' ? 'reclaim' : rec.stage === 'not-recorded' ? 'copy' : needsKey ? 'sign' : 'poll';
+    const noteHtml = _BURNDEP_NOTE[rec.stage] ? `<div style="margin-top:3px;max-width:52ch;">${escapeHtml(_BURNDEP_NOTE[rec.stage])}</div>` : '';
     // A stage label alone can't distinguish "waiting normally" from "stuck on a repeating error" — this is the
     // only place a background-poller failure (never seen by anyone unless they look here) becomes visible.
     const errorHtml = failing
@@ -22991,11 +23003,12 @@ function _renderHoldingsBurndepBridges(listEl) {
         <div style="font-size:11px;line-height:1.5;">
           <div><strong>${escapeHtml(amtStr)} ${escapeHtml(ticker)}</strong> — ${escapeHtml(label)}</div>
           <div class="muted">${shorten(rec.id.split(':')[0], 6)}:${rec.id.split(':')[1]}${watchLink}</div>
+          ${noteHtml}
           ${errorHtml}
           ${maraHtml}
           ${foldHtml}
         </div>
-        <button data-burndep-act="${needsKey ? 'sign' : 'poll'}" data-burndep-id="${escapeHtml(rec.id)}" style="font-size:11px;padding:5px 10px;white-space:nowrap;">${actLabel}</button>
+        <button data-burndep-act="${actKind}" data-burndep-id="${escapeHtml(rec.id)}" style="font-size:11px;padding:5px 10px;white-space:nowrap;">${actLabel}</button>
       </div>`;
   }).join('');
   // Always present, regardless of whether any record is currently journalled — the whole point is to recover
@@ -23079,6 +23092,23 @@ function _renderHoldingsBurndepBridges(listEl) {
         btn.textContent = PHASE_TEXT[p.phase] || PHASE_TEXT[p.status] || (p.status ? p.status[0].toUpperCase() + p.status.slice(1) + '…' : '…');
       };
       try {
+        const kind = btn.dataset.burndepAct, rec = records.find((r) => r.id === id);
+        if (kind === 'copy') {
+          // The burn and the opening of the note it spent (amount and blinding open the burn-home's public commitment).
+          const big = (k, v) => (typeof v === 'bigint' ? v.toString() : v);
+          await navigator.clipboard.writeText(JSON.stringify({ burnTxid: rec.burn?.txid || null, burnHome: { txid: rec.burnHome?.txid, cx: rec.burnHome?.cx, cy: rec.burnHome?.cy, blinding: rec.burnHome?.blinding },
+            amount: rec.source?.amount, assetId: rec.source?.assetId, source: { txid: rec.source?.txid, vout: rec.source?.vout } }, big, 2));
+          toast('Bridge details copied.', 'success');
+          btn.disabled = false; btn.textContent = orig;
+          return;
+        }
+        if (kind === 'reclaim') {
+          await ensurePrivkey();
+          await ux.reclaim({ rec, walletPriv: wallet.priv });
+          toast('Moving your TAC back to your wallet. It shows in Holdings once it confirms.', 'success', 8000);
+          renderHoldings();
+          return;
+        }
         if (isSign) await ensurePrivkey();
         const after = await ux.advance(bytesToHex(wallet.pub), id, { walletPriv: wallet.priv, onProgress });
         // Always confirm the outcome via toast — independent of this card's own DOM, so a background refresh
@@ -23090,6 +23120,8 @@ function _renderHoldingsBurndepBridges(listEl) {
           const decimals = Number.isInteger(meta.decimals) ? meta.decimals : 8;
           const amtStr = fmtAssetAmount(BigInt(after.source.amount), decimals);
           toast(`${amtStr} ${meta.ticker || 'TAC'} minted — now in your private Ethereum balance.`, 'success', 8000);
+        } else if (_BURNDEP_NOTE[after.stage]) {
+          toast(_BURNDEP_NOTE[after.stage], '', 12000);
         } else if (isSign || after.stage !== beforeStage) {
           toast(_BURNDEP_STAGE_LABEL[after.stage] || after.stage, 'success');
         }
@@ -23167,13 +23199,17 @@ function _startBurndepAutoRefresh() {
     if (document.hidden || _isAppIdle()) return;
     if (!wallet || !wallet.pub) { _stopBurndepAutoRefresh(); return; }
     let ux, records;
-    try { ux = _burndepUxSingleton(); records = ux.list(bytesToHex(wallet.pub)).filter((r) => r.stage !== 'minted'); }
+    try { ux = _burndepUxSingleton(); records = ux.list(bytesToHex(wallet.pub)).filter((r) => !['minted', 'reclaimed', 'not-recorded', 'stopped'].includes(r.stage)); }
     catch { return; }
     if (!records.length) { _stopBurndepAutoRefresh(); return; }
     let changed = false;
     for (const rec of records) {
-      if (rec.stage === 'traced' || rec.stage === 'folded') continue; // needs the key — user-driven only
-      try { const after = await ux.advance(bytesToHex(wallet.pub), rec.id); if (after.stage !== rec.stage) changed = true; }
+      try {
+        // The key stages are user-driven; only their key-free check runs here (a tracked burn-home pauses, an unrecorded
+        // burn says so).
+        const after = (rec.stage === 'traced' || rec.stage === 'folded') ? await ux.verify(bytesToHex(wallet.pub), rec.id) : await ux.advance(bytesToHex(wallet.pub), rec.id);
+        if (after && after.stage !== rec.stage) changed = true;
+      }
       catch { changed = true; /* the record's own lastError just moved even though its stage didn't — re-render so it shows */ }
     }
     if (changed && document.querySelector('.tab.active[data-tab="holdings"]')) renderHoldings();
