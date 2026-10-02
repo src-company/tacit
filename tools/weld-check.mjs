@@ -122,7 +122,7 @@ const provenJobs = {};
 
 // router.withdrawToV1(tx, intent), encoded as evm-pool-wallet.js encodes it for a self-sent move.
 const { calldata } = await import(new URL('../dapp/evm-pool-gateway.js', import.meta.url));
-const EVM_ROUTER = '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5', KEEPER = '0xa0ee7a142d267c1f36714e4a8f75612f20a79720';   // anvil account 9
+const EVM_POOL = '0x000000c2A20657CE25f2Ba99737933D031AFBEE9', EVM_ROUTER = '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5', KEEPER = '0xa0ee7a142d267c1f36714e4a8f75612f20a79720';   // anvil account 9
 const PAIR = { tuple: ['uint256', 'uint256'] }, B = (x) => BigInt(x);
 const TX_TYPES = [PAIR, { tuple: [PAIR, PAIR] }, PAIR, { tuple: Array(11).fill('uint256') }, 'address', 'uint256', 'address', 'uint256', 'bytes', 'bytes'];
 const TX_SIG = '(uint256[2],uint256[2][2],uint256[2],uint256[11],address,int256,address,uint256,bytes,bytes)';
@@ -183,7 +183,9 @@ async function openPage({ account, key = null, host = '127.0.0.1', init = null, 
   // relayed for real, router.withdrawToV1 sent as a keeper would; any other relay is recorded and refused.
   await ctx.route('https://tacit-evm-pool-keeper*.onrender.com/**', async (route) => {
     const p = new URL(route.request().url()).pathname;
-    if (/\/quote$/.test(p)) return json(route, { relayer: '0x0000000000000000000000000000000000000001', fee: '329000000000000', sweepFee: '439000000000000', receiveMin: '175600000000000000' });
+    // A quote names its chain and pool, which the wallet checks before it signs anything (its host says which chain).
+    if (/\/quote$/.test(p)) return json(route, { chainId: /-base\./.test(route.request().url()) ? 8453 : /-robinhood\./.test(route.request().url()) ? 4663 : 1, pool: EVM_POOL,
+      relayer: '0x0000000000000000000000000000000000000001', fee: '329000000000000', sweepFee: '439000000000000', receiveMin: '175600000000000000' });
     if (/\/(head|reserve)$/.test(p)) return route.fulfill({ status: 404, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{}' });
     if (/\/relay$/.test(p)) {
       const b = JSON.parse(route.request().postData() || '{}');
