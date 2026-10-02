@@ -2462,7 +2462,15 @@ const QUOTE_RELAY_FEE_ASSETS = {
   cUSDT: { minUnderlying: 300000n },               // $0.30 (6dp)
   cUSD:  { minUnderlying: 300000000000000000n },   // $0.30 (18dp)
   cBTC:  { minUnderlying: 2000000000000n },        // ~$0.30 at Chainlink BTC/USD, see confidential-pool-ux.js
-  cTAC:  { minUnderlying: 2000000000000000000n },  // 2 TAC — static, not AMM-quoted (thin pool, manipulable)
+  // cTAC is the one asset with no published gas-aware floor (that would reveal the private reference price), so an
+  // integrator that cannot retry (an immutable page) pays exactly this number. It is sized so that what the relay
+  // spends settling a transfer or an exit stays under it across an ordinary range of gas prices, not only the lowest,
+  // and in line with the minimum the other assets' published floors carry. The settle gate refuses a fee
+  // under the op's cost AFTER the job was accepted, so a floor set for the quietest gas of the month fails the day
+  // gas rises. Static, not AMM-quoted (thin pool, manipulable). The dapp's own table starts lower and asks again at
+  // twice that when refused (confidential-pool-ux.js), so it is unchanged. No figure here may be turned into a price
+  // per TAC: the reference stays in the deployment's configuration.
+  cTAC:  { minUnderlying: 4000000000000000000n },  // 4 TAC
 };
 function handleConfidentialQuote(req, env, url, cors) {
   const assets = _CONFIDENTIAL_DEPLOYMENTS?.mainnet?.assets || [];

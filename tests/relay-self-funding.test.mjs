@@ -637,6 +637,17 @@ test('quote: the published floor is the gate\'s floor, raised only by the relay\
   ok(BigInt(q.gasAwareFloorUnits) >= floor0, 'the default published floor must never sit below what the gate enforces');
 });
 
+test('quote: cTAC publishes a static floor of 4 TAC, and the gate accepts a fee of exactly that at the settle gas of an ordinary day', async () => {
+  // An integrator that cannot retry pays the published number and nothing else, so it has to clear the gate: the
+  // published figure is held to the gate here, at the configured reference and a gas price well above today's.
+  const r = await loadQuote({ env: TAC_ENV })('cTAC');
+  ok(r.staticFloorUnits === '400000000', `the published cTAC floor is 4 TAC (400000000 units), got ${r.staticFloorUnits}`);
+  for (const gasWei of [60_000_000n, 150_000_000n]) {
+    const { gate } = loadGate({ gasWei, btcUsd: 80000, env: TAC_ENV });
+    ok(await gate({ type: 'transfer', op: transfer(cTac, BigInt(r.staticFloorUnits)) }) === true, `the published floor must pass the gate at ${Number(gasWei) / 1e9} gwei`);
+  }
+});
+
 test('quote: cTAC NEVER publishes a live floor, even when the reference is configured (it would reveal the private price)', async () => {
   const r = await loadQuote({ env: TAC_ENV })('cTAC');
   ok(r.gasAwareFloorUnits === null, `a cTAC floor in cTAC units would let anyone recover the reference price; got ${r.gasAwareFloorUnits}`);
