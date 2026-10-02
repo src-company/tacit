@@ -376,7 +376,11 @@ on Base or Robinhood Chain.
 
 With no `relay`, every action is proved on the device and sent from `provider`: no keeper, no relayer, no fee
 beyond gas. With `relay`, `send` and `withdraw` go through the keeper (its fee, no gas) unless called with
-`{ via: 'self' }`. Each action takes `{ via, onStep(msg) }` as its last argument. `w.receive.address` is the
+`{ via: 'self' }`. Each action takes `{ via, maxFee, onStep(msg) }` as its last argument: `maxFee` (wei) is the most a
+relayed spend may pay the relayer, the fee the caller showed, and a dearer quote is refused before anything is signed
+(the error's `feeMoved` is the new fee). `w.quote(gas?)` reads the relayer's quote, priced for a spend that burns `gas`
+when given. A spend the wallet must merge notes for first pays the fee once per merge, and is refused before the first
+when the notes cannot cover it. `w.receive.address` is the
 private ETH address and `w.receive.waiting()` what sits there unswept. With `relay`, confirmed history is read from the
 keeper's feed first (checked as below); `w.rescan()` rebuilds from chain logs alone. `w.terminate()` stops the
 worker. Synced state stays small as the pool grows: the tree's right edge and the paths of the wallet's own notes.

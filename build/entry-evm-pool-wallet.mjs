@@ -12,7 +12,8 @@
 //   await w.deposit(wei)            → deposits from the user's wallet            → tx hash
 //   await w.send(bp1, wei)          → private payment                            → tx hash
 //   await w.withdraw(0x…, wei)      → out of the pool to any address             → tx hash
-//   await w.quote()                 → the relayer's { fee, receiveMin, … } (needs relay)
+//   await w.quote(gas?)             → the relayer's { fee, receiveMin, … }, priced for a spend burning `gas` when given
+//                                     (needs relay)
 //   await w.bridgeOut(l2, wei, { l2Rpc }) → from the Ethereum pool to this wallet's private ETH address on Base
 //                                     (8453) or Robinhood Chain (4663, needs l2Rpc) via the canonical bridge
 //                                     (needs relay)                              → tx hash
@@ -22,9 +23,11 @@
 //   await w.rescan()                → rebuilds the synced state from chain logs alone (no keeper feed)
 //   await w.setArtifacts({ wasm, zkey, vk }) → the proving files, if not given at open
 //   w.terminate()                   → stops the prove worker
-// Each action takes an optional last argument { via: 'self' | 'relay', onStep(msg) }. Without `relay` everything
-// is proved here and submitted by `provider`; with it, send and withdraw go through that keeper unless via: 'self',
-// and confirmed history is read from the keeper's /events feed, checked against the pool before it is kept.
+// Each action takes an optional last argument { via: 'self' | 'relay', maxFee, onStep(msg) }. Without `relay`
+// everything is proved here and submitted by `provider`; with it, send and withdraw go through that keeper unless
+// via: 'self', and confirmed history is read from the keeper's /events feed, checked against the pool before it is
+// kept. maxFee (wei) is the most a relayed spend may pay the relayer, the fee the caller showed: a dearer quote is
+// refused before anything is signed, with an error whose `feeMoved` is the new fee.
 //
 // provider:    an EIP-1193 provider on `chainId` (the user's wallet); it signs and, unless `rpc` is given, reads.
 //              Opening does not ask it to connect; the first action that sends does. Optional with `rpc` for a
@@ -132,7 +135,7 @@ export async function makeEvmPoolWallet({ provider = null, chainId, identityKey,
     chain: { chainId: id, pool: POOL, router: ROUTER, rpc: read, deployBlock: deployBlock ?? CHAINS[id]?.deployBlock ?? 0, confirmations },
   });
   let last = null;
-  const opts = (o = {}) => ({ via: o.via ?? null, onStep: o.onStep ?? (() => {}) });
+  const opts = (o = {}) => ({ via: o.via ?? null, maxFee: o.maxFee ?? null, onStep: o.onStep ?? (() => {}) });
   return {
     address: w.address,
     sync: async () => (last = await w.sync()),
@@ -146,8 +149,8 @@ export async function makeEvmPoolWallet({ provider = null, chainId, identityKey,
     deposit: (wei, o) => w.deposit({ amount: wei, ...opts(o) }),
     send: (to, wei, o) => w.send({ to, amount: wei, ...opts(o) }),
     withdraw: (to, wei, o) => w.withdraw({ to, amount: wei, ...opts(o) }),
-    quote: () => w.quote(),
-    bridgeOut: (toChainId, wei, o = {}) => w.bridgeOut({ toChainId, amount: wei, l2Rpc: o.l2Rpc ? jsonRpc(o.l2Rpc) : null, onStep: o.onStep ?? (() => {}) }),
+    quote: (gas) => w.quote(gas),
+    bridgeOut: (toChainId, wei, o = {}) => w.bridgeOut({ toChainId, amount: wei, l2Rpc: o.l2Rpc ? jsonRpc(o.l2Rpc) : null, maxFee: o.maxFee ?? null, onStep: o.onStep ?? (() => {}) }),
     toV1: (wei, commit, o = {}) => w.toV1({ amount: wei, commit, ...opts(o) }),
     rescan: async () => (last = await w.rescan()),
     setArtifacts: async (a) => { art = await checkedArtifacts(a); prover?.terminate(); prover = null; },

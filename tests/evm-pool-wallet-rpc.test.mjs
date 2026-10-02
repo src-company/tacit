@@ -1,6 +1,6 @@
 // jsonRpc over several nodes, and the wallet's log scan against nodes with different eth_getLogs range limits.
 import assert from 'node:assert/strict';
-import { jsonRpc, makeEvmPoolWallet, evmPoolKeys, recipientOf, logFailure, sealNote, openNote, paymentKey, sealState, openState } from '../dapp/evm-pool-wallet.js';
+import { jsonRpc, makeEvmPoolWallet, evmPoolKeys, recipientOf, logFailure, sealNote, openNote, paymentKey, sealState, openState, mergePlan } from '../dapp/evm-pool-wallet.js';
 import { poolAsset } from '../dapp/evm-pool-zk.js';
 import { makeEvmPoolZk } from '../dapp/evm-pool-zk.js';
 import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7 } from 'poseidon-lite';
@@ -225,6 +225,84 @@ await check('a relayed spend whose quote is above the fee shown is refused befor
   await assert.rejects(() => w.send({ to, amount: 1n, via: 'relay', maxFee: 4_000_000_000_000n }), (e) => e.feeMoved === 5_000_000_000_000n && /fee went up/.test(e.message));
   await assert.rejects(() => w.withdraw({ to: '0x1111111111111111111111111111111111111111', amount: 1n, via: 'relay', maxFee: 1n }), (e) => e.feeMoved === 5_000_000_000_000n);
   await assert.rejects(() => w.send({ to, amount: 1n, via: 'relay', maxFee: 6_000_000_000_000n }), (e) => e.feeMoved === undefined);
+});
+
+await check('merging plans: none when two notes cover it, one fee per merge, nothing when merges cannot', async () => {
+  assert.equal(mergePlan([5n, 3n], 8n, 1n), 0);
+  assert.equal(mergePlan([9n], 9n, 1n), 0);
+  assert.equal(mergePlan([4n, 3n, 3n], 9n, 1n), 1, 'merging 4+3 leaves 6, and 6+3 covers it');
+  assert.equal(mergePlan([4n, 3n, 3n], 10n, 1n), null, 'the second merge leaves one note of 8');
+  assert.equal(mergePlan([1n, 1n], 3n, 2n), null, 'a merge that costs its whole note');
+  assert.equal(mergePlan([], 1n, 0n), null);
+  assert.equal(mergePlan(Array(10).fill(5n), 40n, 0n), 6, 'ten notes of 5 reach 40 only after six merges, though no single merge shows it');
+  assert.equal(mergePlan(Array(10).fill(5n), 51n, 0n), null, 'and cannot reach more than they hold');
+  assert.equal(mergePlan([2n, 2n, 2n, 2n, 2n, 2n, 2n, 2n, 2n], 100n, 0n), null, 'no more than 8 merges');
+});
+
+await check('mergePlan agrees with the loop prepare() ran before it, merge for merge, over random notes, needs and fees', async () => {
+  // That loop: take one note, or two, covering `need`; else merge the two largest (the new note is their sum less `fee`),
+  // and stop when they cannot pay the fee, when fewer than two notes are left, or after eight rounds, the last of which
+  // merges without looking again. → merges made, or null.
+  const loop = (values, need, fee) => {
+    let u = values.map(BigInt);
+    for (let guard = 0; guard < 8; guard++) {
+      const asc = [...u].sort((a, b) => (a < b ? -1 : 1));
+      if (asc.some((v) => v >= need)) return guard;
+      for (let i = asc.length - 1; i > 0; i--) for (let j = i - 1; j >= 0; j--) if (asc[i] + asc[j] >= need) return guard;
+      const desc = [...u].sort((a, b) => (b < a ? -1 : 1));
+      if (desc.length < 2 || desc[0] + desc[1] <= fee) return null;
+      u = [desc[0] + desc[1] - fee, ...desc.slice(2)];
+    }
+    return null;
+  };
+  let seed = 12345;
+  const rand = (m) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % m; };
+  let reachable = 0, merged = 0;
+  for (let i = 0; i < 20_000; i++) {
+    const values = Array.from({ length: rand(11) }, () => BigInt(1 + rand(50)));
+    const need = BigInt(1 + rand(300)), fee = BigInt(rand(6));
+    const want = loop(values, need, fee);
+    assert.equal(mergePlan(values, need, fee), want, `${values} need ${need} fee ${fee}`);
+    if (want != null) reachable++;
+    if (want > 0) merged++;
+  }
+  assert.ok(reachable > 2000 && merged > 500, `the cases cover both outcomes and real merges (${reachable} reachable, ${merged} merging)`);
+});
+
+await check('a spend that merging cannot cover is refused before a merge is paid for', async () => {
+  const POOLA = '0x000000c2A20657CE25f2Ba99737933D031AFBEE9', RELAYER = '0xfA2afbaB631C7Eda7CeA6AE1440605C504E322Ec';
+  const keys = evmPoolKeys(zk, new Uint8Array(32).fill(5));
+  const E12 = 10n ** 12n, fee = E12;
+  const notes = [4n, 3n, 3n].map((v, index) => ({ index, leaf: String(1000 + index), v: String(v * E12), rho: String(index + 1), s: '0x02' + String(index + 1).padStart(2, '0').repeat(32), block: 90, tx: '0x' + '00'.repeat(32), kind: 'memo' }));
+  const kv = new Map([[`tacit-evm-pool-v1:8453:${POOLA.toLowerCase()}:${keys.address}`, JSON.stringify({ block: 100, leaves: notes.map((x) => x.leaf), notes, nextRefund: 1, attempts: {} })]]);
+  const urls = [];
+  const rpc = async (m) => (m === 'eth_blockNumber' ? '0x64' : m === 'eth_getLogs' ? [] : '0x0');
+  const w = makeEvmPoolWallet({
+    zk, keys, prove: null, keeper: 'https://k.test', store: { get: (k) => kv.get(k), set: (k, v) => kv.set(k, v) },
+    fetchImpl: async (url) => { urls.push(url.replace('https://k.test', '')); return { ok: true, status: 200, headers: new Map(), json: async () => ({ chainId: 8453, pool: POOLA, relayer: RELAYER, fee: fee.toString() }) }; },
+    chain: { chainId: 8453, pool: POOLA, router: '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5', rpc, deployBlock: 0, confirmations: 0, relayer: RELAYER },
+  });
+  const to = evmPoolKeys(zk, new Uint8Array(32).fill(6)).address;
+  assert.equal((await w.sync()).balance, 10n * E12, 'the seeded notes are the wallet\'s');
+  // 9 + fee needs 10: two merges leave one note of 8 (4+3-1 = 6, then 6+3-1 = 8)
+  await assert.rejects(() => w.send({ to, amount: 9n * E12, via: 'relay' }), /not enough in the pool for this amount and its fee/);
+  assert.deepEqual([...new Set(urls.filter((u) => !u.startsWith('/quote') && !u.startsWith('/events')))], [], 'nothing past the quote was asked of the relayer');
+});
+
+await check('the quote can be priced for a spend that burns more gas, and toV1 holds a relayed fee to maxFee', async () => {
+  const POOLA = '0x000000c2A20657CE25f2Ba99737933D031AFBEE9', RELAYER = '0x7c9f8aE4e48Cbb2727F95b6477a1cf92bCFc43D0';
+  const urls = [];
+  const rpc = async (m) => (m === 'eth_blockNumber' ? '0x64' : m === 'eth_getLogs' ? [] : '0x0');
+  const w = makeEvmPoolWallet({
+    zk, keys: evmPoolKeys(zk, new Uint8Array(32).fill(5)), prove: null, store: null, keeper: 'https://k.test',
+    fetchImpl: async (url) => { urls.push(url.replace('https://k.test', '')); return { ok: true, status: 200, headers: new Map(), json: async () => ({ chainId: 1, pool: POOLA, relayer: RELAYER, fee: '5000000000000' }) }; },
+    chain: { chainId: 1, pool: POOLA, router: '0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5', rpc, deployBlock: 0, confirmations: 0, relayer: RELAYER },
+  });
+  await w.quote();
+  await w.quote(700_000);
+  assert.deepEqual(urls.filter((u) => u.startsWith('/quote')), ['/quote', '/quote?gas=700000']);
+  await assert.rejects(() => w.toV1({ amount: 10n ** 12n, commit: '0x' + '11'.repeat(32), via: 'relay', maxFee: 4_000_000_000_000n }), (e) => e.feeMoved === 5_000_000_000_000n && /fee went up/.test(e.message));
+  assert.ok(urls.includes('/quote?gas=700000'), 'toV1 asked for the quote priced for its own gas');
 });
 
 console.log(`\n${n} checks passed`);

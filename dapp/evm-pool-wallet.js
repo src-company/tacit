@@ -233,6 +233,23 @@ export function logFailure(e, step) {
   return null;
 }
 
+// How many merges, each paying `fee` out of the merged note, get two of the notes `values` to cover `need` (the plan
+// prepare() follows): 0 when two already do, null when no run of merges does. Pure, so a spend is refused before the
+// first merge is paid for.
+export function mergePlan(values, need, fee) {
+  const u = values.map(BigInt).sort((a, b) => (a < b ? -1 : 1));
+  for (let merges = 0; merges < 8; merges++) {
+    if (u.length && u[u.length - 1] >= need) return merges;
+    if (u.length > 1 && u[u.length - 1] + u[u.length - 2] >= need) return merges;
+    if (u.length < 2) return null;
+    const a = u.pop(), b = u.pop();
+    if (a + b <= fee) return null;
+    u.push(a + b - fee);
+    u.sort((x, y) => (x < y ? -1 : 1));
+  }
+  return null;
+}
+
 function decodeTransact(log) {
   const d = unhex(log.data);
   const w = (i) => d.subarray(32 * i, 32 * i + 32);
@@ -730,9 +747,11 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     return withinFee(await keeperGet(gas ? `/quote?gas=${gas}` : '/quote'), maxFee);
   }
 
-  // Merges the two largest notes into one, repeatedly, until two notes cover `need` (each merge pays a fee).
+  // Merges the two largest notes into one, repeatedly, until two notes cover `need` (each merge pays a fee). Refuses
+  // before the first merge when no run of them would, so no fee is paid for a spend that cannot happen.
   async function prepare(need, q, onStep) {
     const fee = q ? BigInt(q.fee) : 0n;
+    if (mergePlan(unspent().map((n) => n.v), need, fee) == null) throw new Error('not enough in the pool for this amount and its fee');
     for (let guard = 0; guard < 8; guard++) {
       const pick = select(need);
       if (pick) return pick;
@@ -777,7 +796,8 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     connect(s) { signer = s; },
     // Forgets the synced state and rebuilds it from chain logs alone (no feed).
     rescan: () => rescanFromChain(),
-    quote: () => keeperGet('/quote'),
+    // The relayer's quote: priced for a spend that burns `gas` (withdrawAndCall, toV1) when given, else an ordinary one.
+    quote: (gas = null) => keeperGet(gas ? `/quote?gas=${gas}` : '/quote'),
     // The receive box at `index` (0 is the private ETH address; later ones are one-time addresses, e.g. per payment
     // request, found again from the seed within the same gap as refund boxes). → address
     receiveBoxAt: (index = RECEIVE_INDEX) => boxOf(index),
@@ -933,13 +953,13 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     // in one transaction (router.withdrawToV1): relayed by default, or from the signer with via: 'self'. `commit` is
     // V1's wrap commitment for the wallet's own next V1 note (confidential-pool-ux buildWrap(...).commit); the V1
     // wallet finds the deposit from its key and makes it a note with its usual wrap settle. → tx hash.
-    async toV1({ amount, commit, via = null, onStep = () => {} }) {
+    async toV1({ amount, commit, via = null, maxFee = null, onStep = () => {} }) {
       if (Number(chain.chainId) !== 1) throw new Error('V1 is on Ethereum; move to V1 from the Ethereum pool');
       const a = BigInt(amount);
       if (a <= 0n || a % V1_UNIT !== 0n) throw new Error('the amount must be a positive multiple of 1e10 wei');
       if (!/^0x[0-9a-fA-F]{64}$/.test(String(commit)) || BigInt(commit) === 0n) throw new Error('commit must be a 32-byte V1 wrap commitment');
       await sync();
-      const q = await quoteFor(via, 700_000);
+      const q = await quoteFor(via, 700_000, maxFee);
       const fee = q ? BigInt(q.fee) : 0n;
       const intent = {
         assetId: V1_TETH_ASSET_ID, amount: a, tip: 0n, tipTo: ZERO, commit,
