@@ -122,6 +122,7 @@ const POOL_LOCK_ABI = [
   { type: 'function', name: 'cbtcLockVBtc', stateMutability: 'view', inputs: [{ name: 'outpoint', type: 'bytes32' }], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'cbtcLockSpent', stateMutability: 'view', inputs: [{ name: 'outpoint', type: 'bytes32' }], outputs: [{ type: 'bool' }] },
   { type: 'function', name: 'cbtcLockRedeemed', stateMutability: 'view', inputs: [{ name: 'outpoint', type: 'bytes32' }], outputs: [{ type: 'bool' }] },
+  { type: 'function', name: 'cbtcMinted', stateMutability: 'view', inputs: [{ name: 'outpoint', type: 'bytes32' }], outputs: [{ type: 'bool' }] },
 ];
 const HELPER_ESCROW_OF_ABI = [
   { type: 'function', name: 'helperEscrowOf', stateMutability: 'view', inputs: [{ name: 'outpoint', type: 'bytes32' }, { name: 'depositor', type: 'address' }], outputs: [{ type: 'uint256' }] },
@@ -135,11 +136,17 @@ const escrowHelpers = new Set(ADDR.cbtcEscrowHelpers.map((a) => a.toLowerCase())
 const readEscrowOf = (outpoint, funder, depositor) => (escrowHelpers.has(String(funder).toLowerCase())
   ? publicClient.readContract({ address: funder, abi: HELPER_ESCROW_OF_ABI, functionName: 'helperEscrowOf', args: [outpoint, depositor] })
   : publicClient.readContract({ address: ADDR.collateralEngine, abi: ESCROW_OF_ABI, functionName: 'escrowOf', args: [outpoint, funder] }));
-const readBondLock = async (outpoint) => {
+// What the pool knows of a lock: its size, whether cBTC is minted against it, and whether it is spent or redeemed.
+const readLockState = async (outpoint) => {
   const call = (functionName) => publicClient.readContract({ address: ADDR.pool, abi: POOL_LOCK_ABI, functionName, args: [outpoint] });
-  const [vBtc, spent, redeemed] = await Promise.all([call('cbtcLockVBtc'), call('cbtcLockSpent'), call('cbtcLockRedeemed')]);
-  const required = vBtc > 0n ? await publicClient.readContract({ address: ADDR.collateralEngine, abi: REQUIRED_ESCROW_ABI, functionName: 'requiredEscrow', args: [vBtc] }) : 0n;
-  return { vBtc, spent, redeemed, required };
+  const [vBtc, spent, redeemed, minted] = await Promise.all([call('cbtcLockVBtc'), call('cbtcLockSpent'), call('cbtcLockRedeemed'), call('cbtcMinted')]);
+  return { vBtc, spent, redeemed, minted };
+};
+// The same, with the escrow the lock needs at the engine's price (which reverts on a stale feed, so only the daily credit reads it).
+const readBondLock = async (outpoint) => {
+  const lock = await readLockState(outpoint);
+  const required = lock.vBtc > 0n ? await publicClient.readContract({ address: ADDR.collateralEngine, abi: REQUIRED_ESCROW_ABI, functionName: 'requiredEscrow', args: [lock.vBtc] }) : 0n;
+  return { ...lock, required };
 };
 const CLAIMED_ABI = [
   { type: 'function', name: 'claimed', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }], outputs: [{ type: 'uint256' }] },
@@ -1438,8 +1445,8 @@ export async function settleCycle(store, coverage = null) {
     const dayIndex = d - startDay;
     // A bond counts only if its escrow is still posted now that its day is over; an escrow that cannot be read leaves the day unsettled.
     if (CFG.pointsBondHoldFromDay && d >= CFG.pointsBondHoldFromDay) {
-      const r = await decideBondHolds({ store, day: d, readEscrow: readEscrowOf, failAfterSecs: CFG.pointsSettleMaxWaitSecs, log });
-      if (r.checked) log(`settle: day ${d}: ${r.checked} bond(s) checked, ${r.released} no longer posted`);
+      const r = await decideBondHolds({ store, day: d, readEscrow: readEscrowOf, readLock: readLockState, failAfterSecs: CFG.pointsSettleMaxWaitSecs, log });
+      if (r.checked) log(`settle: day ${d}: ${r.checked} bond(s) checked, ${r.released} not counted (taken back, or no cBTC minted against them)`);
     }
     // A bond still posted on a real lock earns for each further day; its credit is recorded before the day is read.
     if (CFG.pointsCbtcHoldRate > 0 && CFG.pointsCbtcHoldFromDay && d >= CFG.pointsCbtcHoldFromDay) {

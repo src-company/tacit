@@ -1886,8 +1886,8 @@ await step('ptsview', async () => {
   ok(/Early activity counts up to 3×\. Holding 50 or 500 public TAC at the same address through the past day multiplies its points by 1\.1 or 1\.3\./.test(v.body),
     `ptsview: the early bonus and the holder tiers are the service's (${v.body.slice(-330)})`);
   ok(/Hold 50 public TAC here through a day and what it does next earns 1\.1×/.test(v.body), 'ptsview: the next holder tier is read from the same tiers');
-  ok(/1,000 per wstETH · ×3(?! from)/.test(v.body), 'ptsview: a weight in force shows on its way of earning');
-  ok(new RegExp(`1,000 per wstETH · ×3; 500 a day while a bond on a Bitcoin lock stays posted from ${dShort(today + 1)}`).test(v.body), 'ptsview: the bond\'s daily credit and the day it starts show on its way of earning');
+  ok(/1,000 per wstETH once cBTC is minted against it \(from \d+ \w+\) · ×3(?! from)/.test(v.body), 'ptsview: a weight in force shows on its way of earning');
+  ok(new RegExp(`1,000 per wstETH once cBTC is minted against it \\(from ${dShort(today + 1)}\\) · ×3; 500 a day while a bond on a Bitcoin lock stays posted from ${dShort(today + 1)}`).test(v.body), 'ptsview: the bond\'s mint condition, its daily credit and the day they start show on its way of earning');
   ok(v.days.some((d) => /\+0\s*not counted/.test(d)), `ptsview: a day whose listed points were not counted (a released bond) says so instead of adding them up (${v.days.join(' | ')})`);
   ok(/Kept a cBTC bond posted/.test(v.body) && !v.links.some((h) => h.includes('d'.repeat(64))), 'ptsview: a day\'s bond credit is listed as activity and links to no transaction');
   ok(/This week\s*×1\.25 · 2 kinds of activity · 3 days/.test(v.body), `ptsview: an address whose points were multiplied for the week is told so (${v.body.slice(500, 900)})`);
@@ -1899,7 +1899,7 @@ await step('ptsview', async () => {
     && new RegExp(`Limit\\s*0\\.02 TAC per point, no limit from ${nextD}`).test(terms)
     && /Weights\s*cBTC bond ×3(?! from)/.test(terms)
     && new RegExp(`Each week\\s*25% more for each other kind of activity in the past 7 days \\(up to 50%; a kind counts once it has earned 25 points that week\\), and 25% more for activity on more than one day, from ${dShort(today + 1)}`).test(terms)
-    && new RegExp(`Bonds\\s*a cBTC bond counts if it is still posted when its day settles, shortly after the day ends, from ${dShort(today + 1)}; a bond on a Bitcoin lock earns a flat 500 points per wstETH for each further day it stays posted, credited when the day settles and counted as activity for the week, from ${dShort(today + 1)}`).test(terms)
+    && new RegExp(`Bonds\\s*a cBTC bond counts if cBTC has been minted against it and it is still posted when its day settles, shortly after the day ends, from ${dShort(today + 1)}; a bond on a Bitcoin lock earns a flat 500 points per wstETH for each further day it stays posted, credited when the day settles and counted as activity for the week, from ${dShort(today + 1)}`).test(terms)
     && /Counting\s*each activity at its weight, times the week’s multiplier\. A day’s pot is split by these counted points; the all-time total is points as scored/.test(terms) && /Points go to\s*the address that sent the transaction/.test(terms) && /Settled\s*each day, shortly after it ends/.test(terms) && /Claim\s*any time once a day is settled/.test(terms),
     `ptsview: the terms list the days, the pot, the limit, who is paid and when (${terms.slice(0, 300)})`);
   await r.page.click('.ptd-b:last-child');
@@ -1969,7 +1969,7 @@ await step('ptsview', async () => {
     await z.page.click('#pts-body summary:has-text("Terms")');
     const zt = { body: await z.page.$eval('#pts-body', (e) => e.textContent.replace(/\s+/g, ' ')), terms: await z.page.$eval('#pts-body details:has(> summary:has-text("Terms"))', (d) => d.textContent.replace(/\s+/g, ' ')) };
     ok(new RegExp(`1,000 per wstETH until ${dShort(today)}; then 500 a day while a bond on a Bitcoin lock stays posted`).test(zt.body), `ptsview: until the day posting stops scoring it still pays, then only the daily credit does (${zt.body.slice(zt.body.indexOf('Post a bond'), zt.body.indexOf('Post a bond') + 200)})`);
-    ok(new RegExp(`Weights\\s*cBTC bond not counted from ${dShort(today + 1)}`).test(zt.terms) && !/counts if it is still posted/.test(zt.terms) && /a flat 500 points per wstETH for each further day it stays posted/.test(zt.terms),
+    ok(new RegExp(`Weights\\s*cBTC bond not counted from ${dShort(today + 1)}`).test(zt.terms) && !/cBTC has been minted against it/.test(zt.terms) && /a flat 500 points per wstETH for each further day it stays posted/.test(zt.terms),
       `ptsview: Terms says posting a bond is not counted, drops the rule that no longer matters, and states the daily credit (${zt.terms.slice(0, 400)})`);
     if (z.errors.length) { fails++; console.log('FAIL ptsview page errors: ' + z.errors.slice(0, 3).join(' | ')); }
     await z.browser.close();

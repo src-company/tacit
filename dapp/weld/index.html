@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-07UC7X9tI+1xtJTLm4mEJ/dyndcrF3NLztlVxuXGe5w=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-3j+xPq4wjVok6b0cLtaoYhjmiUCzL6Qw2aOooYFkwfs=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -4260,7 +4260,8 @@ function bondEarnText(r, day, n) {
   const w = scheduled(PGM.weights, day), zero = w?.e.weights.cbtcmint === 0;
   const hold = r.cbtchold ? `${n(r.cbtchold)} a day while a bond on a Bitcoin lock stays posted` : '';
   if (zero && hold) return w.from ? `${n(r.cbtcmint)} per wstETH until ${dayShort(w.from - 1)}; then ${hold}` : hold;
-  return `${n(r.cbtcmint)} per wstETH${weightNote('cbtcmint', day)}${hold ? `; ${hold}${PGM.cbtcHoldFromDay > day ? ` from ${dayShort(PGM.cbtcHoldFromDay)}` : ''}` : ''}`;
+  const minted = PGM.bondHoldFromDay ? ` once cBTC is minted against it${PGM.bondHoldFromDay > day ? ` (from ${dayShort(PGM.bondHoldFromDay)})` : ''}` : '';
+  return `${n(r.cbtcmint)} per wstETH${minted}${weightNote('cbtcmint', day)}${hold ? `; ${hold}${PGM.cbtcHoldFromDay > day ? ` from ${dayShort(PGM.cbtcHoldFromDay)}` : ''}` : ''}`;
 }
 const earnRows = () => {
   const r = PGM.rates, n = rateStr, day = utcDay(now());
@@ -4335,7 +4336,7 @@ function terms() {
   const week = sp ? `${pct(sp.kindStep)} more for each other kind of activity in the past 7 days${sp.maxKinds ? ` (up to ${pct(sp.kindStep * sp.maxKinds)}${sp.minPoints ? `; a kind counts once it has earned ${rateStr(sp.minPoints)} points that week` : ''})` : ''}, and ${pct(sp.returnStep)} more for activity on more than one day${g.from ? `, from ${dayShort(g.from)}` : ''}` : null;
   const counting = names?.length || sp ? 'each activity at its weight, times the week’s multiplier. A day’s pot is split by these counted points; the all-time total is points as scored' : null;
   const bonds = [
-    PGM.bondHoldFromDay && w?.e.weights.cbtcmint !== 0 ? `a cBTC bond counts if it is still posted when its day settles, shortly after the day ends${PGM.bondHoldFromDay > today ? `, from ${dayShort(PGM.bondHoldFromDay)}` : ''}` : null,
+    PGM.bondHoldFromDay && w?.e.weights.cbtcmint !== 0 ? `a cBTC bond counts if cBTC has been minted against it and it is still posted when its day settles, shortly after the day ends${PGM.bondHoldFromDay > today ? `, from ${dayShort(PGM.bondHoldFromDay)}` : ''}` : null,
     PGM.rates.cbtchold ? `a bond on a Bitcoin lock earns a flat ${rateStr(PGM.rates.cbtchold)} points per wstETH for each further day it stays posted, credited when the day settles and counted as activity for the week${PGM.cbtcHoldFromDay > today ? `, from ${dayShort(PGM.cbtcHoldFromDay)}` : ''}` : null,
   ].filter(Boolean).join('; ') || null;
   const kv = (k, v) => html`<div class="kv"><span>${k}</span><b>${v}</b></div>`;

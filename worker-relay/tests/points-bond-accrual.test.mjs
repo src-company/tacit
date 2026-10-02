@@ -120,6 +120,27 @@ try {
   void big;
   console.log('ok - escrow beyond what the lock needs earns nothing');
 
+  // A bond counts for its day only if cBTC is minted against its lock and the lock is neither redeemed nor spent: the engine will
+  // not release escrow behind outstanding cBTC, so such a bond cannot be taken back and posted again.
+  const MD = D + 20;
+  const bm = {
+    minted: bond(store, A, MD, out(30), A), unminted: bond(store, B, MD, out(31), B), redeemed: bond(store, C, MD, out(32), C),
+    spent: bond(store, A, MD, out(33), A), sliver: bond(store, B, MD, out(34), B),
+  };
+  const lockOf = { [out(30)]: { minted: true }, [out(31)]: { minted: false }, [out(32)]: { minted: true, redeemed: true }, [out(33)]: { minted: true, spent: true }, [out(34)]: { minted: true } };
+  const mres = await decideBondHolds({ store, day: MD, readEscrow: async (o) => (o === out(34) ? 1n : ETH), readLock: async (o) => ({ spent: false, redeemed: false, ...lockOf[o] }) });
+  assert.deepEqual(mres, { checked: 5, released: 4 }, 'only the bond on a minted, live lock that is still whole is counted');
+  const mintedRows = store.dayActivityPoints(MD * DAY, (MD + 1) * DAY).filter((x) => x.activity === 'cbtcmint');
+  assert.deepEqual(mintedRows.map((x) => x.address), [A], 'and it is the one that counts');
+  void bm;
+  // Past the grace an unreadable lock stops holding the day back and is counted; before it, the day waits.
+  const ND = D + 21, nb = bond(store, C, ND, out(35), C);
+  const lockBoom = async () => { throw new Error('rpc down'); };
+  await assert.rejects(decideBondHolds({ store, day: ND, readEscrow: async () => ETH, readLock: lockBoom, failAfterSecs: 6 * 3600, nowSec: () => (ND + 1) * DAY + 100 }), /rpc down/);
+  assert.deepEqual(await decideBondHolds({ store, day: ND, readEscrow: async () => ETH, readLock: lockBoom, failAfterSecs: 6 * 3600, nowSec: () => (ND + 1) * DAY + 7 * 3600 }), { checked: 1, released: 0 });
+  void nb;
+  console.log('ok - a bond counts only if cBTC is minted against a live lock and the whole of it is still posted');
+
   // A bond that cannot be read: the day waits, until it is well past its end; then it stops holding rewards back.
   const flaky = bond(store, C, D + 6, out(7), C);
   const boom = async () => { throw new Error('rpc down'); };
