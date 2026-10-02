@@ -2450,13 +2450,12 @@ function buildFeePricer(env) {
 // GET /confidential/quote?asset=<ticker|0x assetId>&effects=<N> — the relay's fee policy, published rather
 // than left for every integrator to mirror `confidential-pool-ux.js`'s RELAY_FEE_ASSETS table by hand. Two
 // parts: a STATIC per-asset floor (this table, kept in sync with the dapp's copy by convention — both are
-// small and rarely change) and, for cETH only, a live GAS-AWARE floor using the same `floorInFeeUnits` the
-// relay's own profitability gate (buildRelayFeeGate above) checks a submitted op against. `effects` is the
-// caller's own estimate of how many public effects their op will emit (nullifiers/minted leaves/fee legs) —
-// there is no built op yet to count them from at quote time, so this is advisory; the AUTHORITATIVE check at
-// submit time re-derives the real count from the real op via the identical `passesFloor` function. Every
-// other asset only gets the static floor: there is no USD price oracle wired server-side beyond cETH's fixed
-// wei-per-unit constant (see buildRelayFeeGate's own comment for why).
+// small and rarely change) and, for every asset the gate can price except cTAC (cETH, cUSD, cBTC), a live GAS-AWARE
+// floor using the same `floorInFeeUnits` the relay's own profitability gate (buildRelayFeeGate above) checks a
+// submitted op against. `effects` is the caller's own estimate of how many public effects their op will emit
+// (nullifiers/minted leaves/fee legs) — there is no built op yet to count them from at quote time, so this is
+// advisory; the AUTHORITATIVE check at submit time re-derives the real count from the real op via the identical
+// `passesFloor` function. cTAC only gets the static floor (see the exception in the handler below).
 const QUOTE_RELAY_FEE_ASSETS = {
   cETH:  { minUnderlying: 100000000000000n },     // 0.0001 ETH
   cUSDC: { minUnderlying: 300000n },               // $0.30 (6dp)
@@ -2554,14 +2553,8 @@ function handleConfidentialQuote(req, env, url, cors) {
         try {
           const cost = await wrapSettleCost(env, gasPriceHex, ethUsd);
           let tipWei = cost.tipWei;
-          if (ticker === 'cETH') {
-            const amountParam = url.searchParams.get('amountWei') || '';
-            if (/^\d+$/.test(amountParam)) {
-              const capBps = BigInt(env.WRAP_TIP_CAP_BPS || '300');
-              const cap = (BigInt(amountParam) * capBps) / 10000n;
-              if (cap < tipWei) tipWei = cap;
-            }
-          }
+          const amountParam = url.searchParams.get('amountWei') || '';
+          if (ticker === 'cETH' && /^\d+$/.test(amountParam)) tipWei = cappedWrapTip(env, tipWei, BigInt(amountParam));
           out.recommendedWrapTipWei = tipWei.toString();
           // Self-settle (SettleTipForwarder.settleWithTip) carries no gas leg: the caller is already
           // broadcasting their own settle transaction and paying its gas directly, so the wrap figure's
@@ -2670,8 +2663,8 @@ async function proveRateLimit(env, ip, bucket = 'prove', burst = PROVE_RL_BURST,
   });
 }
 // What settling one wrap costs this relay now, with its margin, in wei: settle gas at `gasPriceHex` plus the SP1
-// network prove (nothing for the prove when PROVE or ETH has no price). The quote recommends it as a wrap tip, and a
-// wrap whose deposit paid at least half of it is paid work (wrapTipPaid).
+// network prove (nothing for the prove when PROVE or ETH has no price). The quote recommends it as a wrap tip (capped
+// for a small ETH deposit, cappedWrapTip), and a wrap whose deposit paid at least half of that is paid work (wrapTipPaid).
 async function wrapSettleCost(env, gasPriceHex, ethUsd) {
   const gasCostWei = BigInt(env.WRAP_SETTLE_GAS || '593000') * BigInt(gasPriceHex);
   const provePriceUsd = await _provePriceUsd('mainnet').catch(() => null);
@@ -2679,6 +2672,13 @@ async function wrapSettleCost(env, gasPriceHex, ethUsd) {
   const marginBps = BigInt(env.RELAY_FEE_MARGIN_BPS || '1000'), withMargin = (x) => x + (x * marginBps) / 10000n;
   return { tipWei: withMargin(gasCostWei + proveCostWei), proveTipWei: withMargin(proveCostWei) };
 }
+// The tip the quote recommends for a wrap of `amountWei` of ETH: what settling costs, capped at WRAP_TIP_CAP_BPS of the
+// deposit (default 300 = 3%) so it is never a double-digit share of a small one. A wrap is held to the same figure
+// (wrapTipPaid), so the tip the quote recommends is always one that counts.
+const cappedWrapTip = (env, tipWei, amountWei) => {
+  const cap = (amountWei * BigInt(env.WRAP_TIP_CAP_BPS || '300')) / 10000n;
+  return cap < tipWei ? cap : tipWei;
+};
 // A wrap's op carries no fee (its tip rides on the deposit, paid on chain before anything is proved), so by its op
 // alone a wrap is free work. `depositTx` names the deposit's transaction: when its receipt holds a WrappedWithTip
 // from one of our tip forwarders for this op's own deposit (commitment, asset and amount) paying our tip recipient at
@@ -2713,7 +2713,7 @@ async function wrapTipPaid(env, body) {
   const [gas, ethUsd] = await Promise.all([_ethGasPrice('mainnet').catch(() => null), _ethUsdPrice().catch(() => null)]);
   if (!gas) return false;
   const { tipWei } = await wrapSettleCost(env, gas, ethUsd);
-  return tip * 2n >= tipWei;
+  return tip * 2n >= (row.ticker === 'cETH' ? cappedWrapTip(env, tipWei, amount) : tipWei);
 }
 // A GLOBAL daily ceiling on prove-mode jobs, on top of the per-IP bucket.
 //

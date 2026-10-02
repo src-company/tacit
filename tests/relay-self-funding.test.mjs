@@ -456,14 +456,15 @@ async function loadTipPaid({ receipt, gasHex = '0x3b9aca00', ethUsd = 2500, prov
   return { ...f, keccak_256, u };
 }
 test('a wrap counts as paid only for its own deposit, through our forwarder, to our recipient, at a real tip', async () => {
-  const W = (b) => '0x' + b.repeat(32), op = { asset: W('3c'), value: '1000000', cx: W('01'), cy: W('02'), owner: W('03') };
+  // A deposit of 1 ETH, for which the 3% cap on the recommended tip is well above what settling costs.
+  const W = (b) => '0x' + b.repeat(32), op = { asset: W('3c'), value: '100000000', cx: W('01'), cy: W('02'), owner: W('03') };
   const { wrapTipPaid, wrapSettleCost, keccak_256, u } = await loadTipPaid({ receipt: null });
   const commit = '0x' + u.bytesToHex(keccak_256(u.hexToBytes('01'.repeat(32) + '02'.repeat(32) + '03'.repeat(32))));
   const sig = '0x' + u.bytesToHex(keccak_256(new TextEncoder().encode('WrappedWithTip(bytes32,uint256,uint256,address)')));
   const FWD = '0x000000D218B03db5837943b0b05DeA2965AE956e', TO = '0x' + '006cd14f36f65ecbb29b2519ccbe63a0dc8549f2'.padStart(64, '0');
   const word = (n) => BigInt(n).toString(16).padStart(64, '0');
   const cost = (await wrapSettleCost({}, '0x3b9aca00', 2500)).tipWei;
-  const rcpt = ({ address = FWD, topics = [sig, commit, TO], amount = 10n ** 16n, tip = cost, status = '0x1' } = {}) => ({ status, logs: [{ address, topics, data: '0x' + word(amount) + word(tip) }] });
+  const rcpt = ({ address = FWD, topics = [sig, commit, TO], amount = 10n ** 18n, tip = cost, status = '0x1' } = {}) => ({ status, logs: [{ address, topics, data: '0x' + word(amount) + word(tip) }] });
   const paid = async (receipt, body = { type: 'wrap', op, depositTx: W('aa') }) => (await loadTipPaid({ receipt })).wrapTipPaid({}, body);
   ok(await paid(rcpt()) === true, 'a full tip for this deposit counts as paid');
   ok(await paid(rcpt({ tip: (cost + 1n) / 2n })) === true, 'half the cost still counts (gas moves between the quote and the settle)');
@@ -472,6 +473,14 @@ test('a wrap counts as paid only for its own deposit, through our forwarder, to 
   ok(await paid(rcpt({ topics: [sig, commit, '0x' + '11'.repeat(32)] })) === false, 'a tip to someone else does not pay us');
   ok(await paid(rcpt({ address: '0x' + '22'.repeat(20) })) === false, 'the same event from any other contract is ignored');
   ok(await paid(rcpt({ amount: 10n ** 15n })) === false, 'a tip on a different amount is a different deposit');
+  // A small deposit: the quote recommends a tip capped at 3% of it, and that recommended tip must count as paid.
+  const small = { ...op, value: '1000000' }, smallWei = 10n ** 16n, capped = (smallWei * 300n) / 10000n;
+  ok(capped < cost, 'the cap binds for a 0.01 ETH deposit at this gas');
+  const paidSmall = (tip) => paid(rcpt({ amount: smallWei, tip }), { type: 'wrap', op: small, depositTx: W('aa') });
+  ok(await paidSmall(capped) === true, 'the capped tip the quote recommends counts as paid');
+  ok(await paidSmall((capped + 1n) / 2n) === true, 'half of it still counts');
+  ok(await paidSmall(capped / 3n) === false, 'a tip under half the capped recommendation is still free work');
+  ok(await paidSmall(0n) === false, 'no tip is free work');
   ok(await paid(rcpt({ status: '0x0' })) === false, 'a reverted deposit paid nothing');
   ok(await paid(rcpt(), { type: 'wrap', op }) === false, 'without depositTx a wrap is free work, as before');
   ok(await paid(rcpt(), { type: 'transfer', op, depositTx: W('aa') }) === false, 'only a wrap can be paid this way');
