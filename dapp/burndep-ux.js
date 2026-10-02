@@ -23,6 +23,7 @@ import { makeBurnDepositBroadcaster } from './burndep-broadcast.js';
 import { makeBurnDepositKit, classifyConfidentialTx } from './burn-deposit-bitcoin.js';
 import { makeBtcWallet } from './bitcoin-taproot-wallet.js';
 import { makeBridgeMintRecovery } from './bridge-mint-recovery.js';
+import { buildRecoverClaim } from './bridge-recover.js';
 
 export const BURNDEP_BETA_CAP_RAW = 100_000_000_000n; // 1,000 TAC at 8 decimals
 // The registration door (worker/src/index.js) caps a bundle's cxfers at 64 hops. The migrate itself adds one
@@ -160,7 +161,7 @@ export function makeBurnDepositUx(deps) {
   // here, a bridge whose burn-home is tracked pauses before its burn (the holder keeps the TAC and can move it back),
   // and a burn is offered for minting once the attested state records it. Read from the public attested state,
   // cached briefly; the live set is keyed by outpoint, as the scan keys it.
-  const REFLECTED_NOTE = 'this TAC is already tracked by the reflection, so it uses a different bridge path than this one. Your TAC is untouched.';
+  const REFLECTED_NOTE = 'this TAC takes a different bridge path, which is not in the app yet. Your TAC is untouched.';
   let reflCache = null;
   async function reflected(fresh = false) {
     if (!fresh && reflCache && now() - reflCache.at < 60000) return reflCache;
@@ -476,6 +477,14 @@ export function makeBurnDepositUx(deps) {
       }
       return putRecord({ ...rec, stage: 'reclaimed', reclaimedAt: now() });
     },
+    // A recovery in flight: follow its claim until the TAC is sent back to this wallet.
+    recovering: async (rec) => {
+      const c = await callWorker('GET', `/bridge/recover?burn=${stripHex(rec.burn.txid)}`);
+      if (c && c.status === 'sent') return putRecord({ ...rec, stage: 'recovered', recover: { ...rec.recover, status: 'sent', txid: c.txid, sentAt: now() } });
+      if (c && c.status === 'none') return putRecord({ ...rec, stage: 'not-recorded' });
+      if (c && c.status && c.status !== (rec.recover && rec.recover.status)) return putRecord({ ...rec, recover: { ...rec.recover, status: c.status } });
+      return rec;
+    },
     registered: async (rec) => {
       const st = await checkTxidStatus(rec.burn.txid);
       if (st.status !== 'folded') return rec;
@@ -577,7 +586,7 @@ export function makeBurnDepositUx(deps) {
     const burnHome = reveal.reconstructBurnHome({ prims: P, walletPriv, source, amount, burnHomeTxid, chainSpk });
     const bundle = { ...traced.bundle, burned: { cx: burnHome.cx, cy: burnHome.cy } };
 
-    const stageByStatus = { unconfirmed: 'burn-submitted', 'awaiting-scan': status.registered ? 'registered' : 'burn-mined', pending: status.registered ? 'registered' : 'burn-mined', folded: 'folded' };
+    const stageByStatus = { unconfirmed: 'burn-submitted', 'awaiting-scan': status.registered ? 'registered' : 'burn-mined', pending: status.registered ? 'registered' : 'burn-mined', folded: 'folded', 'not-recorded': 'not-recorded' };
     const stage = stageByStatus[status.status];
     if (!stage) throw new Error(`burndep-ux: cannot recover from status '${status.status}'`);
 
@@ -649,6 +658,19 @@ export function makeBurnDepositUx(deps) {
     await chain.broadcastWithRetry(built.revealHex);
     return putRecord({ ...rec, stage: 'reclaim-sent', reclaim: { commitTxid: built.commitTxid, txid: built.revealTxid, commitHex: built.commitHex, revealHex: built.revealHex }, reclaimSentAt: now() });
   }
+  // A bridge that did not complete: its TAC comes back to this wallet. The wallet key signs a claim naming the burn, the
+  // amount and the burned note's opening (dapp/bridge-recover.js); once it checks out the same amount is sent to this
+  // wallet's address, and the record follows it through 'recovering' to 'recovered'.
+  async function recover({ rec, walletPriv } = {}) {
+    if (!rec || (rec.stage !== 'not-recorded' && rec.stage !== 'recovering')) throw new Error('burndep-ux: only a bridge that did not complete can be recovered');
+    if (!walletPriv) throw new Error('burndep-ux: recovering needs the wallet key');
+    if (bytesToHexLocal(secp.getPublicKey(walletPriv, true)) !== lc(rec.walletPub)) throw new Error('burndep-ux: this bridge belongs to a different wallet');
+    const claim = buildRecoverClaim({ secp, sha256, signSchnorr }, { burnTxid: rec.burn.txid, amount: rec.source.amount, blinding: rec.burnHome.blinding, walletPriv });
+    const r = await callWorker('POST', '/bridge/recover', claim);
+    if (!r || !r.ok) throw new Error((r && r.error) || 'the recovery could not be started; try again in a moment');
+    return putRecord({ ...rec, stage: r.status === 'sent' ? 'recovered' : 'recovering', recover: { status: r.status, txid: r.txid || null, at: now() } });
+  }
+
   // The key-free part of a stage the holder drives: a bridge whose burn-home is live stops, and an unrecorded burn says
   // so, without waiting for a click. Used by a page's background refresh.
   async function verify(walletPub, id) {
@@ -658,6 +680,7 @@ export function makeBurnDepositUx(deps) {
       return putRecord({ ...rec, stage: 'stopped', stoppedAt: now(), stoppedWhy: 'tracked' });
     }
     if (rec.stage === 'folded' && (await burnRecorded(rec)) === false) return putRecord({ ...rec, stage: 'not-recorded', notRecordedAt: now() });
+    if (rec.stage === 'recovering') return STAGE_ADVANCE.recovering(rec);
     return rec;
   }
 
@@ -673,7 +696,7 @@ export function makeBurnDepositUx(deps) {
 
   return {
     BURNDEP_BETA_CAP_RAW, eligibleNotes, isReserved, preflight, start, advance, resumeAll, recoverFromTxid, list, abandon,
-    buildCancel, reclaim, verify, isLive, burnRecorded,
+    buildCancel, reclaim, recover, verify, isLive, burnRecorded,
     slipstreamStatus: broadcaster.slipstreamStatus,
     checkTxidStatus,
   };

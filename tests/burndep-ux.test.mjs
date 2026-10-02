@@ -15,6 +15,8 @@ import { makeConfidentialPool } from '../dapp/confidential-pool.js';
 import { makeBurnDepositUx, BURNDEP_BETA_CAP_RAW } from '../dapp/burndep-ux.js';
 import { makeBurnDepositKit, classifyConfidentialTx } from '../dapp/burn-deposit-bitcoin.js';
 import { ripemd160 } from '../dapp/vendor/tacit-deps.min.js';
+import { verifySchnorr } from '../dapp/bulletproofs.js';
+import { recoverClaimDigest } from '../dapp/bridge-recover.js';
 
 let n = 0, failures = 0;
 const ok = (c, m) => { if (c) { console.log('  ok -', m); n++; } else { console.error('  FAIL -', m); failures++; } };
@@ -66,6 +68,7 @@ function makeWorld() {
   // recordBurns is off.
   const liveKeys = new Set(), checkedDests = [];
   let recordBurns = true, noteHeight = 800;
+  const recoverPosts = [], recoverState = new Map();
 
   const wpkhSpkOf = (pub) => bytesToHex(new Uint8Array([0x00, 0x14, ...ripemd160ish(pub)]));
   // A real HASH160 isn't needed for these tests — only byte-equality between "what the source pays" and
@@ -101,6 +104,15 @@ function makeWorld() {
       return json({ attestedHeight: 1000, snapshot: { height: 1000, liveTriples: [...liveKeys].map((k) => [k, '0x00', ASSET, '0x00', 0]),
         burnNodes: [['0x' + '00'.repeat(32), '0x' + '00'.repeat(32), '0x' + '00'.repeat(32), true], ...dests.map((d) => ['0x' + '11'.repeat(32), '0x' + '00'.repeat(32), d, true])],
         pendingDepositRecords: [] } });
+    }
+    if (u.pathname === '/bridge/recover') {
+      if (opts && opts.method === 'POST') {
+        recoverPosts.push(body);
+        if (!recoverState.has(body.burnTxid)) recoverState.set(body.burnTxid, { status: 'queued', txid: null });
+        return json({ ok: true, ...recoverState.get(body.burnTxid) });
+      }
+      const c = recoverState.get(stripHex(u.searchParams.get('burn') || ''));
+      return json(c ? { ok: true, ...c } : { ok: true, status: 'none' });
     }
     if (u.pathname === '/reflection/burndep') {
       // A first-writer-wins conflict against a DIFFERENT bundle already stored for this exact burn txid — an
@@ -159,7 +171,8 @@ function makeWorld() {
   };
 
   return {
-    fetchImpl, chain, bridgeMint, broadcasts, registered, bridgeMintCalls,
+    fetchImpl, chain, bridgeMint, broadcasts, registered, bridgeMintCalls, recoverPosts,
+    setRecoverStatus: (burn, status, txid = null) => recoverState.set(burn, { status, txid }),
     setMigrateConfirmed: (v) => { migrateConfirmed = v; },
     setBurnSubmitted: (txid) => { burnSubmitted = txid; },
     setBurnConfirmed: (v) => { burnConfirmed = v; },
@@ -585,7 +598,7 @@ let rec;
   const ux = makeUx(world, makeMemStorage());
   const pf = await ux.preflight({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPub: WALLET_PUB });
   const st = pf.steps.find((x) => x.name === 'not-tracked');
-  ok(pf.ok === false && st && st.ok === false && /already tracked by the reflection/.test(st.detail), 'preflight refuses a note the reflection already tracks, with a plain reason');
+  ok(pf.ok === false && st && st.ok === false && /takes a different bridge path/.test(st.detail), 'preflight refuses a note the reflection already tracks, with a plain reason');
   ok(world.broadcasts.length === 0, 'nothing is broadcast for a tracked note');
 }
 // A bridge whose burn-home is tracked pauses before its burn; its TAC goes back to the wallet.
@@ -661,6 +674,41 @@ let rec;
   ok(world.bridgeMintCalls.length === 0, 'and never mints it');
 }
 
+// A bridge that did not complete is recovered: the wallet signs a claim that opens the burned note, and the record
+// follows the claim until the TAC is sent back.
+{
+  const world = makeWorld();
+  const ux = makeUx(world, makeMemStorage());
+  let r = await ux.start({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE });
+  r = await ux.advance(r.walletPub, r.id); world.setMigrateConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id); r = await ux.advance(r.walletPub, r.id);
+  world.setBurnHomeOnChain(r.burnHome.txid, r.burnHome.spk);
+  r = await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV });
+  world.setBurnSubmitted(r.burn.txid);
+  r = await ux.advance(r.walletPub, r.id); world.setBurnConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id); r = await ux.advance(r.walletPub, r.id);
+  world.setRecordBurns(false); world.setBurnFolded(true);
+  r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'not-recorded', 'sanity: not recorded');
+  let refused = false;
+  try { await ux.recover({ rec: r, walletPriv: new Uint8Array(32).fill(0x23) }); } catch { refused = true; }
+  ok(refused && world.recoverPosts.length === 0, 'another key cannot start a recovery for this wallet’s bridge');
+  r = await ux.recover({ rec: r, walletPriv: WALLET_PRIV });
+  ok(r.stage === 'recovering', 'recover starts the recovery');
+  const claim = world.recoverPosts[0];
+  ok(claim.burnTxid === stripHex(r.burn.txid).toLowerCase() && claim.amount === String(NOTE_AMOUNT), 'the claim names the burn and the amount it carried');
+  const opened = pool.commitXY(BigInt(claim.amount), BigInt(claim.blinding));
+  ok(BigInt(opened.cx) === BigInt(r.burnHome.cx) && BigInt(opened.cy) === BigInt(r.burnHome.cy), 'its opening opens the burned note');
+  ok(claim.pubkey === Buffer.from(WALLET_PUB).toString('hex') && verifySchnorr(hexToBytes(claim.sig), recoverClaimDigest(sha256, claim), hexToBytes(claim.pubkey).slice(1)), 'it is signed by the wallet key');
+  r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'recovering' && r.recover.status === 'queued', 'it waits while the claim is queued');
+  world.setRecoverStatus(claim.burnTxid, 'sent', 'ab'.repeat(32));
+  r = await ux.verify(r.walletPub, r.id);
+  ok(r.stage === 'recovered' && r.recover.txid === 'ab'.repeat(32), 'the background check moves it to recovered, with the transaction that sent it');
+  let threw = false;
+  try { await ux.recover({ rec: { ...r, stage: 'folded' }, walletPriv: WALLET_PRIV }); } catch { threw = true; }
+  ok(threw, 'only a bridge that did not complete can be recovered');
+}
 
 // A note newer than the attested state is not judged yet: preflight asks to wait, and a bridge holds before its burn.
 {

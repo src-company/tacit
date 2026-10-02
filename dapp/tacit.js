@@ -22918,19 +22918,21 @@ const _BURNDEP_STAGE_LABEL = {
   'burn-mined': 'registering with the reflection…', registered: 'waiting for the reflection to fold it…',
   folded: 'ready to mint',
   stopped: 'paused before the burn — your TAC is safe', 'reclaim-sent': 'moving back to your wallet…',
-  'not-recorded': 'not mintable',
+  'not-recorded': 'didn’t complete', recovering: 'recovering your TAC…', recovered: 'recovered — back in your wallet',
 };
 // What the button itself says while advance() is in flight FOR that stage — distinct from the row's resting
 // label above, and from PHASE_TEXT (below, in the click handler), which further refines 'folded' as its own
 // onProgress events arrive. A bare "…" for every stage is what made a real 10-60s mint read as hung.
 const _BURNDEP_BUSY_LABEL = {
   traced: 'Checking & signing…', 'burn-mined': 'Registering…', registered: 'Checking…', folded: 'Building…',
-  stopped: 'Moving…', 'not-recorded': 'Copying…',
+  stopped: 'Moving…', 'not-recorded': 'Recovering…', recovering: 'Checking…',
 };
 // Plain words under a bridge that cannot go on the usual way, and what its holder can do.
 const _BURNDEP_NOTE = {
-  stopped: 'This TAC is already tracked by the reflection, which uses a different bridge path, so this one paused before the burn. Your TAC is untouched: move it back to your wallet to use it as before.',
-  'not-recorded': 'The burn confirmed, but this TAC was already tracked by the reflection, which uses a different bridge path, so the burn was not recorded for minting here. Copy its details to keep a verifiable record of the burn and its amount.',
+  stopped: 'This TAC takes a different bridge path, so this one paused before the burn. Your TAC is untouched: move it back to your wallet to use it as before.',
+  'not-recorded': 'This bridge didn’t complete. Recover returns your TAC to your wallet so you can try again.',
+  recovering: 'Your TAC is on its way back to your wallet, usually within the hour. Nothing else to do.',
+  recovered: 'Your TAC is back in your wallet. You can try the bridge again.',
 };
 // Known failure shapes seen in production, translated to text a holder can act on. Falls through to the raw
 // message for anything else — never hides a genuinely new error, only smooths the ones already understood.
@@ -22974,16 +22976,17 @@ function _renderHoldingsBurndepBridges(listEl) {
     // show "transaction not found" for however long MARA takes, at exactly the point a user is most likely to
     // anxiously check on it. Link the migrate instead until the burn is confirmed and indexed.
     const preMinedBurn = rec.stage === 'burn-signed' || rec.stage === 'burn-submitted';
-    const watchTxid = (!preMinedBurn && rec.burn?.txid) || rec.migrate?.revealTxid;
+    const watchTxid = (rec.stage === 'recovered' && rec.recover?.txid) || (!preMinedBurn && rec.burn?.txid) || rec.migrate?.revealTxid;
     const watchNote = preMinedBurn ? ` · <span title="MARA Slipstream submits straight to a miner — this won't appear on mempool.space until it's mined">not on public explorers yet</span>` : '';
     const watchLink = watchTxid ? ` · <a href="https://mempool.space/${NET.name === 'signet' ? 'signet/' : ''}tx/${escapeHtml(watchTxid)}" target="_blank" rel="noopener noreferrer">view ↗</a>${watchNote}` : '';
-    const settledOff = rec.stage === 'stopped' || rec.stage === 'not-recorded';
+    const settledOff = rec.stage === 'stopped' || rec.stage === 'not-recorded' || rec.stage === 'recovered';
     const needsKey = rec.stage === 'traced' || rec.stage === 'folded' || rec.stage === 'stopped';
     const failing = !!rec.lastError && !settledOff;
     const actLabel = rec.stage === 'traced' ? 'Burn' : rec.stage === 'folded' ? 'Mint' : rec.stage === 'stopped' ? 'Move back to my wallet'
-      : rec.stage === 'not-recorded' ? 'Copy details' : failing ? 'Retry' : 'Refresh';
-    const actKind = rec.stage === 'stopped' ? 'reclaim' : rec.stage === 'not-recorded' ? 'copy' : needsKey ? 'sign' : 'poll';
-    const noteHtml = _BURNDEP_NOTE[rec.stage] ? `<div style="margin-top:3px;max-width:52ch;">${escapeHtml(_BURNDEP_NOTE[rec.stage])}</div>` : '';
+      : rec.stage === 'not-recorded' ? 'Recover' : rec.stage === 'recovered' ? 'Done' : failing ? 'Retry' : 'Refresh';
+    const actKind = rec.stage === 'stopped' ? 'reclaim' : rec.stage === 'not-recorded' ? 'recover' : rec.stage === 'recovered' ? 'dismiss' : needsKey ? 'sign' : 'poll';
+    const noteText = rec.stage === 'recovering' && rec.recover?.status === 'held' ? 'Your recovery is being checked. Nothing else to do.' : _BURNDEP_NOTE[rec.stage];
+    const noteHtml = noteText ? `<div style="margin-top:3px;max-width:52ch;">${escapeHtml(noteText)}</div>` : '';
     // A stage label alone can't distinguish "waiting normally" from "stuck on a repeating error" — this is the
     // only place a background-poller failure (never seen by anyone unless they look here) becomes visible.
     const errorHtml = failing
@@ -23093,13 +23096,16 @@ function _renderHoldingsBurndepBridges(listEl) {
       };
       try {
         const kind = btn.dataset.burndepAct, rec = records.find((r) => r.id === id);
-        if (kind === 'copy') {
-          // The burn and the opening of the note it spent (amount and blinding open the burn-home's public commitment).
-          const big = (k, v) => (typeof v === 'bigint' ? v.toString() : v);
-          await navigator.clipboard.writeText(JSON.stringify({ burnTxid: rec.burn?.txid || null, burnHome: { txid: rec.burnHome?.txid, cx: rec.burnHome?.cx, cy: rec.burnHome?.cy, blinding: rec.burnHome?.blinding },
-            amount: rec.source?.amount, assetId: rec.source?.assetId, source: { txid: rec.source?.txid, vout: rec.source?.vout } }, big, 2));
-          toast('Bridge details copied.', 'success');
-          btn.disabled = false; btn.textContent = orig;
+        if (kind === 'recover') {
+          await ensurePrivkey();
+          const after = await ux.recover({ rec, walletPriv: wallet.priv });
+          toast(after.stage === 'recovered' ? _BURNDEP_NOTE.recovered : 'Recovering your TAC. It returns to your wallet, usually within the hour.', 'success', 8000);
+          renderHoldings();
+          return;
+        }
+        if (kind === 'dismiss') {
+          ux.abandon(bytesToHex(wallet.pub), id);
+          renderHoldings();
           return;
         }
         if (kind === 'reclaim') {
@@ -23199,7 +23205,7 @@ function _startBurndepAutoRefresh() {
     if (document.hidden || _isAppIdle()) return;
     if (!wallet || !wallet.pub) { _stopBurndepAutoRefresh(); return; }
     let ux, records;
-    try { ux = _burndepUxSingleton(); records = ux.list(bytesToHex(wallet.pub)).filter((r) => !['minted', 'reclaimed', 'not-recorded', 'stopped'].includes(r.stage)); }
+    try { ux = _burndepUxSingleton(); records = ux.list(bytesToHex(wallet.pub)).filter((r) => !['minted', 'reclaimed', 'not-recorded', 'stopped', 'recovered'].includes(r.stage)); }
     catch { return; }
     if (!records.length) { _stopBurndepAutoRefresh(); return; }
     let changed = false;

@@ -107,6 +107,7 @@ import { makeScanReflectionIndexer } from '../../dapp/confidential-reflection-sc
 import { makeBurndepAdmission, HEADER_CHUNK as BURNDEP_HEADER_CHUNK } from './burndep-admission.js';
 import { SWAP_BATCH_VK } from '../../dapp/confidential-swapbatch-vk.js';
 import { bpRangeVerify, bpClassicProofLen } from '../../dapp/bulletproofs.js';
+import { makeBridgeRecover } from '../../dapp/bridge-recover.js';
 import { bppRangeVerify, bytesToPoint as bppPoint } from '../../dapp/bulletproofs-plus.js';
 import { makeStatsReader, mergeReadings, toJson as statsJson } from '../../dapp/weld/stats/read.js';
 
@@ -626,7 +627,7 @@ const reverseBytes = b => { const r = new Uint8Array(b); r.reverse(); return r; 
 // caller (curl, another server) could already do. This is what lets a third-party page with no fixed
 // origin (an IPFS/web3-gateway-hosted frontend, e.g.) use the relay directly from a browser instead of
 // needing its own backend proxy or a per-deploy entry in ALLOWED_ORIGINS.
-const OPEN_ORIGIN_PATHS = new Set(['/stats', '/confidential/submit', '/confidential/status', '/confidential/quote', '/confidential/index', '/reflection/dump', '/reflection/status', '/reflection/note-witness', '/reflection/burndep', '/reflection/eth-state/covers', '/crossout/minted', '/farm/program', '/farm/health']);
+const OPEN_ORIGIN_PATHS = new Set(['/stats', '/bridge/recover', '/confidential/submit', '/confidential/status', '/confidential/quote', '/confidential/index', '/reflection/dump', '/reflection/status', '/reflection/note-witness', '/reflection/burndep', '/reflection/eth-state/covers', '/crossout/minted', '/farm/program', '/farm/health']);
 function corsHeaders(env, reqOrigin, openOrigin) {
   const list = (env.ALLOWED_ORIGINS || '*').split(',').map(s => s.trim());
   const allow = openOrigin || list.includes('*') ? '*' : (list.includes(reqOrigin) ? reqOrigin : list[0]);
@@ -2034,6 +2035,100 @@ function buildProbeBurnTxHex(noteTxidDisplay, noteVout) {
   const voutLe = [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff].map((x) => x.toString(16).padStart(2, '0')).join('');
   return withHex('01000000' + '01' + txidInternal + voutLe + '00' + 'ffffffff' + '00' + '00000000');
 }
+// ---- recovering a bridge that did not complete ----
+// POST /bridge/recover?network= — { burnTxid, amount, blinding, pubkey, sig }: a holder's claim for a burn the reflection
+// passed without recording it for a mint (dapp/bridge-recover.js says exactly what is checked). A claim that checks out
+// is queued once per burn; it always pays the burn's own holder, whoever submits it. The recovery service checks it
+// again and sends the amount back to the holder's key. GET ?burn= reads where a claim stands.
+const bridgeRecoverKey = (network, burn) => `bridge:recover:${network}:${burn}`;
+let _bridgeRecover = null;
+const bridgeRecover = () => _bridgeRecover || (_bridgeRecover = makeBridgeRecover({
+  secp, sha256, ripemd160, pool: makeConfidentialPool({ secp, keccak256: keccak_256, sha256 }), classifyConfidentialTx, verifySchnorr,
+  tacAssetId: CANONICAL_TAC_ASSET_ID_HEX,
+}));
+async function bridgeRecoverState(env, network) {
+  const snap = await getReflectionSnapshotForStatus(env, network);
+  if (!snap || !Number.isInteger(snap.attestedHeight)) return null;
+  return { height: snap.attestedHeight, dests: snap.burnDests, pending: new Set(snap.pendingDepositRecords.map((r) => String((r && r.key) || '').toLowerCase())) };
+}
+const bridgeRecoverView = (c) => ({ ok: true, status: c.status, txid: c.txid || null });
+async function handleBridgeRecover(req, env, url, cors) {
+  if (!env.REGISTRY_KV) return jsonResponse({ error: 'no kv' }, 500, cors);
+  const network = url.searchParams.get('network') === 'signet' ? 'signet' : 'mainnet';
+  const nostore = { ...cors, 'Cache-Control': 'no-store' };
+  const read = async (burn) => { const raw = await env.REGISTRY_KV.get(bridgeRecoverKey(network, burn)); return raw ? JSON.parse(raw) : null; };
+  if (req.method === 'GET') {
+    const burn = String(url.searchParams.get('burn') || '').replace(/^0x/, '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(burn)) return jsonResponse({ ok: false, error: 'burn required (64 hex characters)' }, 400, nostore);
+    const c = await read(burn);
+    return jsonResponse(c ? bridgeRecoverView(c) : { ok: true, status: 'none' }, 200, nostore);
+  }
+  const ip = req.headers.get('CF-Connecting-IP') || 'anon';
+  const rl = await proveRateLimit(env, ip, 'bridge-recover', 10, 60000);
+  if (!rl.ok) return jsonResponse({ ok: false, error: `too many requests — retry in ~${rl.retryAfter}s`, retryAfter: rl.retryAfter }, 429, { ...nostore, 'Retry-After': String(rl.retryAfter) });
+  let claim;
+  try { claim = await req.json(); } catch { return jsonResponse({ ok: false, error: 'bad json' }, 400, nostore); }
+  const burn = String((claim && claim.burnTxid) || '').replace(/^0x/, '').toLowerCase();
+  const existing = /^[0-9a-f]{64}$/.test(burn) ? await read(burn) : null;
+  if (existing) return jsonResponse(bridgeRecoverView(existing), 200, nostore);
+  const v = await bridgeRecover().verifyClaim(claim, {
+    getTx: async (t) => JSON.parse(await apiText(env, `/tx/${t}`, {}, network)),
+    getTxHex: async (t) => (await apiText(env, `/tx/${t}/hex`, {}, network)).trim(),
+    state: await bridgeRecoverState(env, network),
+  }).catch((e) => ({ ok: false, reason: String((e && e.message) || e) }));
+  if (!v.ok) return jsonResponse({ ok: false, error: v.reason }, 400, nostore);
+  const rec = {
+    burnTxid: v.burnTxid, amount: v.amount.toString(), blinding: String(claim.blinding), pubkey: v.pubkey,
+    sig: String(claim.sig).replace(/^0x/, '').toLowerCase(), address: v.address, burnHeight: v.burnHeight, status: 'queued', at: Date.now(),
+  };
+  await env.REGISTRY_KV.put(bridgeRecoverKey(network, v.burnTxid), JSON.stringify(rec));
+  return jsonResponse(bridgeRecoverView(rec), 200, nostore);
+}
+// GET /bridge/recover/queue?network= (box token): every claim in full, for the recovery service, which sends the queued
+// ones and reads the rest to know what it already sent.
+async function handleBridgeRecoverQueue(req, env, url, cors) {
+  if (!checkConfidentialAuth(req, env)) return jsonResponse({ error: 'not found' }, 404, cors);
+  if (!env.REGISTRY_KV) return jsonResponse({ error: 'no kv' }, 500, cors);
+  const network = url.searchParams.get('network') === 'signet' ? 'signet' : 'mainnet';
+  const prefix = `bridge:recover:${network}:`;
+  const out = [];
+  let cursor;
+  do {
+    const list = await env.REGISTRY_KV.list({ prefix, cursor });
+    for (const k of list.keys) {
+      try { const c = JSON.parse(await env.REGISTRY_KV.get(k.name)); if (c) out.push(c); } catch {}
+    }
+    cursor = list.list_complete ? undefined : list.cursor;
+  } while (cursor);
+  return jsonResponse({ network, claims: out }, 200, { ...cors, 'Cache-Control': 'no-store' });
+}
+// POST /bridge/recover/mark?network= (box token) — { burnTxid, status: 'sending' | 'sent' | 'held', inputs?, txid?, note? }:
+// the recovery service's record of what it sends. 'sending' names the notes it is about to spend, so a send cut short
+// can be resolved from whether those notes were spent. A claim marked sent stays sent; a held one waits for a person.
+async function handleBridgeRecoverMark(req, env, url, cors) {
+  if (!checkConfidentialAuth(req, env)) return jsonResponse({ error: 'not found' }, 404, cors);
+  if (!env.REGISTRY_KV) return jsonResponse({ error: 'no kv' }, 500, cors);
+  const network = url.searchParams.get('network') === 'signet' ? 'signet' : 'mainnet';
+  let b;
+  try { b = await req.json(); } catch { return jsonResponse({ ok: false, error: 'bad json' }, 400, cors); }
+  const burn = String((b && b.burnTxid) || '').replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(burn) || !['sending', 'sent', 'held'].includes(b.status)) return jsonResponse({ ok: false, error: 'burnTxid and status (sending|sent|held) required' }, 400, cors);
+  const key = bridgeRecoverKey(network, burn);
+  const raw = await env.REGISTRY_KV.get(key);
+  if (!raw) return jsonResponse({ ok: false, error: 'no claim for that burn' }, 404, cors);
+  const c = JSON.parse(raw);
+  if (c.status === 'sent') return jsonResponse(bridgeRecoverView(c), 200, cors);
+  const txid = b.txid ? String(b.txid).replace(/^0x/, '').toLowerCase() : null;
+  const inputs = Array.isArray(b.inputs) ? b.inputs.slice(0, 8).map((o) => ({ txid: String((o && o.txid) || '').replace(/^0x/, '').toLowerCase(), vout: Number(o && o.vout) }))
+    .filter((o) => /^[0-9a-f]{64}$/.test(o.txid) && Number.isInteger(o.vout) && o.vout >= 0) : null;
+  const next = {
+    ...c, status: b.status, ...(txid && /^[0-9a-f]{64}$/.test(txid) ? { txid } : {}), ...(inputs && inputs.length ? { inputs } : {}),
+    ...(b.note ? { note: String(b.note).slice(0, 300) } : {}), [`${b.status}At`]: Date.now(),
+  };
+  await env.REGISTRY_KV.put(key, JSON.stringify(next));
+  return jsonResponse(bridgeRecoverView(next), 200, cors);
+}
+
 // POST /reflection/burndep/check?network= — a pre-flight admission check that runs the SAME logic the scan's
 // own fold will (both call into burndep-admission.js's shared enrich/header-chain/admit — see that module's
 // header comment for why sharing it matters), so a holder or a UI can learn "would this admit" before ever
@@ -25949,7 +26044,7 @@ export {
   apiText, apiRawBytes,
   // Exported so tests can drive the burn-deposit auto-completion sweep and its shared bundle-builder directly
   // against a fake KV + real esplora data, without needing a live REGISTRY_KV.
-  sweepPendingBurnDeposits, buildBurndepBundle, assetKey, handleBurnDepositStatus, handleBurnDepositCheck,
+  sweepPendingBurnDeposits, buildBurndepBundle, assetKey, handleBurnDepositStatus, handleBurnDepositCheck, handleBridgeRecover, handleBridgeRecoverQueue, handleBridgeRecoverMark,
   buildProbeBurnTxHex, handleBurndepCacheStatus,
 };
 
@@ -26247,6 +26342,9 @@ async function _routeFetch(req, env, ctx) {
     if (url.pathname === '/reflection/burndep/trace' && req.method === 'POST') return handleBurnDepositTrace(req, env, url, cors);
     if (url.pathname === '/reflection/burndep/status' && req.method === 'GET') return handleBurnDepositStatus(req, env, url, cors);
     if (url.pathname === '/reflection/burndep/check' && req.method === 'POST') return handleBurnDepositCheck(req, env, url, cors);
+    if (url.pathname === '/bridge/recover' && (req.method === 'POST' || req.method === 'GET')) return handleBridgeRecover(req, env, url, cors);
+    if (url.pathname === '/bridge/recover/queue' && req.method === 'GET') return handleBridgeRecoverQueue(req, env, url, cors);
+    if (url.pathname === '/bridge/recover/mark' && req.method === 'POST') return handleBridgeRecoverMark(req, env, url, cors);
     if (url.pathname === '/reflection/burndep/sweep' && req.method === 'POST') return handleBurnDepositSweep(req, env, url, cors);
     if (url.pathname === '/reflection/burndep/cache-status' && req.method === 'GET') return handleBurndepCacheStatus(req, env, url, cors);
     if (url.pathname === '/crossout/minted' && req.method === 'GET') return handleCrossoutMinted(url, env, cors);

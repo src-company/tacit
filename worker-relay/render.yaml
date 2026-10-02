@@ -628,6 +628,31 @@ services:
       - key: PORT
         value: "10000"
 
+  # Background worker: sends TAC back for bridges that did not complete (src/bridge-recover.js). Reads the claims the
+  # API took in (POST /bridge/recover), checks each again against public chain data and the attested reflection state,
+  # and sends the claimed amount from its own key to the claim's key. Built from the repo root like the faucet (it
+  # loads dapp/tacit.js headlessly). No disk: each claim's progress is kept by the API and resolved from chain data.
+  - type: worker
+    name: tacit-bridge-recover
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./worker-relay/Dockerfile.sats-faucet
+    dockerContext: .
+    plan: starter
+    region: oregon
+    dockerCommand: node src/bridge-recover.js
+    autoDeploy: false
+    envVars:
+      # DELIBERATELY NOT `fromGroup: tacit-relay-shared`: it holds only its own key and the API token.
+      - key: RECOVER_NETWORK
+        value: mainnet
+      - key: TACIT_WORKER_BASE
+        value: https://api.tacit.finance
+      - key: RECOVER_KEY             # P2WPKH key holding the TAC it sends, hex — set in the Render dashboard
+        sync: false
+      - key: CONFIDENTIAL_BOX_TOKEN  # the API's box token — set in the Render dashboard
+        sync: false
+
   # Always-on web service: BIP-352 silent-payment tweak index for signet (src/sp-tweak-index.js). Publishes, per
   # block, input_hash·A_sum for every transaction with a taproot output; wallets match outputs locally with their
   # scan key, so the index holds no keys and never learns which outputs matched. Serves GET /sp/tip,
