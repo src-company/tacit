@@ -10,7 +10,8 @@ import { hmac } from '../node_modules/@noble/hashes/hmac.js';
 import { makeConfidentialPool } from '../dapp/confidential-pool.js';
 import { signSchnorr, verifySchnorr } from '../dapp/bulletproofs.js';
 import { makeBridgeRecover } from '../dapp/bridge-recover.js';
-import { makeRecoverer } from '../worker-relay/src/bridge-recover.js';
+import { makeRecoverer, makeTopUp } from '../worker-relay/src/bridge-recover.js';
+import * as vdeps from '../dapp/vendor/tacit-deps.min.js';
 
 const _cat = (arrs) => { const t = arrs.reduce((s, a) => s + a.length, 0); const o = new Uint8Array(t); let p = 0; for (const a of arrs) { o.set(a, p); p += a.length; } return o; };
 secp.etc.hmacSha256Sync = (key, ...m) => hmac(sha256, key, _cat(m));
@@ -58,8 +59,9 @@ function world({ status = 'queued', inputs, sendingAt = 0, notes, live = new Set
   ];
   const wallet = { notes: async () => held, send: async (x) => { sends.push(x); return 'ab'.repeat(32); } };
   const state = async () => ({ height: 1000, dests, pending: new Set(), live });
-  const rec = makeRecoverer({ verifier, pool, api, chain, state, wallet, graceSecs: 600, now: () => 1_000_000 });
-  return { rec, marks, sends, spends, claim, pub };
+  const before = { calls: 0, result: false };
+  const rec = makeRecoverer({ verifier, pool, api, chain, state, wallet, beforeSend: async () => { before.calls++; return before.result; }, graceSecs: 600, now: () => 1_000_000 });
+  return { rec, marks, sends, spends, claim, pub, before };
 }
 
 test('a queued claim is marked with its notes, sent to the claim key for the exact amount, then marked sent', async () => {
@@ -119,4 +121,43 @@ test('without enough TAC on hand it waits and marks nothing', async () => {
   assert.equal((await w.rec.tick()).short, BURN);
   assert.equal(w.sends.length, 0);
   assert.equal(w.marks.length, 0);
+});
+
+test('a fee top-up before a send makes the send wait a round', async () => {
+  const w = world();
+  w.before.result = true;
+  assert.equal((await w.rec.tick()).toppedUp, true);
+  assert.equal(w.sends.length, 0);
+  assert.equal(w.marks.length, 0, 'nothing is marked sending before the money is there');
+  w.before.result = false;
+  assert.equal((await w.rec.tick()).sent, 1);
+});
+
+test('fee money: one top-up from the fee key when plain sats run low, never more often than six hours', async () => {
+  const RECOVER = 'aa'.repeat(32), FEE = 'bb'.repeat(32);
+  const addrOf = (pubHex) => 'bc1q-' + pubHex.slice(2, 10);
+  const recoverAddr = addrOf(hex(secp.getPublicKey(Buffer.from(RECOVER, 'hex'), true)));
+  let utxos = [{ value: 546 }, { value: 2000 }];
+  const sent = [];
+  const tacit = {
+    DUST: 546, wallet: {}, invalidateHoldingsCache() {},
+    getUtxos: async () => utxos,
+    buildAndBroadcastSatsSend: async ({ recipientAddr, amountSats }) => { sent.push({ from: tacit.wallet.address(), recipientAddr, amountSats }); return { txid: 'cd'.repeat(32) }; },
+  };
+  Object.defineProperty(tacit.wallet, 'address', { value: () => addrOf(hex(tacit.wallet.pub)) });
+  const { setWalletKey } = await import('../worker-relay/src/sats-faucet.js');
+  setWalletKey({ tacit, deps: vdeps }, RECOVER);
+  let t = 0;
+  const none = makeTopUp({ tacit, deps: vdeps, recoverKey: RECOVER, feeKey: null });
+  assert.equal(await none(), false, 'no fee key, no top-up');
+  const topUp = makeTopUp({ tacit, deps: vdeps, recoverKey: RECOVER, feeKey: FEE, minSats: 6000, topUpSats: 12000, now: () => t, logger: () => {} });
+  assert.equal(await topUp(), true);
+  assert.deepEqual(sent, [{ from: addrOf(hex(secp.getPublicKey(Buffer.from(FEE, 'hex'), true))), recipientAddr: recoverAddr, amountSats: 12000 }], 'sent from the fee key to the recovery key');
+  assert.equal(tacit.wallet.address(), recoverAddr, 'the recovery key is back in place');
+  t = 5 * 3600 * 1000;
+  assert.equal(await topUp(), false, 'not again within six hours');
+  utxos = [{ value: 9000 }];
+  t = 7 * 3600 * 1000;
+  assert.equal(await topUp(), false, 'not when enough plain sats are on hand (546-sat notes do not count)');
+  assert.equal(sent.length, 1);
 });

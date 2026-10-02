@@ -652,6 +652,8 @@ services:
         sync: false
       - key: CONFIDENTIAL_BOX_TOKEN  # the API's box token — set in the Render dashboard
         sync: false
+      - key: RECOVER_FEE_KEY         # optional: a key whose plain sats top up the fee money — set in the Render dashboard
+        sync: false
 
   # Always-on web service: BIP-352 silent-payment tweak index for signet (src/sp-tweak-index.js). Publishes, per
   # block, input_hash·A_sum for every transaction with a taproot output; wallets match outputs locally with their

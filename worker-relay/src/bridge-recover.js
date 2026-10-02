@@ -15,6 +15,12 @@
 //   RECOVER_ETH_RPC          Ethereum RPC for the pool's attested digest (default https://ethereum-rpc.publicnode.com)
 //   RECOVER_POLL_SECS        poll interval (default 120)
 //   RECOVER_GRACE_SECS       wait before resending a send cut short (default 1200)
+//   RECOVER_FEE_KEY          optional P2WPKH key whose plain sats top up RECOVER_KEY's fee money when it runs low
+//                            (secret); TAC never goes to its address
+//   RECOVER_MIN_SATS         plain sats below which a top-up is sent (default 6000)
+//   RECOVER_TOPUP_SATS       sats per top-up, at most one per six hours (default 12000)
+//   RECOVER_STEALTH_TXIDS    comma-separated txids of stealth sends to RECOVER_KEY, discovered at start (recent
+//                            ones are also found by scanning TAC's recent transfers)
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +49,9 @@ export function configFromEnv(env = process.env) {
     ethRpc: env.RECOVER_ETH_RPC || 'https://ethereum-rpc.publicnode.com',
     pollSecs: int(env.RECOVER_POLL_SECS, 120),
     graceSecs: int(env.RECOVER_GRACE_SECS, 1200),
+    minSats: int(env.RECOVER_MIN_SATS, 6000),
+    topUpSats: int(env.RECOVER_TOPUP_SATS, 12000),
+    stealthTxids: String(env.RECOVER_STEALTH_TXIDS || '').split(',').map((t) => t.trim().toLowerCase()).filter((t) => /^[0-9a-f]{64}$/.test(t)),
   };
   if (cfg.network !== 'mainnet') throw new Error('bridge-recover runs on mainnet only');
   if (!cfg.token) throw new Error('CONFIDENTIAL_BOX_TOKEN is required');
@@ -75,7 +84,8 @@ export function makeChain(fetchImpl = fetch, bases = ESPLORA.mainnet) {
 //   chain:  makeChain()
 //   state:  async () → { height, dests, pending, live } from the authenticated reflection state (0x-prefixed keys)
 //   wallet: { pubHex, spk, notes() → [{ txid, vout, amount, blinding, value }], send({ pubHex, amount, inputs }) → txid }
-export function makeRecoverer({ verifier, pool, api, chain, state, wallet, graceSecs = 1200, now = () => Date.now(), logger = log }) {
+//   beforeSend: optional async () → true when it did something (a fee top-up) that the send should wait for
+export function makeRecoverer({ verifier, pool, api, chain, state, wallet, beforeSend = null, graceSecs = 1200, now = () => Date.now(), logger = log }) {
   const opKey = (o) => key0x(pool.outpointKey('0x' + lc(o.txid).match(/../g).reverse().join(''), o.vout));
 
   // Untracked notes first, largest first: an untracked note sent on stays untracked, so its holder can bridge it.
@@ -144,6 +154,7 @@ export function makeRecoverer({ verifier, pool, api, chain, state, wallet, grace
     }
     if (!inputs) inputs = pick(notes, v.amount, st.live || new Set());
     if (!inputs) { logger(`not enough TAC on hand for ${claim.burnTxid} (${claim.amount}); waiting`); return { sent: 0, short: claim.burnTxid }; }
+    if (beforeSend && await beforeSend()) return { sent: 0, toppedUp: true };
     const txid = await sendOne(claim, v.amount, inputs);
     return { sent: 1, txid };
   }
@@ -194,12 +205,19 @@ export function makeApi({ cfg, fetchImpl = fetch }) {
   };
 }
 
-// The key's TAC notes and sends, through the dapp's own transfer builder.
-export function makeTacitWallet({ tacit }) {
+// The key's TAC notes and sends, through the dapp's own transfer builder. Notes received by stealth send sit at one-time
+// addresses: they are found among TAC's recent transfers (and any txid given), then held like any other note.
+export function makeTacitWallet({ tacit, stealthTxids = [], logger = log }) {
+  let primed = false;
   return {
     async notes() {
+      if (!primed) {
+        for (const t of stealthTxids) { try { await tacit.discoverStealthFromTxid(t, { merge: true }); } catch (e) { logger(`stealth txid ${t}: ${e && e.message || e}`); } }
+        primed = true;
+      }
+      try { await tacit.scanAssetForStealthReceipts(TAC_ASSET_ID, { maxPages: 2, pageLimit: 50 }); } catch (e) { logger(`stealth scan: ${e && e.message || e}`); }
       try { tacit.invalidateHoldingsCache(); } catch {}
-      const h = (await tacit.scanHoldings()).get(TAC_ASSET_ID);
+      const h = (await tacit.scanHoldings(true)).get(TAC_ASSET_ID);
       return ((h && h.utxos) || []).map((u) => ({ txid: u.utxo.txid, vout: u.utxo.vout, value: u.utxo.value, amount: BigInt(u.amount), blinding: BigInt(u.blinding), _u: u }));
     },
     async send({ pubHex, amount, inputs }) {
@@ -209,17 +227,50 @@ export function makeTacitWallet({ tacit }) {
   };
 }
 
+// Fee money: when the key's plain sats fall under minSats, one send of topUpSats from the fee key's plain sats, at most
+// once per six hours. Returns true when it sent one, so the refund waits a round for it.
+export function makeTopUp({ tacit, deps, recoverKey, feeKey, minSats = 6000, topUpSats = 12000, now = () => Date.now(), logger = log }) {
+  let lastAt = -Infinity;
+  return async function topUp() {
+    if (!feeKey) return false;
+    const addr = tacit.wallet.address();
+    const have = (await tacit.getUtxos(addr)).filter((u) => u.value > tacit.DUST).reduce((a, u) => a + u.value, 0);
+    if (have >= minSats || now() - lastAt < 6 * 3600 * 1000) return false;
+    lastAt = now();
+    setWalletKey({ tacit, deps }, feeKey);
+    try {
+      const r = await tacit.buildAndBroadcastSatsSend({ recipientAddr: addr, amountSats: topUpSats });
+      logger(`fee money: ${topUpSats} sats from ${tacit.wallet.address()} in ${r.txid} (had ${have})`);
+      return true;
+    } finally { setWalletKey({ tacit, deps }, recoverKey); }
+  };
+}
+
 async function main() {
   const cfg = configFromEnv();
-  if (!process.env.RECOVER_KEY) throw new Error('RECOVER_KEY is required');
+  const keyOf = (v) => (v ? String(v).trim().toLowerCase().replace(/^0x/, '') : null);
+  const recoverKey = keyOf(process.env.RECOVER_KEY), feeKey = keyOf(process.env.RECOVER_FEE_KEY);
+  if (!recoverKey) throw new Error('RECOVER_KEY is required');
   const loaded = await loadTacitHeadless(cfg.network);
-  const pubHex = setWalletKey(loaded, process.env.RECOVER_KEY);
+  const pubHex = setWalletKey(loaded, recoverKey);
   const { deps } = loaded;
   const pool = makeConfidentialPool({ secp: deps.secp, keccak256: deps.keccak_256, sha256: deps.sha256 });
   const verifier = makeBridgeRecover({ secp: deps.secp, sha256: deps.sha256, ripemd160: deps.ripemd160, pool, classifyConfidentialTx, signSchnorr, verifySchnorr, tacAssetId: TAC_ASSET_ID });
-  log(`sending from ${loaded.tacit.wallet.address()} (${pubHex})`);
+  const wallet = makeTacitWallet({ tacit: loaded.tacit, stealthTxids: cfg.stealthTxids });
+  try {
+    const { unifiedAddress } = await import('../../dapp/tacit-unified.js');
+    const notes = await wallet.notes();
+    const sats = (await loaded.tacit.getUtxos(loaded.tacit.wallet.address())).filter((u) => u.value > loaded.tacit.DUST).reduce((a, u) => a + u.value, 0);
+    log(`sending from ${loaded.tacit.wallet.address()} (${unifiedAddress(recoverKey).address}): ${notes.reduce((a, n) => a + n.amount, 0n)} TAC units in ${notes.length} note(s), ${sats} sats`);
+  } catch (e) { log(`sending from ${loaded.tacit.wallet.address()} (${pubHex}); balance read failed: ${e && e.message || e}`); }
+  const topUp = makeTopUp({ tacit: loaded.tacit, deps, recoverKey, feeKey, minSats: cfg.minSats, topUpSats: cfg.topUpSats });
+  if (feeKey) {
+    setWalletKey(loaded, feeKey);
+    log(`fee money from ${loaded.tacit.wallet.address()} when under ${cfg.minSats} sats`);
+    setWalletKey(loaded, recoverKey);
+  }
   const rec = makeRecoverer({
-    verifier, pool, api: makeApi({ cfg }), chain: makeChain(), state: makeAuthedState({ cfg, deps }), wallet: makeTacitWallet(loaded), graceSecs: cfg.graceSecs,
+    verifier, pool, api: makeApi({ cfg }), chain: makeChain(), state: makeAuthedState({ cfg, deps }), wallet, beforeSend: topUp, graceSecs: cfg.graceSecs,
   });
   const chain = makeChain();
   for (;;) {
