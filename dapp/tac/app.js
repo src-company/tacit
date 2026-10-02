@@ -532,6 +532,18 @@ function tabs(ids, panes, onPick) {
 async function refreshAll() {
   renderBalances(); refreshChip();
   await Promise.all([loadPublic(), loadShielded()]);
+  await recoverExits().catch(() => {});
+}
+
+// TAC withdrawn to this wallet that this browser holds no opening for (withdrawn on another device, or before its
+// storage was cleared) is opened again from the pool seed, and the public balance read again when any is.
+async function recoverExits() {
+  if (!unlocked() || !poolWallet || !shielded.notes) return;
+  const h = await T.scanHoldings();
+  const ghosts = (h instanceof Map ? h.get(S.TAC_ASSET_MAINNET)?.ghosts : null) || [];
+  if (!ghosts.length) return;
+  const n = await S.recoverExitOpenings(T, { poolWallet, asset: S.TAC_ASSET_MAINNET, utxos: ghosts.map((g) => g.utxo), notes: shielded.notes });
+  if (n) { T.invalidateHoldingsCache?.(); await loadPublic(); }
 }
 
 // TAC paid to a one-time stealth address does not sit at this wallet's own script, so a plain holdings scan

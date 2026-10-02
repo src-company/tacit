@@ -289,7 +289,7 @@ export async function poolNotes(poolWallet, asset) {
 
 // Notes this browser has spent, by nullifier, until the replay counts the spend (it does after three confirmations),
 // so a second spend made in between never picks them again; and each spend's change, shown as settling until the
-// change note is read back. Kept six hours.
+// change note is read back, with an exit's amount, shown as on its way out until the spend's notes are. Kept six hours.
 const PENDING_KEY = 'tacit-pool-pending-v1', PENDING_MS = 6 * 3600e3;
 const nfKey = (nf) => String(nf).replace(/^0x/, '').toLowerCase();
 function pendingRead() {
@@ -300,19 +300,23 @@ function pendingRead() {
   for (const [k, x] of Object.entries(v?.change || {})) if (now - x.at < PENDING_MS) out.change[k] = x;
   return out;
 }
-function pendingMark(notes, txid, change, asset) {
+function pendingMark(notes, txid, change, asset, out = 0n) {
   const p = pendingRead(), at = Date.now();
   for (const n of notes) if (n.nf) p.spent[nfKey(n.nf)] = { at, txid };
-  if (change > 0n) p.change[txid] = { at, v: change.toString(), asset: String(asset).replace(/^0x/, '').toLowerCase() };
+  if (change > 0n || out > 0n) p.change[txid] = { at, v: change.toString(), ...(out > 0n ? { out: out.toString() } : {}), asset: String(asset).replace(/^0x/, '').toLowerCase() };
   try { if (typeof localStorage !== 'undefined') localStorage.setItem(PENDING_KEY, JSON.stringify(p)); } catch {}
 }
-// The notes of `notes` this browser has not spent, and how much of `asset` is settling as change not yet read back.
+// The notes of `notes` this browser has not spent, how much of `asset` is settling as change not yet read back, and how
+// much is leaving by an exit the replay has not counted yet.
 export function pendingView(notes, asset) {
   const p = pendingRead(), seen = new Set(notes.map((n) => n.txid));
   const live = notes.filter((n) => !n.spent && !(n.nf && p.spent[nfKey(n.nf)]));
-  let settling = 0n;
-  for (const [txid, c] of Object.entries(p.change)) if (!seen.has(txid) && (!asset || eqAsset(c.asset, asset))) settling += BigInt(c.v);
-  return { live, settling };
+  let settling = 0n, leaving = 0n;
+  for (const [txid, c] of Object.entries(p.change)) {
+    if (seen.has(txid) || (asset && !eqAsset(c.asset, asset))) continue;
+    settling += BigInt(c.v); leaving += BigInt(c.out || 0);
+  }
+  return { live, settling, leaving };
 }
 // A relayer that refused a payment because its notes are already being spent: posting it again would only conflict.
 const spentElsewhere = (m) => /nullifier|conflict|replayed|already spent|double/i.test(String(m || ''));
@@ -398,8 +402,30 @@ export async function exitToWallet(tacit, { poolWallet, amount, asset, anchor = 
   const { payload } = await proveHere(built, say);
   say('sending…');
   const r = await broadcastCarrier(tacit, { payload, outputs: [{ value: Math.max(tacit.DUST, DUST_SATS), script: own }] });
-  pendingMark(a.notes, r.revealTxid, change, asset);
+  pendingMark(a.notes, r.revealTxid, change, asset, amount);
+  // The holdings scan credits the note from this opening once the replay records the exit.
+  tacit.recordOpening?.(r.revealTxid, 0, String(asset).replace(/^0x/, '').toLowerCase(), amount, BigInt(built.exit.blinding));
   return { ...r, exit: { vout: 0, value: amount.toString(), blinding: built.exit.blinding, cx: built.exit.cx, cy: built.exit.cy }, anchor: a.hAnchor };
+}
+
+// Opens again, from the pool seed, exits this wallet made to its own address whose openings this browser does not
+// hold (made on another device, or with its storage cleared), and records them. `utxos` are such outputs, as the
+// holdings scan lists them under `ghosts`; `notes` are the pool wallet's notes of `asset`, spent ones included, among
+// which recoverExit finds each spend's inputs. → how many it recorded.
+export async function recoverExitOpenings(tacit, { poolWallet, asset, utxos, notes }) {
+  const assetHex = String(asset).replace(/^0x/, '').toLowerCase();
+  let n = 0;
+  for (const u of utxos || []) {
+    const tx = await tacit.getTx(u.txid).catch(() => null);
+    const env = tx ? tacit.txOutputEnvelope(tx) : null;
+    if (!env || env.opcode !== 0x6d) continue;
+    let o;
+    try { o = pool.recoverExit(poolWallet, env.payload, notes); } catch { continue; }
+    if (o.exitVout !== u.vout) continue;
+    tacit.recordOpening(u.txid, u.vout, assetHex, BigInt(o.value), BigInt(o.blinding));
+    n++;
+  }
+  return n;
 }
 
 // ── back to sats ──

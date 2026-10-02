@@ -17155,24 +17155,30 @@ async function _fetchSwapAccepted(txidHex) {
 
 // Bitcoin-native shielded pool exits (T_BTC_SPEND with an exit). An exit output is a transparent note of
 // (asset, Cx, Cy) exactly when the pool's replay recorded an accepted exit at txid:exit_vout, so its validity
-// comes from the pool service's exit record. No service configured, or none reachable → no record → not
-// credited. A T_BTC_SPEND may ride any input of its carrier; an exit is only accepted when the carrier's vin[0]
-// holds no transparent Tacit op.
+// comes from the pool service's exit record. No service reachable → no record → not credited. A T_BTC_SPEND
+// may ride any input of its carrier; an exit is only accepted when the carrier's vin[0] holds no transparent
+// Tacit op.
 const T_BTC_SPEND = 0x6D;
-const BTC_POOL_API = String((typeof globalThis !== 'undefined' && typeof globalThis.__TACIT_BTC_POOL_API__ === 'string' && globalThis.__TACIT_BTC_POOL_API__)
+// The network's replay service (the hosts dapp/sats/secret.js's pool clients read), unless a page or process
+// names its own.
+const BTC_POOL_API_SET = String((typeof globalThis !== 'undefined' && typeof globalThis.__TACIT_BTC_POOL_API__ === 'string' && globalThis.__TACIT_BTC_POOL_API__)
   || (typeof process !== 'undefined' && process.env?.TACIT_BTC_POOL_API)
   || '').replace(/\/$/, '');
+const BTC_POOL_API_BY_NET = { mainnet: 'https://tacit-btc-pool-mainnet.onrender.com', signet: 'https://tacit-btc-pool.onrender.com' };
+const btcPoolApi = () => BTC_POOL_API_SET || BTC_POOL_API_BY_NET[NET.name] || '';
 const _btcPoolExitCache = new Map();
 const BTC_POOL_EXIT_TTL_MS = 30 * 1000;
 function clearBtcPoolExitCache() { _btcPoolExitCache.clear(); }
-// → { exit: { assetIdHex, commitment } | null, available }. Only answers from the service are cached.
+// → { exit: { assetIdHex, commitment } | null, available, height }, `height` the block the replay has reached when
+// it says (null otherwise). Only answers from the service are cached.
 async function _fetchBtcPoolExit(txidHex, vout) {
   const k = `${txidHex}:${vout}`;
   const c = _btcPoolExitCache.get(k);
   if (c && (Date.now() - c.fetchedAt) < BTC_POOL_EXIT_TTL_MS) return c;
-  if (!BTC_POOL_API) return { exit: null, available: false, fetchedAt: Date.now() };
+  const api = btcPoolApi();
+  if (!api) return { exit: null, available: false, fetchedAt: Date.now() };
   try {
-    const r = await fetch(`${BTC_POOL_API}/btc-pool/exit/${txidHex}/${vout}`);
+    const r = await fetch(`${api}/btc-pool/exit/${txidHex}/${vout}`);
     if (!r.ok) return { exit: null, available: false, fetchedAt: Date.now() };
     const j = await r.json();
     let exit = null;
@@ -17182,7 +17188,7 @@ async function _fetchBtcPoolExit(txidHex, vout) {
       const commitment = concatBytes(new Uint8Array([(parseInt(cy.slice(-2), 16) & 1) ? 0x03 : 0x02]), hexToBytes(cx));
       exit = { assetIdHex: asset, commitment, cx, cy };
     }
-    const entry = { exit, available: true, fetchedAt: Date.now() };
+    const entry = { exit, available: true, height: Number.isInteger(j.height) ? j.height : null, fetchedAt: Date.now() };
     _btcPoolExitCache.set(k, entry);
     return entry;
   } catch {
@@ -17241,7 +17247,13 @@ const _btcPoolExitMatched = new Map();
 async function _btcPoolExitNote(txidHex, vout, { tx = null, env = null } = {}) {
   const k = `${txidHex}:${vout}`;
   const rec = await _fetchBtcPoolExit(txidHex, vout);
-  if (!rec.exit) { _btcPoolExitMatched.delete(k); return { note: null, available: rec.available }; }
+  if (!rec.exit) {
+    _btcPoolExitMatched.delete(k);
+    // A carrier the replay has not reached (unconfirmed, or above the height the service reports) is not decided yet.
+    const at = tx?.status?.confirmed === true ? Number(tx.status.block_height) : null;
+    const behind = tx != null && rec.height != null && (at == null || !(at <= rec.height));
+    return { note: null, available: rec.available && !behind };
+  }
   const hit = _btcPoolExitMatched.get(k);
   if (!tx && hit && hit.cx === rec.exit.cx && hit.cy === rec.exit.cy && hit.assetIdHex === rec.exit.assetIdHex) return { note: hit, available: true };
   const envs = tx ? _carrierSpendEnvelopes(tx) : (env && env.opcode === T_BTC_SPEND ? [env] : []);
@@ -20284,11 +20296,8 @@ async function _scanHoldingsImpl() {
   for (const u of utxos) {
     const tx = await fetchTx(u.txid);
     if (!tx || !tx.vin || !tx.vin[0]) continue;
-    const witness = tx.vin[0].witness;
-    if (!witness || witness.length < 3) continue;
-    let envelopeBytes;
-    try { envelopeBytes = hexToBytes(witness[1]); } catch { continue; }
-    const env = decodeEnvelopeScript(envelopeBytes);
+    // vin[0]'s envelope, or a pool spend on a later input, as validateOutpoint reads the tx.
+    const env = _txOutputEnvelope(tx);
     if (!env) continue;
 
     let assetIdHex = null, ticker = '???', decimals = 0, onChainCommitment = null;
@@ -20531,6 +20540,16 @@ async function _scanHoldingsImpl() {
       const _fm = getAssetMeta(assetIdHex);
       if (_fm) { ticker = _fm.ticker; decimals = _fm.decimals; }
       onChainCommitment = fc.commitment;
+    } else if (env.opcode === T_BTC_SPEND) {
+      // A pool exit to this address: the spend names the note's asset and commitment at its exit_vout, and
+      // validateOutpoint credits it only against the pool's exit record. The opening is the one the exiting
+      // wallet recorded, or one it rebuilds from its pool seed (dapp/sats/secret.js recoverExitOpenings).
+      const x = _btcSpendExit(env.payload);
+      if (!x || x.exitVout !== u.vout) continue;
+      assetIdHex = x.assetIdHex;
+      const meta = getAssetMeta(assetIdHex);
+      if (meta) { ticker = meta.ticker; decimals = meta.decimals; }
+      onChainCommitment = hexToBytes(x.commitmentHex);
     } else continue;
 
     if (!holdings.has(assetIdHex)) {
@@ -20666,6 +20685,11 @@ async function _scanHoldingsImpl() {
           continue;
         }
       } catch {}
+    }
+    // A pool exit carries nothing a recipient can open on chain; without its opening it waits as a ghost.
+    if (env.opcode === T_BTC_SPEND) {
+      h.ghosts.push({ utxo: u, commitment: onChainCommitment });
+      continue;
     }
 
     // Auto-discovery: try to recover (amount, blinding) from chain alone using the

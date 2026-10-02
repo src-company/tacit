@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Ce9jgUEGaAwhkRkQCFc8SFXH8R488Lw7CjBCeyujMCw=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ycBLPNVPFsuDAnNukpkiWDswgOJhBhUPlCCvwOq4vUk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Simple, private payments: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key and one tacit1 address, every payment made on your device, recovered from the key alone.">
@@ -603,7 +603,7 @@ const viaText = (k) => ({ eth: `Ethereum ${short(k.address || '')}`, btc: `Bitco
 // lock, BIP-352 silent payments, shielded asset sends. It holds one key at a time, so every use takes a turn and the
 // key changes only between turns. It reads the shared network once at import, so this page pins mainnet for its visit
 // and puts back any linked-wallet records a call rewrites.
-const TACIT_URL = '/tacit.js?cb=133a3a2e';
+const TACIT_URL = '/tacit.js?cb=3eb5d608';
 const SHARED_NET = 'tacit-network-v1', PREV_NET = 'tacit-pay-prev-net-v1';
 const SHARED_WALLET_KEYS = ['tacit-eth-identity', 'tacit-btc-identity', 'tacit-active-mode-v1', 'tacit-ext-mode-v1', 'tacit-ext-state-v1',
   ...['mainnet', 'signet'].flatMap((n) => [`tacit-eth-identity:${n}`, `tacit-btc-identity:${n}`])];
@@ -1090,10 +1090,10 @@ function btcReceive(f) {
 // publishing either is paid inside the pool; an older tacit1 address is paid a shielded transfer from the TAC at this
 // key's Bitcoin address instead, which hides who received it.
 // pool: the shielded balance this browser has not spent; top2: its two largest notes, the most one payment can use;
-// settling: change of this browser's own spends that the pool has not counted yet; route: relay, or self (posted from
-// this key's Bitcoin address).
+// settling: change of this browser's own spends that the pool has not counted yet; leaving: TAC this browser took out
+// to its Bitcoin address that the pool has not counted yet; route: relay, or self (posted from this key's Bitcoin address).
 const TAC_ROUTE = 'tacit-pay-tac-route-v1';
-const TAC = { pub: null, at: 0, loading: null, err: null, pool: null, top2: 0n, settling: 0n, notes: null, pw: null, fee: null, relay: false, share: null, route: readJson(TAC_ROUTE) === 'self' ? 'self' : 'relay' };
+const TAC = { pub: null, at: 0, loading: null, err: null, pool: null, top2: 0n, settling: 0n, leaving: 0n, notes: null, pw: null, fee: null, relay: false, share: null, route: readJson(TAC_ROUTE) === 'self' ? 'self' : 'relay' };
 // Silent-payment hints (dapp/sp-hints.js): a silent payment sent from here also posts its txid sealed to the
 // recipient's scan key, and each Bitcoin read opens the hints sealed to this key's, so payments from Tacit apps show up
 // without a link. The service cannot tell who a hint is for.
@@ -1133,7 +1133,7 @@ async function hintsForMe(t, pub) {
   }
   if (S.key?.pubHex === pub) writeJson(k, { after, retry: retry.slice(-50) });
 }
-const getSecret = lazy(() => import('/sats/secret.js?cb=47c283a4'));
+const getSecret = lazy(() => import('/sats/secret.js?cb=28bff07e'));
 function loadTac(force = false) {
   if (!S.key) return Promise.resolve();
   if (TAC.loading) return TAC.loading;
@@ -1147,8 +1147,21 @@ function loadTac(force = false) {
     if (S.key?.pubHex !== pub) return;
     const f = info?.fees?.['0x' + X.TAC_ASSET_MAINNET];
     const v = X.pendingView(notes, X.TAC_ASSET_MAINNET), vals = v.live.map((n) => BigInt(n.value)).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
-    Object.assign(TAC, { pub, at: Date.now(), pw, notes, pool: vals.reduce((t, x) => t + x, 0n), top2: (vals[0] || 0n) + (vals[1] || 0n), settling: v.settling, relay: !!info, fee: f == null ? null : BigInt(f), err: null });
+    Object.assign(TAC, { pub, at: Date.now(), pw, notes, pool: vals.reduce((t, x) => t + x, 0n), top2: (vals[0] || 0n) + (vals[1] || 0n), settling: v.settling, leaving: v.leaving, relay: !!info, fee: f == null ? null : BigInt(f), err: null });
+    recoverExits(pw, notes, pub).catch(() => {});
   })().catch((e) => { if (S.key?.pubHex === pub) TAC.err = e; }).finally(() => { TAC.loading = null; if (S.key?.pubHex === pub) render(); }));
+}
+// TAC taken out to this key's Bitcoin address that this browser holds no opening for (taken out on another device, or
+// before its storage was cleared) is opened again from the pool seed, and the address is read again when any is.
+async function recoverExits(pw, notes, pub) {
+  const X = await getSecret();
+  const n = await withKey(async (t) => {
+    const ghosts = (await t.scanHoldings()).get(TAC_ID)?.ghosts || [];
+    const found = ghosts.length ? await X.recoverExitOpenings(t, { poolWallet: pw, asset: X.TAC_ASSET_MAINNET, utxos: ghosts.map((g) => g.utxo), notes }) : 0;
+    if (found) t.invalidateHoldingsCache();
+    return found;
+  }, pub);
+  if (n && S.key?.pubHex === pub) { await BTC.loading; loadBtc(true); }
 }
 const tacOnBtc = () => (BTC.pub === S.key?.pubHex ? BTC.held.find((a) => a.id === TAC_ID) : null);
 // A wallet read in full with nothing in it. Its Send form says where to get an address first: a new wallet has nothing to send.
@@ -1161,7 +1174,7 @@ function tacBal() {
   const ok = TAC.pub === S.key.pubHex, pub = tacOnBtc();
   return html`<svg class="tk md" aria-hidden="true"><use href="#tk-tac"/></svg>
     <div><div class="v num">${ok ? fmt(TAC.pool, 8, 4) : TAC.err ? html`<span class="err">—</span>` : html`<span class="sk" style="--w:8ch"></span>`}</div>
-      <div class="u">${!ok && TAC.err ? html`<span class="err">Couldn’t read your TAC: ${errText(TAC.err)}</span>` : html`TAC, shielded${ok && TAC.settling ? ` · ${fmt(TAC.settling, 8, 4)} settling` : ''}${pub ? ` · ${fmt(pub.balance, 8, 4)} more at your Bitcoin address` : ''}`}</div></div>
+      <div class="u">${!ok && TAC.err ? html`<span class="err">Couldn’t read your TAC: ${errText(TAC.err)}</span>` : html`TAC, shielded${ok && TAC.settling ? ` · ${fmt(TAC.settling, 8, 4)} settling` : ''}${ok && TAC.leaving ? ` · ${fmt(TAC.leaving, 8, 4)} on its way to your Bitcoin address` : ''}${pub ? ` · ${fmt(pub.balance, 8, 4)} more at your Bitcoin address` : ''}`}</div></div>
     <div class="side">${ok || TAC.err ? html`<button class="link" type="button" id="bal-re">${ok ? 'refresh' : 'retry'}</button>` : 'reading…'}</div>`;
 }
 async function checkPool(pool, msg) {
@@ -1356,7 +1369,7 @@ function tacMove(f) {
       if (r.wait) return waitView(r, (tip) => exit(tip));
       await withKey(async (t) => { try { t.invalidateHoldingsCache?.(); } catch {} });
       await loadTac(true).catch(() => {});
-      say($('#status'), html`<span class="ok">Took out ${fmt(v, 8, 4)} TAC to your Bitcoin address.</span> ${btcTx(r.revealTxid)}`);
+      say($('#status'), html`<span class="ok">Took out ${fmt(v, 8, 4)} TAC to your Bitcoin address.</span> It shows there once the pool counts it, after three confirmations. ${btcTx(r.revealTxid)}`);
     } catch (err) { sayErr(status, err); }
   };
   $('#f-exit').onclick = (e) => busyBtn(e.currentTarget, () => exit());
