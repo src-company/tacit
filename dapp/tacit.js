@@ -61572,7 +61572,7 @@ async function renderHoldings() {
                   <div style="margin-top:8px;padding:10px 12px;background:var(--bg-warm);border:1px dashed var(--ink-faint);font-size:11px;line-height:1.7;">
                     <div><strong>${escapeHtml(amtStr)} ${escapeHtml(target.ticker)}</strong> → your private Ethereum balance (no relay fee)</div>
                     <div>One Bitcoin transaction that burns this note, sent through ordinary relay and paid from your wallet's own sats.</div>
-                    <div>Typical timeline: it confirms in a block or so; the reflection records it once it is about 25 blocks deep, and then you mint it here.</div>
+                    <div>Typical timeline: it confirms in a block or so; the reflection then records it, usually within a few hours and sometimes up to a day, and you mint it here.</div>
                     <div style="color:var(--red);margin-top:6px;font-weight:500;">⚠ Irreversible once the burn confirms.</div>
                   </div>
                   <label class="checkbox-row" style="margin-top:10px;">
