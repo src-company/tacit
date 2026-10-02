@@ -3,7 +3,8 @@
 // with deterministic test keys, broadcasts through an injected recorder (no network), reads the reveal back with
 // the JS mirror of the guest's parser, folds it through the reflection scan mirror, and mints it with
 // confidential-bridge-mint.js — the Bitcoin → Ethereum round trip in JS, for an unbound (class 1) and a bound
-// (class 2) note. Then every refusal.
+// (class 2) note at a P2TR output, and an unbound note at the wallet's own P2WPKH output (auth key zero, the shape an
+// ordinary transfer leaves in a wallet). Then every refusal.
 //
 // Run: node tests/bridge-burn-broadcast.test.mjs
 
@@ -62,16 +63,18 @@ function testWallet({ utxos = null, rate = 5 } = {}) {
   return { prims: w.prims, sent, spk };
 }
 
-// A reflection state holding the note live, loaded into the scan indexer the worker runs.
-function reflectedIndexer({ bound }) {
+// A reflection state holding the note live, loaded into the scan indexer the worker runs. `auth` is the note's auth key:
+// its P2TR x-only key, or zero for a note at a P2WPKH output.
+const ZERO32 = '0x' + '00'.repeat(32);
+function reflectedIndexer({ bound, auth = NOTE_XONLY }) {
   const idx = makeScanReflectionIndexer({ secp, keccak256, sha256, burnDepositKit: makeBurnDepositKit({ secp, keccak256, sha256 }) });
   const { cx, cy } = pool.commitXY(NOTE_VALUE, NOTE_BLINDING);
-  const leaf = bound ? pool.btcNoteLeafBound(ASSET, cx, cy, NOTE_XONLY, CHAIN_BINDING) : pool.btcNoteLeaf(ASSET, cx, cy, NOTE_XONLY);
+  const leaf = bound ? pool.btcNoteLeafBound(ASSET, cx, cy, auth, CHAIN_BINDING) : pool.btcNoteLeaf(ASSET, cx, cy, auth);
   const key = pool.outpointKey(txidInternal(NOTE_TXID), NOTE_VOUT);
   const otherKey = pool.outpointKey(txidInternal('77'.repeat(32)), 0);
   idx.load({
     noteLeaves: ['0x' + '01'.repeat(32), '0x' + '02'.repeat(32), leaf],
-    liveTriples: [[key, pool.commitmentHash(cx, cy), ASSET, NOTE_XONLY, bound ? 1 : 0], [otherKey, '0x' + '0e'.repeat(32), ASSET, '0x' + '0f'.repeat(32), 0]].sort((a, b) => (BigInt(a[0]) < BigInt(b[0]) ? -1 : 1)),
+    liveTriples: [[key, pool.commitmentHash(cx, cy), ASSET, auth, bound ? 1 : 0], [otherKey, '0x' + '0e'.repeat(32), ASSET, '0x' + '0f'.repeat(32), 0]].sort((a, b) => (BigInt(a[0]) < BigInt(b[0]) ? -1 : 1)),
     coords: [[key.toLowerCase(), { cx, cy }]],
     height: 100,
   });
@@ -110,6 +113,21 @@ function bip341Sighash(tx, idx, prevouts, leafHash) {
   if (leafHash) msg.push(leafHash, Buffer.from([0x00]), u32(0xffffffff));
   return tagged('TapSighash', Buffer.concat(msg));
 }
+// BIP-143 (segwit v0) SIGHASH_ALL message for a P2WPKH input.
+function bip143Sighash(tx, idx, pubkey, value) {
+  const u32 = (v) => { const x = Buffer.alloc(4); x.writeUInt32LE(v >>> 0); return x; };
+  const u64 = (v) => { const x = Buffer.alloc(8); x.writeBigUInt64LE(BigInt(v)); return x; };
+  const dsha = (b) => sha(sha(b));
+  const h160 = createHash('ripemd160').update(sha(pubkey)).digest();
+  const scriptCode = Buffer.concat([Buffer.from([0x19, 0x76, 0xa9, 0x14]), h160, Buffer.from([0x88, 0xac])]);
+  const inp = tx.inputs[idx];
+  return dsha(Buffer.concat([u32(tx.version),
+    dsha(Buffer.concat(tx.inputs.map((i) => Buffer.concat([i.txid, u32(i.vout)])))),
+    dsha(Buffer.concat(tx.inputs.map((i) => u32(i.sequence)))),
+    inp.txid, u32(inp.vout), scriptCode, u64(value), u32(inp.sequence),
+    dsha(Buffer.concat(tx.outputs.map((o) => Buffer.concat([u64(o.value), varintBuf(o.script.length), o.script])))),
+    u32(tx.locktime), u32(1)]));
+}
 function scriptPushes(s) {
   const out = []; let p = 36; // after PUSH32 key OP_CHECKSIG OP_FALSE OP_IF
   while (s[p] !== 0x68) { const op = s[p++]; const n = op <= 75 ? op : op === 0x4c ? s[p++] : (p += 2, s.readUInt16LE(p - 2)); out.push(s.subarray(p, p + n)); p += n; }
@@ -120,16 +138,17 @@ function scriptPushes(s) {
 const note = { txid: NOTE_TXID, vout: NOTE_VOUT, sats: 330, asset: ASSET, value: NOTE_VALUE, blinding: NOTE_BLINDING };
 const destBlinding = 0x5151n;
 
-async function roundTrip({ bound }) {
-  const { idx, leaf } = reflectedIndexer({ bound });
+async function roundTrip({ bound, wpkh = false }) {
+  const { idx, leaf } = reflectedIndexer({ bound, auth: wpkh ? ZERO32 : NOTE_XONLY });
   const snapshot = idx.snapshot();
   const w = testWallet();
   const burner = makeBridgeBurnBroadcaster({ pool, bridgeMint: bm, prims: w.prims });
+  const theNote = wpkh ? { ...note, script: w.spk } : note;
   const r = await burner.broadcastBridgeBurn({
-    note, notePriv: NOTE_PRIV, chainBinding: CHAIN_BINDING, fee: FEE, snapshot,
-    dest: { owner: DEST_OWNER, blinding: destBlinding }, isSpendable: () => true,
+    note: theNote, notePriv: wpkh ? WALLET_PRIV : NOTE_PRIV, chainBinding: CHAIN_BINDING, fee: FEE, snapshot,
+    dest: { owner: DEST_OWNER, blinding: destBlinding }, isSpendable: (u) => !(u.txid === NOTE_TXID && u.vout === NOTE_VOUT),
   });
-  const tag = bound ? 'class 2' : 'class 1';
+  const tag = (bound ? 'class 2' : 'class 1') + (wpkh ? ', P2WPKH note' : '');
 
   // Broadcast: commit then reveal, through the injected standard broadcaster.
   assert.strictEqual(w.sent.length, 2, 'commit and reveal broadcast');
@@ -167,8 +186,13 @@ async function roundTrip({ bound }) {
   assert.strictEqual(cb.length, 33, 'control block for a single-leaf tree');
   const pushes = scriptPushes(script);
   assert.ok(pushes.every((p) => p.length <= 520), 'every push within 520 bytes');
-  assert.strictEqual(reveal.inputs[1].witness.length, 1, 'vin[1] is a key-path spend');
-  assert.strictEqual(reveal.inputs[1].witness[0].length, 64);
+  if (wpkh) {
+    assert.strictEqual(reveal.inputs[1].witness.length, 2, 'vin[1] is a P2WPKH spend [signature, key]');
+    assert.strictEqual(Buffer.from(reveal.inputs[1].witness[1]).toString('hex'), Buffer.from(secp.getPublicKey(WALLET_PRIV, true)).toString('hex'));
+  } else {
+    assert.strictEqual(reveal.inputs[1].witness.length, 1, 'vin[1] is a key-path spend');
+    assert.strictEqual(reveal.inputs[1].witness[0].length, 64);
+  }
   // The commit output is P2TR(NUMS, leaf(script)).
   const leafHash = tagged('TapLeaf', Buffer.concat([Buffer.from([0xc0]), varintBuf(script.length), script]));
   const NUMS = cb.subarray(1);
@@ -178,10 +202,22 @@ async function roundTrip({ bound }) {
   assert.strictEqual(cb[0], 0xc0 | (Q.toRawBytes(true)[0] === 0x03 ? 1 : 0), 'control block parity');
   const prevouts = [
     { value: commit.outputs[0].value, script: commit.outputs[0].script },
-    { value: BigInt(note.sats), script: Buffer.from('5120' + NOTE_XONLY.slice(2), 'hex') },
+    { value: BigInt(note.sats), script: Buffer.from(wpkh ? w.spk : '5120' + NOTE_XONLY.slice(2), 'hex') },
   ];
   assert.ok(verifySchnorr(sig0, bip341Sighash(reveal, 0, prevouts, leafHash), script.subarray(1, 33)), 'vin[0] signature verifies under the envelope key');
-  assert.ok(verifySchnorr(reveal.inputs[1].witness[0], bip341Sighash(reveal, 1, prevouts, null), Buffer.from(NOTE_XONLY.slice(2), 'hex')), 'vin[1] signature verifies under the note\'s auth key');
+  if (wpkh) {
+    const [der, pub] = reveal.inputs[1].witness;
+    assert.strictEqual(der[der.length - 1], 0x01, 'SIGHASH_ALL');
+    // DER (0x30 len 0x02 rlen r 0x02 slen s) to the 64-byte compact form.
+    const d = der.subarray(0, der.length - 1);
+    assert.strictEqual(d[0], 0x30);
+    const rl = d[3], r = d.subarray(4, 4 + rl), sl = d[5 + rl], sv = d.subarray(6 + rl, 6 + rl + sl);
+    const to32 = (x) => Buffer.from(x).subarray(Math.max(0, x.length - 32)).toString('hex').padStart(64, '0');
+    const compact = Buffer.from(to32(r) + to32(sv), 'hex');
+    assert.ok(secp.verify(compact, bip143Sighash(reveal, 1, pub, note.sats), pub), 'vin[1] signature verifies under the wallet key (independent BIP-143 sighash)');
+  } else {
+    assert.ok(verifySchnorr(reveal.inputs[1].witness[0], bip341Sighash(reveal, 1, prevouts, null), Buffer.from(NOTE_XONLY.slice(2), 'hex')), 'vin[1] signature verifies under the note\'s auth key');
+  }
   const vsize = (tx) => Math.ceil((tx.baseSize * 3 + tx.totalSize) / 4);
   const revealFee = Number(prevouts[0].value + prevouts[1].value - reveal.outputs.reduce((s, o) => s + o.value, 0n));
   assert.strictEqual(revealFee, r.revealFee);
@@ -221,6 +257,18 @@ async function roundTrip({ bound }) {
 
 const { snapshot: snap1, burner } = await roundTrip({ bound: false });
 const { snapshot: snap2 } = await roundTrip({ bound: true });
+const { snapshot: snapW } = await roundTrip({ bound: false, wpkh: true });
+{
+  // A P2WPKH note: its script must be the key's own, and it is signed with the wallet's prims.
+  const w = testWallet();
+  const base = { note: { ...note, script: w.spk }, notePriv: WALLET_PRIV, chainBinding: CHAIN_BINDING, fee: FEE, snapshot: snapW, dest: { owner: DEST_OWNER, blinding: destBlinding }, isSpendable: () => true };
+  await assert.rejects(() => burner.broadcastBridgeBurn({ ...base, prims: w.prims, note: { ...note, script: '0014' + 'ab'.repeat(20) } }), /P2WPKH output of notePriv/, 'script is not the key\'s P2WPKH');
+  await assert.rejects(() => burner.broadcastBridgeBurn({ ...base, prims: w.prims, snapshot: snap1 }), /auth key/, 'a P2WPKH note recorded under a Taproot key');
+  const other = makeBtcWallet({ priv: new Uint8Array(32).fill(0x44), hrp: 'bc', fetchUtxos: async () => [], broadcastTx: async () => 'ok', fetchFeeRate: async () => 5 });
+  await assert.rejects(() => burner.broadcastBridgeBurn({ ...base, prims: other.prims, fundingUtxos: [{ txid: '6f'.repeat(32), vout: 0, value: 50_000 }] }), /signed with the wallet key/, 'prims of another key');
+  assert.strictEqual(w.sent.length, 0);
+  ok('refuses a P2WPKH note whose script is not the key\'s, one recorded under a Taproot key, and prims of another key');
+}
 
 // ── refusals: nothing is built or broadcast ──
 {

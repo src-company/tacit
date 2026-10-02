@@ -17,6 +17,9 @@ import { makeBurnDepositKit, classifyConfidentialTx } from '../dapp/burn-deposit
 import { ripemd160 } from '../dapp/vendor/tacit-deps.min.js';
 import { verifySchnorr } from '../dapp/bulletproofs.js';
 import { recoverClaimDigest } from '../dapp/bridge-recover.js';
+import { makeConfidentialBridgeMint } from '../dapp/confidential-bridge-mint.js';
+import { makeConfidentialTransfer } from '../dapp/confidential-transfer.js';
+import { makeBridgeMintRecovery } from '../dapp/bridge-mint-recovery.js';
 
 let n = 0, failures = 0;
 const ok = (c, m) => { if (c) { console.log('  ok -', m); n++; } else { console.error('  FAIL -', m); failures++; } };
@@ -69,6 +72,10 @@ function makeWorld() {
   const liveKeys = new Set(), checkedDests = [];
   let recordBurns = true, noteHeight = 800;
   const recoverPosts = [], recoverState = new Map();
+  // A note the reflection tracks for real (its leaf in the tree, its live entry with the true commitment hash and the
+  // zero auth key of a P2WPKH output), and the reflected burns the attested state has recorded.
+  let reflectedNote = null, recordReflected = true;
+  const reflectedDests = [];
 
   const wpkhSpkOf = (pub) => bytesToHex(new Uint8Array([0x00, 0x14, ...ripemd160ish(pub)]));
   // A real HASH160 isn't needed for these tests — only byte-equality between "what the source pays" and
@@ -100,8 +107,11 @@ function makeWorld() {
       return json({ ok: true, admitted: true, reason: 'admitted' });
     }
     if (u.pathname === '/reflection/dump') {
-      const dests = burnFolded && recordBurns ? checkedDests : [];
-      return json({ attestedHeight: 1000, snapshot: { height: 1000, liveTriples: [...liveKeys].map((k) => [k, '0x00', ASSET, '0x00', 0]),
+      const dests = [...(burnFolded && recordBurns ? checkedDests : []), ...(recordReflected ? reflectedDests : [])];
+      const live = [...liveKeys].map((k) => [k, '0x00', ASSET, '0x00', 0]);
+      const noteLeaves = ['0x' + '01'.repeat(32)];
+      if (reflectedNote) { live.push(reflectedNote.triple); noteLeaves.push(reflectedNote.leaf); }
+      return json({ attestedHeight: 1000, snapshot: { height: 1000, noteLeaves, liveTriples: live.sort((a, b) => (BigInt(a[0]) < BigInt(b[0]) ? -1 : 1)), spentLinks: [],
         burnNodes: [['0x' + '00'.repeat(32), '0x' + '00'.repeat(32), '0x' + '00'.repeat(32), true], ...dests.map((d) => ['0x' + '11'.repeat(32), '0x' + '00'.repeat(32), d, true])],
         pendingDepositRecords: [] } });
     }
@@ -152,7 +162,9 @@ function makeWorld() {
   };
 
   const bridgeMintCalls = [];
+  const realBm = makeConfidentialBridgeMint({ pool, ct: makeConfidentialTransfer({ keccak256: keccak_256 }) });
   const bridgeMint = {
+    buildBridgeBurnEnvelope: realBm.buildBridgeBurnEnvelope, sourceLeaf: realBm.sourceLeaf,
     // Mirrors confidential-bridge-mint.js's own recovery check (lines 211-212) — a stub that accepts anything
     // is exactly how the wrong { ownerPub, secret } shape here shipped unnoticed: nothing caught it short of a
     // real mint against the live module.
@@ -182,6 +194,15 @@ function makeWorld() {
     setRegisterConflict: (v) => { registerConflict = v; },
     setLive: (txid, vout) => liveKeys.add(String(pool.outpointKey(withHex(stripHex(txid).match(/../g).reverse().join('')), vout)).toLowerCase()),
     setRecordBurns: (v) => { recordBurns = v; },
+    setReflectedNote: ({ txid, vout, value, blinding }) => {
+      const { cx, cy } = pool.commitXY(value, blinding);
+      const zero = '0x' + '00'.repeat(32);
+      reflectedNote = { leaf: pool.btcNoteLeaf(ASSET, cx, cy, zero), triple: [String(pool.outpointKey(withHex(revHex(txid)), vout)).toLowerCase(), pool.commitmentHash(cx, cy), ASSET, zero, 0] };
+    },
+    // The attested state records a reflected burn: its destination, read from the reveal the way the reflection reads it.
+    foldReflected: (revealHex) => { const d = classifyConfidentialTx(withHex(revealHex)); if (d && d.dest) reflectedDests.push(String(d.dest).toLowerCase()); },
+    setRecordReflected: (v) => { recordReflected = v; },
+    setChainTx: (txid, { confirmed = true, vout = [] } = {}) => chainTxs.set(stripHex(txid), { confirmed, vout }),
     setNoteHeight: (h) => { noteHeight = h; },
   };
 }
@@ -590,16 +611,80 @@ let rec;
 
 
 // ==== TAC the reflection already tracks ====
-// Preflight: a tracked source note is refused before anything is signed.
+// Preflight: a tracked source note takes the reflected path — no provenance trace, no MARA.
 {
   const world = makeWorld();
   world.setLive(NOTE_TXID, NOTE_VOUT);
   world.setBurnHomeOnChain(NOTE_TXID, '0014' + Buffer.from(ripemd160(nobleSha256(WALLET_PUB))).toString('hex'));   // the wallet's real P2WPKH
   const ux = makeUx(world, makeMemStorage());
   const pf = await ux.preflight({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPub: WALLET_PUB });
-  const st = pf.steps.find((x) => x.name === 'not-tracked');
-  ok(pf.ok === false && st && st.ok === false && /takes a different bridge path/.test(st.detail), 'preflight refuses a note the reflection already tracks, with a plain reason');
-  ok(world.broadcasts.length === 0, 'nothing is broadcast for a tracked note');
+  ok(pf.ok === true && pf.path === 'reflected' && pf.burnFeeRate === BASE_RATE && !pf.steps.some((x) => x.name === 'trace' || x.name === 'mara-rates'), 'preflight routes a tracked note to the reflected path, with no trace and no MARA');
+  ok(world.broadcasts.length === 0, 'preflight broadcasts nothing');
+}
+// The reflected path end to end: one standard burn of the note itself, then the class-1 mint once it is recorded.
+{
+  const world = makeWorld();
+  const wpkh = '0014' + Buffer.from(ripemd160(nobleSha256(WALLET_PUB))).toString('hex');
+  world.setBurnHomeOnChain(NOTE_TXID, wpkh);
+  world.setReflectedNote({ txid: NOTE_TXID, vout: NOTE_VOUT, value: NOTE_AMOUNT, blinding: NOTE_BLINDING });
+  const ux = makeUx(world, makeMemStorage());
+  const note = { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING };
+  let r = await ux.startReflected({ note, walletPriv: WALLET_PRIV, feeRate: BASE_RATE });
+  ok(r.stage === 'rburn-signed' && r.path === 'reflected' && world.broadcasts.length === 0, 'the burn is signed and journalled before anything is broadcast');
+  const dec = classifyConfidentialTx(withHex(r.burn.hex));
+  const zero = '0x' + '00'.repeat(32);
+  const { cx, cy } = pool.commitXY(NOTE_AMOUNT, NOTE_BLINDING);
+  const nu = pool.nullifier(pool.btcNoteLeaf(ASSET, cx, cy, zero));
+  ok(dec && dec.type === 'burn' && dec.nullifier === nu && dec.target === withHex('7c'.repeat(32)), 'the reveal burns the note under its own ν (auth key zero) toward this pool');
+  ok(r.mint.sourceClass === 1 && r.mint.burned.owner === zero && BigInt(r.mint.dest.value) === NOTE_AMOUNT, 'the mint is planned as class 1, the full amount, no relay fee');
+  const mr = makeBridgeMintRecovery({ hmac: hmacFn, sha256, curveOrder: secp.CURVE.n });
+  ok(BigInt(r.mint.dest.blinding) === BigInt(mr.deriveBridgeMintBlinding({ privkey: WALLET_PRIV, nullifier: nu })), 'the destination blinding is derived from the wallet key and ν, so the minted note is recoverable from the key');
+  ok(ux.isReserved(r.burn.fundingUtxos[0].txid, r.burn.fundingUtxos[0].vout), 'the commit’s funding is reserved against other sends');
+  let threw = false;
+  try { await ux.startReflected({ note, walletPriv: WALLET_PRIV, feeRate: BASE_RATE }); } catch { threw = true; }
+  ok(threw, 'a second bridge of the same note is refused');
+  r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'rburn-sent' && world.broadcasts.length === 2 && world.broadcasts.every((b) => b.chain) && !world.broadcasts.some((b) => b.mara), 'commit and reveal go out through ordinary relay, never MARA');
+  r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'rburn-sent', 'it waits for the burn to confirm');
+  world.setChainTx(r.burn.txid, { confirmed: true });
+  r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'rburn-mined' && r.burnHeight === 800, 'the confirmed burn records its height');
+  world.setNoteHeight(1001);
+  world.setChainTx(r.burn.txid, { confirmed: true });
+  world.foldReflected(r.burn.hex);
+  r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'rfolded', 'once the attested state records its destination, it is ready to mint');
+  r = await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV });
+  const call = world.bridgeMintCalls[0];
+  ok(r.stage === 'minted' && call && call.sourceClass === 1 && call.burned.owner === zero && call.spentTxid === withHex(revHex(NOTE_TXID)) && call.spentVout === NOTE_VOUT && call.recovery.seedDerived === true,
+    'the mint names the burned note’s outpoint as class 1 with the zero auth key, and stays recoverable from the key');
+}
+// A reflected burn the attested state passes without recording is not offered for minting.
+{
+  const world = makeWorld();
+  world.setBurnHomeOnChain(NOTE_TXID, '0014' + Buffer.from(ripemd160(nobleSha256(WALLET_PUB))).toString('hex'));
+  world.setReflectedNote({ txid: NOTE_TXID, vout: NOTE_VOUT, value: NOTE_AMOUNT, blinding: NOTE_BLINDING });
+  world.setRecordReflected(false);
+  const ux = makeUx(world, makeMemStorage());
+  let r = await ux.startReflected({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPriv: WALLET_PRIV, feeRate: BASE_RATE });
+  r = await ux.advance(r.walletPub, r.id);
+  world.setChainTx(r.burn.txid, { confirmed: true });
+  r = await ux.advance(r.walletPub, r.id);
+  world.foldReflected(r.burn.hex);
+  r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'not-recorded' && world.bridgeMintCalls.length === 0, 'a reflected burn passed without a record is marked not mintable and never minted');
+}
+// The plan refuses a note whose opening does not match what the reflection tracks, before anything is signed.
+{
+  const world = makeWorld();
+  world.setBurnHomeOnChain(NOTE_TXID, '0014' + Buffer.from(ripemd160(nobleSha256(WALLET_PUB))).toString('hex'));
+  world.setReflectedNote({ txid: NOTE_TXID, vout: NOTE_VOUT, value: NOTE_AMOUNT, blinding: NOTE_BLINDING });
+  const storage = makeMemStorage();
+  const ux = makeUx(world, storage);
+  let threw = null;
+  try { await ux.startReflected({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT + 1n, blinding: NOTE_BLINDING }, walletPriv: WALLET_PRIV, feeRate: BASE_RATE }); } catch (e) { threw = e; }
+  ok(threw && /opening/.test(threw.message) && ux.list(Buffer.from(WALLET_PUB).toString('hex')).length === 0 && world.broadcasts.length === 0, 'a wrong opening is refused with nothing journalled or broadcast');
 }
 // A bridge whose burn-home is tracked pauses before its burn; its TAC goes back to the wallet.
 {

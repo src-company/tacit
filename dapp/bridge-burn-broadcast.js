@@ -13,14 +13,16 @@
 //     btc_note_leaf_bound(.., chainBinding) (class 2), selected by the live-set bound tag;
 //   - burnId = bridge_burn_id(REFLECTED, note txid, note vout, srcLeaf, envelope target), which is what the mint
 //     looks up; the envelope's pool-root field is not read.
-// Outputs are unconstrained. The reveal spends [commit:0 (envelope), note (key path)] and returns the note's
-// sats and the commit value, net of the fee, to the wallet.
+// Outputs are unconstrained. The reveal spends [commit:0 (envelope), note] and returns the note's sats and the commit
+// value, net of the fee, to the wallet. A note at a P2TR output is spent by key path with its own key (that x-only key
+// is its auth key); a note at the wallet's P2WPKH output is spent with the wallet key, and its auth key is zero, as the
+// reflection derives it for any non-P2TR output.
 //
 // Deps: { pool } — makeConfidentialPool(); { bridgeMint } — makeConfidentialBridgeMint() (the envelope builder);
 // { prims } — makeBtcWallet(...).prims (signing, serialization, UTXOs, fee rate, standard broadcast), also
 // accepted per call; { fetchImpl, relayBase } — for the reflected state, GET /reflection/dump.
 
-import { secp } from './vendor/tacit-deps.min.js';
+import { secp, sha256 as vsha256, ripemd160 } from './vendor/tacit-deps.min.js';
 import { verifySchnorr } from './bulletproofs.js';
 import { extractTaprootEnvelope, parseBurnEnvelope, extractInputs } from './burn-deposit-bitcoin.js';
 import { isProtectedOutpoint } from './confidential-deployments.js';
@@ -44,7 +46,7 @@ export function makeBridgeBurnBroadcaster({ pool, bridgeMint, prims: defaultPrim
   if (!pool || !bridgeMint) throw new Error('bridge-burn: pool and bridgeMint are required');
 
   const need = ['wallet', 'encodeEnvelopeScript', 'tapLeafHash', 'tweakedOutputKey', 'TAP_NUMS', 'p2trScript', 'controlBlock',
-    'p2wpkhScript', 'feeFor', 'getFeeRate', 'getUtxos', 'signCommitInputs', 'signTaprootScriptPathInput',
+    'p2wpkhScript', 'feeFor', 'getFeeRate', 'getUtxos', 'signCommitInputs', 'signP2wpkhInput', 'signTaprootScriptPathInput',
     'signTaprootKeypathInput', 'tapSighash', 'tapSighashKeyPath', 'serializeTx', 'txid', 'broadcast', 'broadcastWithRetry',
     'estCommitVb', 'DUST', 'bytesToHex', 'hexToBytes'];
   function primsOf(p) {
@@ -79,6 +81,8 @@ export function makeBridgeBurnBroadcaster({ pool, bridgeMint, prims: defaultPrim
     return { live, locks, spent, leaves };
   }
 
+  const toHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  const wpkhOf = (priv) => '0014' + toHex(ripemd160(vsha256(secp.getPublicKey(priv, true))));
   const xonlyOf = (priv) => {
     if (!(priv instanceof Uint8Array) || priv.length !== 32) throw new Error('bridge-burn: notePriv must be Uint8Array(32)');
     return '0x' + Array.from(secp.getPublicKey(priv, true).slice(1), (b) => b.toString(16).padStart(2, '0')).join('');
@@ -86,7 +90,8 @@ export function makeBridgeBurnBroadcaster({ pool, bridgeMint, prims: defaultPrim
 
   // Everything the guest will check, resolved against the reflected state, before a transaction exists.
   //   note  { txid (display), vout, sats, asset, value, blinding, script? } — a wallet-held reflected note UTXO
-  //   notePriv — the key of the note's P2TR output (its x-only key is the note's auth key, spent by key path)
+  //   notePriv — the key of the note's output: a P2TR output's key (its x-only key is the note's auth key, spent by key
+  //              path), or the wallet key of a P2WPKH output (auth key zero), named by note.script
   //   dest  { owner, blinding? , value? } — the Ethereum destination; value, if given, must be the burned value net of fee
   // Returns the envelope and every value the mint needs.
   function planBridgeBurn({ note, notePriv, chainBinding, dest, fee = 0n, sourceClass = null, deriveDestBlinding = null, snapshot, bitcoinPoolRoot = ZERO32 }) {
@@ -111,11 +116,11 @@ export function makeBridgeBurnBroadcaster({ pool, bridgeMint, prims: defaultPrim
       throw new Error('bridge-burn: this path burns reflected notes (class 1 or 2); a never-reflected note needs the separate burn-deposit reveal construction, not this module');
     }
 
-    const owner = xonlyOf(notePriv);
-    if (note.script != null) {
-      const spk = lc(String(note.script).replace(/^0x/, ''));
-      if (spk !== '5120' + owner.slice(2)) throw new Error('bridge-burn: note.script is not the P2TR output of notePriv (key-path spend with an untweaked key)');
-    }
+    const spk = note.script != null ? lc(String(note.script).replace(/^0x/, '')) : null;
+    const wpkh = spk != null && spk.startsWith('0014');
+    const owner = wpkh ? ZERO32 : xonlyOf(notePriv);
+    if (wpkh && spk !== wpkhOf(notePriv)) throw new Error('bridge-burn: note.script is not the P2WPKH output of notePriv');
+    if (!wpkh && spk != null && spk !== '5120' + owner.slice(2)) throw new Error('bridge-burn: note.script is not the P2TR output of notePriv (key-path spend with an untweaked key)');
 
     const st = indexSnapshot(snapshot);
     const spentTxid = txidInternal(note.txid);
@@ -148,7 +153,7 @@ export function makeBridgeBurnBroadcaster({ pool, bridgeMint, prims: defaultPrim
 
     return {
       envelope: built.envelope, nullifier: built.nullifier, destLeaf: built.destLeaf, fee: f, sourceClass: cls, burnId, srcLeaf,
-      spentTxid, spentVout: vout, noteKey: key, owner, sats, asset: h32(note.asset), chainBinding: h32(chainBinding),
+      spentTxid, spentVout: vout, noteKey: key, owner, wpkh, sats, asset: h32(note.asset), chainBinding: h32(chainBinding),
       burned: { value, blinding, owner },
       dest: { value: built.dest.value, blinding: built.dest.blinding, owner: h32(dest.owner), cx: built.dest.cx, cy: built.dest.cy },
       liveIndex: st,
@@ -204,7 +209,10 @@ export function makeBridgeBurnBroadcaster({ pool, bridgeMint, prims: defaultPrim
     const { Q_xonly, parity } = P.tweakedOutputKey(P.TAP_NUMS, leaf);
     const commitSpk = P.p2trScript(Q_xonly);
     const cb = P.controlBlock(P.TAP_NUMS, parity);
-    const noteSpk = P.hexToBytes('5120' + plan.owner.slice(2));
+    const noteSpk = P.hexToBytes(plan.wpkh ? wpkhOf(args.notePriv) : '5120' + plan.owner.slice(2));
+    if (plan.wpkh && P.bytesToHex(wallet.pub) !== toHex(secp.getPublicKey(args.notePriv, true))) {
+      throw new Error('bridge-burn: a note at a P2WPKH output is signed with the wallet key; pass the prims of notePriv');
+    }
     const noteTxid = String(args.note.txid).replace(/^0x/, '').toLowerCase();
 
     // The reveal's size does not depend on the commit txid or output values, so size it exactly before funding.
@@ -212,7 +220,7 @@ export function makeBridgeBurnBroadcaster({ pool, bridgeMint, prims: defaultPrim
       version: 2, locktime: 0,
       inputs: [
         { txid: '00'.repeat(32), vout: 0, sequence: 0xfffffffd, witness: [new Uint8Array(64), envelopeScript, cb] },
-        { txid: noteTxid, vout: plan.spentVout, sequence: 0xfffffffd, witness: [new Uint8Array(64)] },
+        { txid: noteTxid, vout: plan.spentVout, sequence: 0xfffffffd, witness: plan.wpkh ? [new Uint8Array(72), new Uint8Array(33)] : [new Uint8Array(64)] },
       ],
       outputs: [{ value: P.DUST, script: wpkhSpk }],
     };
@@ -257,7 +265,7 @@ export function makeBridgeBurnBroadcaster({ pool, bridgeMint, prims: defaultPrim
     revealTx.inputs[0].txid = commitTxid;
     const prevouts = [{ value: commitValue, script: commitSpk }, { value: plan.sats, script: noteSpk }];
     revealTx.inputs[0].witness = P.signTaprootScriptPathInput(revealTx, prevouts, envelopeScript, cb);
-    revealTx.inputs[1].witness = P.signTaprootKeypathInput(revealTx, 1, prevouts, args.notePriv);
+    revealTx.inputs[1].witness = plan.wpkh ? P.signP2wpkhInput(revealTx, 1, plan.sats) : P.signTaprootKeypathInput(revealTx, 1, prevouts, args.notePriv);
     const revealStd = checkStandard(P, revealTx, prevouts, 'reveal');
     if (revealStd.fee !== revealFee) throw new Error('bridge-burn: reveal fee drifted from its estimate');
     if (revealTx.inputs[0].witness[0].length > MAX_TAPSCRIPT_STACK_ITEM) throw new Error('bridge-burn: tapscript stack item over the policy limit');
@@ -265,7 +273,10 @@ export function makeBridgeBurnBroadcaster({ pool, bridgeMint, prims: defaultPrim
     // Signatures verify under the keys the outputs commit to.
     const b2h = (b) => '0x' + P.bytesToHex(b);
     const sig0ok = verifySchnorr(revealTx.inputs[0].witness[0], P.tapSighash(revealTx, 0, prevouts, leaf, 0x00), wallet.xonly());
-    const sig1ok = verifySchnorr(revealTx.inputs[1].witness[0], P.tapSighashKeyPath(revealTx, 1, prevouts, 0x00), P.hexToBytes(plan.owner.slice(2)));
+    // A P2WPKH input carries [ECDSA signature, key]; its key must be the note's, and the node checks the signature.
+    const sig1ok = plan.wpkh
+      ? revealTx.inputs[1].witness.length === 2 && P.bytesToHex(revealTx.inputs[1].witness[1]) === P.bytesToHex(wallet.pub)
+      : verifySchnorr(revealTx.inputs[1].witness[0], P.tapSighashKeyPath(revealTx, 1, prevouts, 0x00), P.hexToBytes(plan.owner.slice(2)));
     if (!sig0ok || !sig1ok) throw new Error('bridge-burn: a reveal signature does not verify');
 
     // Read the reveal back the way the reflection does: the envelope at vin[0], exactly one live note spent.

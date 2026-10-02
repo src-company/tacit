@@ -5,7 +5,8 @@
 //   1. the burn: a confirmed 0x2B burn of TAC that the attested reflection state has passed without recording it for a
 //      mint (neither its destination in the recorded burns nor a pending record for its note);
 //   2. the amount: the opening (amount, blinding) reproduces the commitment of the note the burn spent, as the
-//      confidential transfer that created that note published it;
+//      confidential transfer that created that note published it (the burned note is the burn's first input for a
+//      burn-deposit, and the input after the envelope commit for a burn of a tracked note);
 //   3. the holder: the signing key's P2WPKH address paid into the burn or into the move that made the burned note.
 // The same check runs where a claim is taken in (the API) and again where it is paid (the recovery service), and the
 // payment goes back to that same key.
@@ -80,15 +81,17 @@ export function makeBridgeRecover({ secp, sha256, ripemd160, pool, classifyConfi
     if (lc(strip(env.assetId)) !== TAC) return no('not a TAC bridge');
     if (!state || !Number.isInteger(state.height) || burn.status.block_height > state.height) return no('not yet passed by the reflection');
     if (state.dests.has(lc(env.dest))) return no('this bridge completed: mint it instead');
-    const vin0 = burn.vin && burn.vin[0];
-    if (!vin0) return no('burn has no inputs');
-    if (state.pending.has(lc(pool.outpointKey('0x' + rev(vin0.txid), vin0.vout)))) return no('this bridge is still pending');
-
-    const home = await getTx(vin0.txid);
-    const made = classifyConfidentialTx('0x' + strip(await getTxHex(vin0.txid)));
-    if (!home || !made || made.type !== 'cxfer') return no('the burned note was not made by a confidential transfer');
-    const at = (made.vouts || []).indexOf(vin0.vout);
-    if (at < 0 || !made.commitments[at]) return no('the burned note has no published commitment');
+    if (!burn.vin || !burn.vin.length) return no('burn has no inputs');
+    // The burned note: the first of the burn's first two inputs that a confidential transfer made.
+    let note = null, home = null, made = null;
+    for (const vin of burn.vin.slice(0, 2)) {
+      const m = classifyConfidentialTx('0x' + strip(await getTxHex(vin.txid)));
+      if (m && m.type === 'cxfer' && (m.vouts || []).includes(vin.vout)) { note = vin; made = m; home = await getTx(vin.txid); break; }
+    }
+    if (!note || !home) return no('the burned note was not made by a confidential transfer');
+    if (state.pending.has(lc(pool.outpointKey('0x' + rev(note.txid), note.vout)))) return no('this bridge is still pending');
+    const at = made.vouts.indexOf(note.vout);
+    if (!made.commitments[at]) return no('the burned note has no published commitment');
     let onChain, opened;
     try {
       onChain = secp.ProjectivePoint.fromHex(strip(made.commitments[at])).toAffine();

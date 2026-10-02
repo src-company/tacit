@@ -22919,17 +22919,19 @@ const _BURNDEP_STAGE_LABEL = {
   folded: 'ready to mint',
   stopped: 'paused before the burn — your TAC is safe', 'reclaim-sent': 'moving back to your wallet…',
   'not-recorded': 'didn’t complete', recovering: 'recovering your TAC…', recovered: 'recovered — back in your wallet',
+  'rburn-signed': 'broadcasting the burn…', 'rburn-sent': 'burn confirming on Bitcoin…', 'rburn-mined': 'waiting for the reflection to record it…',
+  rfolded: 'ready to mint',
 };
 // What the button itself says while advance() is in flight FOR that stage — distinct from the row's resting
 // label above, and from PHASE_TEXT (below, in the click handler), which further refines 'folded' as its own
 // onProgress events arrive. A bare "…" for every stage is what made a real 10-60s mint read as hung.
 const _BURNDEP_BUSY_LABEL = {
   traced: 'Checking & signing…', 'burn-mined': 'Registering…', registered: 'Checking…', folded: 'Building…',
-  stopped: 'Moving…', 'not-recorded': 'Recovering…', recovering: 'Checking…',
+  stopped: 'Moving…', 'not-recorded': 'Recovering…', recovering: 'Checking…', 'rburn-mined': 'Checking…', rfolded: 'Building…',
 };
 // Plain words under a bridge that cannot go on the usual way, and what its holder can do.
 const _BURNDEP_NOTE = {
-  stopped: 'This TAC takes a different bridge path, so this one paused before the burn. Your TAC is untouched: move it back to your wallet to use it as before.',
+  stopped: 'This bridge paused before the burn and your TAC is untouched. Move it back to your wallet, then bridge it again: it goes in one step.',
   'not-recorded': 'This bridge didn’t complete. Recover returns your TAC to your wallet so you can try again.',
   recovering: 'Your TAC is on its way back to your wallet, usually within the hour. Nothing else to do.',
   recovered: 'Your TAC is back in your wallet. You can try the bridge again.',
@@ -22980,9 +22982,9 @@ function _renderHoldingsBurndepBridges(listEl) {
     const watchNote = preMinedBurn ? ` · <span title="MARA Slipstream submits straight to a miner — this won't appear on mempool.space until it's mined">not on public explorers yet</span>` : '';
     const watchLink = watchTxid ? ` · <a href="https://mempool.space/${NET.name === 'signet' ? 'signet/' : ''}tx/${escapeHtml(watchTxid)}" target="_blank" rel="noopener noreferrer">view ↗</a>${watchNote}` : '';
     const settledOff = rec.stage === 'stopped' || rec.stage === 'not-recorded' || rec.stage === 'recovered';
-    const needsKey = rec.stage === 'traced' || rec.stage === 'folded' || rec.stage === 'stopped';
+    const needsKey = rec.stage === 'traced' || rec.stage === 'folded' || rec.stage === 'rfolded' || rec.stage === 'stopped';
     const failing = !!rec.lastError && !settledOff;
-    const actLabel = rec.stage === 'traced' ? 'Burn' : rec.stage === 'folded' ? 'Mint' : rec.stage === 'stopped' ? 'Move back to my wallet'
+    const actLabel = rec.stage === 'traced' ? 'Burn' : (rec.stage === 'folded' || rec.stage === 'rfolded') ? 'Mint' : rec.stage === 'stopped' ? 'Move back to my wallet'
       : rec.stage === 'not-recorded' ? 'Recover' : rec.stage === 'recovered' ? 'Done' : failing ? 'Retry' : 'Refresh';
     const actKind = rec.stage === 'stopped' ? 'reclaim' : rec.stage === 'not-recorded' ? 'recover' : rec.stage === 'recovered' ? 'dismiss' : needsKey ? 'sign' : 'poll';
     const noteText = rec.stage === 'recovering' && rec.recover?.status === 'held' ? 'Your recovery is being checked. Nothing else to do.' : _BURNDEP_NOTE[rec.stage];
@@ -22999,7 +23001,7 @@ function _renderHoldingsBurndepBridges(listEl) {
     // attest past its own block before it can fold, same shape of wait as the pre-burn admission check, and
     // just as opaque without this — "waiting for the reflection to fold it…" alone gives no sense of how close
     // that actually is. Fetched async below into this placeholder.
-    const foldWaiting = rec.stage === 'burn-mined' || rec.stage === 'registered';
+    const foldWaiting = rec.stage === 'burn-mined' || rec.stage === 'registered' || rec.stage === 'rburn-mined';
     const foldHtml = foldWaiting && rec.burn?.txid ? `<div class="muted" data-burndep-fold="${i}" style="margin-top:2px;">checking reflection progress…</div>` : '';
     return `
       <div data-burndep-row="${i}" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;${i ? 'border-top:1px solid var(--ink-faint);' : ''}">
@@ -23067,7 +23069,7 @@ function _renderHoldingsBurndepBridges(listEl) {
   // string already spells out the block-height gap in plain language, so it's shown as-is rather than
   // reassembled from the raw numbers here (stays correct if the server's own wording ever changes).
   records.forEach((rec, i) => {
-    const foldWaiting = rec.stage === 'burn-mined' || rec.stage === 'registered';
+    const foldWaiting = rec.stage === 'burn-mined' || rec.stage === 'registered' || rec.stage === 'rburn-mined';
     if (!foldWaiting || !rec.burn?.txid) return;
     ux.checkTxidStatus(rec.burn.txid).then((s) => {
       const el = section.querySelector(`[data-burndep-fold="${i}"]`);
@@ -23213,7 +23215,7 @@ function _startBurndepAutoRefresh() {
       try {
         // The key stages are user-driven; only their key-free check runs here (a tracked burn-home pauses, an unrecorded
         // burn says so).
-        const after = (rec.stage === 'traced' || rec.stage === 'folded') ? await ux.verify(bytesToHex(wallet.pub), rec.id) : await ux.advance(bytesToHex(wallet.pub), rec.id);
+        const after = (rec.stage === 'traced' || rec.stage === 'folded' || rec.stage === 'rfolded') ? await ux.verify(bytesToHex(wallet.pub), rec.id) : await ux.advance(bytesToHex(wallet.pub), rec.id);
         if (after && after.stage !== rec.stage) changed = true;
       }
       catch { changed = true; /* the record's own lastError just moved even though its stage didn't — re-render so it shows */ }
@@ -61554,6 +61556,20 @@ async function renderHoldings() {
                 }
                 review = pf;
                 const amtStr = fmtAssetAmount(BigInt(chosen.amount), target.decimals);
+                if (pf.path === 'reflected') {
+                  body.innerHTML = `
+                  <div style="margin-top:8px;padding:10px 12px;background:var(--bg-warm);border:1px dashed var(--ink-faint);font-size:11px;line-height:1.7;">
+                    <div><strong>${escapeHtml(amtStr)} ${escapeHtml(target.ticker)}</strong> → your private Ethereum balance (no relay fee)</div>
+                    <div>One Bitcoin transaction that burns this note, sent through ordinary relay and paid from your wallet's own sats.</div>
+                    <div>Typical timeline: it confirms in a block or so; the reflection records it once it is about 25 blocks deep, and then you mint it here.</div>
+                    <div style="color:var(--red);margin-top:6px;font-weight:500;">⚠ Irreversible once the burn confirms.</div>
+                  </div>
+                  <label class="checkbox-row" style="margin-top:10px;">
+                    <input type="checkbox" data-field="confirm">
+                    <span class="cbx-body" style="font-size:11px;">I understand this bridge is irreversible once the burn confirms.</span>
+                  </label>`;
+                  return false;
+                }
                 body.innerHTML = `
                   <div style="margin-top:8px;padding:10px 12px;background:var(--bg-warm);border:1px dashed var(--ink-faint);font-size:11px;line-height:1.7;">
                     <div><strong>${escapeHtml(amtStr)} ${escapeHtml(target.ticker)}</strong> → your private Ethereum balance (no relay fee)</div>
@@ -61571,6 +61587,27 @@ async function renderHoldings() {
               if (!confirmed) { errEl.textContent = 'check the irreversibility box first'; return false; }
               if (!await ensureBurnerBackedUp('Bridge TAC to Ethereum (the burn-home key is derived from your wallet seed)')) {
                 errEl.textContent = 'Back up the in-page privkey first, then retry.'; return false;
+              }
+              if (review.path === 'reflected') {
+                // Commit (~150 vB) and reveal (~260 vB) at the burn's fee rate, plus the commit's own output.
+                const estBurn = Math.ceil((150 + 260) * review.burnFeeRate) + 546 + 300;
+                if (!(await ensureSatsFunded(estBurn, 'Bridging'))) { errEl.textContent = 'Funding cancelled.'; return false; }
+                const stripR = host.querySelector('.progress-strip');
+                if (stripR) { stripR.style.display = 'flex'; const l = stripR.querySelector('[data-step="0"] .progress-label'); if (l) l.textContent = 'Burn'; }
+                setProgressStrip(stripR, 0);
+                try {
+                  const rec = await ux.startReflected({ note: chosen, walletPriv: wallet.priv, feeRate: review.burnFeeRate });
+                  await ux.advance(rec.walletPub, rec.id);
+                  setProgressStrip(stripR, 1);
+                  applyOptimisticDebit(aid, BigInt(chosen.amount));
+                  recordActivity({ kind: 'bridge-eth', ticker: target.ticker, amount: chosen.amount, decimals: target.decimals, assetId: aid, txid: rec.burn.txid });
+                  toast(`Bridge started — burning ${fmtAssetAmount(BigInt(chosen.amount), target.decimals)} ${target.ticker} on Bitcoin. Mint it from Holdings once the reflection records it.`, 'success', 8000);
+                  renderHoldings(); renderActivity();
+                } catch (e) {
+                  if (stripR) setProgressStrip(stripR, -1, { errorAt: 0 });
+                  throw e;
+                }
+                return;
               }
               // Rough, generous estimate for the migrate's own commit+reveal (observed real sizes: ~120vB
               // commit, ~415vB reveal — see tests/burn-deposit-reveal.test.mjs) plus the DUST burn-home output.

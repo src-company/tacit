@@ -97,3 +97,28 @@ test('a burn from before the in-app bridge is not recoverable here', async () =>
   const claim = r.buildClaim({ burnTxid: BURN, amount: AMOUNT, blinding: BLINDING, walletPriv: WALLET });
   assert.match((await r.verifyClaim(claim, { ...chain, state })).reason, /predates/);
 });
+
+test('a burn of a tracked note (envelope commit first, the note second) is recovered the same way', async () => {
+  const r = makeBridgeRecover({ secp, sha256, ripemd160, pool, classifyConfidentialTx: (h) => kinds[h.replace(/^0x/, '')] || null, signSchnorr, verifySchnorr, tacAssetId: TAC, fromHeight: 500 });
+  const c = pool.commitXY(AMOUNT, '0x' + BLINDING.toString(16).padStart(64, '0'));
+  const compressed = (BigInt(c.cy) % 2n === 0n ? '02' : '03') + c.cx.replace(/^0x/, '').padStart(64, '0');
+  const COMMIT = 'f1'.repeat(32), NOTETX = 'f2'.repeat(32);
+  const kinds = {
+    burnhex: { type: 'burn', assetId: TAC, dest: DEST },
+    commithex: null,
+    notehex: { type: 'cxfer', assetId: TAC, vouts: [0, 1], commitments: ['02' + '33'.repeat(32), compressed] },
+  };
+  const spk = r.ownerScript(hex(secp.getPublicKey(WALLET, true)));
+  const txs = {
+    [BURN]: { status: { confirmed: true, block_height: 900 }, vin: [{ txid: COMMIT, vout: 0, prevout: { scriptpubkey: '5120' + '55'.repeat(32) } }, { txid: NOTETX, vout: 1, prevout: { scriptpubkey: spk, scriptpubkey_address: 'bc1qholder' } }] },
+    [NOTETX]: { status: { confirmed: true, block_height: 850 }, vin: [] },
+  };
+  const chain = { getTx: async (t) => txs[t] || null, getTxHex: async (t) => (t === BURN ? 'burnhex' : t === COMMIT ? 'commithex' : t === NOTETX ? 'notehex' : '') };
+  const state = { height: 1000, dests: new Set(), pending: new Set() };
+  const claim = r.buildClaim({ burnTxid: BURN, amount: AMOUNT, blinding: BLINDING, walletPriv: WALLET });
+  const v = await r.verifyClaim(claim, { ...chain, state });
+  assert.equal(v.ok, true, v.reason);
+  assert.equal(v.address, 'bc1qholder');
+  const wrong = r.buildClaim({ burnTxid: BURN, amount: AMOUNT - 1n, blinding: BLINDING, walletPriv: WALLET });
+  assert.match((await r.verifyClaim(wrong, { ...chain, state })).reason, /do not open/);
+});
