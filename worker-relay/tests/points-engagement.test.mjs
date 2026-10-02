@@ -84,6 +84,15 @@ import { parseCategoryWeights, categoryWeightsForDay, parseEngagementSchedule, e
   assert.deepEqual([zero.dayPoints, zero.rawPoints], [0, 100], 'a weight of 0 leaves the raw points and counts none');
   const dust = countedRows({ dayRows: [{ address: A, activity: 'wrap', points: 100 }], weekRows: [{ address: A, day: 10, activity: 'wrap', points: 100 }, { address: A, day: 9, activity: 'wrap', points: 1e-12 }], spec });
   assert.equal(dust[0].factor, 1, 'a day with next to no points does not make an address a returning one');
+  // Activity weighted 0 is neither a kind nor a day for the week: a dust bond cannot buy the multiplier.
+  const bondOnly = countedRows({
+    dayRows: [{ address: A, activity: 'wrap', points: 100 }],
+    weekRows: [{ address: A, day: 10, activity: 'wrap', points: 100 }, { address: A, day: 9, activity: 'cbtcmint', points: 500 }],
+    spec, weights: { cbtcmint: 0 },
+  })[0];
+  assert.deepEqual([bondOnly.kinds, bondOnly.activeDays, bondOnly.factor], [1, 1, 1], 'a bond that counts for nothing adds no kind and no day');
+  const bondCounts = countedRows({ dayRows: [{ address: A, activity: 'wrap', points: 100 }], weekRows: [{ address: A, day: 10, activity: 'wrap', points: 100 }, { address: A, day: 9, activity: 'cbtcmint', points: 500 }], spec })[0];
+  assert.deepEqual([bondCounts.kinds, bondCounts.activeDays, bondCounts.factor], [2, 2, 1.5], 'and one that counts does');
   const both = Object.fromEntries(countedRows({ dayRows, weekRows, spec, weights: { cbtcmint: 3 } }).map((r) => [r.address, r.dayPoints]));
   assert.equal(both[B], 375, 'the weight and the multiplier compose: 100 × 3 × 1.25');
   const order = countedRows({ dayRows: [...dayRows].reverse(), weekRows: [...weekRows].reverse(), spec, weights: { cbtcmint: 3 } });

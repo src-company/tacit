@@ -1952,6 +1952,28 @@ await step('ptsview', async () => {
     if (l.errors.length) { fails++; console.log('FAIL ptsview page errors: ' + l.errors.slice(0, 3).join(' | ')); }
     await l.browser.close();
   }
+  // A bond that stops scoring when posted: until the day it changes it still pays, then only the daily credit does, and Terms says so.
+  {
+    const z = await openPage({ account: A0 });
+    const zeroProgram = { startDay: today - 8, days: 90, totalWei: '100000000000000000000000', dayBudgetWei: '1111111111111111111111', rateCap: [],
+      weights: [{ fromDay: today + 1, weights: { cbtcmint: 0 } }], engagement: [], bondHoldFromDay: today + 1, cbtcHoldFromDay: today + 1,
+      rates: { wrap: 1250, evmpooldeposit: 1000, zswapeth: 1000, cbtcmint: 1000, cbtchold: 500 } };
+    await z.ctx.route(/api\.tacit\.finance\/points\/0x/, (rt) => json(rt, { address: A0.toLowerCase(), points: 0, deposit_count: 0, today: { points: 0, totalPoints: 100, dayBudgetWei: '1111111111111111111111' }, deposits: [] }));
+    await z.ctx.route(/api\.tacit\.finance\/claim\/0x/, (rt) => json(rt, { cumulativeAmount: '0', claimedWei: '0', unclaimedWei: '0', proof: null }));
+    await z.ctx.route(/api\.tacit\.finance\/leaderboard/, (rt) => json(rt, /day=today/.test(rt.request().url())
+      ? { day: today, programDay: 9, programDays: 90, program: zeroProgram, totalPoints: 100, dayBudgetWei: '1111111111111111111111', taking: 1, rows: [{ address: A0.toLowerCase(), points: 10 }] }
+      : [{ address: A0.toLowerCase(), points: 10 }]));
+    await z.page.goto(z.url + '#pts');
+    await z.page.click('#pts-connect');
+    await until(z.page, () => !!document.querySelector('#pts-body .pulse'), null, 60000);
+    await z.page.click('#pts-body summary:has-text("Terms")');
+    const zt = { body: await z.page.$eval('#pts-body', (e) => e.textContent.replace(/\s+/g, ' ')), terms: await z.page.$eval('#pts-body details:has(> summary:has-text("Terms"))', (d) => d.textContent.replace(/\s+/g, ' ')) };
+    ok(new RegExp(`1,000 per wstETH until ${dShort(today)}; then 500 a day while a bond on a Bitcoin lock stays posted`).test(zt.body), `ptsview: until the day posting stops scoring it still pays, then only the daily credit does (${zt.body.slice(zt.body.indexOf('Post a bond'), zt.body.indexOf('Post a bond') + 200)})`);
+    ok(new RegExp(`Weights\\s*cBTC bond not counted from ${dShort(today + 1)}`).test(zt.terms) && !/counts if it is still posted/.test(zt.terms) && /a flat 500 points per wstETH for each further day it stays posted/.test(zt.terms),
+      `ptsview: Terms says posting a bond is not counted, drops the rule that no longer matters, and states the daily credit (${zt.terms.slice(0, 400)})`);
+    if (z.errors.length) { fails++; console.log('FAIL ptsview page errors: ' + z.errors.slice(0, 3).join(' | ')); }
+    await z.browser.close();
+  }
   // Nobody connected: the pot and the board are public. A service without the day's board is told by its array: no Today switch.
   const n = await openPage({ account: A0, viewport: { width: 390, height: 900 } });
   const many = Array.from({ length: 12 }, (_, i) => ({ address: '0x' + (i + 1).toString(16).repeat(40).slice(0, 40), points: 1000 - i * 10 }));

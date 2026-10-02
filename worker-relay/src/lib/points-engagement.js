@@ -7,7 +7,8 @@
 // Engagement: "20730:0.25,0.25,2,25;20760:off" — from each day, an address's counted points are multiplied by
 // 1 + kindStep for each other kind of activity it has had in the past 7 days (up to maxKinds of them) + returnStep when
 // it was active on more than one of those days. A kind counts once it has earned minPoints in the week, and a day counts
-// as active once the address has earned minPoints on it.
+// as active once the address has earned minPoints on it; points are counted at their weight, so an activity weighted 0
+// is neither a kind nor a day.
 
 // The kinds of activity: where the program is used, not which contract. An activity that is not listed is its own kind.
 export const KIND_OF = {
@@ -100,9 +101,11 @@ export function countedRows({ dayRows, weekRows = [], weights = {}, spec = null 
   const week = new Map();
   if (spec) {
     for (const r of weekRows) {
+      // Activity counts toward the week at its weight, so activity that counts for nothing is not activity for the week.
+      const pts = r.points * (weights[r.activity] ?? 1);
       const w = week.get(r.address) ?? { kinds: new Map(), days: new Map() };
-      w.days.set(r.day, (w.days.get(r.day) ?? 0) + r.points);
-      w.kinds.set(kindOf(r.activity), (w.kinds.get(kindOf(r.activity)) ?? 0) + r.points);
+      w.days.set(r.day, (w.days.get(r.day) ?? 0) + pts);
+      w.kinds.set(kindOf(r.activity), (w.kinds.get(kindOf(r.activity)) ?? 0) + pts);
       week.set(r.address, w);
     }
   }
