@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-JiIsMucpGw0YTU2T6KpLwkfXTgd8dUvFO+ZVfiOKrk8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-5pHq/PKwZeesb6ks7oKXarIzPqJ2lwER/5/+byxOr84=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -285,20 +285,25 @@ a.btn { text-decoration: none; white-space: nowrap; }
 .rcpt .note { margin: 6px 0 2px; }
 .gate { text-align: center; padding: 26px 8px 8px; }
 .gate p { color: var(--mute); margin: 0 auto 4px; max-width: 38ch; font-size: 13px; }
+.gate .alt { margin-top: 12px; }
 .big { font: 400 56px/1 var(--serif); letter-spacing: -.02em; margin: 10px 0 6px; }
 .big small { font: 500 14px var(--mono); color: var(--mute); letter-spacing: 0; margin-left: 6px; }
 
 /* farm rows */
 .farms { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hair); }
 .farm { border-bottom: 1px solid var(--hair); }
-.farm > button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; width: 100%; padding: 16px 0;
+.farm > button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto 8px; align-items: center; gap: 14px; width: 100%; padding: 16px 0;
   background: none; border: 0; cursor: pointer; text-align: left; }
+.farm > button::after { content: ''; width: 7px; height: 7px; border: solid var(--mute); border-width: 0 1.5px 1.5px 0; transform: translateY(-2px) rotate(45deg); }
+.farm.open > button::after { transform: translateY(2px) rotate(-135deg); }
+.farm > button:disabled::after { visibility: hidden; }
 .farm .name { font: 400 22px/1.1 var(--serif); }
 .farm .kind { display: block; font-size: 11.5px; color: var(--mute); margin-top: 3px; }
 .farm .rate { text-align: right; font-size: 12.5px; }
 .farm .rate b { display: block; font-weight: 500; font-size: 14px; }
 .farm .rate span { color: var(--mute); }
 .farm .body { padding: 0 0 20px; }
+#farm-notes:not(:empty) { margin-bottom: 22px; }
 .farm .body .seg.sub { margin-top: 16px; }
 .farm:not(.open) .body { display: none; }
 .tag { display: inline-block; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); border: 1px solid var(--hair-2); padding: 1px 6px; margin-left: 6px; vertical-align: 2px; }
@@ -634,8 +639,8 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
       <button class="x" type="button" data-close aria-label="Close">×</button>
     </div>
     <p class="lede-s">Deposit into a pool and earn TAC every second, and withdraw whenever you like. The public pool takes ETH and TAC from your wallet; the private pools take private tETH and its partner asset, so what you hold stays hidden.</p>
-    <ul class="farms" id="farm-list"></ul>
     <div id="farm-notes"></div>
+    <ul class="farms" id="farm-list"></ul>
   </div>
 </dialog>
 
@@ -2402,7 +2407,7 @@ for (const d of $$('dialog.sheet:not(.layer)')) {
   x.before(b);
 }
 const setFoot = (name, text, dot = '') => { $(`[data-foot="${name}"]`).textContent = text; $(`[data-dot="${name}"]`).className = 'dot' + (dot ? ' ' + dot : ''); dashSoon(); };
-const gate = (text, label, id) => html`<div class="gate"><p>${text}</p><button class="btn" type="button" id="${id}">${label}</button></div>`;
+const gate = (text, label, id, alt = '') => html`<div class="gate"><p>${text}</p><button class="btn" type="button" id="${id}">${label}</button>${alt ? html`<p class="alt">${alt}</p>` : ''}</div>`;
 function wireConnect(id, after) {
   const b = document.getElementById(id);
   if (b) b.onclick = () => busy(b, async () => { try { await connect(); after?.(); } catch (e) { toast(errText(e), true); } });
@@ -4633,6 +4638,12 @@ async function readFarms(current) {
   else if (!x && !prog) setFoot('farm', 'Reading farms…');            // both reads failed; a real "between periods" claim needs at least one to answer
   else setFoot('farm', 'Farms are between reward periods');
 }
+// A line that says what to do next points at the button that does it, wherever the sheet has put it.
+document.addEventListener('click', (e) => {
+  const b = e.target.closest?.('[data-fn-go]');
+  const to = b && $(b.dataset.fnGo === 'redeem' ? '#fn-redeem' : `[data-lprm="${b.dataset.fnGo.slice(2)}"]`);
+  if (to) { to.scrollIntoView({ block: 'center', behavior: 'smooth' }); to.focus({ preventScroll: true }); }
+});
 RETRY.farm = () => { FARM.errs = null; rerender('farm'); loadFarms().then(() => rerender('farm')).catch(() => {}); };
 load.farm = () => loadFarms();
 
@@ -4668,20 +4679,20 @@ render.farm = () => {
     <li class="farm${FARM.open === 'precision' ? ' open' : ''}" data-farm="precision">
       <button type="button" aria-controls="farm-precision" aria-expanded="${FARM.open === 'precision'}">
         ${logoPair('TAC', 'ETH')}
-        <span><span class="name">TAC / ETH</span><span class="kind">Precision pool · public${x?.staked > 0n ? html`<span class="tag">yours</span>` : ''}</span></span>
+        <span><span class="name">TAC / ETH</span><span class="kind">Public pool${x?.staked > 0n ? html`<span class="tag">yours</span>` : ''}</span></span>
         <span class="rate">${x ? html`<b>${fmt(x.perDay, 18, 0)} TAC</b><span>a day${x.live && precisionApr(x) != null ? ` · ${aprShort(precisionApr(x))}` : ''}</span>` : FARM.errs?.precision ? html`<b>—</b>` : html`<b><span class="sk" style="--w:7ch"></span></b><span class="sk" style="--w:11ch"></span>`}</span>
       </button>
       <div class="body" id="farm-precision"></div>
     </li>`];
   if (!prog && FARM.errs?.program) rows.push(html`<li class="farm"><p class="note err">The private farms could not be read. <button class="link" type="button" data-retry="farm">Try again</button></p></li>`);
-  else if (!prog) rows.push(html`<li class="farm"><button type="button" disabled>${logoPair('TAC', 'cETH')}<span><span class="name"><span class="sk" style="--w:10ch"></span></span><span class="kind">Tacit pool · private</span></span><span class="rate"><b><span class="sk" style="--w:7ch"></span></b><span class="sk" style="--w:11ch"></span></span></button></li>`);
+  else if (!prog) rows.push(html`<li class="farm"><button type="button" disabled>${logoPair('TAC', 'cETH')}<span><span class="name"><span class="sk" style="--w:10ch"></span></span><span class="kind">Private pool</span></span><span class="rate"><b><span class="sk" style="--w:7ch"></span></b><span class="sk" style="--w:11ch"></span></span></button></li>`);
   for (const p of prog?.pools || []) {
     const [a, b] = p.pair.split('/');
     rows.push(html`
       <li class="farm${FARM.open === 'pid' + p.pid ? ' open' : ''}" data-farm="pid${p.pid}">
         <button type="button" aria-controls="farm-pid${p.pid}" aria-expanded="${FARM.open === 'pid' + p.pid}">
           ${logoPair(a === 'cETH' ? b : a, 'cETH')}
-          <span><span class="name">${pairName(p.pair)}</span><span class="kind">Tacit pool · private${mine(p.pid).length ? html`<span class="tag">yours</span>` : ''}</span></span>
+          <span><span class="name">${pairName(p.pair)}</span><span class="kind">Private pool${mine(p.pid).length ? html`<span class="tag">yours</span>` : ''}</span></span>
           <span class="rate"><b>${live ? Math.round(Number(p.tacPerDayForPool)).toLocaleString('en-US') : 0} TAC</b><span>a day${live && shieldedApr(p) != null ? ` · ${aprShort(shieldedApr(p))}` : ''}</span></span>
         </button>
         <div class="body" id="farm-pid${p.pid}"></div>
@@ -4788,6 +4799,14 @@ function earnedNow(y) {
 const ethOfTac = (tac, p) => (p?.tacEth > 0 ? BigInt(Math.round(Number(tac) * p.tacEth)) : 0n);
 const ethText = (e) => `${e < 10n ** 13n ? '< 0.00001' : fmt(e, 18, 5)} ETH`;
 const aboutEth = (e) => (e < 10n ** 13n ? '< 0.00001 ETH' : `≈ ${fmt(e, 18, 5)} ETH`);
+// A TAC amount as a button says it: two decimals, four while that would round a real amount down to nothing.
+const tacShort = (v) => fmt(v, 18, v > 0n && v < 5n * 10n ** 15n ? 4 : 2);
+// Amounts in the add form's fields read as a person would write them, not as 18 digits cut off by the box: ETH to 8 decimals,
+// TAC to 6. A balance is cut down to that grid and the paired side rounded up to it. The farm hands back whatever the pool
+// does not use (`_provide` refunds both sides), so the rounding costs nothing.
+const ETH_DP = 8, TAC_DP = 6;
+const cutTo = (v, dp) => v - v % 10n ** BigInt(18 - dp);
+const upTo = (v, dp) => { const u = 10n ** BigInt(18 - dp); return (v + u - 1n) / u * u; };
 
 // The public farm, whole: add from ETH, TAC or both (a permit stands in for any approval), stake LP already held, and
 // see, claim and withdraw a position — part or all of it, as both assets or swapped into one.
@@ -4795,37 +4814,65 @@ function renderPrecision(el) {
   const x = FARM.precision;
   const reading = html`<div class="kv"><span>Stream ends</span><b><span class="sk" style="--w:10ch"></span></b></div><div class="kv"><span>APR now</span><b><span class="sk" style="--w:9ch"></span></b></div>`;
   if (!x || (x.who !== S.address && FARM.errs?.precision)) { mount(el, FARM.errs?.precision ? html`<p class="note err">The farm could not be read. <button class="link" type="button" data-retry="farm">Try again</button></p>` : reading); return; }
-  if (!S.address) { mount(el, gate('Deposit ETH, TAC or both, and the farm puts it to work for you. TAC streams to you every second.', 'Connect wallet', 'pf-connect')); return wireConnect('pf-connect', () => rerender('farm')); }
+  if (S.address) FARM.signIn = false;
+  if (!S.address) {
+    // No browser wallet needed: a Tacit wallet (a passkey will do) farms from its own account.
+    if (FARM.signIn && !S.key) {
+      needKey(el, 'Open your Tacit wallet and farm from its own account. Add ETH to that account, and TAC if you want to farm with both.');
+      el.insertAdjacentHTML('beforeend', html`<p class="note"><button class="link" type="button" id="pf-back">Connect a browser wallet instead</button></p>`.s);
+      $('#pf-back').onclick = () => { FARM.signIn = false; rerender('farm'); };
+      return;
+    }
+    mount(el, gate('Deposit ETH, TAC or both, and the farm puts it to work for you. TAC streams to you every second.', 'Connect wallet', 'pf-connect',
+      html`No browser wallet? <button class="link" type="button" id="pf-tacit">Open your Tacit wallet</button> instead.`));
+    $('#pf-tacit').onclick = () => { FARM.signIn = true; rerender('farm'); };
+    return wireConnect('pf-connect', () => rerender('farm'));
+  }
   if (x.who !== S.address) { mount(el, reading); loadFarms().then(() => rerender('farm')).catch(() => {}); return; }
   if (!FARM.mode) FARM.mode = x.tac >= 10n ** 18n ? 'pair' : 'eth';
   const has = x.staked > 0n, mode = FARM.mode, withEth = mode !== 'tac', withTac = mode !== 'eth';
   const myDay = has && x.totalStaked ? x.perDay * x.staked / x.totalStaked : 0n;
   const ethOf = (tac, p = x) => ethOfTac(tac, p);
-  const paid = FARM.paid?.who === x.who ? FARM.paid.v : null;
-  mount(el, html`
+  const paid = FARM.paid?.who === x.who ? FARM.paid.v : null, e0 = earnedNow(x);
+  // The farm's own facts. Where nothing is staked they are the pitch and lead the card; a staker's position leads instead,
+  // and they close it.
+  const facts = html`
     <div class="kv"><span>${x.live ? 'Stream ends' : 'Stream'}</span><b>${x.live ? dayFmt(x.finish) : 'between reward periods'}</b></div>
     <div class="kv"><span>In the pool</span><b>${fmt(x.r0, 18, 4)} ETH + ${fmt(x.r1, 18, 0)} TAC${x.supply ? ` · ${pctFmt(Number(x.totalStaked * 10000n / x.supply) / 100)} staked` : ''}</b></div>
-    ${x.live ? aprRow(precisionApr(x)) : ''}
+    ${x.live ? aprRow(precisionApr(x)) : ''}`;
+  // What the deposit does, said before anything is typed.
+  const how = mode === 'pair' ? (x.tac > 0n ? 'Both go in at the pool’s ratio, with nothing swapped.'
+    : html`You hold no TAC in ${your()}, and ETH + TAC takes both. <button class="link" type="button" data-go="buy">Buy TAC</button>, claim the airdrop, or <button class="link" type="button" data-go="eth">farm with ETH alone</button>.`)
+    : `About half is swapped to ${mode === 'eth' ? 'TAC' : 'ETH'} inside the pool, then both go into the farm.`;
+  mount(el, html`
+    ${has ? '' : facts}
     ${has ? html`
       <div class="kv"><span>Your stake</span><b>${fmt(x.mine.eth, 18, 4)} ETH + ${fmt(x.mine.tac, 18, 2)} TAC</b></div>
       <p class="note">Swap fees stay in the pool, so they are already counted in this value.</p>
-      <div class="kv"><span>Earning</span><b>${fmt(myDay, 18, 2)} TAC a day${ethOf(myDay) > 0n ? ` (${aboutEth(ethOf(myDay))})` : ''} · ${pctFmt(Number(x.staked * 10000n / x.totalStaked) / 100)} of the farm</b></div>
-      <div class="kv"><span>Earned</span><b class="num" id="pf-earned">${fmt(earnedNow(x), 18, 4)} TAC</b></div>
-      ${ethOf(earnedNow(x)) > 0n ? html`<div class="kv"><span>Worth about</span><b class="num" id="pf-earned-eth">${ethText(ethOf(earnedNow(x)))}</b></div>` : ''}
+      <div class="kv"><span>Earning</span><b>${fmt(myDay, 18, 2)} TAC a day${ethOf(myDay) > 0n ? ` (${aboutEth(ethOf(myDay))})` : ''}</b></div>
+      <div class="kv"><span>Your share</span><b>${pctFmt(Number(x.staked * 10000n / x.totalStaked) / 100)} of the farm</b></div>
+      <div class="kv"><span>Earned</span><b class="num" id="pf-earned">${fmt(e0, 18, 4)} TAC</b></div>
+      ${ethOf(e0) > 0n ? html`<div class="kv"><span>Worth about</span><b class="num" id="pf-earned-eth">${ethText(ethOf(e0))}</b></div>` : ''}
       ${paid > 0n ? html`<div class="kv"><span>Claimed so far</span><b>${fmt(paid, 18, 2)} TAC${ethOf(paid) > 0n ? ` (${aboutEth(ethOf(paid))})` : ''}</b></div>` : ''}
-      <button class="btn ghost" type="button" id="pf-claim" ${earnedNow(x) === 0n ? 'disabled' : ''}>Claim ${fmt(earnedNow(x), 18, 2)} TAC</button>
-      <button class="link" type="button" id="pf-reinvest" ${earnedNow(x) === 0n ? 'disabled' : ''}>Claim and add to the farm</button>
+      <button class="btn ghost" type="button" id="pf-claim" ${e0 === 0n ? 'disabled' : ''}>Claim ${tacShort(e0)} TAC</button>
+      <button class="link" type="button" id="pf-reinvest" ${e0 === 0n ? 'disabled' : ''}>Claim and add to the farm</button>
+      <div class="status" role="status" id="pf-pos-status"></div>` : ''}
+    ${x.lp > 0n ? html`
+      <div class="kv"><span>LP shares not staked</span><b>${fmt(x.lp, 18, 6)}</b></div>
+      <p class="note">Shares that are not staked earn nothing.</p>
+      <button class="btn ghost" type="button" id="pf-stake">Stake them</button>
+      <div class="status" role="status" id="pf-lp-status"></div>` : ''}
+    ${has ? html`
       <div class="lbl"><span>Withdraw</span></div>
       ${segSub('pfp', FARM.outPct, [['25', '25%'], ['50', '50%'], ['100', 'All']])}
       ${segSub('pfr', FARM.outAs, [['both', 'ETH + TAC'], ['eth', 'As ETH'], ['tac', 'As TAC']])}
       <div class="rcpt" id="pf-out-rcpt" hidden></div>
       <div id="pf-out-ack"></div>
-      <button class="btn ghost" type="button" id="pf-exit" disabled>Withdraw</button>` : ''}
-    ${x.lp > 0n ? html`
-      <div class="kv"><span>LP shares not staked</span><b>${fmt(x.lp, 18, 6)}</b></div>
-      <button class="btn ghost" type="button" id="pf-stake">Stake them</button>` : ''}
+      <button class="btn ghost" type="button" id="pf-exit" disabled>Withdraw</button>
+      <div class="status" role="status" id="pf-out-status"></div>` : ''}
     <div class="lbl"><span>${has ? 'Add more' : 'Farm with'}</span></div>
     ${segSub('pfm', mode, [['eth', 'ETH'], ['tac', 'TAC'], ['pair', 'ETH + TAC']])}
+    <p class="note how">${how}</p>
     ${withEth ? html`
       <div class="lbl"><span>ETH</span><button type="button" id="pf-max">${payName()} ${x.bal == null ? '—' : fmt(x.bal, 18, 4)} ETH</button></div>
       <div class="amt"><input id="pf-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="ETH to deposit"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>` : ''}
@@ -4835,13 +4882,20 @@ function renderPrecision(el) {
     <div class="rcpt" id="pf-rcpt" hidden></div>
     <div id="pf-ack"></div>
     <button class="btn" type="button" id="pf-go" disabled>${{ eth: 'Farm with ETH', tac: 'Farm with TAC', pair: 'Farm with ETH + TAC' }[mode]}</button>
-    <div class="status" role="status" id="pf-status"></div>`);
-  const status = $('#pf-status'), done = async (hash, what, note) => {
-    say(status, html`${what}… ${txLink(hash)}`);
+    <div class="status" role="status" id="pf-status"></div>
+    ${has ? html`<div class="lbl sep"><span>The farm</span></div>${facts}` : ''}`);
+  // Each action reports under its own button, where the person pressing it is looking.
+  const status = $('#pf-status'), posStatus = $('#pf-pos-status'), lpStatus = $('#pf-lp-status'), outStatus = $('#pf-out-status');
+  const only = (at) => { for (const s of [status, posStatus, lpStatus, outStatus]) if (s && s !== at) say(s, ''); };   // the latest action's line is the only one
+  const done = async (hash, what, note, at = status) => {
+    only(at);
+    say(at, html`${what}… ${txLink(hash)}`);
     await waitTx(hash);
-    say(status, html`<span class="ok">${note}</span> ${txLink(hash)}`);
+    say(at, html`<span class="ok">${note}</span> ${txLink(hash)}`);
     await loadFarms(true); rerender('farm');
   };
+  $$('[data-go="buy"]', el).forEach((b) => b.addEventListener('click', () => { $('#sheet-farm').close(); openSheet('buy'); }));
+  $$('[data-go="eth"]', el).forEach((b) => b.addEventListener('click', () => { FARM.mode = 'eth'; keep($('#sheet-farm'), render.farm); }));
   wireSub(el, 'pfm', (m) => { FARM.mode = m; keep($('#sheet-farm'), render.farm); });
   // What the stake has earned since the read, counted up each second at its share of the stream, to the stream's end.
   clearInterval(FARM.tick);
@@ -4853,7 +4907,7 @@ function renderPrecision(el) {
       const v = earnedNow(y);
       e.textContent = `${fmt(v, 18, 4)} TAC`;
       if (w) w.textContent = ethText(ethOf(v, y));
-      if (b && b.getAttribute('aria-busy') !== 'true') { b.textContent = `Claim ${fmt(v, 18, 2)} TAC`; b.disabled = v === 0n; }
+      if (b && b.getAttribute('aria-busy') !== 'true') { b.textContent = `Claim ${tacShort(v)} TAC`; b.disabled = v === 0n; }
       if (r && r.getAttribute('aria-busy') !== 'true') r.disabled = v === 0n;
     };
     FARM.tick = setInterval(tick, 1000);
@@ -4868,8 +4922,8 @@ function renderPrecision(el) {
   const gateOk = () => { go.disabled = !q || q.over || !lossOk(ackBox, q.loss); };
   const requote = async (e) => {
     const my = ++seq;
-    if (mode === 'pair' && e?.target === ethIn) tacIn.value = ethIn.value ? plain(tacFor(parseUnits(ethIn.value) || 0n), 18) : '';
-    if (mode === 'pair' && e?.target === tacIn) ethIn.value = tacIn.value ? plain(ethFor(parseUnits(tacIn.value) || 0n), 18) : '';
+    if (mode === 'pair' && e?.target === ethIn) tacIn.value = ethIn.value ? plain(upTo(tacFor(parseUnits(ethIn.value) || 0n), TAC_DP), 18) : '';
+    if (mode === 'pair' && e?.target === tacIn) ethIn.value = tacIn.value ? plain(upTo(ethFor(parseUnits(tacIn.value) || 0n), ETH_DP), 18) : '';
     const wei = withEth ? parseUnits(ethIn.value) || 0n : 0n, tac = withTac ? parseUnits(tacIn.value) || 0n : 0n;
     if (!go.isConnected) return;
     q = null; go.disabled = true; mount(ackBox, html``); if (e?.isTrusted) say(status, '');
@@ -4905,22 +4959,34 @@ function renderPrecision(el) {
       mount(ackBox, lossGate('pf-ackv', loss, 'deposit'));
       wireAck(ackBox, 'pf-ackv', loss, gateOk);
       if (wei > (x.bal ?? wei)) warn(rc, lowEth());
-      else if (tac > x.tac) warn(rc, html`Not enough TAC. <button class="link" type="button" data-go="buy">Buy TAC</button> or claim the airdrop.`);
-      else if (loss >= 0.5) warn(rc, html`A one-sided deposit swaps about half through this thin pool.${mode === 'eth' && x.tac > 0n ? html` <button class="link" type="button" data-go="pair">Add TAC too</button>` : ''}`);
+      else if (tac > x.tac) warn(rc, html`Not enough TAC. <button class="link" type="button" data-go="buy">Buy TAC</button> or claim the airdrop${mode === 'pair' ? html`, or <button class="link" type="button" data-go="eth">farm with ETH alone</button>` : ''}.`);
+      else if (loss >= 5) {
+        // The price impact is the swap's cost at this depth, and the line above the fields says what is swapped: this is for when it is large.
+        const other = mode === 'eth' ? x.tac > 0n : spendable > 0n;
+        warn(rc, html`The swap inside the pool costs a lot at this size. A smaller deposit costs less${other ? html`, and so does <button class="link" type="button" data-go="pair">adding ${mode === 'eth' ? 'TAC' : 'ETH'} too</button>` : ''}.`);
+      }
       rc.querySelector('[data-go="buy"]')?.addEventListener('click', () => { $('#sheet-farm').close(); openSheet('buy'); });
+      rc.querySelector('[data-go="eth"]')?.addEventListener('click', () => { FARM.mode = 'eth'; keep($('#sheet-farm'), render.farm); });
       rc.querySelector('[data-go="pair"]')?.addEventListener('click', () => { FARM.mode = 'pair'; keep($('#sheet-farm'), render.farm); });
       gateOk();
     } catch (e2) { if (my === seq) quoteErr(rc, e2); }
   };
   onEdit([ethIn, tacIn].filter(Boolean), go, requote);
   const fill = (input, v) => { input.value = v > 0n ? plain(v, 18) : ''; requote({ target: input }); };
-  // With no TAC held, the ETH side is filled so the quote says what is missing, rather than filling nothing.
-  $('#pf-max')?.addEventListener('click', () => (mode === 'pair' && x.tac > 0n && ethFor(x.tac) < spendable ? fill(tacIn, x.tac) : fill(ethIn, spendable)));
-  $('#pf-tmax')?.addEventListener('click', () => fill(tacIn, mode === 'pair' ? (tacFor(spendable) < x.tac ? tacFor(spendable) : x.tac) : x.tac));
+  // The largest balanced deposit both balances cover: all the ETH with its TAC, or all the TAC with its ETH. With no TAC
+  // held there is none, and the note above the fields says so.
+  const pairMax = () => {
+    let wei = cutTo(spendable, ETH_DP), tac = upTo(tacFor(wei), TAC_DP);
+    if (tac > x.tac) { tac = cutTo(x.tac, TAC_DP); wei = upTo(ethFor(tac), ETH_DP); }
+    ethIn.value = wei > 0n ? plain(wei, 18) : ''; tacIn.value = tac > 0n ? plain(tac, 18) : '';
+    requote({});
+  };
+  $('#pf-max')?.addEventListener('click', () => (mode === 'pair' ? x.tac > 0n && pairMax() : fill(ethIn, cutTo(spendable, ETH_DP))));
+  $('#pf-tmax')?.addEventListener('click', () => (mode === 'pair' ? x.tac > 0n && pairMax() : fill(tacIn, cutTo(x.tac, TAC_DP))));
   if (FARM.fill === 'tac' && tacIn) { FARM.fill = null; $('#pf-tmax').click(); }
   if (FARM.reinvest && tacIn) {
     const v = FARM.reinvest; FARM.reinvest = null;
-    fill(tacIn, v < x.tac ? v : x.tac);
+    fill(tacIn, cutTo(v < x.tac ? v : x.tac, TAC_DP));
     say(status, html`<span class="ok">Claimed ${fmt(v, 18, 2)} TAC. It is ready to farm below.</span>`);
     go.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
@@ -4948,31 +5014,33 @@ function renderPrecision(el) {
     try {
       const dl = deadline();
       let data = SEL.stake + word(x.lp);
-      if (x.lpAllow < x.lp) { const sig = await permitSig({ token: ADDR.precisionPool, name: 'Precision LP', spender: ADDR.precisionFarm, value: x.lp, deadline: dl, status }); data = SEL.stakeWithPermit + word(x.lp) + word(dl) + word(sig.v) + strip(sig.r) + strip(sig.s); }
-      await done(await sendTx({ to: ADDR.precisionFarm, data, label: 'Stake LP shares in the farm' }), 'Staking', 'Staked.');
+      if (x.lpAllow < x.lp) { const sig = await permitSig({ token: ADDR.precisionPool, name: 'Precision LP', spender: ADDR.precisionFarm, value: x.lp, deadline: dl, status: lpStatus }); data = SEL.stakeWithPermit + word(x.lp) + word(dl) + word(sig.v) + strip(sig.r) + strip(sig.s); }
+      await done(await sendTx({ to: ADDR.precisionFarm, data, label: 'Stake LP shares in the farm' }), 'Staking', 'Staked.', lpStatus);
       toast('Staked. TAC is streaming to you.');
-    } catch (e) { sayErr(status, e); }
+    } catch (e) { sayErr(lpStatus, e); }
   });
 
   // ── the position: claim and withdraw ──
   const c = $('#pf-claim');
   if (c) c.onclick = () => busy(c, async () => {
-    try { await done(await sendTx({ to: ADDR.precisionFarm, data: SEL.claim, label: 'Claim TAC from the farm' }), 'Claiming', `Claimed to ${your()}.`); toast('TAC claimed'); }
-    catch (e) { sayErr(status, e); }
+    try { await done(await sendTx({ to: ADDR.precisionFarm, data: SEL.claim, label: 'Claim TAC from the farm' }), 'Claiming', `Claimed to ${your()}.`, posStatus); toast('TAC claimed'); }
+    catch (e) { sayErr(posStatus, e); }
   });
   // Claim, then open the add form on TAC with exactly what was paid, so it goes back to work in one more step.
   const ri = $('#pf-reinvest');
   if (ri) ri.onclick = () => busy(ri, async () => {
     try {
       const hash = await sendTx({ to: ADDR.precisionFarm, data: SEL.claim, label: 'Claim TAC from the farm' });
-      say(status, html`Claiming… ${txLink(hash)}`);
+      only(posStatus);
+      say(posStatus, html`Claiming… ${txLink(hash)}`);
       const r = await waitTx(hash);
       const got = (r.logs || []).filter((l) => l.address.toLowerCase() === ADDR.precisionFarm.toLowerCase() && l.topics[0] === REWARD_PAID).reduce((t, l) => t + BigInt(l.data), 0n);
       await loadFarms(true);
+      say(posStatus, html`<span class="ok">Claimed.</span> ${txLink(hash)}`);
       if (got > 0n) Object.assign(FARM, { mode: 'tac', reinvest: got });
       rerender('farm');
       toast(`Claimed ${fmt(got, 18, 2)} TAC`);
-    } catch (e) { sayErr(status, e); }
+    } catch (e) { sayErr(posStatus, e); }
   });
   const ex = $('#pf-exit');
   if (!ex) return;
@@ -4997,7 +5065,9 @@ function renderPrecision(el) {
       mount(outRc, html`
         <div class="kv"><span>You get about</span><b>${as === 'both' ? `${fmt(wordAt(r, 0), 18, 5)} ETH + ${fmt(wordAt(r, 1), 18, 2)} TAC` : `${fmt(got, 18, as === 'eth' ? 5 : 2)} ${as === 'eth' ? 'ETH' : 'TAC'}`}</b></div>
         ${all && x.earned > 0n ? html`<div class="kv"><span>Plus earned</span><b>${fmt(x.earned, 18, 2)} TAC</b></div>` : ''}
-        ${lossLine(loss)}`);
+        ${lossLine(loss)}
+        ${as === 'both' ? '' : html`<p class="note">The ${as === 'eth' ? 'TAC' : 'ETH'} half is swapped inside the pool.</p>`}
+        ${!all && x.earned > 0n ? html`<p class="note">What you have earned stays in the farm until you claim it.</p>` : ''}`);
       outRc.hidden = false;
       mount(outAck, lossGate('pf-outv', loss, 'withdrawal'));
       wireAck(outAck, 'pf-outv', loss, outGateOk);
@@ -5017,40 +5087,55 @@ function renderPrecision(el) {
       const min0 = wordAt(sim, 0) * 995n / 1000n, min1 = z.as === 'both' ? wordAt(sim, 1) * 995n / 1000n : 0n;
       const hash = await sendTx({ to: ADDR.precisionFarm, data: outData(z.all, z.as, z.shares, min0, min1, dl), label: `Withdraw ${z.all ? 'all' : `${FARM.outPct}%`} from the farm${z.as === 'both' ? '' : ` as ${z.as === 'eth' ? 'ETH' : 'TAC'}`}` });
       delete acked['pf-outv'];
-      await done(hash, 'Withdrawing', `Withdrawn to ${your()}.`);
+      await done(hash, 'Withdrawing', `Withdrawn to ${your()}.`, outStatus);
       toast(`Withdrawn to ${your()}`);
-    } catch (e) { sayErr(status, e); }
+    } catch (e) { sayErr(outStatus, e); }
   });
 }
 
 // Shielded farms: positions are found from the key alone; harvest and unbond are relayed at no fee.
+// A position's unharvested reward in ETH at the public pool's price, and whether unbonding would give up a real amount of it
+// (the pool module refuses below its 0.001 TAC dust line, so unbond is held back until a harvest).
+const UNBOND_DUST = 100000n;
+const pendingEth = (pos) => ethOfTac((big(pos.pendingUnits) || 0n) * (big(FARM.program?.unitScale) || E10), FARM.precision);
+const unharvested = (pos) => (big(pos.pendingUnits) || 0n) > UNBOND_DUST;
 function renderShielded(el, p) {
   if (!p) return;
   const r = p.reserves || {};
   const mine = (FARM.positions || []).filter((x) => Number(x.pid) === Number(p.pid));
-  mount(el, html`
+  // The farm's facts lead the card until the key has a position here; then the position leads and they close it.
+  const facts = html`
     <div class="kv"><span>In the pool</span><b>${lpWorth(p, r.lpTotalShares) || ''}${lpWorth(p, r.lpTotalShares) ? ' · ' : ''}${Math.round(Number(p.totalShares) * 100 / Math.max(1, Number(r.lpTotalShares || 1)))}% bonded</b></div>
     <div class="kv"><span>${FARM.program.epoch?.active ? 'Stream ends' : 'Stream'}</span><b>${FARM.program.epoch?.active ? dayFmt(FARM.program.epoch.periodFinish) : 'between reward periods'}</b></div>
-    ${FARM.program.epoch?.active ? aprRow(shieldedApr(p)) : ''}
+    ${FARM.program.epoch?.active ? aprRow(shieldedApr(p)) : ''}`;
+  mount(el, html`
+    ${mine.length ? '' : facts}
     <div id="sf-${p.pid}"></div>
-    <div class="status" role="status" id="sf-status-${p.pid}"></div>`);
+    <div class="status" role="status" id="sf-status-${p.pid}"></div>
+    ${mine.length ? html`<div class="lbl sep"><span>The farm</span></div>${facts}` : ''}`);
   const box = $(`#sf-${p.pid}`), status = $(`#sf-status-${p.pid}`);
   if (!needKey(box, 'Open your Tacit wallet to see your private positions here.')) return;
   if (FARM.positions == null) { mount(box, html`<div class="kv"><span><span class="sk" style="--w:11ch"></span></span><b><span class="sk" style="--w:12ch"></span></b></div>`); loadPositions().then(() => rerender('farm')).catch((e) => sayErr(status, e)); return; }
   mount(box, html`
     ${mine.map((pos, i) => { const locked = Number(pos.unlockAt || 0) > chainNow(), day = FARM.program.epoch?.active && Number(p.totalShares) ? Number(p.tacPerDayForPool) * Number(pos.shares) / Number(p.totalShares) : 0; return html`
+      ${mine.length > 1 ? html`<div class="lbl"><span>Position ${i + 1}</span></div>` : ''}
       <div class="kv"><span>Your position</span><b>${lpWorth(p, pos.shares) || `${Number(pos.shares).toLocaleString('en-US')} shares`}</b></div>
-      <div class="kv"><span>Earned</span><b>${pos.pendingTac} TAC${day ? ` · about ${day >= 10 ? Math.round(day).toLocaleString('en-US') : day.toFixed(2)} a day` : ''}</b></div>
-      <div class="row2"><button class="btn ghost" type="button" data-harvest="${i}" ${BigInt(pos.pendingUnits || 0) > 0n ? '' : 'disabled'}>Harvest</button><button class="btn ghost" type="button" data-unbond="${i}" ${locked ? 'disabled' : ''}>${locked ? `Unbond from ${dayFmt(Number(pos.unlockAt))}` : 'Unbond'}</button></div>`; })}
+      <div class="kv"><span>Earned</span><b>${pos.pendingTac} TAC${pendingEth(pos) > 0n ? ` (${aboutEth(pendingEth(pos))})` : ''}</b></div>
+      ${day ? html`<div class="kv"><span>Earning</span><b>about ${day >= 10 ? Math.round(day).toLocaleString('en-US') : day.toFixed(2)} TAC a day</b></div>` : ''}
+      <div class="row2"><button class="btn ghost" type="button" data-harvest="${i}" ${BigInt(pos.pendingUnits || 0) > 0n ? '' : 'disabled'}>Harvest</button><button class="btn ghost" type="button" data-unbond="${i}" ${locked || unharvested(pos) ? 'disabled' : ''}>${locked ? `Unbond from ${dayFmt(Number(pos.unlockAt))}` : 'Unbond'}</button></div>
+      ${unharvested(pos) && !locked ? html`<p class="note">Harvest first: unbonding now would give up the ${pos.pendingTac} TAC this position has earned.</p>` : ''}`; })}
+    ${mine.length ? html`<p class="note">Harvest pays what is earned as a wTAC note, which turns into TAC one for one. Unbond ends the position and returns the liquidity as a private note.</p>
+      <div class="status" role="status" id="sf-act-${p.pid}"></div>` : ''}
     <div id="sj-${p.pid}"></div>`);
   farmJoin($(`#sj-${p.pid}`, box), p, status, mine.length > 0);
+  const act = $(`#sf-act-${p.pid}`, box);                          // harvest and unbond report here, under the positions
   $$('[data-harvest]', box).forEach((b) => b.onclick = () => busy(b, async (run) => {
-    try { say(status, 'The relay is proving your harvest…'); await (await getUx()).farmHarvest({ walletPriv: walletPriv(), position: mine[Number(b.dataset.harvest)], waitOpts: run.wait('Harvest farm rewards', 15 * 60e3) }); say(status, html`<span class="ok">Harvested to a wTAC note,</span> the farm’s reward token, redeemable one for one for TAC.`); toast('Harvested'); await Promise.allSettled([scanPrivate(true), loadPositions()]); rerender('farm'); }
-    catch (e) { sayErr(status, e); }
+    try { say(act, 'The relay is proving your harvest…'); await (await getUx()).farmHarvest({ walletPriv: walletPriv(), position: mine[Number(b.dataset.harvest)], waitOpts: run.wait('Harvest farm rewards', 15 * 60e3) }); say(act, html`<span class="ok">Harvested to a wTAC note,</span> the farm’s reward token, one for one with TAC. <button class="link" type="button" data-fn-go="redeem">Turn it into TAC</button>`); toast('Harvested'); await Promise.allSettled([scanPrivate(true), loadPositions()]); rerender('farm'); }
+    catch (e) { sayErr(act, e); }
   }));
   $$('[data-unbond]', box).forEach((b) => b.onclick = () => busy(b, async (run) => {
-    try { say(status, 'The relay is proving your unbond…'); await (await getUx()).farmUnbond({ walletPriv: walletPriv(), position: mine[Number(b.dataset.unbond)], waitOpts: run.wait('Unbond from a farm', 15 * 60e3) }); say(status, html`<span class="ok">Unbonded. Your liquidity is a private note again.</span>`); toast('Unbonded'); await Promise.allSettled([scanPrivate(true), loadPositions()]); rerender('farm'); }
-    catch (e) { sayErr(status, /forfeit/i.test(e?.message || '') ? new Error('Harvest first; unbonding now would forfeit the TAC it has earned.') : e); }
+    try { say(act, 'The relay is proving your unbond…'); await (await getUx()).farmUnbond({ walletPriv: walletPriv(), position: mine[Number(b.dataset.unbond)], waitOpts: run.wait('Unbond from a farm', 15 * 60e3) }); say(act, html`<span class="ok">Unbonded. Your liquidity is a private note again.</span> <button class="link" type="button" data-fn-go="lp${p.pid}">Take it out as ${pairName(p.pair)}</button>`); toast('Unbonded'); await Promise.allSettled([scanPrivate(true), loadPositions()]); rerender('farm'); }
+    catch (e) { sayErr(act, /forfeit/i.test(e?.message || '') ? new Error('Harvest first; unbonding now would forfeit the TAC it has earned.') : e); }
   }));
 }
 
@@ -5125,7 +5210,7 @@ function farmJoin(el, p, status, has) {
         ${day ? html`<div class="kv"><span>Earns about</span><b>${day >= 10 ? Math.round(day).toLocaleString('en-US') : day.toFixed(2)} TAC a day${ethOfTac(BigInt(Math.round(day * 1e18)), FARM.precision) > 0n ? ` (${aboutEth(ethOfTac(BigInt(Math.round(day * 1e18)), FARM.precision))})` : ''}</b></div>` : ''}
         ${day && aprOf(day, 2 * Number(a) / 1e8) != null ? html`<div class="kv"><span>APR on this deposit</span><b>${aprLong(aprOf(day, 2 * Number(a) / 1e8))}</b></div>
           <p class="note">At today’s TAC price${FARM.program?.epoch?.periodFinish ? `, while the stream runs to ${dayFmt(FARM.program.epoch.periodFinish)}` : ''}. Swap fees come on top.</p>` : ''}
-        ${fA || fB ? html`<div class="kv"><span>Relay fee to cut your notes to size</span><b>${[fA ? `${fmt(fA, 8, 6)} tETH` : '', fB ? `${fmt(fB, 8, dpB)} ${other}` : ''].filter(Boolean).join(' + ')}</b></div>` : ''}
+        ${fA || fB ? html`<div class="kv"><span>Relay fee to split your notes</span><b>${[fA ? `${fmt(fA, 8, 6)} tETH` : '', fB ? `${fmt(fB, 8, dpB)} ${other}` : ''].filter(Boolean).join(' + ')}</b></div>` : ''}
         <div class="kv"><span>Gas, from ${your()}</span><b>about ${fmt(j.gas, 18, 5)} ETH</b></div>`);
       rc.hidden = false;
       if (q.over) warn(rc, `More than your private balance covers${fA || fB ? ' with the relay fee' : ''}. Try Max.`);
@@ -6050,7 +6135,7 @@ function dashItems() {
   if (x?.staked > 0n || x?.earned > 0n || pos.length) {
     const scale = big(FARM.program?.unitScale) || E10, earned = (x ? earnedNow(x) : 0n) + pos.reduce((a, p) => a + (big(p.pendingUnits) || 0n) * scale, 0n);
     const myDay = x?.staked > 0n && x.totalStaked ? x.perDay * x.staked / x.totalStaked : 0n, apr = x?.staked > 0n && x.live ? precisionApr(x) : null;
-    out.push({ key: 'farm', icon: 'tk-tac', label: 'Farm rewards', unit: 'TAC', dec: 18, max: 2, v: earned, live: earned > 0n, open: 'farm', show: true,
+    out.push({ key: 'farm', icon: 'tk-tac', label: 'Farm rewards', unit: 'TAC', dec: 18, max: 2, v: earned, live: earned > 0n, open: 'farm', show: true, wrap: true,
       meta: ethOfTac(earned, FARM.precision) > 0n ? `${aboutEth(ethOfTac(earned, FARM.precision))} to claim` : apr != null ? `${aprShort(apr)} · ${fmt(myDay, 18, 2)} a day` : pos.length ? `${pos.length} private position${pos.length === 1 ? '' : 's'}` : x?.staked > 0n ? 'staked in the public farm' : 'rewards to claim' });
   }
   if (S.wallet && AIR && !AIR.error && (AIR.claimable || AIR.claimed)) out.push({ key: 'air', icon: 'tk-tac', label: 'Airdrop', unit: 'TAC', dec: 18, max: 2, v: BigInt(AIR.amountWei || 0),
@@ -6077,7 +6162,7 @@ function paintDash() {
     const value = it.v != null ? html`${show(it.v)}${it.unit ? html` <small>${it.unit}</small>` : ''}` : prev != null && !it.err ? html`<span class="stale">${show(prev)}</span>`
       : it.err || it.lazy ? '—' : html`<span class="sk" style="--w:7ch"></span>`;
     const body = html`<span class="di-k"><svg class="tk" aria-hidden="true"><use href="#${it.icon}"/></svg>${it.label}${it.live ? html`<span class="dot live"></span>` : ''}</span>
-      <span class="di-v num">${value}</span><span class="di-m${it.err ? ' wrap' : ''}">${delta}${it.err ? 'could not read · open to retry' : it.meta || (it.v == null ? html`<span class="sk" style="--w:12ch"></span>` : '')}</span>`;
+      <span class="di-v num">${value}</span><span class="di-m${it.err || it.wrap ? ' wrap' : ''}">${delta}${it.err ? 'could not read · open to retry' : it.meta || (it.v == null ? html`<span class="sk" style="--w:12ch"></span>` : '')}</span>`;
     return it.href ? html`<li><a class="di" href="${it.href}">${body}</a></li>`
       : html`<li><button class="di" type="button" ${it.asset ? html`data-asset="${it.asset}"` : html`data-dash-open="${it.open}"`}>${body}</button></li>`;
   };

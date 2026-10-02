@@ -7,6 +7,9 @@
 //   ux       the page's shell: a toast over an open sheet can be pressed, a drag ending on the backdrop leaves the sheet open, an
 //            unreadable amount says so, one sheet replacing another keeps its link in the address bar, a hash naming nothing is ignored
 //   apr      every farm row shows its APR now, and the public farm's card spells it out; the Farm tile leads with the public farm's APR
+//   farmgate nobody connected: the public farm offers a browser wallet or, in place, the ways into a Tacit wallet, and back
+//   farmpos  a private farm's card with positions: each named and leading the card, unbond held back while a real reward is
+//            unharvested, harvested rewards and unbonded liquidity above the farms, a harvest pointing at its next step
 //   pair     with no TAC held, Max fills the ETH side and says TAC is missing; then ETH + TAC staked in one transaction
 //            with an EIP-2612 permit
 //   farm     a one-sided ETH zap waits for its typed loss acceptance (its preview's APR never above the farm's APR now),
@@ -83,7 +86,7 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
-const ONLY = new Set((process.argv[2] || 'airdrop,links,ux,apr,pair,farm,reinvest,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,selfexit,selfmore,selflocks,selfsplit,makepub,farmjoin,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,ux,apr,farmgate,pair,farm,reinvest,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,selfexit,selfmore,selflocks,selfsplit,makepub,farmjoin,farmpos,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -264,7 +267,7 @@ async function acceptLoss(page, goSel, ackSel) {
 }
 // Chain state, polled, is the check: a toast from an earlier step can still be on screen.
 async function chainUntil(fn, ms = 240000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await fn()) return true; await sleep(1500); } return false; }
-const toastSays = (page, re) => until(page, (r) => new RegExp(r).test(document.querySelector('#toast-container')?.textContent || '') || /class="err"/.test(document.querySelector('#pf-status')?.innerHTML || ''), re.source, 240000);
+const toastSays = (page, re) => until(page, (r) => new RegExp(r).test(document.querySelector('#toast-container')?.textContent || '') || !!document.querySelector('#farm-precision .status .err'), re.source, 240000);
 
 const main = await openPage({ account: A0, key: K0 });
 const { page, url } = main;
@@ -351,6 +354,22 @@ await step('apr', async () => {
   ok(/^(\d[\d,]*%|1,000%\+) APR on TAC\/ETH · [\d,]+ TAC a day/.test(foot), `apr: the Farm tile leads with the public farm's APR (${foot})`);
 });
 
+await step('farmgate', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  try {
+    await r.page.goto(r.url + '#farm');
+    await r.page.waitForSelector('#pf-connect', { timeout: 120000 });
+    ok(!!(await r.page.$('#pf-tacit')), 'farmgate: with nobody connected the farm offers a browser wallet, and a Tacit wallet instead');
+    await r.page.click('#pf-tacit');
+    await r.page.waitForSelector('#farm-precision-in [data-in]', { timeout: 30000 });
+    ok(!(await r.page.$('#pf-connect')) && !!(await r.page.$('#pf-back')) && (await r.page.$$('#farm-precision-in [data-in]')).length >= 2, 'farmgate: the ways into a Tacit wallet open in place, with a way back');
+    await r.page.click('#pf-back');
+    await r.page.waitForSelector('#pf-connect', { timeout: 30000 });
+    ok(true, 'farmgate: and back to the browser wallet');
+    if (r.errors.length) { fails++; console.log('FAIL farmgate page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { await r.browser.close(); }
+});
+
 await step('pair', async () => {
   // The account starts with no TAC, whatever mainnet holds for it at the fork block, so Max says what is missing.
   const held = await tacOf(A0);
@@ -360,9 +379,13 @@ await step('pair', async () => {
   if (await page.$('#pf-connect')) await page.click('#pf-connect');
   await page.waitForSelector('[data-pfm="pair"]', { timeout: 60000 });
   await page.click('[data-pfm="pair"]');
+  await until(page, () => /You hold no TAC/.test(document.querySelector('#farm-precision .how')?.textContent || ''), null, 60000);
+  ok(!!(await page.$('#farm-precision .how [data-go="buy"]')) && !!(await page.$('#farm-precision .how [data-go="eth"]')), 'pair: with no TAC held the form says so before anything is typed, with ways on');
   await page.click('#pf-max');
+  ok(!(await page.inputValue('#pf-amt')) && !(await page.inputValue('#pf-tac')), 'pair: and Max does not invent a deposit the TAC cannot pay for');
+  await page.fill('#pf-amt', '0.002');
   await until(page, () => /Not enough TAC/.test(document.querySelector('#pf-rcpt')?.textContent || ''), null, 240000);
-  ok(parseFloat(await page.inputValue('#pf-amt')) > 0 && await page.isDisabled('#pf-go'), `pair: with no TAC held, Max fills the ETH side and says TAC is missing (${await page.inputValue('#pf-amt')} ETH)`);
+  ok(await page.isDisabled('#pf-go') && !!(await page.$('#pf-rcpt [data-go="eth"]')), 'pair: a typed ETH amount still says TAC is missing, and offers ETH alone');
   await fundTac(A0, 1000n * 10n ** 18n);
   await page.evaluate(() => { location.hash = ''; location.hash = '#farm'; });
   await until(page, () => /[1-9]/.test(document.querySelector('#pf-tmax')?.textContent || ''), null, 120000);
@@ -373,12 +396,13 @@ await step('pair', async () => {
   await page.click('#pf-max');
   await until(page, () => !document.querySelector('#pf-go').disabled || /Not enough|refuse/.test(document.querySelector('#pf-rcpt')?.textContent || ''));
   ok(!(await page.isDisabled('#pf-go')), `pair: ETH Max with TAC as the limit fills a deposit the TAC covers (${await page.inputValue('#pf-tac')} TAC, ${await page.inputValue('#pf-amt')} ETH)`);
+  ok(/^\d*\.?\d{0,8}$/.test(await page.inputValue('#pf-amt')) && /^\d*\.?\d{0,6}$/.test(await page.inputValue('#pf-tac')), 'pair: both fields read to a few decimals, not 18 digits');
   await page.fill('#pf-amt', '0.002');
   await until(page, () => !document.querySelector('#pf-go').disabled || /\S/.test(document.querySelector('#pf-status')?.textContent || ''));
   if (await page.isDisabled('#pf-go')) throw new Error(`the ETH + TAC deposit stayed disabled: ${await text(page, '#pf-status')} | ${await text(page, '#pf-rcpt')}`);
   const s0 = await stakedOf(A0), t0 = await tacOf(A0);
   await page.click('#pf-go');
-  await until(page, () => /Staked/.test(document.querySelector('#toast-container')?.textContent || '') || /err/.test(document.querySelector('#pf-status')?.innerHTML || ''));
+  await until(page, () => /Staked/.test(document.querySelector('#toast-container')?.textContent || '') || !!document.querySelector('#farm-precision .status .err'));
   ok((await stakedOf(A0)) > s0 && (await tacOf(A0)) < t0, `pair: ETH + TAC staked with a permit ${await text(page, '#pf-status')}`);
 });
 
@@ -441,7 +465,7 @@ await step('farm', async () => {
   ok(Math.abs(shown - got) <= 0.006 + got * 0.001, `farm: the claim then shows under Claimed so far (${shown} TAC for ${got.toFixed(4)} paid)`);
   await page.waitForSelector('#pf-exit');
   await page.click('#pf-exit');
-  await until(page, () => /Withdrawn/.test(document.querySelector('#toast-container')?.textContent || '') || /err/.test(document.querySelector('#pf-status')?.innerHTML || ''));
+  await until(page, () => /Withdrawn/.test(document.querySelector('#toast-container')?.textContent || '') || !!document.querySelector('#farm-precision .status .err'));
   ok((await stakedOf(A0)) === 0n, `farm: withdraw all leaves nothing staked ${await text(page, '#pf-status')}`);
 });
 
@@ -515,7 +539,8 @@ await step('tacfarm', async () => {
   await page.waitForSelector('#pf-stake', { timeout: 60000 });
   await page.click('#pf-stake');
   await chainUntil(async () => (await stakedOf(A0)) === st2);
-  ok((await stakedOf(A0)) === st2, `tacfarm: LP held is staked again with a permit ${await text(page, '#pf-status')}`);
+  ok((await stakedOf(A0)) === st2, `tacfarm: LP held is staked again with a permit ${await text(page, '#pf-lp-status')}`);
+  await page.waitForSelector('#pf-stake', { state: 'detached', timeout: 120000 });     // the page ignores tab presses until the stake has finished drawing
   await page.waitForSelector('[data-pfp="100"]');
   await page.click('[data-pfp="100"]'); await page.click('[data-pfr="tac"]');
   await acceptLoss(page, '#pf-exit', '#pf-outv');
@@ -1069,7 +1094,7 @@ await step('farmjoin', async () => {
       .catch(async (e) => { throw new Error(`${e.message.split('\n')[0]} | ${(await text(r.page, '#sj-rcpt-0')).replace(/\s+/g, ' ')}`); });
     await shot(r.page, 'farmjoin');
     const rc = (await text(r.page, '#sj-rcpt-0')).replace(/\s+/g, ' ');
-    ok(/Share of the farm/.test(rc) && /Relay fee to cut your notes to size/.test(rc) && /Gas, from your Tacit account/.test(rc), `farmjoin: Max quotes both sides, the split fees and the gas (${rc})`);
+    ok(/Share of the farm/.test(rc) && /Relay fee to split your notes/.test(rc) && /Gas, from your Tacit account/.test(rc), `farmjoin: Max quotes both sides, the split fees and the gas (${rc})`);
     if (/Earns about/.test(rc)) ok(/APR on this deposit\s*(about [\d,]+%|over 100,000%)/.test(rc) && /Swap fees come on top/.test(rc), 'farmjoin: and the APR for this deposit');
     await r.page.click('#sj-go-0');
     await until(r.page, () => !!window.__join || /err/.test(document.querySelector('#sf-status-0')?.innerHTML || ''), null, 120000);
@@ -1649,7 +1674,7 @@ await step('acct', async () => {
   await until(r.page, () => !document.querySelector('#pf-go').disabled || /\S/.test(document.querySelector('#pf-status')?.textContent || ''), null, 60000);
   if (await r.page.isDisabled('#pf-go')) throw new Error(`the ETH + TAC deposit stayed disabled: ${await text(r.page, '#pf-rcpt')}`);
   await r.page.click('#pf-go');
-  await until(r.page, () => /Staked/.test(document.querySelector('#toast-container')?.textContent || '') || /err/.test(document.querySelector('#pf-status')?.innerHTML || ''), null, 120000);
+  await until(r.page, () => /Staked/.test(document.querySelector('#toast-container')?.textContent || '') || !!document.querySelector('#farm-precision .status .err'), null, 120000);
   ok((await stakedOf(want)) > 0n, `acct: ETH + TAC staked with a permit the Tacit account signed ${await text(r.page, '#pf-status')}`);
 
   const OUT = '0x1111111111111111111111111111111111111111', o0 = await balOf(OUT);
@@ -2631,6 +2656,144 @@ await step('tacdeposit', async () => {
     ok(/Finish a 20 TAC deposit/.test(await text(r.page, '#act-body')), 'tacdeposit: the settle shows in Activity');
     if (r.errors.length) { fails++; console.log('FAIL tacdeposit page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   } finally { await r.browser.close(); }
+});
+
+// The page's pool module with private notes added to the balance and, if given, the farm positions the key holds: what a
+// private farm's card shows once a key has something in it. Harvest and unbond are recorded, not proved.
+const FARM_CETH = '0x3cba71e1114af183cdeacc6b8457a474d17529fd28704480ca799d0d03126f34', FARM_CTAC = '0xf0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
+const FARM_WTAC_ASSET = '0x1097c9e552ae4fce2a8c416b93403953fa445a5f2cdae8ced36d9a78cfe40832', FARM_LP0 = '0x17c56713a7e4a5d679a71def3ff9fa186f1556ef757b0ee6b7a3ed8c9249ef99';
+const stubFarmUx = (page, { notes = [], positions = null }) => page.route(/\/confidential-pool-ux\.js\?cb=/, (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: `
+  import * as real from '/confidential-pool-ux.js?stub=real';
+  export * from '/confidential-pool-ux.js?stub=real';
+  export function makeConfidentialPoolUx(o) {
+    const ux = real.makeConfidentialPoolUx(o), balance = ux.balance;
+    let seq = 0;
+    const note = (asset, value) => { seq++; return { asset, value: String(value), leafIndex: 910000 + seq, cx: '0x' + seq.toString(16).padStart(64, 'a'), cy: '0x01', owner: '0x02', root: '0x03', path: [] }; };
+    const add = ${JSON.stringify(notes.map(([a, v]) => [a, String(v)]))}.map(([a, v]) => note(a, BigInt(v)));
+    window.__farmCalls = [];
+    ux.balance = async (priv) => {
+      const b = await balance(priv);
+      b.notes = [...b.notes, ...add];
+      for (const n of add) { const g = b.byAsset[n.asset] ||= { asset: n.asset, value: 0n, notes: [] }; g.value = BigInt(g.value) + BigInt(n.value); g.notes = [...g.notes, n]; }
+      return b;
+    };
+    ${positions ? `const positions = ${JSON.stringify(positions)}; ux.farmPositions = async () => positions.map((p) => ({ ...p }));
+    ux.farmHarvest = async ({ position }) => { window.__farmCalls.push('harvest:' + position.receiptLeaf); return {}; };
+    ux.farmUnbond = async ({ position }) => { window.__farmCalls.push('unbond:' + position.receiptLeaf); return {}; };` : ''}
+    return ux;
+  }` }));
+const farmPos = (n, shares, units, tac) => ({ pid: 0, pair: 'TAC/cETH', lpAsset: FARM_LP0, shares: String(shares), receiptLeaf: '0x' + String(n).repeat(64), receiptIndex: n, unlockAt: 0, pendingUnits: String(units), pendingTac: tac });
+// Opens a key by its pasted hex, funds its Tacit account for gas and returns the page.
+async function openFarmKey(hex, stub, viewport) {
+  const r = await openPage({ account: A0, key: K0, viewport });
+  const acct = makeEvmAccount({ secp, keccak256: keccak_256, sha256 }).deriveEvmAccount(Buffer.from(hex, 'hex'), 'mainnet').address;
+  await rpc('anvil_setBalance', [acct, '0x' + (10n ** 18n).toString(16)]);
+  await stubFarmUx(r.page, stub);
+  await r.page.goto(r.url + '#wallet');
+  await r.page.click('#wallet-body [data-in="paste"]'); await r.page.fill('#ws-hex', hex); await r.page.click('#wallet-body [data-in="key"]');
+  await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+  return r;
+}
+
+// A private farm's card with a key that holds positions: the position leads and the farm's facts close the card, each
+// position is named, unbond waits for a harvest while a real reward is unharvested, what is waiting (harvested rewards,
+// liquidity not bonded) sits above the farms, and what a harvest or unbond leaves points at its next step.
+await step('farmpos', async () => {
+  const r = await openFarmKey('b05e'.padEnd(64, '6'), { notes: [[FARM_WTAC_ASSET, 1234560000n], [FARM_LP0, 50000000n]], positions: [farmPos(7, 150000000, 1234560000, '12.3456'), farmPos(8, 20000000, 50000, '0.0005')] });
+  const p = r.page;
+  try {
+    await go(p, '#farm');
+    await p.waitForSelector('.farm.open[data-farm="pid0"] [data-unbond]', { timeout: 240000 });
+    const card = (await text(p, '#farm-pid0')).replace(/\s+/g, ' ');
+    ok(/Position 1/.test(card) && /Position 2/.test(card), 'farmpos: with two positions in one pool, each is named');
+    ok(card.indexOf('Your position') < card.indexOf('In the pool') && /The farm/.test(card), 'farmpos: the positions lead the card and the farm\'s facts close it');
+    ok(/Earned\s*12\.3456 TAC (\(≈ [\d.,]+ ETH\)|\(< 0\.00001 ETH\))?/.test(card) && /Earning\s*about [\d,.]+ TAC a day/.test(card), 'farmpos: earned reads in ETH too, and what it earns a day has its own row');
+    const un = await p.$$eval('[data-unbond]', (b) => b.map((x) => x.disabled));
+    ok(un[0] === true && un[1] === false, `farmpos: unbond waits for a harvest while a real reward is unharvested, and not for dust (${un})`);
+    ok(/Harvest first: unbonding now would give up the 12\.3456 TAC/.test(card), 'farmpos: and says why');
+    await until(p, () => /Harvested rewards/.test(document.querySelector('#farm-notes')?.textContent || ''), null, 300000);   // the notes scan is slow on a cold fork
+    ok(await p.evaluate(() => { const n = document.querySelector('#farm-notes'), l = document.querySelector('#farm-list'); return !!(n.compareDocumentPosition(l) & Node.DOCUMENT_POSITION_FOLLOWING) && /Harvested rewards/.test(n.textContent) && /not bonded/.test(n.textContent); }),
+      'farmpos: harvested rewards and unbonded liquidity wait above the farms');
+    ok(/Private pool/.test(await text(p, '[data-farm="pid0"] > button')) && !/Tacit pool/.test(await text(p, '#farm-list')), 'farmpos: the rows say Private pool');
+    await p.click('[data-harvest="0"]');
+    await p.waitForSelector('#sf-act-0 [data-fn-go="redeem"]', { timeout: 60000 });
+    ok(await p.evaluate(() => { const a = document.querySelector('#sf-act-0'), u = document.querySelector('[data-unbond="1"]'); return !!(u.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING); }), 'farmpos: a harvest reports under the positions, not below the join form');
+    await p.click('#sf-act-0 [data-fn-go="redeem"]');
+    await until(p, () => document.activeElement?.id === 'fn-redeem', null, 10000);
+    ok((await p.evaluate(() => window.__farmCalls)).some((c) => c.startsWith('harvest:')), 'farmpos: a harvest says where to turn it into TAC, and the link takes you to that button');
+    if (r.errors.length) { fails++; console.log('FAIL farmpos page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  } finally { await r.browser.close(); }
+});
+
+// The farm sheet in each state a visitor can reach, for design review: nobody connected, a wallet with and without TAC, a
+// stake with something earned and a withdrawal previewed, then the private farms with nothing to add, with notes to add, and
+// with a position, a harvest and liquidity that is not bonded. Opt-in (`farmtour`), and it writes to SHOTS.
+await step('farmtour', async () => {
+  if (!SHOTS) throw new Error('the farm tour needs SHOTS=<dir>');
+  const CETH = '0x3cba71e1114af183cdeacc6b8457a474d17529fd28704480ca799d0d03126f34', CTAC = '0xf0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
+  const WTAC_ASSET = '0x1097c9e552ae4fce2a8c416b93403953fa445a5f2cdae8ced36d9a78cfe40832', LP0 = '0x17c56713a7e4a5d679a71def3ff9fa186f1556ef757b0ee6b7a3ed8c9249ef99';
+  const shown = (p, sel, ms = 120000) => p.waitForSelector(sel, { timeout: ms }).catch(() => {});
+  // PART=public or PART=private runs half of it (the private half scans a key's notes, which needs an archive fork); WIDTH=phone or WIDTH=desk runs one width.
+  const part = process.env.PART || 'both';
+  for (const [tag, viewport] of [['phone', { width: 390, height: 1700 }], ['desk', { width: 1280, height: 1500 }]].filter(([t]) => !process.env.WIDTH || t === process.env.WIDTH)) {
+    if (part !== 'private') {
+      const r = await openPage({ account: A0, key: K0, viewport });
+      const p = r.page, snap = async (name) => { await p.waitForTimeout(1200); await p.screenshot({ path: join(SHOTS, `farm-${tag}-${name}.png`), fullPage: true }); };
+      const held = await tacOf(A0);
+      if (held > 0n) await rpc('eth_sendTransaction', [{ from: A0, to: TAC, data: '0xa9059cbb' + addrWord(RESERVE) + word(held) }]);
+      await p.goto(r.url + '#farm');
+      await p.waitForSelector('#pf-connect, [data-pfm]', { timeout: 120000 });
+      await snap('1-public-signed-out');
+      if (await p.$('#pf-connect')) await p.click('#pf-connect');
+      await p.waitForSelector('[data-pfm="eth"]', { timeout: 120000 });
+      await p.fill('#pf-amt', '0.05'); await shown(p, '#pf-rcpt:not([hidden])'); await snap('2-public-eth');
+      await p.fill('#pf-amt', '2'); await shown(p, '#pf-ackv'); await snap('3-public-eth-big');
+      await p.fill('#pf-amt', '');
+      await p.click('[data-pfm="pair"]'); await snap('4-public-pair-no-tac');
+      await p.fill('#pf-amt', '0.002');
+      await until(p, () => /Not enough TAC/.test(document.querySelector('#pf-rcpt')?.textContent || ''), null, 240000).catch(() => {}); await snap('4b-public-pair-no-tac-typed');
+      await fundTac(A0, 1000n * 10n ** 18n);
+      await go(p, '#farm'); await until(p, () => /[1-9]/.test(document.querySelector('#pf-tmax')?.textContent || ''), null, 120000);
+      await p.fill('#pf-amt', ''); await until(p, () => document.querySelector('#pf-rcpt')?.hidden, null, 60000);
+      await p.click('#pf-max'); await until(p, () => !document.querySelector('#pf-go').disabled || /Not enough|refuse/.test(document.querySelector('#pf-rcpt')?.textContent || ''), null, 240000).catch(() => {});
+      await snap('5-public-pair');
+      await p.fill('#pf-amt', '0.02');
+      await acceptLoss(p, '#pf-go', '#pf-ackv');
+      await p.click('#pf-go'); await p.waitForSelector('#pf-exit', { timeout: 120000 });
+      await snap('6-public-just-staked');
+      await rpc('evm_increaseTime', [2 * 86400]); await rpc('evm_mine', []);
+      await go(p, '#farm'); await until(p, () => { const b = document.querySelector('#pf-claim'); return b && !b.disabled; });
+      await shown(p, '#pf-out-rcpt:not([hidden])'); await snap('7-public-staked');
+      await p.click('[data-pfp="50"]'); await p.click('[data-pfr="eth"]'); await shown(p, '#pf-out-rcpt:not([hidden])'); await snap('8-public-withdraw-half-as-eth');
+      await p.click('#pf-claim'); await until(p, () => /TAC claimed/.test(document.querySelector('#toast-container')?.textContent || ''), null, 120000).catch(() => {});
+      await shown(p, '#pf-status .ok'); await snap('9-public-claimed');
+      if (r.errors.length) console.log(`   ${tag} page errors: ${r.errors.slice(0, 3).join(' | ')}`);
+      await r.browser.close();
+    }
+    if (part !== 'public') for (const variant of ['bare', 'notes', 'position']) {
+      const notes = variant === 'bare' ? [] : [[FARM_CETH, 2000000n], [FARM_CTAC, 50000000000n]].concat(variant === 'position' ? [[FARM_WTAC_ASSET, 1234560000n], [FARM_LP0, 50000000n]] : []);
+      const r = await openFarmKey(({ bare: 'ba7e', notes: 'f4a3e', position: 'b05e' })[variant].padEnd(64, '6'), { notes, positions: variant === 'position' ? [farmPos(7, 150000000, 1234560000, '12.3456'), farmPos(8, 20000000, 50000, '0.0005')] : null }, viewport);
+      const p = r.page, snap = async (name) => { await p.waitForTimeout(1200); await p.screenshot({ path: join(SHOTS, `farm-${tag}-${name}.png`), fullPage: true }); };
+      await go(p, '#farm');
+      await p.waitForSelector('[data-farm="pid0"] > button', { timeout: 120000 });
+      if (!(await p.$('.farm.open[data-farm="pid0"]'))) await p.click('[data-farm="pid0"] > button');
+      if (variant === 'bare') { await shown(p, '#farm-pid0 .gate-p, #farm-pid0 .note'); await p.waitForTimeout(3000); await snap('10-private-no-notes'); }
+      else {
+        await shown(p, variant === 'notes' ? '#sj-max-0' : '#farm-pid0 [data-unbond]', 240000);
+        if (variant === 'notes') {
+          await p.click('#sj-max-0');
+          await until(p, () => /Adds/.test(document.querySelector('#sj-rcpt-0')?.textContent || '') && !document.querySelector('#sj-go-0').disabled, null, 420000).catch(() => {});
+          await snap('11-private-join');
+        } else {
+          await p.waitForTimeout(2000); await snap('12-private-position');
+          await p.click('[data-harvest="0"]'); await shown(p, '#sf-act-0 [data-fn-go]'); await snap('13-private-harvested');
+        }
+      }
+      if (r.errors.length) console.log(`   ${tag} ${variant} page errors: ${r.errors.slice(0, 3).join(' | ')}`);
+      await r.browser.close();
+    }
+  }
+  ok(true, `farmtour: screenshots in ${SHOTS}`);
 });
 
 // A walk through every sheet and its main states for design review: one screenshot each, at phone and desktop widths
