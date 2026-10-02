@@ -342,8 +342,8 @@ from a Blob) and submission. It checks the ceremony files against their pinned h
 served at `https://tacit.finance/evm-pool/tacit-evm-pool-wallet.js` with `Access-Control-Allow-Origin: *`, as are the
 ceremony files beside it.
 
-Current build: sha256 `94370c7d3c6324af3d69fc24e20e4d9ba72751b527529d1319a28bd6a81776da`, IPFS
-`bafybeigj4mx7yfngahio6uqds2ukjbpjc7nns7lndfia7er7pkkxxwqjwi` (pinned on Filebase). The build is deterministic from
+Current build: sha256 `cdc59dd5d5c95370a30161dd64637e32590b85290241944184283a05098c15c0`, IPFS
+`bafybeigatwjp4gda4y3hj4zza7mgmk4qsipqs7gcgqipudql7625eefthy` (pinned on Filebase). The build is deterministic from
 the repository: `node build/build-evm-pool-wallet.mjs` prints the same hash.
 
 The wallet keeps its synced state in storage sealed under a key from the wallet's view scalar. It finds history
