@@ -2009,7 +2009,7 @@ async function handleBurnDepositStatus(req, env, url, cors) {
     // Passed and neither recorded nor pending: the burned note was one the reflection already tracked, which bridges
     // through the reflected-note path, so this burn-deposit envelope was not recorded for a mint.
     status = 'not-recorded';
-    detail = 'confirmed on Bitcoin and passed by the reflection, but not recorded for minting: the burned note was already tracked by the reflection, which uses the reflected-note bridge path';
+    detail = 'confirmed on Bitcoin and passed by the reflection without a record for minting; the wallet that made it can recover its TAC in the app';
   } else {
     status = 'unknown';
     detail = 'confirmed on Bitcoin, but no reflection state is available yet to compare against';
