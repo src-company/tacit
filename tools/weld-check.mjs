@@ -2675,6 +2675,7 @@ const stubFarmUx = (page, { notes = [], positions = null }) => page.route(/\/con
       const b = await balance(priv);
       b.notes = [...b.notes, ...add];
       for (const n of add) { const g = b.byAsset[n.asset] ||= { asset: n.asset, value: 0n, notes: [] }; g.value = BigInt(g.value) + BigInt(n.value); g.notes = [...g.notes, n]; }
+      ${positions ? 'b.farmPositions = positions.map((p) => ({ ...p }));' : ''}       // the page takes positions from the scan when it carries them
       return b;
     };
     ${positions ? `const positions = ${JSON.stringify(positions)}; ux.farmPositions = async () => positions.map((p) => ({ ...p }));
