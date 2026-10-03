@@ -86,6 +86,8 @@ secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_modules/playwright-core');
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
+// Borrow reports under each step's own line (#bw-s1…#bw-s4) as well as the sheet's: read them all.
+const bwText = (page) => page.evaluate((s) => [...document.querySelectorAll(s)].map((e) => e.textContent).join(' '), '#bw-status, #bw-s1, #bw-s2, #bw-s3, #bw-s4');
 const ONLY = new Set((process.argv[2] || 'airdrop,links,ux,apr,farmgate,pair,farm,reinvest,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,selfexit,selfmore,selflocks,selfsplit,makepub,farmjoin,farmpos,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
@@ -894,8 +896,8 @@ await step('locks', async () => {
     // An empty Tacit account: the connected wallet tops it up and the bond posts from the Tacit account, in one click.
     if (await r.page.waitForSelector('#bw-topup', { timeout: 60000 }).then(() => true, () => false)) {
       await r.page.click('#bw-topup');
-      await until(r.page, () => /Bond posted/.test(document.querySelector('#bw-status')?.textContent || '') || /error|could not|reverted/i.test(document.querySelector('#bw-status')?.textContent || ''), null, 180000).catch(() => {});
-      ok(/Bond posted/.test(await text(r.page, '#bw-status')), `locks: Top up from wallet funds the Tacit account and posts the bond (${(await text(r.page, '#bw-status')).trim().slice(0, 120)})`);
+      await until(r.page, () => /Bond posted/.test([...document.querySelectorAll('#bw-status, #bw-s1, #bw-s2, #bw-s3, #bw-s4')].map((e) => e.textContent).join(' ')) || /error|could not|reverted/i.test([...document.querySelectorAll('#bw-status, #bw-s1, #bw-s2, #bw-s3, #bw-s4')].map((e) => e.textContent).join(' ')), null, 180000).catch(() => {});
+      ok(/Bond posted/.test(await bwText(r.page)), `locks: Top up from wallet funds the Tacit account and posts the bond (${(await bwText(r.page)).trim().slice(0, 120)})`);
     } else ok(false, 'locks: an empty Tacit account offers Top up from wallet');
     if (r.errors.length) { fails++; console.log('FAIL locks page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   } finally { await r.browser.close(); }
@@ -921,8 +923,8 @@ await step('repay', async () => {
     const note = await r.page.evaluate(() => (document.querySelector('#borrow-body')?.textContent || '').replace(/\s+/g, ' '));
     ok(/Repaying burns 8(\.00)? cUSD you hold privately and returns the cBTC/.test(note), `repay: the loan step says what repaying burns (${(note.match(/Repaying burns[^.]*\./) || [''])[0]})`);
     await r.page.click('#bw-repay');
-    await until(r.page, () => /not visible on chain yet|not on chain yet/.test(document.querySelector('#bw-status')?.textContent || ''), null, 60000).catch(() => {});
-    ok(/not visible on chain yet|not on chain yet/.test(await text(r.page, '#bw-status')), `repay: before the loan is on chain it says so (${await text(r.page, '#bw-status')})`);
+    await until(r.page, () => /not visible on chain yet|not on chain yet/.test([...document.querySelectorAll('#bw-status, #bw-s1, #bw-s2, #bw-s3, #bw-s4')].map((e) => e.textContent).join(' ')), null, 60000).catch(() => {});
+    ok(/not visible on chain yet|not on chain yet/.test(await bwText(r.page)), `repay: before the loan is on chain it says so (${await bwText(r.page)})`);
     if (r.errors.length) { fails++; console.log('FAIL repay page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   } finally { await r.browser.close(); }
 });
