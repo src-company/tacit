@@ -77,6 +77,10 @@ server.memGuard = memGuard;
 // Late-wired for the same reason srv.memGuard is: worker/src/index.js only ever sees `env`, never `srv`,
 // and a pre-request memory check (handleReflectionJob) needs it there.
 env.memGuard = memGuard;
+if (process.env.DATABASE_URL) {
+  const { runReflectionJob } = await import('./reflection-job-thread.mjs');
+  env.assembleReflectionJobOffThread = runReflectionJob;
+}
 
 const port = Number(process.env.PORT) || 8787;
 server.listen(port, () => {

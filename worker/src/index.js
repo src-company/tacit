@@ -1070,21 +1070,31 @@ async function handleReflectionJob(req, env, url, cors) {
   if (reflectionOverSoftMemory(env)) {
     return jsonResponse({ error: 'temporarily over capacity, retry shortly' }, 503, { ...cors, 'Cache-Control': 'no-store', 'Retry-After': '5' });
   }
+  // Assembling a batch is minutes of CPU on full mainnet blocks; the Node server runs it on a worker thread
+  // (env.assembleReflectionJobOffThread, server/index.mjs) so the requests it serves meanwhile are not held.
   let inFlight = _reflectionAssembleInFlight.get(network);
   if (!inFlight) {
-    inFlight = att.assembleJob().then((job) => ({ job, ethContentHash: att.lastEthContentHash ? att.lastEthContentHash() : null }));
-    inFlight.finally(() => { if (_reflectionAssembleInFlight.get(network) === inFlight) _reflectionAssembleInFlight.delete(network); });
+    inFlight = env.assembleReflectionJobOffThread ? env.assembleReflectionJobOffThread(network) : assembleReflectionJobBody(env, network);
+    inFlight.finally(() => { if (_reflectionAssembleInFlight.get(network) === inFlight) _reflectionAssembleInFlight.delete(network); }).catch(() => {});
     _reflectionAssembleInFlight.set(network, inFlight);
   }
-  const { job, ethContentHash } = await inFlight;
-  if (job) {
-    // Stash the snapshot (+ which eth-state candidate this job used, if any) so ack (which only carries
-    // jobId) can both advance the persisted state and promote that candidate once the batch lands.
-    await env.REGISTRY_KV.put(reflectionPendingKey(network, job.jobId), JSON.stringify({ newSnapshot: job.newSnapshot, ethContentHash, attestedTo: job.attestedTo }), { expirationTtl: 86400 });
-    const { newSnapshot, ...jobForBox } = job; // the relayer needs input + jobId + attestedTo, not the snapshot
-    return jsonResponse(jobForBox, 200, { ...cors, 'Cache-Control': 'no-store' });
-  }
+  const body = await inFlight;
+  if (body) return new Response(body, { status: 200, headers: { ...cors, 'Cache-Control': 'no-store', 'Content-Type': 'application/json' } });
   return jsonResponse({}, 200, { ...cors, 'Cache-Control': 'no-store' });
+}
+
+// The next batch for the relayer as a JSON body, or null when caught up. Its post-batch snapshot (and which
+// eth-state candidate it used, if any) is stashed for /reflection/ack, which carries only the jobId, to
+// advance the persisted state and promote that candidate once the batch lands.
+async function assembleReflectionJobBody(env, network) {
+  const att = scanReflectionAttesterFor(env, network);
+  if (!att) return null;
+  const job = await att.assembleJob();
+  if (!job) return null;
+  const ethContentHash = att.lastEthContentHash ? att.lastEthContentHash() : null;
+  await env.REGISTRY_KV.put(reflectionPendingKey(network, job.jobId), JSON.stringify({ newSnapshot: job.newSnapshot, ethContentHash, attestedTo: job.attestedTo }), { expirationTtl: 86400 });
+  const { newSnapshot, ...jobForBox } = job; // the relayer needs input + jobId + attestedTo, not the snapshot
+  return JSON.stringify(jobForBox);
 }
 
 // GET /reflection/eth-state?network= — the eth_prove sidecar (worker-relay/src/eth-state-sidecar.js) reads
@@ -25834,6 +25844,7 @@ async function scanForEtches(env, network) {
 // Workers ignores extra named exports — only the default object's fetch /
 // scheduled handlers are invoked at runtime — so this has no production effect.
 export {
+  assembleReflectionJobBody,
   openingMsg, disclosureMsg, listingMsg, cancelMsg, claimMsg,
   atomicIntentMsg, atomicIntentClaimMsg, atomicIntentFulfilmentMsg, atomicIntentCancelMsg,
   atomicIntentClaimReadMsg, _slimAtomicClaim, handleAtomicIntentClaimDetail,
