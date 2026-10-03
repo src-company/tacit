@@ -329,6 +329,9 @@ export function makeScanReflectionIndexer({ secp, keccak256, sha256, ownerTag, b
       chainBinding: chainBinding || null,
       anchorHeight, headers, blockCount,
       getBlock: async (i) => {
+        // A macrotask boundary per block: with the blocks already in memory nothing else here waits on I/O, so a
+        // multi-block fold would otherwise hold a server's event loop for its whole length.
+        await new Promise((r) => setTimeout(r, 0));
         const b = await getRawBlock(i);
         const blockTxs = b.txs || [];
         const bwc = blockTxs.length ? blockWitnessCtx(blockTxs) : null;

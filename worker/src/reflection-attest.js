@@ -283,7 +283,11 @@ export function buildScanReflectionAttester(env, { deps, api, apiRawBytes, netwo
   // honest holder is a delay, and the worst case for an attacker is that their own junk is ignored.
   const getBurnDeposits = async (txidsDisplay, anchorHeight) => {
     const map = new Map();
+    // Bundles are rare, and a batch spans tens of thousands of txids: one keys-only listing finds the few
+    // with a bundle instead of a store read per txid, which on Postgres is a round trip each.
+    const registered = env.REGISTRY_KV.list ? new Set((await listBurnDepositTxids()).map((t) => t.toLowerCase())) : null;
     for (const txid of txidsDisplay) {
+      if (registered && !registered.has(String(txid).replace(/^0x/, '').toLowerCase())) continue;
       const raw = await env.REGISTRY_KV.get(burnDepKey(txid));
       if (!raw) continue;
       try {
