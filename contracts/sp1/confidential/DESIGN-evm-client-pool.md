@@ -622,7 +622,7 @@ own proof is always sufficient on its own.
 | Tests | `tests/evm-pool-zk.test.mjs` (21 checks), `tests/evm-pool-gateway.test.mjs` (5), `contracts/test/TacitEvmPool.t.sol` (21), `contracts/test/TacitEvmPoolRouter.t.sol` (22) |
 | Real-proof fixture | `tests/gen-evm-pool-fixture.mjs` → `contracts/test/fixtures/evm_pool_transact.json` |
 
-**Relation.** `EvmPoolTransact(depth 32, 2 in, 2 out, 120-bit values)`, 44,410 constraints, 11 public
+**Relation.** `EvmPoolTransact(depth 32, 2 in, 2 out, 120-bit values)`, 44,414 constraints, 11 public
 inputs: `root, oldRoot, newRoot, startIndex, publicAmount, extDataHash, asset, nf[2], outLeaf[2]`. Keys,
 notes and nullifiers are the Bitcoin pool's unchanged. `Σ inV + publicAmount = Σ outV` with
 `publicAmount = extAmount − fee mod p`. Spend authority is EdDSA-Poseidon over

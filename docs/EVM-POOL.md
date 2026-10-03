@@ -63,7 +63,7 @@ The reference client is plain ES modules with no build step:
 - [`dapp/evm-pool-gateway.js`](../dapp/evm-pool-gateway.js): deposit-box intents, keeper completions, receive boxes,
   withdrawals to a box or escrow.
 
-Proving time on a laptop is 5–14 s in Node. Phone and browser measurements are published with the final artifacts.
+Proving time on a laptop is 5–14 s in Node.
 A signature, not the spending key, authorizes a spend (EdDSA-Poseidon over the transaction message), so a device
 too slow to prove can hand the witness to another prover without giving up custody.
 
@@ -97,23 +97,25 @@ ct   = be16(value) ⊕ keccak256(k ‖ 0x0000)[0..16)
 tag  = keccak256("tacit-evm-pool-aead-tag-v1" ‖ k ‖ ct)[0..16)
 ```
 
-A wallet accepts a memo only if `Poseidon(asset, value, npk, rho)` equals the output's leaf.
+In this guide `beN(x)` is `x` as N big-endian bytes. A wallet accepts a memo only if `Poseidon(asset, value, npk, rho)`
+equals the output's leaf.
 Public signal order: `root, oldRoot, newRoot, startIndex, publicAmount, extDataHash, asset, nf[2], outLeaf[2]`.
 
 ### Payment proofs and payment links
 
-In `dapp/evm-pool-wallet.js` a spend's one-time keys are derived from the sender's key, so the sender finds its
-payments again from the key alone (`paymentKey`); a deposit's are random, as are every output's in the standalone
-wallet below:
+In `dapp/evm-pool-wallet.js`, and so in the standalone wallet below, which bundles it, a spend's one-time keys are
+derived from the sender's key, so the sender finds its payments again from the key alone (`paymentKey`); a deposit's
+are random:
 
 ```
-e_k = HMAC-SHA256(sha256("tacit-evm-pool-eph-v1" ‖ be256(v)), be256(chainId) ‖ be256(nf0) ‖ k [‖ a]) mod n
+e_k = HMAC-SHA256(sha256("tacit-evm-pool-eph-v1" ‖ be32(v)), be32(chainId) ‖ be32(nf0) ‖ k [‖ a]) mod n
       v = the sender's view scalar, nf0 = the spend's first nullifier, k = the output (0 or 1)
       a = the attempt, one byte 1 to 15, appended only when non-zero
 ```
 
 A spend that never landed and is built again from the same note (a new quote, so a new change amount) takes the next
-attempt, so two memos never share a one-time key or a keystream. The wallet remembers the count with its state and
+attempt, so a rebuilt spend does not reuse an earlier attempt's one-time key or keystream (up to 16 attempts per note,
+counted in the wallet's local state). The wallet remembers the count with its state and
 looks through attempts 0 to 15 when it finds its payments again. Attempt 0 is the plain form above, so existing
 proofs are unchanged.
 
@@ -121,20 +123,21 @@ A payment proof is `(chain, tx, k, e_k)`. Anyone holding the recipient's address
 `e_k·G` is the memo's `pk_eph`, the memo opens under `s = compress(e_k·V)`, and the note it opens to is the output's
 leaf. It shows nothing about any other address.
 
-A payment request link (`#pay=<address>&n=<npk>&ns=<sig>&amount=`) names the payee's deposit address by `n`
-(`receiveBoxOf(n, 25)`) and signs it: `ns` is a secp256k1 signature, under the view key inside the pool address, over
-`keccak256("tacit-pay-box-v1" ‖ be256(n))`. A payer's page pays the deposit address only when the signature checks
-against the address in the link; otherwise it pays the pool address directly, so a link whose `n` was swapped cannot
-redirect a payment.
+A payment request link
+(`#pay=<address>&n=<npk, 64 hex>&ns=<r‖s, 128 hex>&amount=<ETH>&chain=<ethereum|base|robinhood>&for=<note>`, the last
+three optional) names the payee's deposit address by `n` (`receiveBoxOf(n, 25)`) and signs it: `ns` is a secp256k1
+signature, under the view key inside the pool address, over `keccak256("tacit-pay-box-v1" ‖ be32(n))`. A payer's page
+pays the deposit address only when the signature checks against the address in the link; otherwise it pays the pool
+address directly, so a link whose `n` was swapped cannot redirect a payment.
 
 A payment link hands over a key of its own, whose pool balance holds the payment:
 
 ```
-seed_i = HMAC-SHA256(identity key, "tacit-pay-gift-v1" ‖ be32(chainId) ‖ be32(i))      i = 0, 1, 2, …
-https://tacit.finance/pay/#gift=<seed_i hex>&chain=<ethereum|base|robinhood>&for=<note>
+seed_i = HMAC-SHA256(identity key, "tacit-pay-gift-v1" ‖ be4(chainId) ‖ be4(i))        i = 0, 1, 2, …
+https://tacit.finance/pay/eth/#gift=<seed_i hex>&chain=<ethereum|base|robinhood>&for=<note>
 ```
 
-`seed_i` is an identity key like any other: its pool keys are `evmPoolKeys(seed_i)`, and whoever opens the link
+`seed_i` is an identity key like any other: its pool keys are `evmPoolKeys(zk, seed_i)`, and whoever opens the link
 withdraws its balance to an address or sends it into their own. The sender funds link `i` with a private send, so the
 key alone finds every link it sent: each of its sends' paid outputs, opened with `e_k` under the keys of links `0, 1, …`
 (ten past the last one found). A link was taken once its note's nullifier is on chain; taken back if that transaction
@@ -157,24 +160,26 @@ function transact(
 
 `fee` goes to `relayer` in the same call (a non-zero fee needs a non-zero relayer). The contract recomputes the asset,
 `extDataHash` and `publicAmount` itself, so recipient, amounts, relayer, fee and memos cannot be altered after the
-owner signs.
+owner signs. `pB` takes snarkjs's `pi_b` with each pair swapped: `[[b01, b00], [b11, b10]]` for `[[b00, b01], [b10, b11]]`.
 
-**Ordering.** A transaction with an output inserts two leaves at the pool's current size and must be proven
-against the current root (`oldRoot == root()`, `startIndex == nextIndex()`; `head()` returns both in one call). If
-another transaction lands first it reverts with `StaleRoot` or `WrongInsertionIndex`: rebuild the witness against
-the new leaves and prove again; the owner's signature does not change. Submit through private order flow. A
-transaction with no outputs (a full withdrawal) inserts nothing and never goes stale. Membership may be proven against any root the pool has held
+**Ordering.** A transaction with an output inserts two leaves at the pool's current size and must be proven against the
+current root (`oldRoot == root()`, `startIndex == nextIndex()`; `head()` returns both in one call). If another
+transaction lands first it reverts with `StaleRoot` or `WrongInsertionIndex`: rebuild the witness against the new leaves
+and prove again; the owner's signature does not change. Submit through private order flow. A transaction with no outputs
+(a full withdrawal) inserts nothing and never goes stale. Membership may be proven against any root the pool has held
 (`everKnownRoot`); `rootSize(root)` is the leaf count the tree had when that root was current.
 
 **Indexing.** Rebuild the tree from `Transact` events in `firstIndex` order, appending `(outLeaf0, outLeaf1)`; skip
 events where both are zero (nothing was inserted). Notes are found by trial-decrypting the memos, and receive-box
 notes from the router's `Received` events. Key notes by
 `(leaf, index)`: the same leaf can appear twice if a deposit box is paid twice, and each copy is separately spendable.
-`isSpent(nullifiers)` checks a wallet's notes in one call.
+`isSpent(nullifiers)` checks many notes in one call but tells the node which nullifiers are yours; a wallet scanning
+`Transact` events already has every spent nullifier (`nf0`, `nf1`).
 
 ## Router
 
-The router is optional periphery; everything it does can be done by calling the pool directly.
+The router is optional periphery: deposit, transfer and withdraw need only the pool. The router adds addresses anyone
+can pay (deposit, wrap and receive boxes) and calls run in the same transaction as a withdrawal.
 
 **Deposit boxes: pay an address now, get a note later.** A `DepositIntent` fixes the amount, both output leaves, both
 memo hashes, a refund address and a deadline. `depositBoxOf(intent)` is a counterfactual address that holds only
@@ -196,13 +201,13 @@ funds or has code (no reuse) and one whose deadline is less than an hour away. F
 `amount` a multiple of 10^10 wei.
 
 A keeper service completes boxes for its fee: `POST /evm-pool/keeper/deposit` with `{ intent, hint }` from
-`depositIntent()` (endpoint published at launch). Anyone can run one (`worker-relay/src/evm-pool-keeper.js`); the
-same service sweeps receive boxes and relays (below).
+`depositIntent()` (each chain's keeper URL is `keeper` in `contracts/deployments/evm-pool.json`). Anyone can run one
+(`worker-relay/src/evm-pool-keeper.js`); the same service sweeps receive boxes and relays (below).
 
-**Wrap boxes and `withdrawToV1`.** A `WrapIntent` fixes a V1 asset id, amount, tip, tip recipient (zero = whoever
-completes), V1 note commitment, refund and deadline. `completeWrap(intent)` wraps the box's funds into that V1 note.
-`withdrawToV1(tx, intent)` withdraws from the pool into the wrap box and wraps in one transaction; the proof binds
-the box as recipient.
+**Wrap boxes and `withdrawToV1` (Ethereum only: the router's `V1` is zero on Base and Robinhood Chain).** A `WrapIntent`
+fixes a V1 asset id, amount, tip, tip recipient (zero = whoever completes), V1 note commitment, refund and deadline.
+`completeWrap(intent)` wraps the box's funds into that V1 note. `withdrawToV1(tx, intent)` withdraws from the pool into
+the wrap box and wraps in one transaction; the proof binds the box as recipient.
 
 **Receive boxes: one standing address, paid any number of times.** `receiveBoxOf(npk, feeBps)` is an address
 tied to one note key of the owner and a fee cap in basis points. Anyone pays it ETH, as often as they like, from any
@@ -225,8 +230,9 @@ has no code and takes any payment, including a plain 21,000-gas transfer from an
 - Payments into one box are public and linked to each other, like any reused address. Spends of the swept notes
   are not: they reveal nullifiers, never the note key.
 - Only the pool's asset leaves a receive box. Anything else sent to it stays there.
-- Pay a receive box from a plain transfer or a call that does nothing else first. A sweep removes the box's code at the
-  end of its transaction, so ETH paid to the box later in that same transaction is lost with it.
+- Never pay a receive box later in a transaction that swept it. A sweep deletes the box's account, with any ETH it then
+  holds, when its transaction ends, so a payment made after the sweep in that same transaction, `fundReceive` included,
+  is destroyed. A plain transfer, or a call that pays before doing anything else, is safe.
 
 **Receive address (canonical, every app shows the same one).** The address a wallet displays depends on every
 value below, so all apps use exactly these:
@@ -235,7 +241,7 @@ value below, so all apps use exactly these:
 |---|---|
 | Pool wallet seed | `HMAC-SHA256(key = Tacit identity private key (32 bytes), msg = "tacit-btc-pool-seed-v1")` |
 | Wallet keys | `walletKeys(seed, "mainnet")` (`dapp/btc-pool-zk.js`), the `"mainnet"` tag on every EVM chain |
-| Box key | `receiveKeys(zk, wallet, 0)`: tweak seed `0x00 ‖ keccak256("tacit-evm-pool-receive-key-v1" ‖ be32(n) ‖ be32(i))`, `i = 0` |
+| Box key | `receiveKeys(zk, wallet, 0)`: `ownedKeys(wallet, s)` with `s = 0x00 ‖ keccak256("tacit-evm-pool-receive-key-v1" ‖ be32(n) ‖ be32(i))`, `n` = the wallet's nullifier scalar, `i = 0` |
 | Fee cap | `feeBps = 25` |
 | Address | `receiveBoxOf(npk, 25)` on the router; offline, `receiveBoxAddress(npk)`. The same address on every chain. |
 
@@ -251,49 +257,52 @@ address (box 0, feeBps 25) = 0x52fc37ee7741468a15CE879320a7a41CEBaeb232
 address (box 0, feeBps 0)  = 0x7ABc01dEAC9A65A0d2480a87DB6F22EbC1342639
 ```
 
-**Keeper intake for receive boxes.** A payment to a box that has never been swept emits no event, so a keeper
+**Keeper intake for receive boxes.** A plain payment to a box emits no event, so a keeper
 sweeps only boxes it has been told about: `POST /evm-pool/keeper/receive` with `{ chainId, npk, feeBps }`
-(idempotent; endpoint published at launch). The keeper then watches the box's balance and sweeps whenever the
+(idempotent; keeper URLs as above). The keeper then watches the box's balance and sweeps whenever the
 capped fee covers its gas. Registering tells the keeper which box belongs to which note key, which the first sweep
 makes public anyway; it never learns anything that spends. The owner can always sweep without a keeper.
 At capacity the keeper makes room for a new registration, and for a new deposit or wrap intent, by dropping the
-oldest one whose box has never held funds, so registrations that never pay cannot lock out new users; register again
-before paying if a box was dropped. Requests are rate limited per client address (an IPv6 client by its /64).
+oldest idle one, so registrations that never pay cannot lock out new users; register again before paying if a box was
+dropped. Requests are rate limited per client address (an IPv6 client by its /64).
 
 **Zaps.** `zapTokenToDepositWithPermit2(tx, amountIn, permit, sig, swapData)` swaps any ERC-20 to ETH through the
 pinned aggregator and deposits exactly the proven amount, refunding the rest.
 
-**Withdraw and call.** A withdrawal can run actions with the funds in the same transaction: a swap, a bridge
-deposit, a wrap or zap into a V1 note, or any call. A `CallIntent` lists the calls (target, value, data, and a token to
-transfer or approve first), the tokens to deliver to `to` with their minimum amounts, a refund address and a deadline.
+**Withdraw and call.** A withdrawal can run actions with the funds in the same transaction: a swap, a bridge deposit, a
+wrap or zap into a V1 note, or any call. A `CallIntent` lists the calls (target, value, data, and a token to transfer or
+approve first), the tokens to deliver to `to` with their minimum amounts, a refund address and a deadline.
 `callEscrowOf(intent)` is its escrow address; a withdrawal with that recipient binds the whole intent through the proof,
 so a relayer can change neither the calls nor where their outputs go. `withdrawAndCall(tx, intent)` withdraws and runs
 it at once: if any call fails or an output falls short, the transaction reverts and nothing is spent. Funds that reach
 the escrow another way are run by anyone with `executeCall(intent)` before the deadline, and returned to `refund` with
 `refundCall(intent, token)` after it. Whatever is left of the pool asset after the calls goes to `refund`; making
-`refund` the owner's own receive box (`callRefundBox`) returns it to the pool privately. A keeper sweeps a box only
-when its capped fee covers the gas, so on Ethereum a small refund waits there until it grows or the owner sweeps it. Calls cannot target the pool,
-the router or the escrow itself. Client helpers in `dapp/evm-pool-gateway.js`: `callIntent`, `callEscrowAddress`,
-`callWithdrawalWitness`, and call builders for V1 (`v1WrapCall`, `v1ZapShieldedNoteCall`, `v1ZapCanonicalNoteCall`).
+`refund` the owner's own receive box (`callRefundBox`) returns it to the pool privately. A keeper sweeps a box only when
+its capped fee covers the gas, so on Ethereum a small refund waits there until it grows or the owner sweeps it. Calls
+cannot target the pool, the router or the escrow itself. Client helpers in `dapp/evm-pool-gateway.js`: `callIntent`,
+`callEscrowAddress`, `callWithdrawalWitness`, and call builders for V1 (`v1WrapCall`, `v1ZapShieldedNoteCall`,
+`v1ZapCanonicalNoteCall`).
 
 **Funding with a call.** Contracts and bridge messages that deliver funds by calling a contract use
 `fundDeposit(intent, hint)` (pays a deposit box exactly `intent.amount` and publishes the keeper hint in
-`DepositFunded`, so any keeper can complete it) or `fundReceive(npk, feeBps, amount)` (pays a receive box and announces
-it in `ReceiveFunded`, so a keeper sweeps it without registration). A published hint shows the note's value and public
-key material; it does not let anyone spend the note or link its later spends.
+`DepositFunded`) or `fundReceive(npk, feeBps, amount)` (pays a receive box and announces it in `ReceiveFunded`). A
+keeper that reads these events can act from chain data alone; the reference keeper reads only `Transact` and
+`Received`, so also post the intent to `/deposit` or register the box at `/receive`. A published hint shows the note's
+value and public key material; it does not let anyone spend the note or link its later spends.
 
 ## What it costs
 
-The contracts take no fee. Every action can go from your own wallet for the network gas alone. A relayer is an
-optional convenience: it submits the transaction for a small fee, so you need no gas and none of your accounts appears
-on chain. Anyone can run a relayer, and nothing depends on a particular one.
+The contracts take no fee. Shielding, sending, withdrawing and collecting a deposit-address payment can each go from
+your own wallet for the network gas alone. A relayer is an optional convenience: it submits the transaction for a small
+fee, so you need no gas and none of your accounts appears on chain. Anyone can run a relayer, and nothing depends on a
+particular one.
 
 | Action | From your own wallet | Through a relayer |
 | --- | --- | --- |
 | Shield (deposit) | network gas only | not relayed: a deposit is sent by whoever pays it |
 | Send privately to another address | network gas only | relayer fee, no gas |
 | Withdraw (unshield) | network gas only | relayer fee, no gas |
-| Collect a payment sent to a deposit address | network gas only, any amount | relayer fee, at most 0.25%, for payments above a minimum |
+| Collect a payment sent to a deposit address (a receive box) | network gas only, any amount | relayer fee, at most 0.25%, for payments above a minimum |
 
 A relayer's fee comes out of the shielded balance in the same transaction, on top of the amount: the recipient receives
 the full amount. A collected deposit-address payment is credited minus its fee. The fee follows the transaction's
@@ -303,7 +312,7 @@ combining before a large spend; each combine is one more transaction, with its o
 ### Current estimates
 
 On live transactions a shield, send or withdraw typically uses about 350,000 to 440,000 gas on every chain, and
-collecting a deposit-address payment about 480,000 to 570,000. Fees are each relay's quote on 3 October 2026, with ETH
+collecting a deposit-address payment about 470,000 to 510,000. Fees are each relay's quote on 3 October 2026, with ETH
 at about $2,680. `GET /evm-pool/keeper/quote` returns the fee now.
 
 | | Ethereum | Base | Robinhood Chain |
@@ -323,7 +332,10 @@ A payment below the minimum waits at its address until it grows or you collect i
 | Send from your own wallet | that your account made a private transfer; not the recipient or the amount |
 | Send through a relayer | that the relayer made a private transfer; nothing about you |
 | Withdraw from your own wallet | your account as the sender, the recipient and the amount; not which deposit it spends |
-| Withdraw through a relayer | the recipient and the amount, sent by the relayer; no link to your wallet |
+| Withdraw through a relayer | the recipient and the amount, sent by the relayer; nothing names your wallet |
+
+Amounts are public at both ends: a withdrawal that empties exactly what one deposit put in pairs with it. Withdrawing a
+different amount, or later, keeps the two apart.
 
 Spending authority is the Tacit key, not the account that sends the transaction. The proof does not name a sender, so
 any account can submit your send or withdrawal. Submitting from an account that did not make the deposit, and is not
@@ -332,22 +344,25 @@ any signer for this.
 
 ### Never stuck
 
-Every action has an own-wallet path, offered next to the relayer's. Relayers are interchangeable: the wallet takes a
-relayer endpoint per chain, a relayer you run is held to the same fee ceiling as any other, and its address is the
-`relayer` the proof binds. Run one from `worker-relay/src/evm-pool-keeper.js`.
+Shield, send, withdraw and collecting a deposit-address payment each have an own-wallet path, offered next to the
+relayer's. A move to an L2 goes through a keeper. Relayers are interchangeable: `dapp/evm-pool-wallet.js` takes a relayer
+endpoint per chain, and a chain config that names your relayer (`relayer`, `maxRelayFee`) holds it to the same fee
+ceiling as any other; its address is the `relayer` the proof binds. The standalone wallet below accepts only the relayer
+addresses it pins when it runs on a real origin. Run a relayer from `worker-relay/src/evm-pool-keeper.js`.
 
 ## Relaying
 
-A user never needs gas or a funded address: a relayer submits the transaction and is paid `fee` out of the
-user's shielded funds in the same call. The proof binds `relayer` and `fee` (with recipient, amount and memos), so
-a relayer cannot redirect the funds or raise its fee after it is signed, and a copy of the transaction submitted by anyone else still
-pays the named relayer. Before signing, the wallet checks the relayer's quote: it must name this chain and pool, and
-the fee must be within a per-chain ceiling (0.05 ETH on Ethereum, 0.002 ETH on Base and Robinhood Chain), so a
-compromised relayer cannot quote more than that. In a browser on a real origin the quote must also come from the
-relayer address the wallet expects for the chain. A chain config can set `relayer` and `maxRelayFee`. Withdrawing to a fresh, empty address through a relayer leaves no on-chain link to the
-depositor's wallet.
+A user never needs gas or a funded address: a relayer submits the transaction and is paid `fee` out of the user's
+shielded funds in the same call. The proof binds `relayer` and `fee` (with recipient, amount and memos), so a relayer
+cannot redirect the funds or raise its fee after it is signed, and a copy of the transaction submitted by anyone else
+still pays the named relayer. Before signing, the wallet checks the relayer's quote: it must name this chain and pool,
+and the fee must be within a per-chain ceiling (0.05 ETH on Ethereum, 0.002 ETH on Base and Robinhood Chain), so a
+compromised relayer cannot quote more than that. In a browser on a real origin the quote must also come from the relayer
+address the wallet expects for the chain. A chain config can set `relayer` and `maxRelayFee`. Withdrawing to a fresh,
+empty address through a relayer leaves no on-chain link to the depositor's wallet beyond what the amounts and timing
+show.
 
-With the keeper service:
+With the keeper service (each chain's `keeper` URL and `keeperAddress` are in `contracts/deployments/evm-pool.json`):
 
 1. `GET /evm-pool/keeper/quote` → `{ relayer, fee, sweepFee, receiveMin, … }`: the keeper's address and the fee it
    accepts now, plus what collecting a receive box costs now (`sweepFee`) and the smallest box balance whose 0.25%
@@ -363,7 +378,7 @@ same head cannot both land. The keeper keeps a queue instead of a race. Output l
 a spend's signature does not cover the root.
 1. `POST /reserve { outLeaf0, outLeaf1, nfs }` → `{ id, oldRoot, start, root, size, pending, expires }`: a slot. The
    wallet proves from `oldRoot` at `start`, which is the pool at `root`/`size` with the `pending` leaves appended.
-   Any number of wallets prove at once, each in its own slot.
+   Wallets prove at once, each in its own slot, up to the queue's depth (24 by default) and two open slots per client.
 2. `POST /relay { tx, reservation: id }`: the keeper checks the proof off chain against the slot and the transaction
    (proof, extDataHash, fee, nullifiers), then sends the slots in order, several per block.
 3. A slot that is not fulfilled within 90 s is cut, with the slots behind it, and those wallets reserve again.
@@ -379,10 +394,10 @@ leave a nonce gap; on Ethereum each insertion proves against the head.
 
 **History feed.** `GET /evm-pool/keeper/events?from=<block>` → `{ through, events }`: the pool's `Transact` and the
 router's `Received` events in blocks `from..through`, confirmed, in chain order, whole blocks per page. A wallet syncs
-most of its history from it in a few requests instead of thousands of log queries. It trusts nothing in it: each page
-is kept only if the tree it builds is one the pool has held at that size (`rootSize(root) == size`). A feed can at
-most hide a note (by withholding its memo or `Received` event) or a spend of one; `rescan()` rebuilds from chain logs
-alone, and a spend that keeps failing runs it.
+most of its history from it in a few requests instead of thousands of log queries. It trusts nothing in it: each page is
+kept only if the tree it builds is one the pool has held at that size (`rootSize(root) == size`). A feed can at most
+hide a note (by withholding its memo or `Received` event, or by listing its nullifier as spent) or a spend of one;
+`rescan()` rebuilds from chain logs alone, and a spend that keeps failing runs it.
 
 A `409` with `stale: true` means another transaction landed first: rebuild against the new root and prove again
 (the owner's signature does not change). A `400` carrying `needFee` means gas moved; re-quote. Deposits are not
@@ -398,7 +413,7 @@ ceremony files beside it.
 
 Current build: sha256 `cdc59dd5d5c95370a30161dd64637e32590b85290241944184283a05098c15c0`, IPFS
 `bafybeigatwjp4gda4y3hj4zza7mgmk4qsipqs7gcgqipudql7625eefthy` (pinned on Filebase). The build is deterministic from
-the repository: `node build/build-evm-pool-wallet.mjs` prints the same hash.
+the repository: `npm ci` in `build/`, then `node build/build-evm-pool-wallet.mjs` prints the same hash.
 
 The wallet keeps its synced state in storage sealed under a key from the wallet's view scalar. It finds history
 through the keeper's feed and checks every batch, from the feed or from a node's logs, against the pool (`rootSize`).
@@ -423,32 +438,37 @@ await w.withdraw('0x…', wei);           // to any address
 
 `artifacts` may also be an async loader, called the first time an action proves, or left out and set later with
 `w.setArtifacts(...)`: opening, `sync`, `balance`, the addresses and a view-only wallet (`rpc` without `provider`) never
-download the proving files, and opening never asks the wallet to connect. On Ethereum, `w.toV1(wei, commit)` moves ETH
-into a V1 tETH note in one `withdrawToV1` (commit = V1's wrap commitment for the wallet's own next note; the V1 wallet
-finds and settles it as any wrap), and `w.bridgeOut(l2, wei, { l2Rpc })` moves it to the wallet's private ETH address
-on Base or Robinhood Chain.
+download the proving files, and opening never asks the wallet to connect. On Ethereum, `w.toV1(wei, commit)` (`wei` a
+multiple of 10^10) moves ETH into a V1 tETH note in one `withdrawToV1` (commit = V1's wrap commitment for the wallet's
+own next note; the V1 wallet finds and settles it as any wrap), and `w.bridgeOut(toChainId, wei, { l2Rpc })` moves it to the
+wallet's private ETH address on Base or Robinhood Chain.
 
-With no `relay`, every action is proved on the device and sent from `provider`: no keeper, no relayer, no fee
-beyond gas. With `relay`, `send` and `withdraw` go through the keeper (its fee, no gas) unless called with
-`{ via: 'self' }`. Each action takes `{ via, maxFee, onStep(msg) }` as its last argument: `maxFee` (wei) is the most a
-relayed spend may pay the relayer, the fee the caller showed, and a dearer quote is refused before anything is signed
-(the error's `feeMoved` is the new fee). `w.quote(gas?)` reads the relayer's quote, priced for a spend that burns `gas`
-when given. A spend the wallet must merge notes for first pays the fee once per merge, and is refused before the first
-when the notes cannot cover it. `w.receive.address` is the
-private ETH address and `w.receive.waiting()` what sits there unswept. With `relay`, confirmed history is read from the
-keeper's feed first (checked as below); `w.rescan()` rebuilds from chain logs alone. `w.terminate()` stops the
-worker. Synced state stays small as the pool grows: the tree's right edge and the paths of the wallet's own notes.
+With no `relay`, every action but `bridgeOut` is proved on the device and sent from `provider`: no keeper, no relayer,
+no fee beyond gas; `bridgeOut` needs `relay`. With `relay`, `send`, `withdraw` and `toV1` go through the keeper (its
+fee, no gas) unless called with `{ via: 'self' }`; `deposit` and `receive.sweep` always send from `provider`. Each
+action takes `{ via, maxFee, onStep(msg) }` as its last argument (`bridgeOut`: `{ l2Rpc, maxFee, onStep }`): `maxFee`
+(wei) is the most a relayed spend may pay the relayer, the fee the caller showed, and a dearer quote is refused before
+anything is signed (the error's `feeMoved` is the new fee). `w.quote(gas?)` reads the relayer's quote, priced for a
+spend that burns `gas` when given. A spend the wallet must merge notes for first pays the fee once per merge, and is
+refused before the first when the notes cannot cover it. `w.receive.address` is the private ETH address and
+`w.receive.waiting()` what sits there unswept. This module does not register its private ETH address with a keeper;
+`w.receive.sweep()` collects it. With `relay`, confirmed history is read from the keeper's feed first (checked as
+above); `w.rescan()` rebuilds from chain logs alone. `w.terminate()` stops the worker. Synced state stays small as the
+pool grows: the tree's right edge and the paths of the wallet's own notes.
 
 ## Moving to an L2
 
-From the Ethereum pool, `wallet.bridgeOut({ toChainId, amount, l2Rpc })` withdraws into a call escrow whose one call
-deposits through the L2's canonical bridge to the wallet's own private ETH address there (a receive box is at the same
-address on every chain, since the router is); that chain's keeper sweeps it into a note. Gateway builder:
-`bridgeEthCall`.
+From the Ethereum pool, `bridgeOut({ toChainId, amount, l2Rpc })` in `dapp/evm-pool-wallet.js`
+(`w.bridgeOut(toChainId, wei, { l2Rpc })` in the standalone wallet; `l2Rpc` is only needed for Robinhood Chain)
+withdraws through a keeper into a call escrow whose one call deposits through the L2's canonical bridge to the wallet's
+own private ETH address there (a receive box is at the same address on every chain, since the router is). That chain's
+keeper sweeps it into a note once the box is registered there (`watchReceive()` on the L2 wallet, or
+`POST /evm-pool/keeper/receive`) and holds at least the keeper's `receiveMin`; a smaller amount waits for the owner's
+sweep. Gateway builder: `bridgeEthCall`.
 
 | To | Call from the escrow | Notes |
 |---|---|---|
-| Base (8453) | `L1StandardBridge.depositETHTo(to, 200000, 0x)` at `0x3154Cf16…2C35` | `depositETH` is EOA-only. Arrives in 1–3 min, exact. The portal burns about 620k L1 gas to buy the deposit's L2 gas. |
+| Base (8453) | `L1StandardBridge.depositETHTo(to, 200000, 0x)` at `0x3154Cf16…2C35` | `depositETH` is EOA-only. Arrives in 1–3 min, exact. The deposit costs about 620k L1 gas in all, most of it the portal burning gas to buy the deposit's L2 gas. |
 | Robinhood Chain (4663) | `Inbox.createRetryableTicket(to, amount, sc, to, to, gasLimit, maxFeePerGas, 0x)` at `0x1A07cc4B…7a2D` | Never `depositEth`, which credits a contract's L2 alias. `sc` = `calculateRetryableSubmissionFee(0, 2 × L1 basefee)`; `gasLimit` = 1.5 × `NodeInterface.estimateRetryableTicket`; `maxFeePerGas` = max(8 × L2 gas price, 0.1 gwei), so the ticket runs even if the L2 fee moves. Unused gas refunds to `to` on L2. `to` must have no code on Ethereum when the ticket is made. |
 
 The amount and destination address are public on Ethereum; which note paid is not. Coming back from an L2 is the
@@ -462,7 +482,7 @@ that the funds' origin is any V1 note holder rather than a public wallet.
 
 | From → to | How |
 |---|---|
-| V1 → pool | A V1 settle withdrawal with `recipient = depositBoxOf(intent)` (native ETH, `value × 10^10` wei). `settle` pays an address with no code, so it cannot revert on the box. A keeper completes the deposit afterwards. |
+| V1 → pool | A V1 settle withdrawal with `recipient = depositBoxOf(intent)` (native ETH, `value × 10^10` wei). `settle` pays an address with no code, so it cannot revert on the box. A keeper given `{ intent, hint }` at `/deposit` completes the deposit afterwards. |
 | V1, other asset → pool | A V1 exit recipe (`ConfidentialRouter.exitAndExecute`) swaps to ETH and sweeps to `finalRecipient = depositBoxOf(intent)`. |
 | Pool → V1 | `withdrawToV1(tx, intent)` with `intent.assetId` = the native ETH id above and `intent.commit` = the V1 note commitment. |
 | Pool → V1 shielded note (any asset) | `withdrawAndCall` with a `v1ZapShieldedNoteCall` or `v1ZapCanonicalNoteCall`: swap and shield into V1 in the same transaction. |

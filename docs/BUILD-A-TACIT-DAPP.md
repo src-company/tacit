@@ -1135,7 +1135,7 @@ is [`EVM-POOL.md`](./EVM-POOL.md). This is the smallest working loop.
 derivation, note scanning, Groth16 proving (snarkjs, in a Worker started from a Blob) and submission — built
 from `dapp/evm-pool-wallet.js` by `node build/build-evm-pool-wallet.mjs`. It is served at
 `https://tacit.finance/evm-pool/tacit-evm-pool-wallet.js`; the copy in this repo hashes to
-`sha256:f96e94b3e1e79cdc0b94deac36f2a0308660676662a84f85d0772d1140aeb732` (700,109 bytes) — recompute it
+`sha256:cdc59dd5d5c95370a30161dd64637e32590b85290241944184283a05098c15c0` (705,182 bytes) — recompute it
 yourself (`shasum -a 256`) rather than trust a pinned number, since it changes with the bundle or the ceremony
 artifacts.
 
