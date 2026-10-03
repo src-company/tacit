@@ -1543,12 +1543,16 @@ async function handleReflectionStatus(req, env, url, cors) {
 async function reflectionStatusBody(env, network) {
   const hit = _reflectionStatusCache.get(network);
   if (hit && Date.now() - hit.at < REFLECTION_STATUS_TTL_MS) return { body: hit.body };
-  const raw = await env.REGISTRY_KV.get(`reflection:scan:${network}`);
+  const [raw, tipRaw] = await Promise.all([env.REGISTRY_KV.get(`reflection:scan:${network}`), env.REGISTRY_KV.get(`reflection:tip:${network}`)]);
   if (!raw) return { error: 'no persisted state', status: 404 };
   let s;
   try { s = JSON.parse(raw); } catch { return { error: 'corrupt state', status: 500 }; }
   const snap = s.snapshot && typeof s.snapshot === 'object' ? s.snapshot : s;
-  const attested = s.attestedHeight ?? null, tip = s.tipHeight ?? null;
+  // The live tip has its own record; the snapshot's copy only moves when a batch is acked, so reading that alone
+  // shows a stalled attester as caught up. Whichever is higher, as the attester itself reads it.
+  const tipRec = tipRaw == null ? NaN : parseInt(tipRaw, 10);
+  const attested = s.attestedHeight ?? null;
+  const tip = Number.isInteger(tipRec) && !(s.tipHeight > tipRec) ? tipRec : (s.tipHeight ?? null);
   const body = {
     network,
     attestedHeight: attested,
