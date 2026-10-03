@@ -775,6 +775,7 @@ let rec;
   world.setRecordBurns(false); world.setBurnFolded(true);
   r = await ux.advance(r.walletPub, r.id);
   ok(r.stage === 'not-recorded', 'sanity: not recorded');
+  const notRecorded = r;
   let refused = false;
   try { await ux.recover({ rec: r, walletPriv: new Uint8Array(32).fill(0x23) }); } catch { refused = true; }
   ok(refused && world.recoverPosts.length === 0, 'another key cannot start a recovery for this wallet’s bridge');
@@ -793,6 +794,24 @@ let rec;
   let threw = false;
   try { await ux.recover({ rec: { ...r, stage: 'folded' }, walletPriv: WALLET_PRIV }); } catch { threw = true; }
   ok(threw, 'only a bridge that did not complete can be recovered');
+
+  // A fresh browser (no journal) rebuilds the row from the burn txid and the amount, then recovers the same way.
+  const statusFetch = async (url, opts) => {
+    const u = new URL(url);
+    if (u.pathname === '/reflection/burndep/status' && stripHex(u.searchParams.get('txid') || '') === stripHex(notRecorded.burn.txid)) {
+      const body = { ok: true, status: 'not-recorded', burnBlockHeight: 900, registered: true, note: { txid: withHex(notRecorded.burnHome.txid), vout: 0 }, assetId: ASSET };
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+    }
+    return world.fetchImpl(url, opts);
+  };
+  const fresh = makeUx({ ...world, fetchImpl: statusFetch }, makeMemStorage());
+  const rebuilt = await fresh.recoverFromTxid(notRecorded.burn.txid, WALLET_PRIV, { amount: NOTE_AMOUNT });
+  ok(rebuilt.stage === 'not-recorded', 'a burn the attested state did not record is rebuilt from its txid as a bridge that did not complete');
+  const before = world.recoverPosts.length;
+  const again = await fresh.recover({ rec: rebuilt, walletPriv: WALLET_PRIV });
+  const c2 = world.recoverPosts[before];
+  const opened2 = pool.commitXY(BigInt(c2.amount), BigInt(c2.blinding));
+  ok((again.stage === 'recovering' || again.stage === 'recovered') && BigInt(opened2.cx) === BigInt(notRecorded.burnHome.cx) && BigInt(opened2.cy) === BigInt(notRecorded.burnHome.cy), 'its recovery claim, built from nothing but the key, the txid and the amount, opens the burned note');
 }
 
 // A note newer than the attested state is not judged yet: preflight asks to wait, and a bridge holds before its burn.
