@@ -204,10 +204,11 @@ export function makeEvmWallet({ secp, sha256, keccak256, bytesToHex, hexToBytes,
   // EIP-2612 permit signed by the CONNECTED wallet, so tokens held in the user's own wallet can be pulled by
   // the router without first moving them to the derived account. The alternative — send tokens to the derived
   // address, fund it with gas, then wrap — is three steps and two accounts for what is one signature here.
-  async function signErc2612({ token, name, version = '1', owner, spender, value, nonce, deadline }) {
-    const provider = currentProvider();
+  // `provider` signs with that wallet rather than the chosen one (a page that keeps its own connection).
+  async function signErc2612({ token, name, version = '1', owner, spender, value, nonce, deadline, provider: via = null }) {
+    const provider = via || currentProvider();
     if (!provider) throw new Error('no Ethereum wallet connected');
-    const cid = await chainId();
+    const cid = via ? BigInt(await via.request({ method: 'eth_chainId' })) : await chainId();
     const payload = {
       types: {
         EIP712Domain: [

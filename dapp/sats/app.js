@@ -2,9 +2,9 @@
 // or the chain comes from ../tacit.js, imported only once the user connects.
 
 const TACIT_URL = '/tacit.js?cb=c7692480';
-const SECRET_URL = '/sats/secret.js?cb=28bff07e';
+const SECRET_URL = '/sats/secret.js?cb=eeabb728';
 const MIX_URL = '/sats/mix.js?cb=52f7e8da';
-const ETH_URL = '/sats/eth.js?cb=53a08da1';
+const ETH_URL = '/sats/eth.js?cb=1c2e0a48';
 const POOL_STATUS = 'https://tacit-btc-pool.onrender.com/btc-pool/status';
 
 // tacit.js reads its network from this shared key once, at import. This page
@@ -137,7 +137,8 @@ function netPref() { return store.get(NET_PREF) === 'mainnet' ? 'mainnet' : 'sig
 function curNet() { return T ? T.NET.name : netPref(); }
 
 function claimSharedNet() {
-  if (store.get(PREV_NET, sessionStorage) === null) {
+  // A value another tab of this page already set is not this tab's to restore when it closes.
+  if (store.get(PREV_NET, sessionStorage) === null && store.get(SHARED_NET) !== netPref()) {
     store.set(PREV_NET, store.get(SHARED_NET) ?? '', sessionStorage);
   }
   store.set(SHARED_NET, netPref());
@@ -1257,7 +1258,7 @@ function wire() {
     if (sp && !T?.wallet.pub) log('Someone sent you a payment link. Connect your wallet to check it.');
     checkHashPayment();
   });
-  window.addEventListener('pagehide', () => { if (T) releaseSharedNet(); });
+  window.addEventListener('pagehide', () => releaseSharedNet());       // also when tacit.js failed to load after the claim
   window.addEventListener('pageshow', (e) => { if (e.persisted && T) claimSharedNet(); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden && T?.wallet.pub && pollTimer) poll(); });
 }

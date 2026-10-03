@@ -69,7 +69,7 @@ export function makePoolClient({ api = POOL_API, relayApi = null, base = '/btc-p
   const cache = new Map();
 
   async function getJson(url, init) {
-    const r = await fetchImpl(url, { cache: 'no-store', ...init });
+    const r = await fetchImpl(url, { cache: 'no-store', signal: AbortSignal.timeout?.(60_000), ...init });   // never hangs a payment
     const j = await r.json().catch(() => null);
     if (!r.ok) {
       const e = new Error(j?.error || `${url}: HTTP ${r.status}`);

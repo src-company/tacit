@@ -478,11 +478,24 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   // Reads new events: those `confirmations` deep are kept, the rest are re-read next time. With a keeper, confirmed
   // history comes from its feed first when it can. One read at a time: each absorbs into the state the last one left,
   // so a caller arriving while one runs waits for it, then reads what came after.
-  let reading = Promise.resolve();
+  let reading = Promise.resolve(), healedAt = 0;
   function sync() {
-    const run = reading.catch(() => {}).then(readNew);
+    const run = reading.catch(() => {}).then(readHealed);
     reading = run;
     return run;
+  }
+  // A node that answered short of the range it was asked (one behind the others) can leave the kept tree missing
+  // leaves, so every later read stops at a leaf out of order. The chain's logs alone are then read again from the
+  // start, at most once in ten minutes.
+  async function readHealed() {
+    try { return await readNew(); } catch (e) {
+      if (!/ out of order /.test(e?.message || '') || Date.now() - healedAt < 600_000) throw e;
+      healedAt = Date.now();
+      const keep = { attempts: saved.attempts, nextRefund: saved.nextRefund };
+      saved = { ...blank(), ...keep }; view = null; persist();
+      const f = feed; feed = false;
+      try { return await readNew(); } finally { feed = f; }
+    }
   }
   async function readNew() {
     const tip = Number(BigInt(await chain.rpc('eth_blockNumber')));
@@ -582,7 +595,9 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
     if (!signer) throw new Error('no wallet to send from: connect one, or use a relayer');
     if (signer.ready) await signer.ready();
     const v = '0x' + BigInt(value).toString(16);
-    try { await chain.rpc('eth_call', [{ from: signer.address, to, data, value: v }, 'latest']); }
+    // A signer may bring its own reader (`signer.rpc`), so the node that reads this key's notes and boxes is not also
+    // shown the signer's address and its transactions.
+    try { await (signer.rpc || chain.rpc)('eth_call', [{ from: signer.address, to, data, value: v }, 'latest']); }
     catch (e) {
       const d = revertData(e);
       if (RACED.has(d.slice(0, 10))) return null;
@@ -649,9 +664,9 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
   // true once mined, false if it reverted, true on no answer in time (it may still land; sync will tell). A spend counts
   // only when the receipt carries the pool's Transact for its nullifiers, so a hash for some other transaction is not
   // taken as this payment.
-  async function landed(hash, nfs = []) {
+  async function landed(hash, nfs = [], read = chain.rpc) {
     for (let i = 0; i < 90; i++) {
-      const r = await chain.rpc('eth_getTransactionReceipt', [hash]).catch(() => null);
+      const r = await read('eth_getTransactionReceipt', [hash]).catch(() => null);
       if (!r) { await sleep(2000); continue; }
       if (!(r.status === '0x1' || r.status === 1 || r.status === 'success')) return false;
       return !nfs.length || (r.logs || []).some((l) => String(l.address).toLowerCase() === String(chain.pool).toLowerCase()
@@ -710,10 +725,13 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       }
       for (const n of ins) pending.add(n.nf);
       onStep('waiting for it to be mined');
-      if (await landed(h, ins.map((n) => n.nf))) {
+      if (await landed(h, ins.map((n) => n.nf), q ? chain.rpc : signer?.rpc || chain.rpc)) {
         // Returns once this wallet sees it (spent notes gone, change in), so the next action can build on it.
         const spent = new Set(ins.map((n) => n.nf));
-        await waitFor(() => !state().notes.some((n) => spent.has(n.nf)), 60_000).catch(() => {});
+        const seen = await waitFor(() => !state().notes.some((n) => spent.has(n.nf)), 60_000).then(() => true, () => false);
+        // Not seen landing (no receipt in time, or dropped or replaced): its notes come back if the chain still has
+        // them unspent a while later. A late landing then only makes a spend of them fail and read the chain again.
+        if (!seen) setTimeout(() => { sync().then(() => { if (state().notes.some((n) => spent.has(n.nf))) for (const nf of spent) pending.delete(nf); }).catch(() => {}); }, 15 * 60_000).unref?.();
         return h;
       }
       for (const n of ins) pending.delete(n.nf);

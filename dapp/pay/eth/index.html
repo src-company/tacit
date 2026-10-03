@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-8jN3JIH/svFqp1V5nFp5gmUBe+lKULmbmO4paCtsXSg=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-cBQ0Qdig5BBKvjaD8OZs3SrQi6I8Gip+lHFuz+ytOTI=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -25,7 +25,7 @@
 <link rel="modulepreload" href="/vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="/prf-wallet.js">
 <link rel="modulepreload" href="/tacit-wallet-known.js?cb=49410363">
-<link rel="modulepreload" href="/evm-wallet.js?cb=4f722dd7">
+<link rel="modulepreload" href="/evm-wallet.js?cb=16740dae">
 <link rel="modulepreload" href="/identity-message.js">
 <link rel="modulepreload" href="/tacit-address.js">
 <link rel="modulepreload" href="/bip352.js">
@@ -475,7 +475,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
 import { secp, keccak_256, sha256, hmac, bytesToHex, hexToBytes, concatBytes } from '/vendor/tacit-deps.min.js';
 import { prfBytesToScalar, prfLogin, prfRegister, loadPrfMap, savePrfMap, isPasskeyAvailable } from '/prf-wallet.js';
 import { knownWallets } from '/tacit-wallet-known.js?cb=49410363';
-import { makeEvmWallet } from '/evm-wallet.js?cb=4f722dd7';
+import { makeEvmWallet } from '/evm-wallet.js?cb=16740dae';
 import { makeTacitAddress, poolKeysOf } from '/tacit-address.js';
 import { bip352TaggedHash } from '/bip352.js';
 import { addressId } from '/address-id.js?cb=c4fa5a58';
@@ -483,7 +483,7 @@ import { addressId } from '/address-id.js?cb=c4fa5a58';
 if (!secp.etc.hmacSha256Sync) secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, concatBytes(...m));
 // The rest of the page's modules, asked for now that the ones it waited on are here.
 // preload-later:begin
-for (const u of ["/evm-pool-zk.js","/btc-pool-zk.js","/amm-bjj.js","/evm-pool-wallet.js?cb=87f00cbb","/btc-shielded-pool.js","/vendor/tacit-poseidon.min.js","/btc-pool-zk-boundary.js","/amm-sigma.js","/bulletproofs.js","/bulletproofs-plus.js","/evm-pool-scan.js","/evm-pool-gateway.js","/evm-pool-zk-prover.js?cb=00ff69c2"]) document.head.append(Object.assign(document.createElement('link'), { rel: 'modulepreload', href: u }));
+for (const u of ["/evm-pool-zk.js","/btc-pool-zk.js","/amm-bjj.js","/evm-pool-wallet.js?cb=21820836","/btc-shielded-pool.js","/vendor/tacit-poseidon.min.js","/btc-pool-zk-boundary.js","/amm-sigma.js","/bulletproofs.js","/bulletproofs-plus.js","/evm-pool-scan.js","/evm-pool-gateway.js","/evm-pool-zk-prover.js?cb=00ff69c2"]) document.head.append(Object.assign(document.createElement('link'), { rel: 'modulepreload', href: u }));
 // preload-later:end
 
 // ── config ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -668,7 +668,7 @@ function sayLive(el, view) {
 // ── pool modules, loaded once, right after the page ──────────────────────────────────────────────────────
 const mods = lazy(async () => {
   const [zkm, wm, gw, pm, pos] = await Promise.all([
-    import('/evm-pool-zk.js'), import('/evm-pool-wallet.js?cb=87f00cbb'), import('/evm-pool-gateway.js'),
+    import('/evm-pool-zk.js'), import('/evm-pool-wallet.js?cb=21820836'), import('/evm-pool-gateway.js'),
     import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
   ]);
   const PO = { 2: pos.poseidon2, 3: pos.poseidon3, 4: pos.poseidon4, 5: pos.poseidon5, 7: pos.poseidon7 };
@@ -682,7 +682,8 @@ const rpcs = new Map();
 const rpcOn = async (c) => { if (!rpcs.has(c.chainId)) rpcs.set(c.chainId, (await mods()).jsonRpc(c.rpc)); return rpcs.get(c.chainId); };
 // The connected wallet's own balance is read from the last node on the list, not the first that every private read
 // uses, so one node does not see a wallet's address beside the receive boxes (a chain with one node has no other).
-const rpcApart = async (c) => { const m = await mods(); return m.jsonRpc([...c.rpc].reverse()); };
+const apart = new Map();
+const rpcApart = async (c) => { if (!apart.has(c.chainId)) apart.set(c.chainId, (await mods()).jsonRpc([...c.rpc].reverse())); return apart.get(c.chainId); };
 
 // ── the prover: the ceremony's key, named and hashed by /evm-pool/pin.json, checked, cached, run in a worker ──
 const PROVER = { state: 'idle', got: 0, total: 0, last: null, lastKind: null, cached: false, err: null, testing: false };
@@ -798,14 +799,14 @@ const SHARED_WALLET_KEYS = ['tacit-eth-identity', 'tacit-btc-identity', 'tacit-a
   ...['mainnet', 'signet'].flatMap((n) => [`tacit-eth-identity:${n}`, `tacit-btc-identity:${n}`])];
 let T = null;
 const loadTacit = lazy(async () => {
-  try { if (sessionStorage.getItem(PREV_NET) === null) sessionStorage.setItem(PREV_NET, localStorage.getItem(SHARED_NET) ?? ''); localStorage.setItem(SHARED_NET, 'mainnet'); } catch {}
+  // Another tab of these pages may have pinned it already: its own value is then not this tab's to restore later.
+  try { const cur = localStorage.getItem(SHARED_NET); if (sessionStorage.getItem(PREV_NET) === null && cur !== 'mainnet') sessionStorage.setItem(PREV_NET, cur ?? ''); localStorage.setItem(SHARED_NET, 'mainnet'); } catch {}
   globalThis.__TACIT_NO_INIT__ = true;
   (await import('/pass-dialog.js?cb=033f3fbd')).mountPassDialog();
   T = await import(TACIT_URL);
   return T;
 });
-window.addEventListener('pagehide', () => {
-  if (!T) return;
+window.addEventListener('pagehide', () => {                           // also when tacit.js failed to load after the pin
   try { const p = sessionStorage.getItem(PREV_NET); if (p !== null) { p === '' ? localStorage.removeItem(SHARED_NET) : localStorage.setItem(SHARED_NET, p); sessionStorage.removeItem(PREV_NET); } } catch {}
 });
 let tacitQ = Promise.resolve();
@@ -1013,7 +1014,10 @@ async function ensureChain(id) {
 const signerFor = (c) => ({
   get address() { return S.wallet; },
   ready: async () => { if (!S.wallet || !S.provider) await connectWallet(); await ensureChain(c.chainId); },
-  send: ({ to, data, value }) => S.provider.request({ method: 'eth_sendTransaction', params: [{ from: S.wallet, to, data, value: '0x' + BigInt(value || 0).toString(16) }] }),
+  // Each transaction names its chain, so a wallet that moved to another one meanwhile refuses it instead of sending there.
+  send: ({ to, data, value }) => S.provider.request({ method: 'eth_sendTransaction', params: [{ from: S.wallet, to, data, value: '0x' + BigInt(value || 0).toString(16), chainId: '0x' + c.chainId.toString(16) }] }),
+  // Its checks and receipts are read apart from the node that reads this key's notes and boxes.
+  rpc: async (method, params) => (await rpcApart(c))(method, params),
 });
 
 // ── one pool wallet per chain, all from the one key ─────────────────────────────────────────────────────
@@ -1549,7 +1553,9 @@ async function rebuild(btn) {
 }
 
 // ── rendering ────────────────────────────────────────────────────────────────────────────────────────────
-const FORM = { check: null, needsW: false };
+// A form's check does nothing while an action runs (the form is disabled then, and drawn afresh when it ends), so a
+// late read landing meanwhile never re-enables a button.
+const FORM = { needsW: false, own: null, get check() { const f = this.own; return f && ((...a) => (S.busy ? undefined : f(...a))); }, set check(f) { this.own = f; } };
 const DRAFT = {};
 const cur = () => CH[S.chain.chainId];
 const ethIcon = html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>`;
@@ -1695,7 +1701,7 @@ async function readTier(who) {
     const q = (topics) => rpc('eth_getLogs', [{ address: TAC_TOKEN, topics, fromBlock: '0x' + (head - 7200n).toString(16), toBlock: 'latest' }]);
     const seen = new Map();
     for (const l of [...await q([TAC_TRANSFER, me]), ...await q([TAC_TRANSFER, null, me])]) seen.set(l.blockNumber + ':' + l.logIndex, l);
-    const sorted = [...seen.values()].sort((x, y) => (BigInt(y.blockNumber) - BigInt(x.blockNumber)) || (BigInt(y.logIndex) - BigInt(x.logIndex)));
+    const sorted = [...seen.values()].sort((x, y) => { const d = (BigInt(y.blockNumber) - BigInt(x.blockNumber)) || (BigInt(y.logIndex) - BigInt(x.logIndex)); return d > 0n ? 1 : d < 0n ? -1 : 0; });
     let run = bal, min = bal;
     for (const l of sorted) {
       const v = BigInt(l.data);
@@ -2284,7 +2290,7 @@ function takeBack(i, c) {
     if (via) { Wg.connect(signerFor(c)); await signerFor(c).ready(); }
     const s = await Wg.sync();
     if (!s.balance) throw new Error('That link has already been taken.');
-    const h = await Wg.send({ to: S.key.bp, amount: 'max', via, onStep: step });
+    const h = await Wg.send({ to: S.key.bp, amount: 'max', via, maxFee: via ? null : capOf(relayFee('send', c)), onStep: step });
     done(c, h, 'Taken back into your private balance.');
   });
 }
@@ -2309,7 +2315,7 @@ function paintDue() {
         : st.bal == null || !p ? 'Checking…'
         : fee == null ? (st.quoteErr ? 'The relay is unavailable right now. Try again shortly, or choose your wallet under Send.' : 'Checking…')
         : !covers ? `Waiting for your deposit to reach your private balance on ${c.full}.`
-        : p.wait ? `${p.wait.since} of 5 deposits by others since yours${p.wait.hours > 0 ? `, and about ${Math.ceil(p.wait.hours)} h to go` : ''}. The longer it waits, the harder it is to link to you.`
+        : p.wait ? `${p.wait.since >= 5 ? `${p.wait.since} deposits by others since yours` : `${p.wait.since} of 5 deposits by others since yours`}${p.wait.hours > 0 ? `, and about ${Math.ceil(p.wait.hours)} h to go` : ''}. The longer it waits, the harder it is to link to you.`
         : 'Ready: enough others have deposited since yours.';
       return html`<div class="due-i"><div class="h"><b>Pay ${who}</b><span class="num">${fmt(a, 18, 6)} ETH</span></div>
         <div class="req-m">on ${c.full} · to <span class="nw">${short(d.to)}</span></div>
@@ -2385,6 +2391,14 @@ function formWithdraw(f) {
     if (!a) throw new Error('Enter an amount.');
     const W = await walletOn(c);
     if (l2) {
+      // The move names a refund address of this key; it must come after the newest payment link's, read from history.
+      let k = linkIndex();
+      if (k == null) {                                              // a chain's history unread or failed: read it again first
+        await Promise.all(CHAINS.map((x) => (CH[x.chainId].hist && !CH[x.chainId].histErr ? null : historyOf(x, true).catch(() => {}))));
+        k = linkIndex();
+      }
+      if (k == null) throw new Error(`Your history on ${CHAINS.filter((x) => !CH[x.chainId].hist || CH[x.chainId].histErr).map((x) => x.name).join(' and ')} could not be read, and this move needs it to pick an address no payment link uses. Try again in a minute.`);
+      W.watchThrough(k);
       const h = await W.bridgeOut({ toChainId: l2.chainId, amount: a, l2Rpc: await rpcOn(l2), maxFee, onStep: step });
       walletOn(l2).then((w) => w.watchReceive()).catch(() => {});
       clearDraft('f-wamt');
@@ -2658,7 +2672,7 @@ async function payFromWallet(btn) {
       await ensureChain(c.chainId);
       fetch(`${chainKeeper(c)}/receive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chainId: c.chainId, npk: npk.toString(), feeBps: m.RECEIVE_FEE_BPS }), signal: AbortSignal.timeout?.(20e3) }).catch(() => {});
       r.err = null; r.state = 'confirm'; paintReq();
-      const h = await S.provider.request({ method: 'eth_sendTransaction', params: [{ from: S.wallet, to: box, value: '0x' + a.toString(16) }] });
+      const h = await S.provider.request({ method: 'eth_sendTransaction', params: [{ from: S.wallet, to: box, value: '0x' + a.toString(16), chainId: '0x' + c.chainId.toString(16) }] });
       Object.assign(r, { paid: { h, c, a }, state: 'mining' }); paintReq();
       ptsExpect(c, a);
       toast(`Paid ${fmt(a, 18, 6)} ETH.`);
@@ -2829,7 +2843,7 @@ function readPoints(force = false) {
     let owed = 0n;
     if (c?.proof && c.cumulativeAmount) {
       const data = '0x787eef2e' + strip(who).padStart(64, '0') + BigInt(c.cumulativeAmount).toString(16).padStart(64, '0');
-      owed = BigInt(await (await rpcOn(CHAINS[0]))('eth_call', [{ to: DISTRIBUTOR, data }, 'latest']));
+      owed = BigInt(await (await rpcApart(CHAINS[0]))('eth_call', [{ to: DISTRIBUTOR, data }, 'latest']));      // not the node that reads this key's boxes
     }
     const t = p?.today, share = t && Number(t.totalPoints) > 0 ? Number(t.points) / Number(t.totalPoints) : 0;
     const pool = (p?.deposits || []).filter((d) => d.activity === 'evmpooldeposit');
@@ -3025,7 +3039,8 @@ async function loadGift() {
   const g = GIFT.v;
   if (!g) return;
   try {
-    const W = GIFT.W || (GIFT.W = await giftWallet(g.seed, g.chain));
+    const W = GIFT.v === g && GIFT.W || await giftWallet(g.seed, g.chain);
+    if (GIFT.v === g) GIFT.W = W;                                   // a link opened meanwhile keeps its own wallet
     const [st, q] = await Promise.all([W.sync(), W.quote().catch(() => null)]);
     if (GIFT.v === g) Object.assign(GIFT, { bal: st.balance, fee: q?.fee ? BigInt(q.fee) : GIFT.fee, err: null });
   } catch (e) { if (GIFT.v === g) GIFT.err = e; }
@@ -3088,21 +3103,24 @@ async function claimGift(to) {
   paintGift();
   const tick = setInterval(() => { const e = $('#gift-status'); if (e) sayLive(e, giftStatus()); }, 250);
   try {
-    const W = GIFT.W || (GIFT.W = await giftWallet(g.seed, g.chain));
+    const W = GIFT.v === g && GIFT.W || await giftWallet(g.seed, g.chain);
+    if (GIFT.v === g) GIFT.W = W;
     const [st, q] = await Promise.all([W.sync(), W.quote()]);
     if (!st.balance) throw new Error('This link has already been taken.');
     // The spend takes all of it less the relay's fee as quoted for that spend; this quote only names the amount shown.
     const amount = st.balance - BigInt(q.fee), onStep = (m) => { GIFT.step = stepWords(m); };
     const h = to ? await W.withdraw({ to, amount: 'max', maxFee, onStep }) : await W.send({ to: S.key.bp, amount: 'max', maxFee, onStep });
-    Object.assign(GIFT, { done: { h, a: amount, to }, bal: 0n });
+    if (GIFT.v === g) Object.assign(GIFT, { done: { h, a: amount, to }, bal: 0n });
     toast(to ? `Sent ${fmt(amount, 18, 6)} ETH to ${short(to)}.` : `${fmt(amount, 18, 6)} ETH is in your private balance.`);
     if (!to && S.key) syncChain(g.chain, true).then(() => historyOf(g.chain, true));
   } catch (e) {
-    if (e?.feeMoved != null) { GIFT.fee = e.feeMoved; GIFT.err = new Error(`The relay fee changed to ${fmt(e.feeMoved, 18, 6)} ETH. Check it and press again.`); } else GIFT.err = e;
+    if (GIFT.v !== g) toast(errText(e), true);
+    else if (e?.feeMoved != null) { GIFT.fee = e.feeMoved; GIFT.err = new Error(`The relay fee changed to ${fmt(e.feeMoved, 18, 6)} ETH. Check it and press again.`); } else GIFT.err = e;
   }
   clearInterval(tick);
   GIFT.busy = false;
   paintGift();
+  if (/(^|[#&])gift=/.test(location.hash)) { applyHash(); renderApp(); }   // a link opened while this one was taken
 }
 
 // ── links: #pay=bp1…&amount=0.01&chain=base, #send, #link (Send, by link), #withdraw, #receive, #deposit, #base … ──
@@ -3161,21 +3179,24 @@ function applyHash() {
   const pfText = (q.get('proof') || '').trim(), pf = /^([a-z0-9]+):(0x[0-9a-f]{64}):([01]):([0-9a-f]{1,64})$/i.exec(pfText);
   if (pf && chainOf(pf[1]) && PROOF.v?.src !== pfText) { PROOF.v = { chain: chainOf(pf[1]), tx: pf[2], k: Number(pf[3]), e: BigInt('0x' + pf[4]), src: pfText }; PROOF.res = null; }
   const gs = lc((q.get('gift') || '').trim());
-  if (/^[0-9a-f]{64}$/.test(gs)) {
+  // A link opened while another is being taken waits in the address bar, and opens once that one is done.
+  const giftLater = /^[0-9a-f]{64}$/.test(gs) && GIFT.busy;
+  if (giftLater) toast('Finishing the link already open; the new one opens after it.');
+  if (/^[0-9a-f]{64}$/.test(gs) && !GIFT.busy) {
     Object.assign(GIFT, { v: { seed: hexToBytes(gs), chain: c || null, note: noteOf(q.get('for')) }, W: null, bal: null, fee: null, err: null, done: null, to: '' });
     if (c) loadGift();
   }
   const tab = TABS.find(([k]) => words.includes(k))?.[0] || q.get('tab') || (words.includes('link') ? 'send' : null);
   if (words.includes('link')) S.sendMode = 'link';
-  if (c) { S.chain = c; writeJson(CHAIN_PREF, c.chainId); if (c.chainId !== 1) S.dest = 'addr'; }
+  if (c && !S.busy) { S.chain = c; writeJson(CHAIN_PREF, c.chainId); if (c.chainId !== 1) S.dest = 'addr'; }   // never under a running action
   if (bp) {
     if (REQ.v?.src !== h) {
       REQ.v = { bp, n: /^[0-9a-f]{1,64}$/.test(n) ? n : null, ns: /^[0-9a-f]{128}$/i.test((q.get('ns') || '').trim()) ? q.get('ns').trim() : null, amount, note: noteOf(q.get('for')), src: h };
       DRAFT['f-to'] = bp; if (amount) DRAFT['f-amt'] = plain(amount);
     }
-    S.tab = 'send';
-  } else if (tab && TABS.some(([k]) => k === tab)) S.tab = tab;
-  if (/(^|&)gift=/.test(h)) try { history.replaceState(null, '', location.pathname); } catch {}
+    if (!S.busy) S.tab = 'send';
+  } else if (tab && !S.busy && TABS.some(([k]) => k === tab)) S.tab = tab;
+  if (/(^|&)gift=/.test(h) && !giftLater) try { history.replaceState(null, '', location.pathname); } catch {}
 }
 // Arrow keys, Home and End move between the tabs of a tab list, as screen-reader and keyboard users expect.
 document.addEventListener('keydown', (e) => {

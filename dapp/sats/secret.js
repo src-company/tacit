@@ -300,20 +300,22 @@ function pendingRead() {
   for (const [k, x] of Object.entries(v?.change || {})) if (now - x.at < PENDING_MS) out.change[k] = x;
   return out;
 }
-function pendingMark(notes, txid, change, asset, out = 0n) {
+// Change is marked with the wallet it belongs to, so another key opened in this browser does not count it as its own.
+const ownerTag = (poolWallet) => (poolWallet?.addressString ? String(poolWallet.addressString).slice(-16) : null);
+function pendingMark(notes, txid, change, asset, out = 0n, owner = null) {
   const p = pendingRead(), at = Date.now();
   for (const n of notes) if (n.nf) p.spent[nfKey(n.nf)] = { at, txid };
-  if (change > 0n || out > 0n) p.change[txid] = { at, v: change.toString(), ...(out > 0n ? { out: out.toString() } : {}), asset: String(asset).replace(/^0x/, '').toLowerCase() };
+  if (change > 0n || out > 0n) p.change[txid] = { at, v: change.toString(), ...(out > 0n ? { out: out.toString() } : {}), asset: String(asset).replace(/^0x/, '').toLowerCase(), ...(owner ? { owner } : {}) };
   try { if (typeof localStorage !== 'undefined') localStorage.setItem(PENDING_KEY, JSON.stringify(p)); } catch {}
 }
 // The notes of `notes` this browser has not spent, how much of `asset` is settling as change not yet read back, and how
-// much is leaving by an exit the replay has not counted yet.
-export function pendingView(notes, asset) {
-  const p = pendingRead(), seen = new Set(notes.map((n) => n.txid));
+// much is leaving by an exit the replay has not counted yet. With `poolWallet`, only that wallet's change counts.
+export function pendingView(notes, asset, poolWallet = null) {
+  const p = pendingRead(), seen = new Set(notes.map((n) => n.txid)), owner = ownerTag(poolWallet);
   const live = notes.filter((n) => !n.spent && !(n.nf && p.spent[nfKey(n.nf)]));
   let settling = 0n, leaving = 0n;
   for (const [txid, c] of Object.entries(p.change)) {
-    if (seen.has(txid) || (asset && !eqAsset(c.asset, asset))) continue;
+    if (seen.has(txid) || (asset && !eqAsset(c.asset, asset)) || (owner && c.owner && c.owner !== owner)) continue;
     settling += BigInt(c.v); leaving += BigInt(c.out || 0);
   }
   return { live, settling, leaving };
@@ -322,10 +324,11 @@ export function pendingView(notes, asset) {
 const spentElsewhere = (m) => /nullifier|conflict|replayed|already spent|double/i.test(String(m || ''));
 
 // Inputs covering `need`, with the anchor, root and paths. { wait } when the wallet's anchor policy has not
-// reached the newest input yet; `anchor` overrides the policy with a retained height.
-async function prepare(poolWallet, asset, need, anchor) {
-  const unspent = pendingView(await poolNotes(poolWallet, asset)).live;
-  const { inputs, total } = pool.selectInputs(unspent, need, { asset: '0x' + String(asset).replace(/^0x/, '') });
+// reached the newest input yet; `anchor` overrides the policy with a retained height. `fixed` spends exactly those notes.
+async function prepare(poolWallet, asset, need, anchor, fixed = null) {
+  const { inputs, total } = fixed
+    ? { inputs: fixed, total: fixed.reduce((t, x) => t + BigInt(x.value), 0n) }
+    : pool.selectInputs(pendingView(await poolNotes(poolWallet, asset)).live, need, { asset: '0x' + String(asset).replace(/^0x/, '') });
   const a = await poolClientFor(poolWallet.network).anchorAndPaths(inputs, anchor != null ? { anchor } : {});
   return { ...a, total };
 }
@@ -333,9 +336,9 @@ async function prepare(poolWallet, asset, need, anchor) {
 // Pays `amount` of `asset` to a pool address, or to the pool lane of a tacit1… address. Relayed when the replay service
 // runs a relayer that quotes the asset (fee paid as an extra pool output); otherwise this wallet posts the carrier from
 // its own sats. `noRelay` forces the self-funded path. Used by the fallback below, so a relayer that quotes and then
-// cannot deliver does not leave the payment stranded. `maxFee` (base units) refuses a relayer quote above it, with the
-// quote on the error as `feeMoved`.
-export async function payPrivately(tacit, { poolWallet, to, amount, asset, anchor = null, noRelay = false, maxFee = null, say = () => {} }) {
+// cannot deliver does not leave the payment stranded. `maxFee` (base units, by default a quarter above the fee the relayer advertises)
+// refuses a relayer quote above it, with the quote on the error as `feeMoved`.
+export async function payPrivately(tacit, { poolWallet, to, amount, asset, anchor = null, noRelay = false, maxFee = null, say = () => {}, inputs = null }) {
   to = poolRecipient(to, poolWallet.network);
   pool.decodeAddress(to, poolWallet.network);
   const client = poolClientFor(poolWallet.network);
@@ -345,9 +348,12 @@ export async function payPrivately(tacit, { poolWallet, to, amount, asset, ancho
   // path below needs no relayer, so every refusal it can give here — no free coin to bind, quote table full,
   // rate limited — means "not now", not "impossible". relayInfo() is already caught for the same reason.
   const q = fee != null ? await client.quote({ asset: '0x' + String(asset).replace(/^0x/, '') }).catch(() => null) : null;
-  if (q && maxFee != null && BigInt(q.fee) > BigInt(maxFee)) throw Object.assign(new Error('the relayer’s fee changed'), { feeMoved: BigInt(q.fee) });
+  // With no limit given, a quarter above the fee the relayer advertises is the limit: its fee rate moving between the two
+  // reads is taken, a quote far above what was shown is never signed unseen.
+  const cap = maxFee ?? (fee != null ? (BigInt(fee) * 5n) / 4n : null);
+  if (q && cap != null && BigInt(q.fee) > BigInt(cap)) throw Object.assign(new Error('the relayer’s fee changed'), { feeMoved: BigInt(q.fee) });
   say('finding your notes…');
-  const a = await prepare(poolWallet, asset, amount + (q ? BigInt(q.fee) : 0n), anchor);
+  const a = await prepare(poolWallet, asset, amount + (q ? BigInt(q.fee) : 0n), anchor, inputs);
   if (a.wait) return { wait: a.wait, tip: a.tip };
   const outputs = [{ address: to, value: amount }];
   if (q) outputs.push({ address: q.address, value: BigInt(q.fee) });
@@ -358,15 +364,15 @@ export async function payPrivately(tacit, { poolWallet, to, amount, asset, ancho
     // A relayer can quote and still fail to post — it needs its own confirmed coins to fund the carrier,
     // and it reserves one of them as this batch's bind. When that happens the payment must not be stuck:
     // the body is bound to the relayer's outpoint so this wallet cannot post THIS one, but it can build
-    // the same spend again without a bind and pay for the carrier itself. Rebuilding spends the same
-    // notes, so it publishes the same nullifiers — if the relayer does eventually post its copy, only
+    // the same spend again without a bind and pay for the carrier itself. The rebuild is given the same
+    // notes (selecting again for the smaller need could pick others), so it publishes the same nullifiers — if the relayer does eventually post its copy, only
     // whichever lands first is accepted and the other is rejected by the pool. The money cannot go twice.
     let reason = null;
     try {
       const sub = await client.submit({ payload: payloadHex, quoteId: q.quoteId });
       for (let i = 0; i < 60 && !reason; i++) {
         const stt = await client.relayStatus(sub.id).catch(() => null);
-        if (stt?.carrier) { pendingMark(a.notes, stt.carrier, a.total - amount - BigInt(q.fee), asset); return { revealTxid: stt.carrier, relayed: true, anchor: a.hAnchor }; }
+        if (stt?.carrier) { pendingMark(a.notes, stt.carrier, a.total - amount - BigInt(q.fee), asset, 0n, ownerTag(poolWallet)); return { revealTxid: stt.carrier, relayed: true, anchor: a.hAnchor }; }
         if (stt && (['dropped', 'rejected'].includes(stt.state) || spentElsewhere(stt.state))) { reason = stt.reason || stt.state; break; }
         say('waiting for the relayer’s batch…');
         await new Promise((r) => setTimeout(r, 5000));
@@ -375,12 +381,12 @@ export async function payPrivately(tacit, { poolWallet, to, amount, asset, ancho
     } catch (e) { reason = e?.message || String(e); }
     if (spentElsewhere(reason)) throw new Error('Those notes are already being spent by another payment. Wait for it to settle, then try again.');
     say(`the relayer could not post it (${reason}) — sending it from this wallet instead…`);
-    return payPrivately(tacit, { poolWallet, to, amount, asset, anchor, noRelay: true, say });
+    return payPrivately(tacit, { poolWallet, to, amount, asset, anchor: a.hAnchor, noRelay: true, say, inputs: a.notes });
   }
   say('sending…');
   const own = tacit.p2wpkhScript(tacit.wallet.pub);
   const r = await broadcastCarrier(tacit, { payload, outputs: [{ value: tacit.DUST, script: own }] });
-  pendingMark(a.notes, r.revealTxid, a.total - amount, asset);
+  pendingMark(a.notes, r.revealTxid, a.total - amount, asset, 0n, ownerTag(poolWallet));
   return { ...r, relayed: false, anchor: a.hAnchor };
 }
 
@@ -402,7 +408,7 @@ export async function exitToWallet(tacit, { poolWallet, amount, asset, anchor = 
   const { payload } = await proveHere(built, say);
   say('sending…');
   const r = await broadcastCarrier(tacit, { payload, outputs: [{ value: Math.max(tacit.DUST, DUST_SATS), script: own }] });
-  pendingMark(a.notes, r.revealTxid, change, asset, amount);
+  pendingMark(a.notes, r.revealTxid, change, asset, amount, ownerTag(poolWallet));
   // The holdings scan credits the note from this opening once the replay records the exit.
   tacit.recordOpening?.(r.revealTxid, 0, String(asset).replace(/^0x/, '').toLowerCase(), amount, BigInt(built.exit.blinding));
   return { ...r, exit: { vout: 0, value: amount.toString(), blinding: built.exit.blinding, cx: built.exit.cx, cy: built.exit.cy }, anchor: a.hAnchor };
@@ -864,7 +870,7 @@ export function mount(root, ctx) {
 
   function shieldedLine() {
     const pw = poolWallet();
-    return el('div', {}, `${fmt(state.poolNote.value)} ${ticker()} shielded in `, txLink(state.shield.revealTxid), pw ? ` to your pool address ${pw.addressString.slice(0, 16)}…` : '', '. The pool picks it up after one confirmation.');
+    return el('div', {}, `${fmt(state.poolNote.value)} ${ticker()} shielded in `, txLink(state.shield.revealTxid), pw ? ` to your pool address ${pw.addressString.slice(0, 16)}…` : '', '. The pool picks it up after a few confirmations.');
   }
 
   function renderShield(ph) {

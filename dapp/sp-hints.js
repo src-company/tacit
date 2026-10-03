@@ -36,7 +36,7 @@ export function openHint(scanPrivs, e, c) {
 }
 
 export async function postHint(base, scanPub, txidHex, fetchImpl = fetch) {
-  const r = await fetchImpl(`${base}/sp/hints`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(sealHint(scanPub, txidHex)) });
+  const r = await fetchImpl(`${base}/sp/hints`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(sealHint(scanPub, txidHex)), signal: AbortSignal.timeout?.(20_000) });
   if (!r.ok) throw new Error(`hint: HTTP ${r.status}`);
   return (await r.json()).id;
 }
@@ -45,7 +45,7 @@ export async function postHint(base, scanPub, txidHex, fetchImpl = fetch) {
 export async function readHints(base, after, onHint, fetchImpl = fetch) {
   let at = after;
   for (let guard = 0; guard < 1000; guard++) {
-    const r = await fetchImpl(`${base}/sp/hints?after=${at}&limit=2000`, { cache: 'no-store' });
+    const r = await fetchImpl(`${base}/sp/hints?after=${at}&limit=2000`, { cache: 'no-store', signal: AbortSignal.timeout?.(20_000) });
     if (!r.ok) throw new Error(`hints: HTTP ${r.status}`);
     const j = await r.json();
     for (const [id, e, c] of j.hints) { await onHint(id, e, c); at = id; }
