@@ -282,6 +282,60 @@ the router or the escrow itself. Client helpers in `dapp/evm-pool-gateway.js`: `
 it in `ReceiveFunded`, so a keeper sweeps it without registration). A published hint shows the note's value and public
 key material; it does not let anyone spend the note or link its later spends.
 
+## What it costs
+
+The contracts take no fee. Every action can go from your own wallet for the network gas alone. A relayer is an
+optional convenience: it submits the transaction for a small fee, so you need no gas and none of your accounts appears
+on chain. Anyone can run a relayer, and nothing depends on a particular one.
+
+| Action | From your own wallet | Through a relayer |
+| --- | --- | --- |
+| Shield (deposit) | network gas only | not relayed: a deposit is sent by whoever pays it |
+| Send privately to another address | network gas only | relayer fee, no gas |
+| Withdraw (unshield) | network gas only | relayer fee, no gas |
+| Collect a payment sent to a deposit address | network gas only, any amount | relayer fee, at most 0.25%, for payments above a minimum |
+
+A relayer's fee comes out of the shielded balance in the same transaction, on top of the amount: the recipient receives
+the full amount. A collected deposit-address payment is credited minus its fee. The fee follows the transaction's
+network cost plus a margin, with a floor per chain, so it moves with gas. A balance held in several notes can need
+combining before a large spend; each combine is one more transaction, with its own gas or relayer fee.
+
+### Current estimates
+
+On live transactions a shield, send or withdraw typically uses about 350,000 to 440,000 gas on every chain, and
+collecting a deposit-address payment about 480,000 to 570,000. Fees are each relay's quote on 3 October 2026, with ETH
+at about $2,680. `GET /evm-pool/keeper/quote` returns the fee now.
+
+| | Ethereum | Base | Robinhood Chain |
+| --- | --- | --- | --- |
+| Your own wallet: shield, send or withdraw | about 0.00004 ETH ($0.11) | about 0.000005 ETH ($0.013) | about 0.0000083 ETH ($0.022) |
+| Relayer fee: send or withdraw | 0.0000737 ETH ($0.20) | 0.000005 ETH ($0.013) | 0.0000129 ETH ($0.035) |
+| Relayer fee: collect a deposit-address payment | 0.0000983 ETH ($0.26) | 0.0000043 ETH ($0.012) | 0.0000172 ETH ($0.046) |
+| Smallest payment a relayer collects | 0.0393 ETH ($105) | 0.0017 ETH ($4.60) | 0.0069 ETH ($18) |
+
+A payment below the minimum waits at its address until it grows or you collect it yourself, which costs gas only.
+
+### Privacy by route
+
+| Route | Visible on chain |
+| --- | --- |
+| Shield | the depositing account and the amount |
+| Send from your own wallet | that your account made a private transfer; not the recipient or the amount |
+| Send through a relayer | that the relayer made a private transfer; nothing about you |
+| Withdraw from your own wallet | your account as the sender, the recipient and the amount; not which deposit it spends |
+| Withdraw through a relayer | the recipient and the amount, sent by the relayer; no link to your wallet |
+
+Spending authority is the Tacit key, not the account that sends the transaction. The proof does not name a sender, so
+any account can submit your send or withdrawal. Submitting from an account that did not make the deposit, and is not
+otherwise tied to you, keeps your depositing account off the transaction, with no relayer fee. The wallet library takes
+any signer for this.
+
+### Never stuck
+
+Every action has an own-wallet path, offered next to the relayer's. Relayers are interchangeable: the wallet takes a
+relayer endpoint per chain, a relayer you run is held to the same fee ceiling as any other, and its address is the
+`relayer` the proof binds. Run one from `worker-relay/src/evm-pool-keeper.js`.
+
 ## Relaying
 
 A user never needs gas or a funded address: a relayer submits the transaction and is paid `fee` out of the
