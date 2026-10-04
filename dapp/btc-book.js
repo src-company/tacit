@@ -248,8 +248,10 @@ export function ladderLevels(rows, side) {
 //   spendSats   — never spend more than this; whole lots that don't fit are skipped.
 //   receiveBase — cheapest route to at least this much; a whole lot may overshoot a
 //                 little, but never by more than the amount still needed.
-// maxUnit caps every fill's price. Own offers are never routed.
-export function planBuy(book, { spendSats = null, receiveBase = null, maxUnit = Infinity, includeIntents = true, excludeIds = null } = {}) {
+// maxUnit caps every fill's price. maxBase (spend mode) caps the tokens received, so a
+// limit buy of N tokens never fills more than N from cheaper lots. Own offers are never
+// routed.
+export function planBuy(book, { spendSats = null, receiveBase = null, maxUnit = Infinity, maxBase = null, includeIntents = true, excludeIds = null } = {}) {
   const dec = book.decimals;
   const skip = excludeIds || new Set();
   const cands = book.asks.filter((a) => !a.mine && !skip.has(a.id) && a.unit <= maxUnit && (includeIntents || a.instant));
@@ -262,13 +264,16 @@ export function planBuy(book, { spendSats = null, receiveBase = null, maxUnit = 
     for (const a of cands) {
       const room = budget - sats;
       if (room < DUST) break;
+      const cap = maxBase != null ? BigInt(maxBase) - amount : null;
+      if (cap != null && cap <= 0n) break;
       if (a.whole) {
-        if (a.sats > room) { skipped.push({ ask: a, reason: 'too-big' }); continue; }
+        if (a.sats > room || (cap != null && a.amount > cap)) { skipped.push({ ask: a, reason: 'too-big' }); continue; }
         fills.push({ ask: a, amount: a.amount, sats: a.sats, unit: a.unit });
         sats += a.sats; amount += a.amount;
       } else {
         let want = (BigInt(room) * a.fullAmount) / BigInt(a.fullSats);
         if (want > a.amount) want = a.amount;
+        if (cap != null && want > cap) want = cap;
         if (want < a.minTake) { skipped.push({ ask: a, reason: 'too-small' }); continue; }
         const s = scaledSats(want, a.fullSats, a.fullAmount);
         if (s < DUST || s > room) { skipped.push({ ask: a, reason: 'too-small' }); continue; }

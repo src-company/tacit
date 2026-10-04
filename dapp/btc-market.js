@@ -530,7 +530,7 @@ function createMarket(host, ctx) {
       return { order: o, plan, minUnit };
     }
     if (o.side === 'buy') {
-      const now = planBuy(S.book, { spendSats: o.totalSats, maxUnit: o.unit, includeIntents: S.includeMaker });
+      const now = planBuy(S.book, { spendSats: o.totalSats, maxBase: o.base, maxUnit: o.unit, includeIntents: S.includeMaker });
       return { order: o, plan: now, limit: true };
     }
     const bestSellable = eligibleBids()[0]?.unit;
@@ -561,6 +561,16 @@ function createMarket(host, ctx) {
       }
     }
     if (el.avail.innerHTML !== h) el.avail.innerHTML = h;
+  }
+
+  // How far a fill's average price sits from the last trade, as a note when it's a lot
+  // worse than the market the page header shows (a thin book can ask well above it).
+  function offMarketNote(p, side) {
+    const mark = ctx.asset().markUnit;
+    if (!(mark > 0) || !p?.avgUnit) return '';
+    const off = side === 'buy' ? (p.avgUnit - mark) / mark : (mark - p.avgUnit) / mark;
+    if (off < 0.1) return '';
+    return `<div class="bm-q bm-warn">${side === 'buy' ? 'Pays' : 'Sells'} ${Math.round(off * 100)}% ${side === 'buy' ? 'above' : 'below'} the last trade (${fmtUnit(mark)} sats/${T}). Check the book or set a tighter price limit in Settings.</div>`;
   }
 
   function paintQuote() {
@@ -611,6 +621,7 @@ function createMarket(host, ctx) {
       html += row('You pay', `${fmtSats(p.sats)} sats${usd(p.sats)}`);
       html += row('Average price', `${fmtUnit(p.avgUnit)} sats/${T}`);
       html += row('Network fees', `≈ ${fmtSats(p.feesEst)} sats`, 'muted');
+      html += offMarketNote(p, 'buy');
       if (p.leftoverSats >= DUST && o.spendSats != null) html += `<div class="bm-q bm-note">${fmtSats(p.leftoverSats)} sats can't fill at this price and stay in your wallet.</div>`;
       if (p.shortBase > 0n) html += `<div class="bm-q bm-note">Only ${fmtAmount(p.amount, dec, 4)} ${T} is for sale within your max price.</div>`;
       if (p.overBase > 0n) html += `<div class="bm-q bm-note">Includes ${fmtAmount(p.overBase, dec, 4)} ${T} extra — offers are sold in whole pieces.</div>`;
@@ -618,7 +629,7 @@ function createMarket(host, ctx) {
       if (big && o.spendSats != null) html += `<div class="bm-q bm-muted">A cheaper piece (${fmtAmount(big.ask.amount, dec, 4)} ${T} at ${fmtUnit(big.ask.unit)}) needs ${fmtSats(big.ask.sats)} sats.</div>`;
       if (p.needsMaker) html += `<div class="bm-q bm-muted">Some of this fills from offers the seller confirms — usually seconds.</div>`;
       el.quote.innerHTML = html;
-      if (m && m.unlocked && m.sats != null && m.sats < p.sats + p.feesEst) { setGo('Not enough sats', true, 'fund'); return; }
+      if (m && m.unlocked && m.sats != null && m.sats < p.sats + p.feesEst) { setGo(`Add ${fmtSats(p.sats + p.feesEst - m.sats)} more sats`, true, 'fund'); return; }
       setGo(`Review buy`, true, 'review');
       return;
     }
@@ -648,6 +659,7 @@ function createMarket(host, ctx) {
       html += row('You sell', `${fmtAmount(p.amount, dec, 6)} ${T}`);
       html += row('Average price', `${fmtUnit(p.avgUnit)} sats/${T}`);
       html += row('Network fees', `≈ ${fmtSats(p.feesEst)} sats`, 'muted');
+      html += offMarketNote(p, 'sell');
       if (p.leftoverBase > 0n) html += `<div class="bm-q bm-note">${fmtAmount(p.leftoverBase, dec, 4)} ${T} has no matching bid and stays in your wallet.</div>`;
       html += `<div class="bm-q bm-muted">${p.needsBidder ? 'Completes when each bidder\'s wallet settles — some may take hours.' : 'Completes in about a minute — keep this tab open until it does.'}</div>`;
       el.quote.innerHTML = html;
@@ -673,7 +685,8 @@ function createMarket(host, ctx) {
         html += `<label class="bm-check"><input type="checkbox" data-act="wt"${wt.on ? ' checked' : ''}${wt.ok ? '' : ' disabled'}><span>Fill it while I'm away <em>${wtDetail}</em></span></label>`;
       }
       el.quote.innerHTML = html;
-      if (m && m.unlocked && m.sats != null && m.sats < o.totalSats + (wt.on ? 10000 : 0) + 1000) { setGo('Not enough sats', true, 'fund'); return; }
+      const needSats = (nowFill ? nowFill.sats + nowFill.feesEst : 0) + (bidSats > 0 ? bidSats + (wt.on ? 10000 : 0) + 1000 : 0);
+      if (m && m.unlocked && m.sats != null && m.sats < needSats) { setGo(`Add ${fmtSats(needSats - m.sats)} more sats`, true, 'fund'); return; }
       setGo(nowFill ? 'Review order' : 'Review bid', true, 'review');
       return;
     }
@@ -1049,7 +1062,11 @@ function createMarket(host, ctx) {
     let escLocked = false;
     const api = {
       body, foot,
-      set(html) { body.innerHTML = html; },
+      set(html) {
+        body.innerHTML = html;
+        const h = body.querySelector('h2');
+        if (h) wrap.setAttribute('aria-label', h.textContent);
+      },
       buttons(btns) {
         foot.innerHTML = btns.map((b, i) => `<button type="button" data-i="${i}" class="${b.primary ? 'bm-go' : ''}"${b.disabled ? ' disabled' : ''}>${esc(b.label)}</button>`).join('');
         foot.querySelectorAll('button').forEach((n) => {
@@ -1069,6 +1086,7 @@ function createMarket(host, ctx) {
       close() { if (onKey) document.removeEventListener('keydown', onKey); wrap.remove(); },
       onEscape(fn) { onKey = (e) => { if (e.key === 'Escape' && !escLocked) fn(); }; document.addEventListener('keydown', onKey); },
       lockEscape() { escLocked = true; },
+      unlockEscape() { escLocked = false; },
     };
     return api;
   }
@@ -1079,13 +1097,33 @@ function createMarket(host, ctx) {
     }[s.status] || '○'}</span><span class="lb">${s.label}${s.note ? `<em>${esc(s.note)}</em>` : ''}${s.txid && ctx.txUrl ? ` <a href="${esc(ctx.txUrl(s.txid))}" target="_blank" rel="noopener">tx</a>` : ''}</span></li>`).join('')}</ol>`;
   }
 
+  const planSig = (q) => (q?.plan ? q.plan.fills.map((f) => (f.ask || f.bid).id + ':' + f.amount + ':' + f.sats).join(',') : String(q?.shape?.totalSats ?? ''));
+  let reviewing = false;
   async function review() {
-    if (S.busy || S.destroyed) return;
+    if (S.busy || S.destroyed || reviewing) return;
     const m = me();
     if (!m) { await ctx.unlock(); refresh({ soft: true }); return; }
-    const q = computeQuote();
+    let q = computeQuote();
     if (!q || q.empty) return;
     if (el.go.dataset.kind === 'fund') { ctx.fundSats(); return; }
+    // The quote is only as fresh as the last refresh. After a stretch without one (a
+    // backgrounded tab, a dropped connection) re-read the book first, and show the new
+    // quote instead of a review of offers that may be gone.
+    if (!S.lastOk || Date.now() - S.lastOk > 25_000) {
+      reviewing = true;
+      el.go.disabled = true; el.go.textContent = 'Checking prices…';
+      const before = planSig(q);
+      try { await refresh({ force: true }); } finally { reviewing = false; }
+      if (S.destroyed) return;
+      if (S.lastErr && (!S.lastOk || Date.now() - S.lastOk > 25_000)) {
+        paintQuote();
+        ctx.toast?.('Can\'t reach the order book — check your connection and try again.', 'error', 6000);
+        return;
+      }
+      q = computeQuote();
+      if (!q || q.empty) { paintQuote(); return; }
+      if (planSig(q) !== before) { paintQuote(); ctx.toast?.('Prices changed — check the updated quote.', 'info', 5000); return; }
+    }
     const o = q.order;
     const md = modal();
     let cancelled = false;
@@ -1243,12 +1281,15 @@ function createMarket(host, ctx) {
       if (!ok) { steps.push({ status: 'skipped', label: 'No other offers within your price limit — stopped here' }); break; }
       np.fills.forEach((f) => { const s = stepFor(f); s.note = 're-routed'; s.rerouted = true; queue.push(s); });
     }
+    // Anything never attempted (stopped, or an earlier step failed) says so, not "queued".
+    for (const s of steps) if (s.status === 'queued') { s.status = 'skipped'; s.note = 'not attempted'; }
     const title = got > 0n ? `Bought ${fmtAmount(got, dec, 6)} ${T}` : 'Nothing bought';
     const summary = got > 0n
-      ? `<p class="bm-q">Paid ${fmtSats(spent)} sats${got > 0n ? ` · average ${fmtUnit((spent * Math.pow(10, dec)) / Number(got))} sats/${T}` : ''}. It shows in your wallet now and confirms with the next Bitcoin block.</p>`
+      ? `<p class="bm-q">Paid ${fmtSats(spent)} sats · average ${fmtUnit((spent * Math.pow(10, dec)) / Number(got))} sats/${T}. It shows in your wallet now and confirms with the next Bitcoin block.</p>${err ? `<p class="bm-q bm-warn">The rest didn't go through: ${esc(ctx.friendlyError(err))}</p>` : ''}`
       : `<p class="bm-q">${err ? esc(ctx.friendlyError(err)) : 'The offers were taken before you — nothing was spent.'}</p>`;
     const leftover = order.spendSats != null ? order.spendSats - spent : 0;
     md.set(`<h2>${title}</h2>${summary}${stepsHtml(steps)}`);
+    md.unlockEscape();
     const btns = [{ label: 'Done', primary: true, onClick: () => md.close() }];
     if (leftover >= 5000 && !err) btns.unshift({ label: `Bid with the other ${fmtSats(leftover)} sats`, onClick: () => { md.close(); prime({ side: 'buy', type: 'limit', totalSats: leftover }); } });
     md.buttons(btns);
@@ -1307,9 +1348,13 @@ function createMarket(host, ctx) {
       if (!np.fills.length || !withinBounds(np, { maxBase: left, minUnit: bounds.minUnit })) { steps.push({ status: 'skipped', label: 'No other bids within your price limit — stopped here' }); break; }
       np.fills.forEach((f) => { const s = { status: 'queued', label: sellLabel(f), fill: f, note: 're-routed' }; steps.push(s); queue.push(s); });
     }
+    for (const s of steps) if (s.status === 'queued') { s.status = 'skipped'; s.note = 'not attempted'; }
+    const unsold = plan0.amount > offered ? plan0.amount - offered : 0n;
+    const listRest = () => ({ label: `List the other ${fmtAmount(unsold, dec, 4)} ${asset0.ticker}`, onClick: () => { S.onSellsChanged = null; md.close(); prime({ side: 'sell', type: 'limit', sellBase: unsold }); } });
     endBusy();
     if (offered === 0n) {
       md.set(`<h2>Nothing sold</h2><p class="bm-q">${err ? esc(ctx.friendlyError(err)) : 'The bids were filled before you — nothing was spent.'}</p>${stepsHtml(steps)}`);
+      md.unlockEscape();
       md.buttons([{ label: 'Done', primary: true, onClick: () => md.close() }]);
       if (err) ctx.onError?.(err);
       return;
@@ -1325,7 +1370,8 @@ function createMarket(host, ctx) {
     };
     paintTrack();
     S.onSellsChanged = () => { if (document.body.contains(md.body)) paintTrack(); };
-    md.buttons([{ label: 'Close', primary: true, onClick: () => { S.onSellsChanged = null; md.close(); } }]);
+    md.unlockEscape();
+    md.buttons([...(unsold > 0n && !err ? [listRest()] : []), { label: 'Close', primary: true, onClick: () => { S.onSellsChanged = null; md.close(); } }]);
     if (err) ctx.onError?.(err);
     const pump = async () => { for (let i = 0; i < 40 && document.body.contains(md.body); i++) { await trackSells(); await sleep(SELL_TRACK_MS); } };
     pump();
@@ -1380,6 +1426,7 @@ function createMarket(host, ctx) {
       } else { bidStep.status = 'skipped'; bidStep.note = 'everything filled'; if (wtStep) wtStep.status = 'skipped'; }
     }
     paint(err ? 'Order not completed' : bidId ? 'Your bid is live' : 'Done');
+    md.unlockEscape();
     md.buttons([{ label: 'Done', primary: true, onClick: () => md.close() }]);
     if (err) ctx.onError?.(err);
     endBusy();
@@ -1399,6 +1446,7 @@ function createMarket(host, ctx) {
       await ctx.after.listed?.({ amount: shape.listedBase, result: r });
     } catch (e) { step.status = 'failed'; step.note = ctx.friendlyError(e); err = e; }
     md.set(`<h2>${err ? 'Listing not completed' : 'Listed'}</h2>${stepsHtml([step])}${err ? '' : '<p class="bm-q bm-muted">It shows in the book within a few seconds. Cancel from Your orders.</p>'}`);
+    md.unlockEscape();
     md.buttons([{ label: 'Done', primary: true, onClick: () => md.close() }]);
     if (err) ctx.onError?.(err);
     endBusy();
@@ -1437,19 +1485,21 @@ function createMarket(host, ctx) {
     if (!lv) return;
     if (lv.flag === 'mine') { el.orders.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return; }
     if (side === 'ask') {
-      // Everything up to and including this level, at this level's price.
-      const upTo = S.book.asks.filter((a) => !a.mine && a.unit <= lv.unit * (1 + 1e-9));
+      // Everything up to and including this level, at this level's price. A level that
+      // needs the seller's confirmation turns that option on first, so the cheaper rows
+      // counted below are ones the quote can actually buy.
+      if (!lv.rows[0].instant) S.includeMaker = true;
+      const upTo = S.book.asks.filter((a) => !a.mine && a.unit <= lv.unit * (1 + 1e-9) && (S.includeMaker || a.instant));
       const need = upTo.reduce((t, a) => t + a.amount, 0n);
       const best = eligibleAsks()[0]?.unit || lv.unit;
-      if (!lv.rows[0].instant) S.includeMaker = true;
       S.slip = SLIPPAGE_CHOICES.find((p) => best * (1 + p / 100) >= lv.unit) ?? SLIPPAGE_CHOICES[SLIPPAGE_CHOICES.length - 1];
       prime({ side: 'buy', type: 'market', receiveBase: need });
     } else {
-      const upTo = S.book.bids.filter((b) => !b.mine && b.unit >= lv.unit * (1 - 1e-9));
+      if (lv.flag === 'manual') S.includeManual = true;
+      const upTo = S.book.bids.filter((b) => !b.mine && b.unit >= lv.unit * (1 - 1e-9) && (S.includeManual || b.auto));
       const need = upTo.reduce((t, b) => t + b.amount, 0n);
       const m = me();
       const give = m?.assetBase != null && m.assetBase > 0n && m.assetBase < need ? m.assetBase : need;
-      if (lv.flag === 'manual') S.includeManual = true;
       const best = eligibleBids()[0]?.unit || lv.unit;
       S.slip = SLIPPAGE_CHOICES.find((p) => best * (1 - p / 100) <= lv.unit) ?? SLIPPAGE_CHOICES[SLIPPAGE_CHOICES.length - 1];
       prime({ side: 'sell', type: 'market', sellBase: give });

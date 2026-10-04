@@ -398,6 +398,47 @@ await test('at my price warns when you already have an open order at that price'
   assert.doesNotMatch(await page.textContent('[data-k=quote]'), /already have an open/);
 });
 
+await test('a limit buy never fills more than the amount asked for', async (page) => {
+  await page.evaluate(() => { const W = window.__w; W.listings = [W.preauth('big', 200, 1000)]; });
+  await mount(page); await settle(page, 300);
+  await page.click('[data-act=type][data-v=limit]'); await settle(page);
+  await page.fill('[data-k=limit-price]', '10');
+  await page.fill('[data-k=amount]', '100'); await settle(page);
+  await clickGo(page);
+  assert.doesNotMatch(await page.textContent('.bm-modal'), /Fills now/);
+  await modalPrimary(page);
+  await waitModal(page, /bid is live/i);
+  assert.equal((await calls(page, 'takeAsk')).length, 0);
+  assert.equal((await calls(page, 'placeBid'))[0].args.amountBase, '10000000000');
+});
+
+await test('a buy far above the last trade says so before review', async (page) => {
+  await page.evaluate(() => { const W = window.__w; W.listings = [W.preauth('hi', 10, 3000)]; });
+  await mount(page); await settle(page, 300);
+  await page.fill('[data-k=amount]', '3000'); await settle(page);
+  assert.match(await page.textContent('[data-k=quote]'), /above the last trade/);
+});
+
+await test('review re-reads a stale book and shows the new quote instead of a gone offer', async (page) => {
+  await page.evaluate(() => { const W = window.__w; W.listings = [W.preauth('p1', 10, 2000), W.preauth('p2', 10, 2600)]; });
+  await mount(page); await settle(page, 300);
+  await page.fill('[data-k=amount]', '2000'); await settle(page);
+  await page.evaluate(() => { window.__ctl.state.lastOk = Date.now() - 60_000; window.__w.listings = [window.__w.preauth('p2', 10, 2600)]; });
+  await page.click('[data-k=go]'); await settle(page, 400);
+  assert.equal(await page.$$eval('.bm-modal', (n) => n.length), 0);
+  assert.ok((await calls(page, 'toast')).some((c) => /Prices changed/.test(c.args.m)));
+});
+
+await test('a finished order closes with Escape', async (page) => {
+  await page.evaluate(() => { const W = window.__w; W.listings = [W.preauth('p1', 10, 2000)]; });
+  await mount(page); await settle(page, 300);
+  await page.fill('[data-k=amount]', '2000'); await settle(page);
+  await clickGo(page); await modalPrimary(page);
+  await waitModal(page, /Bought/);
+  await page.keyboard.press('Escape'); await settle(page, 100);
+  assert.equal(await page.$$eval('.bm-modal', (n) => n.length), 0);
+});
+
 await b.close();
 srv.close();
 console.log(`btc-market flows: ${passed} passed${process.exitCode ? ' — FAILURES above' : ''}`);

@@ -196,4 +196,19 @@ t('re-route only on errors that mean the offer moved and nothing was committed',
   assert.equal(isRerouteable(Object.assign(new Error('bid already claimed'), { noReroute: true })), false);
 });
 
+t('a limit buy of N tokens never fills more than N from cheaper whole lots', () => {
+  const now = NOW;
+  const lot = (id, tac, sats) => ({ kind: 'preauth', asset_id: 'aa', sale_id: id, seller_pubkey: '02' + id, asset_opening: { amount: String(BigInt(tac) * 100000000n) }, min_price_sats: sats, expiry: now + 99999, created_at: now - 10 });
+  const b = buildBook({ assetId: 'aa', decimals: 8, listings: [lot('a', 200, 1000), lot('b', 80, 600)], bids: [], nowSec: now });
+  const want = parseAmount('100', 8);
+  const total = satsForAmount(want, 10, 8);
+  const loose = planBuy(b, { spendSats: total, maxUnit: 10 });
+  assert.equal(loose.amount, 20000000000n);
+  const capped = planBuy(b, { spendSats: total, maxBase: want, maxUnit: 10 });
+  assert.ok(capped.amount <= want);
+  assert.equal(capped.fills.length, 1);
+  assert.equal(capped.fills[0].ask.raw.sale_id, 'b');
+  assert.ok(capped.skipped.some((s) => s.ask.raw.sale_id === 'a' && s.reason === 'too-big'));
+});
+
 console.log(`btc-book: ${n} checks passed`);
