@@ -643,7 +643,7 @@ A payment whose proof has left your device holds its notes until the chain shows
 The page reads the pool's logs for the whole chain and finds your notes on your device, so no node is asked about your notes. A node is asked the balance of your standing deposit address with each refresh. One-time deposit addresses are read one per request, from randomly chosen nodes, seconds apart. A proof sent by your wallet is checked through your wallet's own node; a relayed proof is checked by the relay. Under Endpoints you can set your own nodes and relay.
 
 **Can I use my own node?**
-Yes: under Endpoints, enter one node URL per chain (your own node, or a private RPC). `[pending release]` On the anon.wei page, the reads that say what you are doing then go only to it: the names you pay (read on Ethereum), swap routes, your deposit addresses and the pool's checks. The pool's history, the same for every reader, is read through your node first, with the public nodes as a backup; a name is never read through the backup. Reads that name your wallet go through your wallet's own node either way.
+Yes: under Endpoints, enter one node URL per chain (your own node, or a private RPC). `[pending release]` On the anon.wei page, the reads that say what you are doing then go only to it: the names you pay (read on Ethereum), swap routes, your deposit addresses and the pool's checks. Only the pool's history, the same for every reader, falls back to the public nodes, and only when your node does not serve it; nothing else is read through them. Reads that name your wallet go through your wallet's own node either way.
 
 ### Deposit addresses and payment links
 
