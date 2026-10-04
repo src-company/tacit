@@ -642,6 +642,9 @@ A payment whose proof has left your device holds its notes until the chain shows
 **Which nodes learn what?**
 The page reads the pool's logs for the whole chain and finds your notes on your device, so no node is asked about your notes. A node is asked the balance of your standing deposit address with each refresh. One-time deposit addresses are read one per request, from randomly chosen nodes, seconds apart. A proof sent by your wallet is checked through your wallet's own node; a relayed proof is checked by the relay. Under Endpoints you can set your own nodes and relay.
 
+**Can I use my own node?**
+Yes: under Endpoints, enter one node URL per chain (your own node, or a private RPC). `[pending release]` On the anon.wei page, the reads that say what you are doing then go only to it: the names you pay (read on Ethereum), swap routes, your deposit addresses and the pool's checks. The pool's history, the same for every reader, is read through your node first, with the public nodes as a backup; a name is never read through the backup. Reads that name your wallet go through your wallet's own node either way.
+
 ### Deposit addresses and payment links
 
 **What is a deposit address?**
@@ -682,7 +685,7 @@ View-level state: the tree's right edge, the paths of your notes, and each note'
 ### Names
 
 **What does a name lookup reveal?**
-The nodes asked see the name, and your IP address. Nothing goes on chain. The page asks two nodes first, and counts an answer when two agree. It reads the name again just before paying, and sends nothing if the name has moved.
+The nodes asked see the name, and your IP address. Nothing goes on chain. The page asks two nodes first, and counts an answer when two agree. It reads the name again just before paying, and sends nothing if the name has moved. `[pending release]` On the anon.wei page, reads that name your wallet go to your wallet's own node, so the nodes that see a name do not also see your wallet. With your own Ethereum node set under Endpoints, only it sees the names you look up. A link that carries a `tacit1…` address instead of a name needs no lookup.
 
 **What must a name publish?**
 To receive a send or a shield, a `.wei`, `.gwei` or `.eth` name must publish a Tacit address (`tacit1…` or `bp1…`) in its `finance.tacit` text record. To receive a withdrawal, it needs only an address record. `.base.eth` names and names whose records are kept off chain are not read.
