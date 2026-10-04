@@ -158,6 +158,9 @@ function transact(
 | `< 0` | Withdraw `-extAmount` wei to `recipient` (must be non-zero). |
 | `0` | Private transfer inside the pool. |
 
+A withdrawal to a contract first calls it with 100,000 gas. If the contract does not accept the ETH, the pool delivers
+it by a forced transfer that runs no code on the contract (`forceSafeTransferETH`), so the withdrawal does not revert.
+
 `fee` goes to `relayer` in the same call (a non-zero fee needs a non-zero relayer). The contract recomputes the asset,
 `extDataHash` and `publicAmount` itself, so recipient, amounts, relayer, fee and memos cannot be altered after the
 owner signs. `pB` takes snarkjs's `pi_b` with each pair swapped: `[[b01, b00], [b11, b10]]` for `[[b00, b01], [b10, b11]]`.
@@ -166,7 +169,7 @@ owner signs. `pB` takes snarkjs's `pi_b` with each pair swapped: `[[b01, b00], [
 current root (`oldRoot == root()`, `startIndex == nextIndex()`; `head()` returns both in one call). If another
 transaction lands first it reverts with `StaleRoot` or `WrongInsertionIndex`: rebuild the witness against the new leaves
 and prove again; the owner's signature does not change. Submit through private order flow. A transaction with no outputs
-(a full withdrawal) inserts nothing and never goes stale. Membership may be proven against any root the pool has held
+(a full withdrawal) inserts nothing and never goes stale. `[pending release]` The anon.wei page always fills both outputs (an unused one is a zero-value note under a key no one holds), so each of its proofs inserts and is bound to the current head, and a payment without change looks like one with change. Membership may be proven against any root the pool has held
 (`everKnownRoot`); `rootSize(root)` is the leaf count the tree had when that root was current.
 
 **Indexing.** Rebuild the tree from `Transact` events in `firstIndex` order, appending `(outLeaf0, outLeaf1)`; skip
@@ -175,6 +178,21 @@ notes from the router's `Received` events. Key notes by
 `(leaf, index)`: the same leaf can appear twice if a deposit box is paid twice, and each copy is separately spendable.
 `isSpent(nullifiers)` checks many notes in one call but tells the node which nullifiers are yours; a wallet scanning
 `Transact` events already has every spent nullifier (`nf0`, `nf1`).
+
+
+### What each action shows
+
+| Action | Public | Hidden |
+|---|---|---|
+| Deposit (`extAmount > 0`) | The depositing wallet and the amount. | Whose note it creates. |
+| Private transfer (`extAmount = 0`) | The nullifiers, the two new leaves, the encrypted memos, and who submitted it (relayer and `fee`, or the sending wallet). | Sender, recipient and amount. |
+| Withdrawal (`extAmount < 0`) | `recipient`, the amount, `relayer`, `fee`, and who submitted it. | Which deposit funds it, and the value of any change note. |
+| Plain payment to a receive box | The payer, the amount and the box address. | Which wallet owns the box. |
+| `sweepReceive` | The amount swept and the box's note key (`npk`) in the call data. | Anything tying `npk` to the wallet's shielded address. |
+
+The pool hides which deposit pays a withdrawal and who pays whom in a private transfer. While the pool is small, the
+timing and amount of a withdrawal can match it to a deposit. A spend submitted from the user's own wallet shows that
+wallet as the sender; a relayed spend shows the relayer.
 
 ## Router
 
@@ -233,6 +251,9 @@ has no code and takes any payment, including a plain 21,000-gas transfer from an
 - Never pay a receive box later in a transaction that swept it. A sweep deletes the box's account, with any ETH it then
   holds, when its transaction ends, so a payment made after the sweep in that same transaction, `fundReceive` included,
   is destroyed. A plain transfer, or a call that pays before doing anything else, is safe.
+- A payout made by a contract (a Safe transaction, a bridge withdrawal finalization) should go to a receive box that has
+  never received a payment, or straight into the pool by shielding: a box that has never been paid cannot have been
+  swept earlier in the same transaction.
 
 **Receive address (canonical, every app shows the same one).** The address a wallet displays depends on every
 value below, so all apps use exactly these:
@@ -282,6 +303,12 @@ its capped fee covers the gas, so on Ethereum a small refund waits there until i
 cannot target the pool, the router or the escrow itself. Client helpers in `dapp/evm-pool-gateway.js`: `callIntent`,
 `callEscrowAddress`, `callWithdrawalWitness`, and call builders for V1 (`v1WrapCall`, `v1ZapShieldedNoteCall`,
 `v1ZapCanonicalNoteCall`).
+
+Rules the router enforces: `withdrawAndCall` needs a negative `extAmount` and a recipient equal to
+`callEscrowOf(intent)`; it reverts after `deadline`; `refund` must be non-zero; `outTokens` and `minOuts` must be the
+same length, and `to` must be non-zero when there are outputs. Each output token's whole escrow balance goes to `to`
+(ETH is `address(0)`), so ETH listed as an output leaves nothing for `refund`. The calls, their targets and values, the
+outputs, `refund` and the amount are public call data; which note paid is not.
 
 **Funding with a call.** Contracts and bridge messages that deliver funds by calling a contract use
 `fundDeposit(intent, hint)` (pays a deposit box exactly `intent.amount` and publishes the keeper hint in
@@ -362,6 +389,14 @@ address the wallet expects for the chain. A chain config can set `relayer` and `
 empty address through a relayer leaves no on-chain link to the depositor's wallet beyond what the amounts and timing
 show.
 
+`[pending release]` The anon.wei page also holds a quote's fee to the larger of 0.0001 ETH and 8 times the cost of the
+quoted gas at the node's current gas price.
+
+**What the relay sees.** Your IP address; the transaction it is asked to send (all of which becomes public); at
+`/reserve`, the new leaves and the nullifiers being spent; at `/receive`, the chain, note key and fee cap of each box
+it is asked to watch; and at `/events`, the block a history read starts from. It cannot change the recipient, amount,
+relayer or fee, and it holds no key that can spend. Sending from the user's own wallet is always possible.
+
 With the keeper service (each chain's `keeper` URL and `keeperAddress` are in `contracts/deployments/evm-pool.json`):
 
 1. `GET /evm-pool/keeper/quote` → `{ relayer, fee, sweepFee, receiveMin, … }`: the keeper's address and the fee it
@@ -402,6 +437,18 @@ hide a note (by withholding its memo or `Received` event, or by listing its null
 A `409` with `stale: true` means another transaction landed first: rebuild against the new root and prove again
 (the owner's signature does not change). A `400` carrying `needFee` means gas moved; re-quote. Deposits are not
 relayed, since a deposit is paid by whoever sends it.
+
+
+## Keys and recovery
+
+The Tacit identity key is a hash of an Ethereum wallet's signature over one fixed message (`dapp/identity-message.js`),
+the same in every Tacit app, so one wallet opens the same balances anywhere. The signature is the key: sign it only in a
+Tacit app you trust. A smart-contract wallet cannot open a key. Everything else derives from the key (the wallet seed,
+the Secret Sats address, every receive box), so balances rebuild from the key and the chain alone.
+
+A wallet stores view-level state only: the tree's right edge, the paths of its notes, and each note's position, value and
+shared secret. Spending keys are derived when needed and never stored. The anon.wei page seals that state under a key
+derived from the view key.
 
 ## Standalone wallet
 
@@ -453,7 +500,7 @@ spend that burns `gas` when given. A spend the wallet must merge notes for first
 refused before the first when the notes cannot cover it. `w.receive.address` is the private ETH address and
 `w.receive.waiting()` what sits there unswept. This module does not register its private ETH address with a keeper;
 `w.receive.sweep()` collects it. With `relay`, confirmed history is read from the keeper's feed first (checked as
-above); `w.rescan()` rebuilds from chain logs alone. `w.terminate()` stops the worker. Synced state stays small as the
+above); `w.rescan()` rebuilds from chain logs alone. `w.terminate()` stops the worker. `makeEvmPoolWallet` accepts `confirmations` (default 3): history is kept once it is that many blocks deep. The anon.wei page uses 3 on Ethereum and 10 on Base and Robinhood Chain. Synced state stays small as the
 pool grows: the tree's right edge and the paths of the wallet's own notes.
 
 ## Moving to an L2
@@ -465,6 +512,10 @@ own private ETH address there (a receive box is at the same address on every cha
 keeper sweeps it into a note once the box is registered there (`watchReceive()` on the L2 wallet, or
 `POST /evm-pool/keeper/receive`) and holds at least the keeper's `receiveMin`; a smaller amount waits for the owner's
 sweep. Gateway builder: `bridgeEthCall`.
+
+`[pending release]` The anon.wei page offers the same under Withdraw ("My Base", "My Robinhood"), sent to a new one-time
+receive box that has never been used or shown, registered with that chain's keeper before the move, and only for amounts
+at or above that keeper's `receiveMin`.
 
 | To | Call from the escrow | Notes |
 |---|---|---|
@@ -487,6 +538,186 @@ that the funds' origin is any V1 note holder rather than a public wallet.
 | Pool → V1 | `withdrawToV1(tx, intent)` with `intent.assetId` = the native ETH id above and `intent.commit` = the V1 note commitment. |
 | Pool → V1 shielded note (any asset) | `withdrawAndCall` with a `v1ZapShieldedNoteCall` or `v1ZapCanonicalNoteCall`: swap and shield into V1 in the same transaction. |
 | Pool → anything | `withdrawAndCall(tx, intent)` (above), on every chain. On Ethereum, a withdrawal can also name `ConfidentialRouter.escrowAddressFor(recipe)`, run by anyone with `activateExit(recipe)`. |
+
+
+## Questions
+
+Answers for people using the private ETH pool through anon.wei or tacit.finance, and for integrators. Chains: Ethereum (1), Base (8453), Robinhood Chain (4663). Items marked `[pending release]` describe the next version of the anon.wei page.
+
+### What is public and what is hidden
+
+**What does each action show on chain?**
+
+| Action | Public | Hidden |
+|---|---|---|
+| Shield (deposit) | The depositing wallet and the amount. | Whose private balance receives it. |
+| Private send | That a transaction used the pool, the spent notes' nullifiers, the two new note commitments, and who submitted it (the relay and its fee, or your wallet). | Who pays, who receives, and the amount. |
+| Withdraw (unshield) | The recipient address, the amount, who submitted it, and the relay's fee. | Which deposit funds it, and what remains in your balance. |
+| Payment to a deposit address | An ordinary transfer: the payer, the amount, and the address. | Which wallet owns the address. |
+| Sweep of a deposit address into the pool | The amount swept, and the owner's note key in the call data. | Anything that ties the note key to your shielded address. |
+
+**Where does the privacy end?**
+The pool hides which deposit pays a withdrawal, and who pays whom in a private send. Amounts and addresses of deposits and withdrawals are public. While the pool is small, the timing and amount of a withdrawal can match it to a deposit.
+
+**What changes if my wallet sends the transaction instead of the relay?**
+The wallet's address shows as the sender. For a withdrawal or a private send, anyone can tell that wallet used the pool; the amount of a private send and the source of a withdrawal stay hidden. For a shield, your wallet always sends the transaction, because a deposit is paid by whoever sends it. A relayed transaction shows the relay's address as sender and the fee it was paid. Nothing names your wallet.
+
+**Can I prove I paid someone?**
+Yes. A spend's one-time key is derived from your key, the spend's first nullifier and the output position, so the reference wallet can derive it again later. With the recipient's address, anyone can check that the output pays them and read the amount (`paymentKey`, `verifyPayment` in `dapp/evm-pool-wallet.js`). Deposits use a random key and have no such proof.
+
+### Withdrawing well
+
+**What does "linked" mean when a withdrawal goes to my own wallet?**
+It means the same address appears on both sides: it shielded, and it received a withdrawal. That address ties the two together. A withdrawal sent from your own wallet has the same effect: the wallet shows as the sender. To keep deposits and withdrawals apart, withdraw to an address that never shielded, and let the relay send it.
+
+**Does repeating a withdrawal address, or leaving a balance, matter?**
+Two withdrawals to one address tie to each other. They do not tie to your deposits or to what stays in your balance. You do not need to empty your balance: what stays in the pool is a new note whose value is not visible. Take out the part you need.
+
+**Which amounts and timing work best?**
+Use a round amount and let time pass between a deposit and its withdrawal. An exact amount soon after a deposit of the same size is the easiest match to make. On a form whose amount shows on chain, the page's Max rounds down to two significant digits (for example 1.2345 ETH becomes 1.2 ETH) and says what stays private.
+
+**Where should a withdrawal go?**
+To a fresh address, through the relay. The page refuses your own deposit addresses as a destination, and asks you to confirm before paying a contract.
+
+**What happens when I withdraw to a contract?**
+The pool sends the ETH with a limited gas allowance (100,000 gas). If the contract does not accept it, the pool still delivers it by a forced transfer that runs no code on the contract. Pay a contract only if it is built to hold ETH.
+
+**What if I have many small notes?**
+One transaction spends at most two notes. A balance in more than two parts needs combining first, and each combine pays the relay's fee once (or gas, from your wallet). The page offers Combine when this applies, and leaves notes worth less than a step's fee as they are.
+
+### The relay
+
+**What does the relay see?**
+Your IP address, as any web server does. The transaction it is asked to send, which becomes public anyway: proof, recipient, amount, fee and encrypted memos. When you reserve a slot, the new note commitments and the nullifiers of the notes you spend. The deposit addresses you ask it to watch (chain, note key, fee cap). The block number your history read starts from. The page also asks each chain's relay for its fee when you start signing in.
+
+**What can the relay not do?**
+Redirect funds or change an amount. The proof binds the recipient, amount, relayer address and fee, and the pool recomputes that binding on chain. A copy of the transaction sent by someone else still pays the relay named in it. The relay never holds a key that can spend: a spend needs your signature inside the proof.
+
+**How is the relay's fee bounded?**
+The page checks each quote before anything is signed:
+- the quote is for this chain and this pool;
+- the relay address is the one the page expects for the chain;
+- the fee is at most a fixed ceiling per chain: 0.05 ETH on Ethereum, 0.002 ETH on Base and on Robinhood Chain;
+- if the fee later moves more than 20% above the one you were shown, the page asks you to confirm again;
+- `[pending release]` the fee is also at most the larger of 0.0001 ETH and 8 times the cost of the quoted gas at the node's current gas price.
+
+A relay you set under Endpoints is held to the ceiling, not to the default relay's address.
+
+**Can I always send from my own wallet?**
+Yes. The pool does not require a relay. Choose "send from my wallet" on the form, or leave out `relay` in the standalone wallet. You prove on your device and pay the gas, and your address shows as the sender.
+
+**What if the relay does not answer?**
+A payment whose proof has left your device holds its notes until the chain shows whether it landed. Trying again reuses the same notes, so the payment cannot happen twice.
+
+**Which nodes learn what?**
+The page reads the pool's logs for the whole chain and finds your notes on your device, so no node is asked about your notes. A node is asked the balance of your standing deposit address with each refresh. One-time deposit addresses are read one per request, from randomly chosen nodes, seconds apart. A proof sent by your wallet is checked through your wallet's own node; a relayed proof is checked by the relay. Under Endpoints you can set your own nodes and relay.
+
+### Deposit addresses and payment links
+
+**What is a deposit address?**
+A standing Ethereum address for one note key of yours. Anyone can pay it, any number of times, from any wallet or exchange. Anyone can then sweep its balance into the pool as a note for you. The same address works on every chain.
+
+**What can I send to it?**
+Plain ETH transfers, from any wallet or exchange. Only the pool's asset leaves a deposit address, so anything else sent there stays there. A plain transfer works because the address has no code between sweeps: a sweep creates the box, empties it and removes it in one transaction.
+
+**Who sweeps it, and what does that cost?**
+Anyone can. A relay keeps at most 0.25% of the swept balance, and only when that covers its gas. You can sweep from your own wallet for no fee, at any amount. Ask the relay to watch an address, or fund it through the router's `fundReceive`, so the relay knows to look.
+
+**What do payments to one deposit address show?**
+They are public and linked to each other, like any reused address. A sweep shows the amount. Spending the swept notes shows nothing about the note key.
+
+**Why should each payer get their own address?**
+One-time addresses keep one payer's payment apart from another's. Your key issues them, nothing on chain ties two of them together, and your key finds them again from the key alone.
+
+**What does a payment link reveal?**
+A link carries a deposit address and your signature over it, made with the view key of your pool address. The payer's page uses it to check that the address is yours. Anyone who holds the link can tell the address is yours.
+
+**How should a contract pay a deposit address?**
+A sweep removes the box's code at the end of its transaction, so ETH sent to that box later in the same transaction is lost with it. A payout made by a contract (a Safe transaction, a bridge withdrawal finalization) should therefore go to a deposit address that has never received a payment, or straight into the pool by shielding.
+
+### Keys and recovery
+
+**Where does my key come from?**
+Your wallet signs one fixed message, and the key is a hash of that signature. The message is the same in every Tacit app (`dapp/identity-message.js`), so the same wallet opens the same balances anywhere. The first sign-in in a browser asks for the signature twice, to confirm your wallet signs the same way each time. The signature is the key: sign it only on anon.wei.limo or tacit.finance.
+
+**Can I sign in with a smart-contract wallet?**
+No. A key opens only from an ordinary account (an account with an EIP-7702 delegation works).
+
+**What do I back up?**
+Nothing besides your wallet. Balances, notes and deposit addresses rebuild from the key and the chain. The page finds up to 20 unused one-time deposit addresses on every chain, so use the ones you have issued before issuing more.
+
+**What does the browser store?**
+View-level state: the tree's right edge, the paths of your notes, and each note's position, value and shared secret. It is sealed under a key derived from your view key, under storage names derived from it too. Spending keys are derived when needed and not stored. The proving key (about 33 MB) is cached and checked against its SHA-256 before each use. "Rebuild" reads the chain's logs alone.
+
+### Names
+
+**What does a name lookup reveal?**
+The nodes asked see the name, and your IP address. Nothing goes on chain. The page asks two nodes first, and counts an answer when two agree. It reads the name again just before paying, and sends nothing if the name has moved.
+
+**What must a name publish?**
+To receive a send or a shield, a `.wei`, `.gwei` or `.eth` name must publish a Tacit address (`tacit1…` or `bp1…`) in its `finance.tacit` text record. To receive a withdrawal, it needs only an address record. `.base.eth` names and names whose records are kept off chain are not read.
+
+### Contracts
+
+**Who controls the contracts, and what if a change is needed?**
+No one. The pool and router have no owner, no pause and no upgrade. Nothing can freeze or seize funds. The pool can be called directly; the router is optional periphery. A change ships as a new contract at a new address. Users withdraw from the old pool and shield into the new one.
+
+**Where are they?**
+The pool is at `0x000000c2A20657CE25f2Ba99737933D031AFBEE9` and the router at `0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5`, the same on all three chains. Do not send ETH to either address: a plain transfer to the pool reverts, and the router hands a stray balance to its next caller.
+
+### Withdraw and call
+
+**What is it?**
+`router.withdrawAndCall(tx, intent)` withdraws and, in the same transaction, runs the calls in a `CallIntent`: a swap, a bridge deposit, a wrap into V1, or any call. The withdrawal's recipient is the intent's escrow address, so the proof binds the whole intent and a relayer can change neither the calls nor where their outputs go.
+
+**What is public?**
+The calls (targets, values, call data), the outputs and their minimums, the refund address, the amount, and the relay's fee. Which note paid stays hidden.
+
+**What do `minOuts`, `deadline` and `refund` do?**
+- Each output token's whole escrow balance goes to `to`, and the transaction reverts if it is below that token's `minOuts`.
+- Any call that fails reverts the whole transaction, including the withdrawal, so nothing is spent.
+- Whatever is left of the pool asset after the calls goes to `refund`.
+- The intent runs only until `deadline`. After it, anyone can return the escrow's funds to `refund` with `refundCall`.
+- Calls cannot target the pool, the router or the escrow.
+
+**Can a withdrawal arrive as a token?**
+`[pending release]` On the anon.wei page, yes: under Withdraw, pick a token from the onchain token list (token.list.wei).
+The withdrawal pays a call intent whose one call is zRouter (`0x000000000000FB114709235f1ccBFfb925F600e4`), along the
+route the onchain quoter zQuoter (`0x000000bd2db80567c23e353ca95a251c573cbf9b`) finds, and zRouter sends the token
+straight to the address you give. zRouter enforces the route's minimum, so a short fill reverts the withdrawal. The
+quote is read with a stand-in recipient, so the nodes asked do not learn the address, and two nodes must return the
+same route. The token, the amount and the address are public; which deposit paid is not.
+
+**How do I get a refund back into the pool?**
+Make `refund` one of your own deposit addresses (`callRefundBox`). A relay sweeps it when its capped fee covers its gas, and you can sweep it yourself.
+
+### Several chains
+
+**Are the pools connected?**
+No. Each chain has its own pool, and a note is bound to its chain. One key opens your balance on all three, and a deposit address is the same on all three.
+
+**How does ETH move between chains?**
+One withdraw-and-call from the Ethereum pool through the rollup's own bridge, to a deposit address of yours on the rollup, which that chain's relay sweeps into a note.
+- Base: `L1StandardBridge.depositETHTo`.
+- Robinhood Chain: `Inbox.createRetryableTicket`, with the call's value covering the ticket's fees. Unused gas refunds to your address on the rollup.
+
+The wallet's `bridgeOut` does this and starts from the Ethereum pool only. `[pending release]` The anon.wei page gains the same under Withdraw, "My Base" and "My Robinhood", sent to a new deposit address of yours. It arrives in minutes. The amount and the address are public on both chains; which deposit it came from is not. On arrival the rollup's relay keeps up to 0.25%.
+
+To move ETH back, withdraw on the rollup and use the rollup's own bridge. No faster path is built into the pool.
+
+### Compared with other designs
+
+**Arbitrary amounts or fixed denominations?**
+Notes hold any amount below 2^120 wei, so you pay and withdraw exactly what you mean. A pool with fixed denominations gives every deposit a standard size. Arbitrary amounts mean an unusual amount is easier to match, which is why the page rounds Max and why round amounts help.
+
+**Why two inputs and two outputs?**
+The circuit has 2 inputs and 2 outputs. A transaction can spend two notes and create a payment and change. A balance in more than two parts is combined first.
+
+**Where are proofs made?**
+In your browser, in web workers. The page downloads the proving files once (about 33 MB), checks them against pinned hashes, and keeps them. The standalone wallet checks the same hashes. The page checks each proof it sends from your wallet against the pool's verifier first; the relay checks the proofs it sends.
+
+**Contracts: immutable or upgradeable?**
+This pool is immutable. A design with governance can change its rules after deployment; this one cannot, so a change means a new pool and a move (see Contracts).
 
 ## Checklist
 
