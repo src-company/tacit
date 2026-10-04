@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-1Dbd3n4www4pATVnd8Fag6ekv8nLQcdACFH50/+a4fs=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-rbb/W1su2ghB50aPSNJYdDxCU1splbr/z6kMfXDMyQk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -919,7 +919,7 @@ const RETRY = {};
 const sayRetry = (el, e, name) => say(el, html`<span class="err">${errText(e)}</span> <button class="link" type="button" data-retry="${name}">Try again</button>`);
 document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-retry]'); if (b) RETRY[b.dataset.retry]?.(); });
 // Quote-time notes live in the receipt; the status line only reports actions.
-const warn = (rc, view) => { rc.insertAdjacentHTML('beforeend', html`<p class="note err">${view}</p>`.s); rc.hidden = false; };
+const warn = (rc, view) => { rc.insertAdjacentHTML('beforeend', html`<p class="note err" role="alert">${view}</p>`.s); rc.hidden = false; };
 const quoteErr = (rc, e) => { mount(rc, html``); warn(rc, errText(e)); };
 // A status redrawn as it counts: when only its [data-tick] part (hidden from screen readers) changed, that part alone is
 // updated, so the line is announced once rather than at every step.
@@ -2064,7 +2064,7 @@ function wireSignIn(root, id, after) {
         else if (k === 'local') await open.local({ pubHex: readJson('tacit-wallet-v1:mainnet')?.pub });
         else await open[k]();
         after?.();
-      } catch (e) { if (!/cancel/i.test(e?.message || '') && e?.name !== 'NotAllowedError' && !e?.unlockCancelled) toast(errText(e), true); }
+      } catch (e) { if (!/cancel/i.test(e?.message || '') && e?.name !== 'NotAllowedError' && e?.code !== 4001 && !e?.unlockCancelled) toast(errText(e), true); }
       finally { signing = false; rest.forEach((x) => { x.disabled = false; }); }
     });
   };
@@ -2182,10 +2182,16 @@ async function permitSig({ token, name, spender, value, deadline, status }) {
 }
 async function waitTx(hash, { timeoutMs = 10 * 60e3, chainId = 1 } = {}) {
   const r = await Promise.race([receipt(hash, chainId), sleep(timeoutMs).then(() => null)]);
-  if (!r) throw new Error(`Still pending. Check the transaction on ${chainId === 1 ? 'Etherscan' : 'its explorer'}.`);
+  if (!r) throw Object.assign(new Error(`Still pending. Check the transaction on ${chainId === 1 ? 'Etherscan' : 'its explorer'}.`), { pending: true });
   if (r.status !== '0x1') throw new Error('The transaction reverted.');
   return r;
 }
+// A sent transaction that has not confirmed yet: the form is spent with it, so pressing again would send a second one.
+const pendingSent = (status, e, hash, base = SCAN) => {
+  if (!hash || !e?.pending) return false;
+  say(status, html`<span class="err">Sent, not confirmed yet.</span> ${txLink(hash, base)} Check it there before sending anything again.`);
+  return true;
+};
 const txLink = (hash, base = SCAN) => html`<a href="${base}/tx/${hash}" target="_blank" rel="noopener">${short(hash, 6)} ↗</a>`;
 // The paying account's ETH, or null while there is none (a chosen wallet not connected yet: the action connects it).
 async function ethBalance() { if (!S.address) return null; try { return BigInt(await rpc('eth_getBalance', [S.address, 'latest'])); } catch { return null; } }
@@ -2309,20 +2315,22 @@ render.wallet = () => {
   }
   $$('[data-copy]', f).forEach((b) => b.onclick = () => copy(b.dataset.copy));
   const go = $('#ac-go');
-  if (go) go.onclick = () => busy(go, async () => {
+  if (go) go.onclick = () => busy(go, async (run) => {
+    let hash, base;
     try {
       const value = parseUnits($('#ac-mv').value), to = WAL.mode === 'add' ? a.address : recipientOf($('#ac-to').value);
       if (!value) throw new Error('Enter an amount.');
       const out = WAL.mode === 'out', tac = out && WAL.asset === 'tac', chainId = out && !tac ? WAL.chain : 1;
       const c = DEVICE_CHAINS.find((x) => x.chainId === chainId);
-      const label = tac ? `Send ${fmt(value, 18, 2)} TAC out` : out ? `Send ${fmt(value, 18, 6)} ETH out${chainId === 1 ? '' : ` on ${c.name}`}` : `Add ${fmt(value, 18, 6)} ETH to your Tacit account`;
-      const hash = await sendTx(tac ? { to: ADDR.tac, data: SEL.transfer + addrWord(to) + word(value), via: 'tacit', label } : { to, data: '0x', value, via: out ? 'tacit' : 'wallet', chainId, label });
+      const label = tac ? `Send ${fmt(value, 18, 6)} TAC out` : out ? `Send ${fmt(value, 18, 6)} ETH out${chainId === 1 ? '' : ` on ${c.name}`}` : `Add ${fmt(value, 18, 6)} ETH to your Tacit account`;
+      base = c.explorer;
+      hash = await sendTx(tac ? { to: ADDR.tac, data: SEL.transfer + addrWord(to) + word(value), via: 'tacit', label } : { to, data: '0x', value, via: out ? 'tacit' : 'wallet', chainId, label });
       say(status, html`Sending… ${txLink(hash, c.explorer)}`);
       await waitTx(hash, { chainId });
       clearField($('#ac-mv'));
       say(status, html`<span class="ok">${WAL.mode === 'add' ? 'Added.' : 'Sent.'}</span> ${txLink(hash, c.explorer)}`);
       rerender('wallet');
-    } catch (e) { sayErr(status, e); }
+    } catch (e) { if (pendingSent(status, e, hash, base)) { clearField($('#ac-mv')); run.release(true); } else sayErr(status, e); }
   });
 };
 // "Add ETH" links in any sheet open the Tacit account's funding panel.
@@ -3115,7 +3123,9 @@ function prover(onProgress) {
   if (proverP) return proverP;
   const made = proverP = (async () => {
     const { vkHash } = await getDeviceMods();
-    const p = await (await fetch('/evm-pool/pin.json', { cache: 'no-store' })).json();
+    const pin = await fetch('/evm-pool/pin.json', { cache: 'no-store' });
+    if (!pin.ok) throw new Error(`The proving files could not be listed (HTTP ${pin.status}). Try again in a minute.`);
+    const p = await pin.json();
     const [vkBytes, wasm, zkey] = await Promise.all([artifact(p.vk, p.vk_sha256, onProgress), artifact(p.wasm, p.wasm_sha256, onProgress), artifact(p.zkey, p.zkey_sha256, onProgress)]);
     const vk = JSON.parse(new TextDecoder().decode(vkBytes));
     if (vkHash(vk) !== strip(p.vk_hash).toLowerCase()) throw new Error('verification key does not match the ceremony pin');
@@ -3131,7 +3141,7 @@ function prover(onProgress) {
       waiting.set(i, { resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
       worker.postMessage({ ...msg, id: i });
     });
-    await call({ op: 'init', wasm, zkey, vk }, 5 * 60e3);
+    try { await call({ op: 'init', wasm, zkey, vk }, 5 * 60e3); } catch (e) { worker.terminate(); throw e; }       // a failed init must not leave its worker holding the key
     return async (input) => { const r = await call({ op: 'prove', input }, 10 * 60e3); return { proof: r.proof, publicSignals: r.publicSignals }; };
   })().catch((e) => { if (proverP === made) proverP = null; throw e; });
   return made;
@@ -4067,18 +4077,18 @@ function renderAirdrop(el) {
     ${s.claimed ? html`<div class="row2"><button class="btn ghost" type="button" id="air-watch">Add TAC to wallet</button><button class="btn ghost" type="button" id="air-farm">Farm it${FARM.precision?.live && precisionApr(FARM.precision) != null ? ` · ${aprShort(precisionApr(FARM.precision))}` : ''}</button></div>` : ''}
     <div class="status" role="status" id="air-status"></div>`);
   const status = $('#air-status');
-  const finish = async (r) => {
+  const finish = async (r, who, run) => {
     say(status, html`Claiming… ${txLink(r.txHash)}`);
-    const w = await air.waitClaimed(S.wallet);
+    const w = await air.waitClaimed(who);
     if (w.claimed) { await loadAirdrop(true); rerender('tac'); toast('TAC claimed'); }
-    else say(status, html`Still pending. ${txLink(r.txHash)}`);
+    else { say(status, html`<span class="err">Sent, not confirmed yet.</span> ${txLink(r.txHash)} Check it there before claiming again.`); run.release(true); }
   };
   const c = $('#air-claim');
-  if (c) c.onclick = () => busy(c, async () => { try { await finish(await air.claim(S.wallet, { send: sendWallet(`Claim ${amount} TAC from the airdrop`), from: S.wallet })); } catch (e) { sayErr(status, e); } });
+  if (c) c.onclick = () => busy(c, async (run) => { try { const who = S.wallet; await finish(await air.claim(who, { send: sendWallet(`Claim ${amount} TAC from the airdrop`), from: who }), who, run); } catch (e) { sayErr(status, e); } });
   const show = $('#air-to-show'); if (show) show.onclick = () => { $('#air-to').hidden = false; show.parentElement.hidden = true; $('#air-to-addr').focus(); };
   $('#air-to-me')?.addEventListener('click', () => { $('#air-to-addr').value = S.acct.address; });
   const ct = $('#air-claim-to');
-  if (ct) ct.onclick = () => busy(ct, async () => { try { await finish(await air.claimTo(S.wallet, recipientOf($('#air-to-addr').value), { send: sendWallet(`Claim ${amount} TAC from the airdrop`) })); } catch (e) { sayErr(status, e); } });
+  if (ct) ct.onclick = () => busy(ct, async (run) => { try { const who = S.wallet; await finish(await air.claimTo(who, recipientOf($('#air-to-addr').value), { send: sendWallet(`Claim ${amount} TAC from the airdrop`) }), who, run); } catch (e) { sayErr(status, e); } });
   const wa = $('#air-watch');
   if (wa) wa.onclick = () => S.provider.request({ method: 'wallet_watchAsset', params: { type: 'ERC20', options: { address: ADDR.tac, symbol: 'TAC', decimals: 18, image: 'https://tacit.finance/tac-logo.png' } } }).catch(() => {});
   const fm = $('#air-farm'); if (fm) fm.onclick = () => { $('#sheet-tac').close(); Object.assign(FARM, { open: 'precision', mode: 'pair', fill: 'tac' }); openSheet('farm'); };
@@ -4133,16 +4143,17 @@ function renderBuy(el) {
   go.onclick = () => busy(go, async (run) => {
     const x = q;
     if (!x || !lossOk(ackBox, x.impact)) return;
+    let hash;
     try {
       const tx = venues.build({ quote: x, dir: 'ETH_TO_TAC', account: S.address, slippageBps: 50, deadline: deadline() });
-      const hash = await sendTx({ to: tx.to, data: tx.data, value: tx.value, label: `Buy TAC with ${fmt(x.paid, 18, 6)} ETH` });
+      hash = await sendTx({ to: tx.to, data: tx.data, value: tx.value, label: `Buy TAC with ${fmt(x.paid, 18, 6)} ETH` });
       say(status, html`Buying… ${txLink(hash)}`);
       await waitTx(hash);
       clearField(input); rc.hidden = true; mount(ackBox, html``); q = null;
       toast('TAC bought'); say(status, html`<span class="ok">Bought.</span> ${txLink(hash)}`);
       run.release(true);
       loadTacHoldings(true).then(() => rerender('tac')).catch(() => {}); loadPrecision().catch(() => {});
-    } catch (e) { sayErr(status, e); }
+    } catch (e) { if (pendingSent(status, e, hash)) { clearField(input); run.release(true); } else sayErr(status, e); }
   });
 }
 
@@ -4191,6 +4202,7 @@ function renderSell(el) {
   go.onclick = () => busy(go, async (run) => {
     const x = q;
     if (!x || !lossOk(ackBox, x.impact)) return;
+    let hash;
     try {
       const dl = deadline(), args = { quote: x, dir: 'TAC_TO_ETH', account: who, slippageBps: 50, deadline: dl };
       let tx = venues.build(args);
@@ -4198,14 +4210,14 @@ function renderSell(el) {
         if (x.venue === 'precision') tx = venues.build({ ...args, permit: { value: x.amountIn, deadline: dl, ...(await permitSig({ token: ADDR.tac, name: 'Tacit Token', spender: tx.approval.spender, value: x.amountIn, deadline: dl, status })) } });
         else { const h = await sendTx({ to: ADDR.tac, data: encErc20Approve(tx.approval.spender, tx.approval.amount), label: 'Approve TAC for the sale' }); say(status, html`Approving TAC… ${txLink(h)}`); await waitTx(h); }
       }
-      const hash = await sendTx({ to: tx.to, data: tx.data, value: tx.value, label: `Sell ${fmt(x.amountIn, 18, 2)} TAC` });
+      hash = await sendTx({ to: tx.to, data: tx.data, value: tx.value, label: `Sell ${fmt(x.amountIn, 18, 2)} TAC` });
       say(status, html`Selling… ${txLink(hash)}`);
       await waitTx(hash);
       clearField(input); rc.hidden = true; mount(ackBox, html``); q = null;
       toast('TAC sold'); say(status, html`<span class="ok">Sold.</span> ${txLink(hash)}`);
       run.release(true);
       loadTacHoldings(true).then(() => rerender('tac')).catch(() => {}); loadPrecision().catch(() => {});
-    } catch (e) { sayErr(status, e); }
+    } catch (e) { if (pendingSent(status, e, hash)) { clearField(input); run.release(true); } else sayErr(status, e); }
   });
 }
 
@@ -4600,6 +4612,11 @@ function weiForm(f, status) {
       rc.hidden = false;
       go.textContent = mine ? `Publish your Tacit address on ${label}.wei` : `Register ${label}.wei`;
       go.disabled = !(p.available || mine);
+      if (p.available && !mine) {                                          // the commit costs gas before the price is due a minute on: say so now
+        const bal = await ethBalance();
+        if (my !== seq || !input.isConnected) return;
+        if (bal != null && bal < p.price) { warn(rc, lowEth()); go.disabled = true; }
+      }
     } catch (err) { if (my === seq) quoteErr(rc, err); }
   };
   onEdit([input], go, check);
@@ -4650,7 +4667,8 @@ function weiForm(f, status) {
       run.check();
       await waitTx(await sendTx({ to: WNS, data: '3fb24782' + weiNode(label) + word(96) + word(96 + rec.length / 2) + rec + abiStr(tacit), via, label: `Publish your Tacit address on ${label}.wei` }));
       say(status, html`<span class="ok">${label}.wei now pays you privately.</span>`);
-      WEI.label = ''; loadPoints(true).then(() => rerender('pts')).catch(() => {});
+      WEI.label = ''; q = null; clearField(input); rc.hidden = true; run.release(true);       // the name is spent: the form must not offer it again
+      loadPoints(true).then(() => rerender('pts')).catch(() => {});
     } catch (e) { sayErr(status, e); check().catch(() => {}); }        // the name's state may have moved: the button reads it again
   });
 }
