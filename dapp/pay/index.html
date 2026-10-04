@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-h+XlZRatsCNwtwJpon8HbjqWlvI9yiCyIunrTCKVoYs=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-fTMZRDiunkvNELZN0IIgZKQ89J7B1Aqi1GBnsokhrSA=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Simple, private payments: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key and one tacit1 address, every payment made on your device, recovered from the key alone.">
@@ -1422,7 +1422,9 @@ async function checkFound() {
     if (sats) S.mode = 'btc'; else if (tac) S.mode = 'tac';
     loadMode(true);
   } catch (e) { FOUND.res = html`<span class="err">${errText(e)}</span>`; }
-  FOUND.busy = false; paintFound();
+  FOUND.busy = false;
+  if (FOUND.v !== f) { FOUND.res = null; return checkFound(); }          // another link was opened meanwhile: this verdict is not its
+  paintFound();
 }
 // Shielded TAC transfers land at one-time outputs; the asset's transfer index finds the ones for this key.
 async function scanForMe() {
@@ -1558,16 +1560,19 @@ function render() {
     mount(bal, html`<svg class="tk md" aria-hidden="true"><use href="#tk-${S.mode}"/></svg>
       <div><div class="v t">${S.mode === 'tac' ? 'Shielded TAC' : 'Silent BTC'}</div><div class="u">yours shows once a wallet is open</div></div>`);
     tabs.hidden = true; S.drawn = S.reads = S.tabs = null;
+    if (S.gate && $('#g-err', f)) return;                  // the gate is drawn: a way in that failed has just said why, and a redraw would erase it
+    S.gate = true;
     mount(f, html`<p class="gate-p">Open your Tacit wallet. One key holds your BTC, TAC and ETH, and nothing else needs backing up.</p>${signIn('g')}`);
     return wireSignIn(f, 'g');
   }
+  S.gate = false;
   paintBal();
   const tab = S.tab[S.mode], drawn = `${S.mode}:${tab}`, reads = formReads();
   tabs.hidden = false;
   if (S.tabs !== drawn) {
     S.tabs = drawn;
     mount(tabs, html`${TABS[S.mode].map(([k, l]) => html`<button type="button" role="tab" data-tab="${k}" aria-selected="${k === tab}">${l}</button>`)}`);
-    $$('#tabs [data-tab]').forEach((b) => b.onclick = () => { S.tab[S.mode] = b.dataset.tab; say($('#status'), ''); render(); $('#tabs [aria-selected="true"]')?.focus(); });
+    $$('#tabs [data-tab]').forEach((b) => b.onclick = () => { S.tab[S.mode] = b.dataset.tab; if (!S.sending) say($('#status'), ''); render(); $('#tabs [aria-selected="true"]')?.focus(); });
   }
   // A redraw of the same form keeps what was typed and where the caret was; one that would change nothing does not happen.
   const same = S.drawn === drawn;
@@ -1585,12 +1590,16 @@ function render() {
       to.dispatchEvent(new Event('input'));
       paintReq();
     }
+    if (S.sending) {                                        // a payment is on its way: a form drawn beside it must not offer the same one again
+      $$('#f-go, #f-shield, #f-exit, #f-fund', f).forEach((b) => { b.disabled = true; });
+      S.reads = null;                                       // so the redraw when it ends brings the buttons back
+    }
   };
   same ? keepFocus(f, draw) : draw();
 }
 function setMode(m) {
   if (!MODES.includes(m) || m === S.mode) return;
-  S.mode = m; say($('#status'), '');
+  S.mode = m; if (!S.sending) say($('#status'), '');
   try { history.replaceState(null, '', `/pay/#${m}`); } catch {}
   render(); loadMode();
 }

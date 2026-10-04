@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-cBQ0Qdig5BBKvjaD8OZs3SrQi6I8Gip+lHFuz+ytOTI=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-yQkVzkzwe28LCNqSVdJpt/kebLhY+vDnnQ4KSMUEJ0I=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -1544,6 +1544,7 @@ function historyOf(c, fresh = false, since = Date.now()) {
 }
 const historyAll = () => Promise.all(CHAINS.map((c) => historyOf(c)));
 async function rebuild(btn) {
+  if (S.busy) return toast('Finish the payment in progress first.', true);          // a rebuild now would drop the wallet that payment is using
   await busyBtn(btn, async () => {
     for (const c of CHAINS) { try { localStorage.removeItem(stateKey(c)); } catch {} Object.assign(CH[c.chainId], { W: null, for: null, bal: null, hist: null, histErr: null, err: null, at: 0, fails: 0 }); }
     paintChains(); paintBal(); paintRecover();
@@ -1849,7 +1850,7 @@ async function act(btn, fn) {
   const st = CH[c.chainId], again = st.deferred;
   st.deferred = false;
   // A relay that never answered may still have sent it: the chain is read again either way.
-  if (ok || err?.said) syncChain(c, true).then(() => historyOf(c, true, tDone));
+  if (ok || err?.said || (err && relayTrouble(err))) syncChain(c, true).then(() => historyOf(c, true, tDone));
   else if (again) syncChain(c, true);
 }
 const done = (c, h, text) => { say($('#status'), html`<span class="ok">${text}</span> ${txLink(c, h)}`); toast(text); };
@@ -2286,7 +2287,9 @@ function takeBack(i, c) {
   const btn = $(`[data-gback="${i}:${c.chainId}"]`);
   if (!btn) return;
   act(btn, async (step) => {
-    const Wg = await giftWallet(giftSeed(i, c.chainId), c), via = viaFor('send');
+    const via = viaFor('send');
+    if (!via && relayFee('send', c) == null) throw new Error("Reading the relay's fee. Try again in a moment.");     // never a spend with no cap on what the relay takes
+    const Wg = await giftWallet(giftSeed(i, c.chainId), c);
     if (via) { Wg.connect(signerFor(c)); await signerFor(c).ready(); }
     const s = await Wg.sync();
     if (!s.balance) throw new Error('That link has already been taken.');
@@ -2421,6 +2424,7 @@ const BRIDGE_Q = { fee: {}, prepay: {}, busy: {}, failed: {} };
 async function bridgeQuote(dest) {
   if (BRIDGE_Q.busy[dest]) return;
   BRIDGE_Q.busy[dest] = true;
+  const here = () => S.tab === 'withdraw' && String(S.dest) === String(dest) && !S.busy;       // the status line belongs to the form that asked
   try {
     const q = await keeperJson(CHAINS[0], `/quote?gas=${BRIDGE_GAS[dest]}`);
     let prepay = 0n;
@@ -2430,12 +2434,12 @@ async function bridgeQuote(dest) {
       prepay = ((1400n * 2n * BigInt(blk.baseFeePerGas) + 450_000n * maxFee) * 6n) / 5n;
     }
     BRIDGE_Q.fee[dest] = BigInt(q.fee); BRIDGE_Q.prepay[dest] = prepay;
-    if (BRIDGE_Q.failed[dest]) { BRIDGE_Q.failed[dest] = false; say($('#status'), ''); }
+    if (BRIDGE_Q.failed[dest]) { BRIDGE_Q.failed[dest] = false; if (here()) say($('#status'), ''); }
     FORM.check?.();
   } catch (e) {
     // The form reads "Reading the relay's fee…" until this arrives, so a failed read is asked again, not left standing.
-    BRIDGE_Q.failed[dest] = true; sayErr($('#status'), e);
-    setTimeout(() => { if (String(S.dest) === String(dest) && BRIDGE_Q.fee[dest] == null) bridgeQuote(dest); }, 10_000);
+    BRIDGE_Q.failed[dest] = true; if (here()) sayErr($('#status'), e);
+    setTimeout(() => { if (here() && BRIDGE_Q.fee[dest] == null) bridgeQuote(dest); }, 10_000);
   } finally { BRIDGE_Q.busy[dest] = false; }
 }
 
@@ -3151,6 +3155,9 @@ async function checkProof(raw) {
     const r = await resolveRecipient(raw);
     if (r.error) throw new Error(r.error);
     const m = await mods(), rpc = await rpcOn(p.chain), rc = await rpc('eth_getTransactionReceipt', [p.tx]);
+    if (PROOF.v !== p) { PROOF.busy = false; PROOF.res = null; return paintProof(); }          // another proof was opened meanwhile: this verdict is not its
+    if (!rc) throw new Error(`That transaction is not on ${p.chain.full} yet. Try again in a minute.`);
+    if (rc.status !== '0x1') throw new Error('That transaction reverted, so it paid nothing.');
     const asset = m.poolAsset({ chainId: BigInt(p.chain.chainId), pool: POOL, token: ZERO });
     let paid = null;
     for (const l of rc?.logs || []) {
@@ -3162,7 +3169,9 @@ async function checkProof(raw) {
     const who = r.label || short(r.bp, 8);
     PROOF.res = paid != null ? html`<span class="ok">✓ This transaction paid ${fmt(paid, 18, 6)} ETH privately to ${who}.</span>` : html`<span class="err">This payment was not to ${who}.</span>`;
   } catch (e) { PROOF.res = html`<span class="err">${errText(e)}</span>`; }
-  PROOF.busy = false; paintProof();
+  PROOF.busy = false;
+  if (PROOF.v !== p) PROOF.res = null;
+  paintProof();
 }
 // What a dismissed or finished link said leaves the address bar, so a reload does not bring it back.
 const leaveBar = (src) => { if (src && location.hash.slice(1) === src) try { history.replaceState(null, '', location.pathname); } catch {} };
