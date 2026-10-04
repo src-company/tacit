@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-yQkVzkzwe28LCNqSVdJpt/kebLhY+vDnnQ4KSMUEJ0I=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-F9ldDI+cdy2WPBLJSgBUp3U6brbgW6HyktVCi3nbWEs=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -1905,7 +1905,7 @@ function formDeposit(f) {
     FORM.check = () => {
       if (!S.wallet) { go.disabled = false; return; }
       const a = parseUnits(amt.value), raw = toEl.value.trim();
-      if (raw !== lastDto) { lastDto = raw; dto = null; if (raw) resolveRecipient(raw).then((r) => { if (toEl.value.trim() === raw) { dto = r; FORM.check?.(); } }); }
+      if (raw !== lastDto) { lastDto = raw; dto = null; if (raw) resolveRecipient(raw).then((r) => { if (toEl.value.trim() === raw) { dto = r; FORM.check?.(); } }, (e) => { if (toEl.value.trim() === raw) { dto = { error: errText(e) }; FORM.check?.(); } }); }
       mount(rc, html``); rc.hidden = true; go.disabled = !a;
       const say_ = (v) => { mount(rc, v); rc.hidden = false; };
       if (raw && !dto) { go.disabled = true; return /\.(g?wei|eth)$/i.test(raw) ? say_(html`<p class="note">Looking up ${raw.toLowerCase()}…</p>`) : undefined; }
@@ -2072,7 +2072,7 @@ function formSend(f) {
   $('#f-max').onclick = () => { const fee = relayFee(tab); if (fee == null) return; const v = maxSpend(fee); amt.value = v ? plain(v) : ''; markMax(amt); amt.dispatchEvent(new Event('input')); };
   FORM.check = () => {
     const raw = to.value.trim(), a = parseUnits(amt.value), fee = relayFee(tab), bal = cur().bal, addr = isAddr(raw);
-    if (raw !== lastTo) { lastTo = raw; okTo = null; if (raw && !addr) resolveRecipient(raw).then((r) => { if (to.value.trim() === raw) { okTo = r; FORM.check?.(); } }); }
+    if (raw !== lastTo) { lastTo = raw; okTo = null; if (raw && !addr) resolveRecipient(raw).then((r) => { if (to.value.trim() === raw) { okTo = r; FORM.check?.(); } }, (e) => { if (to.value.trim() === raw) { okTo = { error: errText(e) }; FORM.check?.(); } }); }
     if (addr) okTo = badSum(raw) ? { error: SUM_MSG } : payable(raw) ? { addr: raw } : { error: 'That address cannot receive a payment.' };
     mount(rc, html``); rc.hidden = true; go.disabled = true; later.hidden = true; dep = null; shownFee = null; go.textContent = 'Send privately';
     const known = nameFor(raw), valid = !!(okTo?.bp || okTo?.addr) && lc(okTo?.bp) !== lc(S.key.bp);
@@ -2618,7 +2618,10 @@ function drawReq() {
   if (typed && $('#req-amt')) $('#req-amt').value = typed;
   $('#req-x').onclick = () => { leaveBar(r.src); REQ.v = null; paintReq(); };
   $('#req-priv')?.addEventListener('click', () => {
-    S.tab = 'send'; S.sendMode = 'to'; DRAFT['f-to'] = r.bp; if (r.amount) DRAFT['f-amt'] = plain(r.amount);
+    if (S.busy) return toast('Finish the payment in progress first.', true);          // the tab and form stay put while an action runs
+    const typed = $('#req-amt')?.value.trim();
+    S.tab = 'send'; S.sendMode = 'to'; DRAFT['f-to'] = r.bp;
+    if (r.amount) DRAFT['f-amt'] = plain(r.amount); else if (typed) DRAFT['f-amt'] = typed; else delete DRAFT['f-amt'];      // never an amount left from some earlier payment
     renderApp();
     if (!S.key) toast('Open your Tacit wallet below to pay privately.');
     $('#form').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3023,7 +3026,7 @@ function renderWalletSheet() {
   $('#w-copy').onclick = () => copy(UNIFIED_LIVE ? unifiedAddress() : k.bp, 'Address copied');
   $('#w-backup')?.addEventListener('click', () => navigator.clipboard.writeText(k.priv).then(() => toast('Key copied. Keep it somewhere private.'), () => toast('Could not copy the key: the browser refused clipboard access.', true)));
   nameUpgrade().then((plan) => { const el = $('#w-up'); if (plan && el?.isConnected) { mount(el, upgradeView(plan)); wireUpgrade(el, plan, () => mount(el, html``)); } });
-  $('#w-lock').onclick = () => { lock(); renderWalletSheet(); };
+  $('#w-lock').onclick = () => { if (S.busy) return toast('Finish the payment in progress first.', true); lock(); renderWalletSheet(); };
   $('#w-conn')?.addEventListener('click', () => connectWallet().then(renderWalletSheet).catch((e) => toast(errText(e), true)));
 }
 $('#wallet').onclick = () => { renderWalletSheet(); $('#sheet-wallet').showModal(); };
@@ -3201,13 +3204,20 @@ function applyHash() {
   if (bp) {
     if (REQ.v?.src !== h) {
       REQ.v = { bp, n: /^[0-9a-f]{1,64}$/.test(n) ? n : null, ns: /^[0-9a-f]{128}$/i.test((q.get('ns') || '').trim()) ? q.get('ns').trim() : null, amount, note: noteOf(q.get('for')), src: h };
-      DRAFT['f-to'] = bp; if (amount) DRAFT['f-amt'] = plain(amount);
+      DRAFT['f-to'] = bp; if (amount) DRAFT['f-amt'] = plain(amount); else delete DRAFT['f-amt'];
     }
     if (!S.busy) S.tab = 'send';
   } else if (tab && !S.busy && TABS.some(([k]) => k === tab)) S.tab = tab;
   if (/(^|&)gift=/.test(h) && !giftLater) try { history.replaceState(null, '', location.pathname); } catch {}
 }
 // Arrow keys, Home and End move between the tabs of a tab list, as screen-reader and keyboard users expect.
+// Enter in a form's field presses that form's action, when it is enabled; the button's own handler still checks everything.
+document.addEventListener('keydown', (e) => {
+  const i = e.target;
+  if (e.key !== 'Enter' || e.defaultPrevented || e.isComposing || e.shiftKey || i?.tagName !== 'INPUT' || !i.closest('#form') || /^(checkbox|radio|button|submit|file)$/.test(i.type)) return;
+  const b = $('#' + ({ 'f-xamt': 'f-exit', 'f-famt': 'f-fund' }[i.id] || 'f-go'), $('#form'));
+  if (b && !b.disabled && b.getAttribute('aria-busy') !== 'true') { e.preventDefault(); b.click(); }
+});
 document.addEventListener('keydown', (e) => {
   const t = e.target.closest?.('[role="tab"]'), box = t?.closest('[role="tablist"]');
   if (!box || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;

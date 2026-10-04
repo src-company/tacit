@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-fTMZRDiunkvNELZN0IIgZKQ89J7B1Aqi1GBnsokhrSA=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-+PjQxkvCmItgsNrS5cBF8QfZgWdFReEoQTQX2NDylDc=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Simple, private payments: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key and one tacit1 address, every payment made on your device, recovered from the key alone.">
@@ -1620,7 +1620,7 @@ function renderWalletSheet() {
     <p class="note">${kept ? 'This key is kept in this browser only, so clearing the browser’s data loses it. Copy it somewhere private: anyone who has it controls these funds, and pasting it back opens them again.' : 'Your wallet or passkey is the only way back to these funds: keep it safe.'} The key stays in this tab; payments to your addresses reach you here, on weld and on tacit.finance.</p>`);
   $('#w-copy').onclick = () => k.tacit && copy(k.tacit, 'Address copied');
   $('#w-backup')?.addEventListener('click', () => navigator.clipboard.writeText(k.priv).then(() => toast('Key copied. Keep it somewhere private.'), () => toast('Could not copy the key: the browser refused clipboard access.', true)));
-  $('#w-lock').onclick = () => { lock(); renderWalletSheet(); };
+  $('#w-lock').onclick = () => { if (S.sending) return toast('Finish the payment in progress first.', true); lock(); renderWalletSheet(); };
 }
 $('#wallet').addEventListener('pointerdown', hintTacit, { once: true, passive: true });
 $('#wallet').onclick = () => { renderWalletSheet(); $('#sheet-wallet').showModal(); };
@@ -1639,6 +1639,13 @@ function applyHash() {
   else if (MODES.includes(h)) S.mode = h;
   try { history.replaceState(null, '', `/pay/#${S.mode}`); } catch {}
 }
+// Enter in a form's field presses that form's action, when it is enabled; the button's own handler still checks everything.
+document.addEventListener('keydown', (e) => {
+  const i = e.target;
+  if (e.key !== 'Enter' || e.defaultPrevented || e.isComposing || e.shiftKey || i?.tagName !== 'INPUT' || !i.closest('#form') || /^(checkbox|radio|button|submit|file)$/.test(i.type)) return;
+  const b = $('#' + ({ 'f-xamt': 'f-exit', 'f-famt': 'f-fund' }[i.id] || 'f-go'), $('#form'));
+  if (b && !b.disabled && b.getAttribute('aria-busy') !== 'true') { e.preventDefault(); b.click(); }
+});
 // Arrow keys, Home and End move between the tabs of a tab list, as screen-reader and keyboard users expect.
 document.addEventListener('keydown', (e) => {
   const t = e.target.closest?.('[role="tab"]'), box = t?.closest('[role="tablist"]');
