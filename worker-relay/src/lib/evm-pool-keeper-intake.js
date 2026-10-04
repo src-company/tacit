@@ -574,7 +574,11 @@ export function createIntakeHandler({
       }
       return send(404, { error: 'not found' });
     } catch (e) {
-      if (e instanceof IntakeError) return send(e.status, { error: e.message, ...(e.stale ? { stale: true } : {}), ...(e.needFee ? { needFee: e.needFee } : {}) });
+      if (e instanceof IntakeError) {
+        // A refused relay says why in the log (no address or IP), so a refusal a wallet reports can be traced.
+        if (/\/relay$/.test(p) && e.status !== 429) log(`relay refused ${e.status}: ${e.message}${e.needFee ? ` (needs ${e.needFee})` : ''}`);
+        return send(e.status, { error: e.message, ...(e.stale ? { stale: true } : {}), ...(e.needFee ? { needFee: e.needFee } : {}) });
+      }
       log(`intake error: ${safeErr(e)}`);
       return send(500, { error: 'internal error' });
     }
