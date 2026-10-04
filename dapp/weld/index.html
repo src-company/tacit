@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-rbb/W1su2ghB50aPSNJYdDxCU1splbr/z6kMfXDMyQk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-6dEJsD7C4nMfev46BxN5fe7TW5Dg1ODj8B7wxPzKbJY=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -835,6 +835,7 @@ function toast(msg, bad = false, ms = bad ? 7000 : 4200) {
   el.className = 'toast' + (bad ? ' error' : '');
   if (msg instanceof Raw) el.innerHTML = msg.s; else el.textContent = msg;
   toasts.append(el);
+  if (bad) { try { announce(''); requestAnimationFrame(() => announce(msg)); } catch {} }     // the toast box appears and fills in one tick, which screen readers miss
   setTimeout(() => el.remove(), ms);
 }
 // Where the clipboard is refused, the toast carries the whole text to copy by hand.
@@ -2068,6 +2069,7 @@ function wireSignIn(root, id, after) {
       finally { signing = false; rest.forEach((x) => { x.disabled = false; }); }
     });
   };
+  box.querySelector(`#${id}-hex`)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); box.querySelector('[data-in="key"]')?.click(); } });
 }
 
 function pickWallet(list) {
@@ -2333,6 +2335,15 @@ render.wallet = () => {
     } catch (e) { if (pendingSent(status, e, hash, base)) { clearField($('#ac-mv')); run.release(true); } else sayErr(status, e); }
   });
 };
+// Enter in a field presses its form's one live action: the single enabled, visible "-go" button of its sheet. The button's own
+// handler still checks everything it checks on a click.
+document.addEventListener('keydown', (e) => {
+  const i = e.target;
+  if (e.key !== 'Enter' || e.defaultPrevented || e.isComposing || e.shiftKey || i?.tagName !== 'INPUT' || /^(checkbox|radio|button|submit|file)$/.test(i.type)) return;
+  const scope = i.closest('dialog.sheet') || document;
+  const live = [...scope.querySelectorAll('button[id$="-go"]')].filter((b) => !b.disabled && b.getAttribute('aria-busy') !== 'true' && b.offsetParent !== null);
+  if (live.length === 1) { e.preventDefault(); live[0].click(); }
+});
 // "Add ETH" links in any sheet open the Tacit account's funding panel.
 document.addEventListener('click', (e) => { if (e.target.closest?.('[data-fund]')) { WAL.mode = 'add'; openSheet('wallet'); } });
 const lowEth = () => (payer() === 'tacit' ? html`More than your Tacit account holds. <button class="link" type="button" data-fund>Add ETH</button>` : 'More than your wallet holds.');
@@ -2651,18 +2662,19 @@ async function settleLocks(run, kind, status) {
   let ok = 0, err = null, offered = false;
   for (;;) {
     if (run.switched()) { const e = new Error('Another Tacit key was opened, so the rest stopped.'); if (run.away) run.fail(status, e); else err ||= e; break; }
-    await loadLocks(true);
+    try { await loadLocks(true); } catch (e) { err ||= e; break; }                 // what went through so far still gets its rescan below
     const due = (kind === 'claim' ? LK.mine : LK.back).find((l) => run.keys.has(kLock(l)) && !tried.has(l.leaf));
     if (!due) break;
     tried.add(due.leaf);
+    const root = kind === 'claim' ? LK.root : LK.sentRoot;                         // the set `due` was found in, whatever a refresh loads while the quote is asked
     try {
       const tk = tickerOf(t, due.asset), fee = BigInt(await t.quoteOpFee(tk, 'stealthclaim'));
       if (fee >= BigInt(due.amount)) throw new Error(`A ${fmt(BigInt(due.amount), 8, 8)} ${shownAs(tk)} payment is smaller than the relay fee to ${kind === 'claim' ? 'claim it' : 'take it back'}.`);
       run.say(status, `${kind === 'claim' ? 'Claiming' : 'Taking back'} ${fmt(BigInt(due.amount), 8, 6)} ${shownAs(tk)}: the relay is proving it…`);
       const what = `${verb} ${fmt(BigInt(due.amount), 8, 6)} ${shownAs(tk)}`;
       const call = (f, o) => (kind === 'claim'
-        ? t.stealthClaim({ walletPriv: priv, lockRecord: due, lockSetRoot: LK.root, fee: f, ...o })
-        : t.stealthRefund({ walletPriv: priv, lockRecord: due, refundPriv: due.refundPriv, lockSetRoot: LK.sentRoot, fee: f, ...o }));
+        ? t.stealthClaim({ walletPriv: priv, lockRecord: due, lockSetRoot: root, fee: f, ...o })
+        : t.stealthRefund({ walletPriv: priv, lockRecord: due, refundPriv: due.refundPriv, lockSetRoot: root, fee: f, ...o }));
       try { await call(fee, { waitOpts: run.wait(what, 15 * 60e3) }); }
       // The relay's floor moved between the quote and the submit: nothing was proved, so ask once more at twice the fee.
       catch (e0) { if (/fee below the current floor/i.test(e0?.message || '') && fee * 2n < BigInt(due.amount)) await call(fee * 2n, { waitOpts: run.wait(what, 15 * 60e3) }); else throw e0; }
@@ -3959,17 +3971,21 @@ function renderTacBal(el) {
       run.take(...worth.map(kNote));
       const sum = worth.reduce((a, n) => a + BigInt(n.value), 0n);
       run.go({ label: `Making ${fmt(sum * E10, 18, 2)} TAC public`, one: false, dest, status: () => $('#tac-bal-status') });
-      let offered = false;
+      let offered = false, moved = 0;
       for (const [i, n] of worth.entries()) {
         if (run.switched()) { run.fail(status, new Error('Another Tacit key was opened, so the rest stopped.')); break; }
         run.say(status, `The relay is moving your TAC${worth.length > 1 ? ` (${i + 1} of ${worth.length})` : ''}…`);
-        try { await t.unwrap({ note: n, walletPriv: priv, recipient: to, wait: true, waitOpts: run.wait(`Make ${fmt(BigInt(n.value), 8, 2)} TAC public`, 15 * 60e3, { exit: { to, units: String(n.value), note: kNote(n), from: 'tac', sheet: 'tac' } }) }); }
+        try { await t.unwrap({ note: n, walletPriv: priv, recipient: to, wait: true, waitOpts: run.wait(`Make ${fmt(BigInt(n.value), 8, 2)} TAC public`, 15 * 60e3, { exit: { to, units: String(n.value), note: kNote(n), from: 'tac', sheet: 'tac' } }) }); moved++; }
         catch (e) {
           if (relayRefused(e) && !run.away) {
             offerSelf({ exit: true, go: exitGo(n, to, n.value), label: `Make ${fmt(BigInt(n.value), 8, 2)} TAC public`, sheet: 'tac', after: loadTacHoldings, status: () => $('#tac-bal-status') }, e);
             offered = true; break;
           }
-          if (!run.away) throw e; run.fail(status, e);
+          if (!run.away) {
+            if (moved) { await Promise.allSettled([scanPrivate(true), loadTacHoldings(true)]); rerender('tac'); throw Object.assign(new Error(`${moved} of ${worth.length} notes are public now; the rest did not go. ${errText(e)}`), { said: true }); }
+            throw e;
+          }
+          run.fail(status, e);
         }
       }
       if (offered) return;
@@ -4127,7 +4143,7 @@ function renderBuy(el) {
       const pick = prec && BigInt(prec.amountOut) * 100n >= BigInt(r.best.amountOut) * 99n ? prec : r.best;
       const s = Number(BigInt(sp)) / 1e18, mid = Number(wei) * s * s;          // TAC wei at the band's mid price
       const impact = mid > 0 ? Math.max(0, (1 - Number(pick.amountOut) / mid) * 100) : 0;
-      q = { ...pick, impact, paid: wei };
+      q = { ...pick, impact, paid: wei, at: Date.now() };
       mount(rc, html`
         <div class="kv"><span>You get about</span><b>${fmt(pick.amountOut, 18, 2)} TAC</b></div>
         ${lossLine(impact)}
@@ -4143,6 +4159,7 @@ function renderBuy(el) {
   go.onclick = () => busy(go, async (run) => {
     const x = q;
     if (!x || !lossOk(ackBox, x.impact)) return;
+    if (Date.now() - x.at > 60e3) { say(status, 'The price had gone stale. It is being read again; check it and press once more.'); input.dispatchEvent(new Event('input')); return; }
     let hash;
     try {
       const tx = venues.build({ quote: x, dir: 'ETH_TO_TAC', account: S.address, slippageBps: 50, deadline: deadline() });
@@ -4150,7 +4167,7 @@ function renderBuy(el) {
       say(status, html`Buying… ${txLink(hash)}`);
       await waitTx(hash);
       clearField(input); rc.hidden = true; mount(ackBox, html``); q = null;
-      toast('TAC bought'); say(status, html`<span class="ok">Bought.</span> ${txLink(hash)}`);
+      OUT.tac.clear(); toast('TAC bought'); say(status, html`<span class="ok">Bought.</span> ${txLink(hash)}`);
       run.release(true);
       loadTacHoldings(true).then(() => rerender('tac')).catch(() => {}); loadPrecision().catch(() => {});
     } catch (e) { if (pendingSent(status, e, hash)) { clearField(input); run.release(true); } else sayErr(status, e); }
@@ -4186,7 +4203,7 @@ function renderSell(el) {
       if (!r.best) throw new Error('No pool can fill this right now.');
       const s = Number(BigInt(sp)) / 1e18, mid = s > 0 ? Number(wei) / (s * s) : 0;     // ETH wei at the band's mid price
       const impact = mid > 0 ? Math.max(0, (1 - Number(r.best.amountOut) / mid) * 100) : 0;
-      q = { ...r.best, impact };
+      q = { ...r.best, impact, at: Date.now() };
       mount(rc, html`
         <div class="kv"><span>You get about</span><b>${fmt(r.best.amountOut, 18, 6)} ETH</b></div>
         ${lossLine(impact)}
@@ -4202,6 +4219,7 @@ function renderSell(el) {
   go.onclick = () => busy(go, async (run) => {
     const x = q;
     if (!x || !lossOk(ackBox, x.impact)) return;
+    if (Date.now() - x.at > 60e3) { say(status, 'The price had gone stale. It is being read again; check it and press once more.'); input.dispatchEvent(new Event('input')); return; }
     let hash;
     try {
       const dl = deadline(), args = { quote: x, dir: 'TAC_TO_ETH', account: who, slippageBps: 50, deadline: dl };
@@ -4214,7 +4232,7 @@ function renderSell(el) {
       say(status, html`Selling… ${txLink(hash)}`);
       await waitTx(hash);
       clearField(input); rc.hidden = true; mount(ackBox, html``); q = null;
-      toast('TAC sold'); say(status, html`<span class="ok">Sold.</span> ${txLink(hash)}`);
+      OUT.tac.clear(); toast('TAC sold'); say(status, html`<span class="ok">Sold.</span> ${txLink(hash)}`);
       run.release(true);
       loadTacHoldings(true).then(() => rerender('tac')).catch(() => {}); loadPrecision().catch(() => {});
     } catch (e) { if (pendingSent(status, e, hash)) { clearField(input); run.release(true); } else sayErr(status, e); }
@@ -4327,7 +4345,8 @@ async function readPoints(current) {
     const [p, c, held] = await Promise.all([get(`points/${addr}`), get(`claim/${addr}`), ethCall(ADDR.tac, SEL.balanceOf + addrWord(addr)).then((r) => wordAt(r, 0)).catch(() => null)]);
     // What is claimable comes from the distributor itself, not the service's copy of it.
     // The distributor's figure, or unknown when it could not be read: never a zero that hides the Claim button.
-    const owedHex = c?.proof && c.cumulativeAmount ? await ethCall(DISTRIBUTOR, '787eef2e' + addrWord(addr) + word(BigInt(c.cumulativeAmount))).catch(() => null) : '0x', owed = owedHex == null ? 0n : wordAt(owedHex, 0);
+    // The service answers /claim for every address (proof null when nothing is owed), so no answer at all is a failed read, not a zero.
+    const owedHex = c?.proof && c.cumulativeAmount ? await ethCall(DISTRIBUTOR, '787eef2e' + addrWord(addr) + word(BigInt(c.cumulativeAmount))).catch(() => null) : c || !p ? '0x' : null, owed = owedHex == null ? 0n : wordAt(owedHex, 0);
     const hist = p ? await get(`points/${addr}/days`) : null;
     const t = p?.today, today = t && Number(t.totalPoints) > 0 ? tacOf(BigInt(t.dayBudgetWei), Number(t.points), Number(t.totalPoints)) : 0n;
     // The service lists activity by block number, which does not order Base or Robinhood blocks against Ethereum's; time does.
