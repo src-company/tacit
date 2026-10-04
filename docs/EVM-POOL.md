@@ -31,6 +31,14 @@ addresses). On any other chain, treat code at these addresses as unrelated.
 PoseidonT5 is the standard deterministic deployment (poseidon-solidity, CREATE2 proxy
 `0x4e59b44847b379578588920cA78FbF26c0B4956C`); the deploy script lands it first on chains that lack it.
 
+The zap, which shields a token in one transaction (see Router below), is deployed through the same CREATE2 proxy with
+a fixed salt. Its address follows from its code and constructor arguments (the pool, zRouter, Permit2), so code at that
+address on any chain is this contract, whoever deployed it (`contracts/script/deploy-zap.mjs`).
+
+| Contract | Address |
+|---|---|
+| Zap (`TacitEvmPoolZap`) | `0x0000008EbBF2323f95c4fBc18254f3D65C53998c` |
+
 Related Ethereum mainnet contracts:
 
 | Contract | Address |
@@ -289,6 +297,27 @@ dropped. Requests are rate limited per client address (an IPv6 client by its /64
 
 **Zaps.** `zapTokenToDepositWithPermit2(tx, amountIn, permit, sig, swapData)` swaps any ERC-20 to ETH through the
 pinned aggregator and deposits exactly the proven amount, refunding the rest.
+
+**Shielding a token in one transaction (`TacitEvmPoolZap`).** A separate contract (`contracts/src/TacitEvmPoolZap.sol`)
+takes a token from its caller, swaps it through zRouter for ETH, and deposits exactly the proof's `extAmount` with the
+caller's own deposit proof, all in one transaction. Unspent token and any ETH above the deposit go back to the caller.
+Its three entry points differ only in how the token is taken:
+
+- `zapToken(tx, tokenIn, amountIn, swap)`: an allowance to the zap, approved before or in the same wallet batch.
+- `zapTokenWithPermit(tx, tokenIn, amountIn, deadline, v, r, s, swap)`: an EIP-2612 permit to the zap. A failing permit
+  is skipped, so one already used (for example, copied from the mempool and sent first) still leaves its allowance.
+- `zapTokenWithPermit2(tx, tokenIn, amountIn, nonce, deadline, signature, swap)`: a Permit2 `PermitTransferFrom`
+  signed with the zap as spender, for a token already approved to Permit2.
+
+`swap` is zRouter calldata that pays at least `extAmount` ETH to the zap: an exact-out route from zQuoter with the zap
+as recipient. The proof is an ordinary deposit, built against the pool's head; if another deposit lands first, the call
+reverts (`StaleRoot`) and nothing moves. The zap holds nothing between transactions, takes tokens only from
+`msg.sender`, allows zRouter only within the call (reset to zero after the swap), and accepts ETH only during a zap.
+
+A wallet picks the way that asks least of the user, in this order: an allowance it already has; an EIP-2612 signature
+(an ordinary account, or one delegated under EIP-7702); a Permit2 signature when the token is already approved to
+Permit2; the approval and the zap in one atomic batch (EIP-5792 `wallet_sendCalls`) when the wallet supports it; and
+only otherwise an approval transaction first. Approve exactly `amountIn`, so no allowance is left behind.
 
 **Withdraw and call.** A withdrawal can run actions with the funds in the same transaction: a swap, a bridge deposit, a
 wrap or zap into a V1 note, or any call. A `CallIntent` lists the calls (target, value, data, and a token to transfer or
@@ -551,6 +580,7 @@ Answers for people using the private ETH pool through anon.wei or tacit.finance,
 | Action | Public | Hidden |
 |---|---|---|
 | Shield (deposit) | The depositing wallet and the amount. | Whose private balance receives it. |
+| Shield from a token | The wallet, the token and the amount it spent, and the ETH amount deposited. | Whose private balance receives it. |
 | Private send | That a transaction used the pool, the spent notes' nullifiers, the two new note commitments, and who submitted it (the relay and its fee, or your wallet). | Who pays, who receives, and the amount. |
 | Withdraw (unshield) | The recipient address, the amount, who submitted it, and the relay's fee. | Which deposit funds it, and what remains in your balance. |
 | Payment to a deposit address | An ordinary transfer: the payer, the amount, and the address. | Which wallet owns the address. |
@@ -663,7 +693,7 @@ To receive a send or a shield, a `.wei`, `.gwei` or `.eth` name must publish a T
 No one. The pool and router have no owner, no pause and no upgrade. Nothing can freeze or seize funds. The pool can be called directly; the router is optional periphery. A change ships as a new contract at a new address. Users withdraw from the old pool and shield into the new one.
 
 **Where are they?**
-The pool is at `0x000000c2A20657CE25f2Ba99737933D031AFBEE9` and the router at `0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5`, the same on all three chains. Do not send ETH to either address: a plain transfer to the pool reverts, and the router hands a stray balance to its next caller.
+The pool is at `0x000000c2A20657CE25f2Ba99737933D031AFBEE9` and the router at `0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5`, the same on all three chains. Do not send ETH to either address: a plain transfer to the pool reverts, and the router hands a stray balance to its next caller. The zap, at `0x0000008EbBF2323f95c4fBc18254f3D65C53998c` on all three, has no owner either and refuses a plain transfer.
 
 ### Withdraw and call
 
@@ -687,6 +717,15 @@ route the onchain quoter zQuoter (`0x000000bd2db80567c23e353ca95a251c573cbf9b`) 
 straight to the address you give. zRouter enforces the route's minimum, so a short fill reverts the withdrawal. The
 quote is read with a stand-in recipient, so the nodes asked do not learn the address, and two nodes must return the
 same route. The token, the amount and the address are public; which deposit paid is not.
+
+**Can I shield from a token?**
+`[pending release]` On the anon.wei page, yes: under Shield, "From my wallet", pick a token from the same list. By
+default, one transaction from your wallet swaps it through zRouter for an exact amount of ETH and shields it through the
+zap: no fee, and your wallet pays the gas of the swap and the deposit. Or let the relay move it in: the swap pays a new
+deposit address of yours, and the relay sweeps it into your balance for up to 0.25%, your wallet paying only the swap's
+gas. Either way the approval is a signature where the token and wallet allow it, or part of one wallet batch; a separate
+approval transaction is needed only when neither works. Your wallet, the token and the ETH amount are public; whose
+balance it lands in is not.
 
 **How do I get a refund back into the pool?**
 Make `refund` one of your own deposit addresses (`callRefundBox`). A relay sweeps it when its capped fee covers its gas, and you can sweep it yourself.
