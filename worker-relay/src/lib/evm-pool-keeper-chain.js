@@ -118,7 +118,7 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
   const [pool, asset, v1] = await Promise.all(['POOL', 'ASSET', 'V1'].map((f) => read(cfg.router, ROUTER_ABI, f)));
   if (getAddress(pool) !== cfg.pool) throw new Error(`router ${cfg.router} serves pool ${pool}, not EVM_POOL_ADDR ${cfg.pool}`);
 
-  const sendUrls = [...cfg.sendRpcUrls, ...(cfg.allowPublicSend || !cfg.sendRpcUrls.length ? [cfg.rpcUrls[0]] : [])];
+  const privateUrls = cfg.sendRpcUrls, publicUrls = cfg.allowPublicSend || !privateUrls.length ? [cfg.rpcUrls[0]] : [];
   // `functionName` on the router, or `pool.transact` (a relayed user transaction) on the pool.
   const target = (functionName) => (functionName === 'pool.transact'
     ? { address: cfg.pool, abi: POOL_ABI, functionName: 'transact' }
@@ -196,28 +196,39 @@ export async function makeKeeperChain({ cfg, account, log = () => {} }) {
     // Whether the keeper can front a send of `gas` now: { ok, balance, need, headroom } (frontFees).
     canFront: async (gas) => frontFees({ ...(await prices()), gas }),
 
-    // Private endpoints first; the read RPC last when public sends are allowed. Returns the tx hash.
+    // One signed transaction to every private endpoint (the same hash at each, so whichever builder takes it, it lands
+    // once); the read RPC only when every private endpoint refused it and public sends are allowed. Returns the hash.
     // Re-simulated inside the queue, right before signing, so state that moved since the caller's estimate
     // (another relay spending the same note, a new root) fails here instead of on chain; a transaction that
     // follows the keeper's own unmined ones cannot be simulated yet and is sent with simulate: false.
     send: (functionName, args, { gas, simulate = true }) => serial(async () => {
       if (simulate) await pub.estimateContractGas({ ...target(functionName), args, account });
       let lastErr;
-      for (const url of sendUrls) {
-        try {
-          const wallet = createWalletClient({ account, chain: viemChain, transport: http(url) });
-          return await withNonceRetry(functionName, async () => {
-            const [nonce, fee] = await Promise.all([nextNonce(), fees(gas)]);
-            const hash = await wallet.writeContract({ ...target(functionName), args, gas, nonce, ...fee });
-            sentNonce = nonce;
-            sentAt = Date.now();
-            return hash;
-          }, { log });
-        } catch (e) {
-          lastErr = e;
-          log(`  submit via ${new URL(url).host} failed: ${safeErr(e)}`);
-          if (revertName(e)) throw e;
+      const via = async (urls, nonce, fee) => {
+        let hash = null;
+        for (const url of urls) {
+          try {
+            const wallet = createWalletClient({ account, chain: viemChain, transport: http(url) });
+            hash = (await wallet.writeContract({ ...target(functionName), args, gas, nonce, ...fee })) || hash;
+          } catch (e) {
+            lastErr = e;
+            log(`  submit via ${new URL(url).host} failed: ${safeErr(e)}`);
+            if (revertName(e)) throw e;
+          }
         }
+        return hash;
+      };
+      for (const urls of [privateUrls, publicUrls]) {
+        if (!urls.length) continue;
+        const hash = await withNonceRetry(functionName, async () => {
+          const [nonce, fee] = await Promise.all([nextNonce(), fees(gas)]);
+          const h = await via(urls, nonce, fee);
+          if (!h) throw lastErr || new Error('no submission endpoint took it');
+          sentNonce = nonce;
+          sentAt = Date.now();
+          return h;
+        }, { log }).catch((e) => { if (revertName(e)) throw e; lastErr = e; return null; });
+        if (hash) return hash;
       }
       throw lastErr || new Error('no submission endpoint');
     }),

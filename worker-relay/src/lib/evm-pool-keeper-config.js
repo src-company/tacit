@@ -63,6 +63,7 @@ export function loadKeeperConfig(env = process.env) {
   const rates = parseTokenMap(str(env, 'EVM_POOL_KEEPER_TOKEN_RATES'), 'EVM_POOL_KEEPER_TOKEN_RATES');
   rates.set(ETH, 10n ** 18n);
 
+  const fastFlashbots = (raw) => { try { const u = new URL(raw); if (u.hostname === 'rpc.flashbots.net') u.pathname = '/fast'; return u.toString(); } catch { return raw; } };
   const sendDefault = chainId === 1 ? 'https://rpc.flashbots.net,https://rpc.mevblocker.io' : '';
   return {
     enabled: true,
@@ -72,7 +73,9 @@ export function loadKeeperConfig(env = process.env) {
     rpcUrls: [rpcUrl, ...list(str(env, 'EVM_POOL_RPC_URLS_FALLBACK'))].filter((u, i, a) => a.indexOf(u) === i),
     // Through the same normaliser the settle path uses: these carry a fee payable to whoever sends them,
     // so an endpoint in its searcher-visible mode invites a copy landed first for that fee.
-    sendRpcUrls: list(str(env, 'EVM_POOL_KEEPER_SEND_RPC_URLS', sendDefault)).map(privateSettleUrl),
+    // Flashbots Protect in fast mode: shared with every builder (still hash-only to searchers), where its default shares
+    // with too few to land a large transaction at a small tip within the 25 blocks it keeps one.
+    sendRpcUrls: list(str(env, 'EVM_POOL_KEEPER_SEND_RPC_URLS', sendDefault)).map(privateSettleUrl).map(fastFlashbots),
     allowPublicSend: str(env, 'EVM_POOL_KEEPER_ALLOW_PUBLIC', '1') !== '0',
     dryRun: str(env, 'EVM_POOL_KEEPER_DRY_RUN', '0') === '1',
 
