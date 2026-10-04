@@ -599,9 +599,9 @@ const TACIT_IPFS_NODE_GATEWAY = 'https://10mz1z2351rzze-8080.proxy.runpod.net/ip
 const IPFS_GATEWAYS_FALLBACK = [
   IPFS_GATEWAY,
   'https://ipfs.filebase.io/ipfs/',
-  'https://ipfs.io/ipfs/',
-  'https://w3s.link/ipfs/',
-  'https://dweb.link/ipfs/',
+  // ipfs.io, dweb.link and w3s.link now answer plain fetches with a service-worker gateway, not the file (2026-10).
+  'https://ipfs.orbitor.dev/ipfs/',
+  'https://gateway.pinata.cloud/ipfs/',
 ];
 
 // Phase 2 contribution milestones. Soundness only requires ≥1 honest
@@ -14248,10 +14248,8 @@ async function _fetchMixerVk(vkCid) {
   const _vkGateways = [
     IPFS_GATEWAY,
     'https://ipfs.filebase.io/ipfs/',
-    'https://ipfs.io/ipfs/',
-    'https://dweb.link/ipfs/',
+    'https://ipfs.orbitor.dev/ipfs/',
     'https://gateway.pinata.cloud/ipfs/',
-    'https://w3s.link/ipfs/',
   ];
   const promise = (async () => {
     for (const gw of _vkGateways) {
@@ -42717,9 +42715,8 @@ async function _ceremonyFetchIpfsWithFailover(cid, validate, onProgress, onBytes
       if (gw.includes('tacit-pin')) return 'tacit cache';
       if (gw.includes('ipfs.filebase.io')) return 'filebase';
       if (gw === TACIT_IPFS_NODE_GATEWAY) return 'tacit node';
-      if (gw.includes('ipfs.io')) return 'ipfs.io';
-      if (gw.includes('w3s.link')) return 'w3s';
-      if (gw.includes('dweb.link')) return 'dweb';
+      if (gw.includes('ipfs.orbitor.dev')) return 'orbitor';
+      if (gw.includes('gateway.pinata.cloud')) return 'pinata';
       const h = new URL(gw).hostname;
       return h.replace(/^www\./, '').split('.')[0];
     } catch { return 'gateway'; }
@@ -56484,8 +56481,8 @@ let _claimEthIsContract = false;
 // the three gateways failed silently with CSP rejects inside the failover
 // loop (each one logged as just a fetch error, never as "blocked by CSP"),
 // leaving only ipfs.io as the actual working option. Reusing the ceremony's
-// CSP-allowed gateway list (ipfs.filebase.io, ipfs.io, w3s.link, dweb.link)
-// gives 4 real attempts and matches what the rest of the dapp uses.
+// CSP-allowed gateway list (ipfs.filebase.io, ipfs.orbitor.dev, gateway.pinata.cloud)
+// gives real attempts and matches what the rest of the dapp uses.
 
 // Strip "ipfs://" prefix and any path; return bare CID. Tolerates spaces.
 function _claimNormaliseCid(input) {

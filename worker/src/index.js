@@ -7990,8 +7990,7 @@ const UPSTREAM_IMMUTABLE_CACHE_TTL = 3600;
 const WRAPPER_IPFS_GATEWAYS = [
   'https://gateway.pinata.cloud/ipfs',
   'https://ipfs.filebase.io/ipfs',
-  'https://ipfs.io/ipfs',
-  'https://dweb.link/ipfs',
+  'https://ipfs.orbitor.dev/ipfs',
 ];
 
 // Strict IPFS CID extractor. Accepts `ipfs://<cid>` (with optional trailing
@@ -8438,9 +8437,8 @@ function _base64ToU8(b64) {
 async function _peekCidPrefix(cid, n) {
   const gateways = [
     'https://ipfs.filebase.io/ipfs/',
-    'https://ipfs.io/ipfs/',
-    'https://w3s.link/ipfs/',
-    'https://dweb.link/ipfs/',
+    'https://ipfs.orbitor.dev/ipfs/',
+    'https://gateway.pinata.cloud/ipfs/',
   ];
   for (const gw of gateways) {
     try {
@@ -11108,9 +11106,8 @@ function faucetKeys(env) {
 // ~500ms-2s (fastest healthy gateway).
 const IPFS_GATEWAYS = [
   'https://ipfs.filebase.io/ipfs/',
-  'https://ipfs.io/ipfs/',
-  'https://w3s.link/ipfs/',
-  'https://dweb.link/ipfs/',
+  // ipfs.io, dweb.link and w3s.link now answer plain fetches with a service-worker gateway, not the file (2026-10).
+  'https://ipfs.orbitor.dev/ipfs/',
   'https://gateway.pinata.cloud/ipfs/',
 ];
 async function handleIpfsProxy(req, env, cors) {
@@ -11249,9 +11246,8 @@ async function handleIpfsBatch(req, env, cors) {
 // the gateway hit so popular metadata gets served from CF edge on next call.
 const _IPFS_GATEWAYS_BATCH = [
   'https://ipfs.filebase.io/ipfs/',
-  'https://ipfs.io/ipfs/',
-  'https://w3s.link/ipfs/',
-  'https://dweb.link/ipfs/',
+  // ipfs.io, dweb.link and w3s.link now answer plain fetches with a service-worker gateway, not the file (2026-10).
+  'https://ipfs.orbitor.dev/ipfs/',
   'https://gateway.pinata.cloud/ipfs/',
 ];
 async function _raceIpfsGatewaysForJson(cid) {
