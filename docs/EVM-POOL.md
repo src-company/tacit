@@ -302,12 +302,6 @@ has no code and takes any payment, including a plain 21,000-gas transfer from an
 - Payments into one box are public and linked to each other, like any reused address. Spends of the swept notes
   are not: they reveal nullifiers, never the note key.
 - Only the pool's asset leaves a receive box. Anything else sent to it stays there.
-- Never pay a receive box later in a transaction that swept it. A sweep deletes the box's account, with any ETH it then
-  holds, when its transaction ends, so a payment made after the sweep in that same transaction, `fundReceive` included,
-  is destroyed. A plain transfer, or a call that pays before doing anything else, is safe.
-- A payout made by a contract (a Safe transaction, a bridge withdrawal finalization) should go to a receive box that has
-  never received a payment, or straight into the pool by shielding: a box that has never been paid cannot have been
-  swept earlier in the same transaction.
 
 **Receive address (canonical, every app shows the same one).** The address a wallet displays depends on every
 value below, so all apps use exactly these:
@@ -821,9 +815,6 @@ One-time addresses keep one payer's payment apart from another's. Your key issue
 
 **What does a payment link reveal?**
 A link carries a deposit address and your signature over it, made with the view key of your pool address. The payer's page uses it to check that the address is yours. Anyone who holds the link can tell the address is yours.
-
-**How should a contract pay a deposit address?**
-A sweep removes the box's code at the end of its transaction, so ETH sent to that box later in the same transaction is lost with it. A payout made by a contract (a Safe transaction, a bridge withdrawal finalization) should therefore go to a deposit address that has never received a payment, or straight into the pool by shielding.
 
 ### Keys and recovery
 
