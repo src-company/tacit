@@ -647,6 +647,44 @@ that the funds' origin is any V1 note holder rather than a public wallet.
 | Pool → anything | `withdrawAndCall(tx, intent)` (above), on every chain. On Ethereum, a withdrawal can also name `ConfidentialRouter.escrowAddressFor(recipe)`, run by anyone with `activateExit(recipe)`. |
 
 
+## The reference app: anon.wei
+
+anon.wei is a complete app for this pool in one HTML file, served from contract code on Ethereum. It offers Ethereum, Base
+and Robinhood Chain, the most liquid of the chains the pool is on. A community that wants the same service on another
+chain (the core pool is also on MegaETH, and more chains may follow) can start from it instead of from nothing.
+
+| Where | What |
+|---|---|
+| `https://anon.wei.limo/` | The page, by name. `anon.wei` is registered in WNS (`0x0000000000696760e15f265e828db644a0c242eb`): `computeId("anon")`, then `resolve(id)` gives the contract that serves it. |
+| `https://<contract>.w4eth.io/` | The same page by contract address, through an ERC-8244 gateway (any contract with `html()`). |
+| `https://<contract>.1.w3link.io/` | Through ERC-4804 (`request()`). This gateway adds a script of its own after `<body>`, so its bytes are not the contract's. |
+| `html()` on the contract | The page itself, from any node: `cast call <contract> "html()(string)" --rpc-url <rpc>`. The call is a read: about 0.8 million gas for the current page, far under the usual 50 million call cap. |
+
+**Finding the newest version.** The contract is a versioned wrapper. `latest()` called on any version walks `successor` to
+the newest, `successor()` and `PREVIOUS()` give the neighbours, and `PAGE_HASH`, `PAGE_LENGTH`, `chunkCount()` and
+`chunkAt(i)` describe what it serves. A version never redirects: it serves its own bytes forever, so a reader who audited
+one stays on it by not walking, and the keccak256 of `html()` must equal `PAGE_HASH`. The page also pins the proving key
+and witness program by SHA-256 and uses them only when they match, so a mirror cannot change what it proves with.
+
+**Adapting it to a chain.** The source is the deployed page. Fetch `html()` and edit it, or read it with its chunker and
+deploy tools in `tacit-pay/` of the `ERC8244/dapps` repository. The places to change:
+- `CHAINS`: one entry per chain, with `chainId`, names, `explorer`, `relay` (the relay URL, or none), `deployBlock` (the
+  pool's deploy block), `confirmations`, `gasReserve` and a list of `rpc` URLs. Add an entry for the new chain; a chain
+  with no relay sends every spend from the user's wallet.
+- `POOL`, `ROUTER` and the verifier are the same addresses on every chain, and need no change.
+- The token flows (shield from a token, withdraw as a token) use `ZROUTER`, `ZQUOTER`, `TLIST` and `ZAP`, which exist only
+  on Ethereum, Base and Robinhood Chain. On a chain without them, remove or hide those forms; the rest of the app does not
+  use them.
+- The document's security policy pins its one script by SHA-256 in `script-src`. After any edit to the script, hash the
+  module text (SHA-256, base64) and replace the pin, or the browser will not run it. `connect-src` already allows any
+  https host, so a new node or relay needs no change there.
+- Test before publishing. `tools/evm-pool-mega-check.mjs` runs a shield, a private send, a withdrawal and a deposit-address
+  sweep on a chain from a script, with or without a relay.
+
+To publish an edited page as contract code, use the same wrapper pattern (the chunk contracts and a constructor that checks
+the page hash); or serve it as an ordinary static page, since it needs nothing from a server. An agent can do the whole
+adaptation from this guide, the live page and the check tool.
+
 ## MegaETH and building an app on another chain
 
 The pool, router, verifier and PoseidonT5 are live on MegaETH (chain 4326) at the addresses above, deployed on 5 October
@@ -671,7 +709,7 @@ with no relay: it proves and sends everything itself.
 - Blocks are very short, so a relay waits a few hundred blocks (200 here) before treating a deposit as settled.
 - zRouter, zQuoter and the token list are not on the chain yet ([Swaps and zaps](#swaps-and-zaps)).
 
-**What an app needs.**
+**What an app needs.** Start from [the reference app](#the-reference-app-anonwei), and see these in the library it uses.
 1. Detect the pool by code at its address, and read its events from the chain's deploy block.
 2. The proving key and witness program, from tacit.finance, IPFS or the [Base Sepolia copy](#an-onchain-copy-of-the-proving-files-base-sepolia),
    each checked against its SHA-256 (`pin.json`), and the verifying key hash pinned in `makeGroth16System({ pinnedVkHash })`.
