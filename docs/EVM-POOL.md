@@ -490,7 +490,7 @@ A user never needs gas or a funded address: a relayer submits the transaction an
 shielded funds in the same call. The proof binds `relayer` and `fee` (with recipient, amount and memos), so a relayer
 cannot redirect the funds or raise its fee after it is signed, and a copy of the transaction submitted by anyone else
 still pays the named relayer. Before signing, the wallet checks the relayer's quote: it must name this chain and pool,
-and the fee must be within a per-chain ceiling (0.05 ETH on Ethereum, 0.002 ETH on Base and Robinhood Chain), so a
+and the fee must be within a per-chain ceiling (0.05 ETH on Ethereum, 0.002 ETH on Base, Robinhood Chain and MegaETH), so a
 compromised relayer cannot quote more than that. In a browser on a real origin the quote must also come from the relayer
 address the wallet expects for the chain. A chain config can set `relayer` and `maxRelayFee`. Withdrawing to a fresh,
 empty address through a relayer leaves no on-chain link to the depositor's wallet beyond what the amounts and timing
@@ -720,7 +720,9 @@ with no relay: it proves and sends everything itself.
 4. Optionally a relay. Run `worker-relay/src/evm-pool-keeper.js` (env-configured: `EVM_POOL_ADDR`, `EVM_POOL_ROUTER_ADDR`,
    `EVM_POOL_CHAIN_ID`, `EVM_POOL_RPC_URL`, `EVM_POOL_START_BLOCK`, `EVM_POOL_CONFIRMATIONS`, and per-action gas such as
    `EVM_POOL_KEEPER_SWEEP_GAS`), or point a wallet at the one above. Set `maxRelayFee` and the expected `relayer` in the
-   chain config so a relay cannot quote more than you allow.
+   chain config so a relay cannot quote more than you allow; the library's built-in tables (`RELAYERS`, `MAX_RELAY_FEE` in
+   `dapp/evm-pool-wallet.js`) cover Ethereum, Base, Robinhood Chain and MegaETH, and a chain missing from them is not
+   checked unless you set both.
 5. The notes of a pool are bound to its chain: nothing moves between chains except by withdrawing and depositing, and a
    user's balance on each chain is found again from their key and that chain's events.
 

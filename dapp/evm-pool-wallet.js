@@ -37,8 +37,9 @@ const RELAYERS = {
   1: '0x7c9f8aE4e48Cbb2727F95b6477a1cf92bCFc43D0',
   8453: '0xfA2afbaB631C7Eda7CeA6AE1440605C504E322Ec',
   4663: '0xc1F8DAc6BC910A5A794b4795b5F9997e0E8A5Fad',
+  4326: '0x69e4ea1992561Ce129713899244209Fd955E7D89',
 };
-const MAX_RELAY_FEE = { 1: 5n * 10n ** 16n, 8453: 2n * 10n ** 15n, 4663: 2n * 10n ** 15n };
+const MAX_RELAY_FEE = { 1: 5n * 10n ** 16n, 8453: 2n * 10n ** 15n, 4663: 2n * 10n ** 15n, 4326: 2n * 10n ** 15n };
 const VMAX = 1n << 120n;
 const G = secp.ProjectivePoint.BASE;
 const N_SECP = secp.CURVE.n;

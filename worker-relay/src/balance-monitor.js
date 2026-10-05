@@ -433,10 +433,11 @@ const EVM_POOL_KEEPERS_DEFAULT = [
   { chainId: 1, name: 'Ethereum', keeper: 'https://tacit-evm-pool-keeper.onrender.com/evm-pool/keeper', address: '0x7c9f8aE4e48Cbb2727F95b6477a1cf92bCFc43D0', rpc: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org', 'https://mainnet.gateway.tenderly.co'], minTipWei: '50000000' },
   { chainId: 8453, name: 'Base', keeper: 'https://tacit-evm-pool-keeper-base.onrender.com/evm-pool/keeper', address: '0xfA2afbaB631C7Eda7CeA6AE1440605C504E322Ec', rpc: ['https://mainnet.base.org', 'https://base.drpc.org'] },
   { chainId: 4663, name: 'Robinhood Chain', keeper: 'https://tacit-evm-pool-keeper-robinhood.onrender.com/evm-pool/keeper', address: '0xc1F8DAc6BC910A5A794b4795b5F9997e0E8A5Fad', rpc: ['https://rpc.mainnet.chain.robinhood.com'] },
+  { chainId: 4326, name: 'MegaETH', keeper: 'https://tacit-evm-pool-keeper-megaeth.onrender.com/evm-pool/keeper', address: '0x69e4ea1992561Ce129713899244209Fd955E7D89', rpc: ['https://mainnet.megaeth.com/rpc'], relayGas: 900_000, gasCap: 3_000_000 },
 ];
-// The keeper's own gas figures (evm-pool-keeper-config.js defaults): an ordinary relay's budget, sent with 30% on
-// the estimate, and the cap on any one transaction.
-const KEEPER_RELAY_GAS = 450_000n * 13n / 10n, KEEPER_GAS_CAP = 1_500_000n;
+// The keeper's own gas figures (evm-pool-keeper-config.js defaults, unless the entry gives `relayGas` and `gasCap`): an
+// ordinary relay's budget, sent with 30% on the estimate, and the cap on any one transaction.
+const KEEPER_RELAY_GAS = 450_000n, KEEPER_GAS_CAP = 1_500_000n;
 async function keeperRpc(urls, method, params = []) {
   let last;
   for (const url of urls) {
@@ -475,12 +476,13 @@ async function checkEvmPoolKeepers() {
     ]);
     const bal = BigInt(balHex), base = BigInt(block.baseFeePerGas ?? '0x0'), minTip = BigInt(k.minTipWei ?? 0), tip0 = BigInt(tipHex);
     const tip = tip0 > minTip ? tip0 : minTip;
-    const now = KEEPER_RELAY_GAS * (base + tip), spike = KEEPER_RELAY_GAS * (8n * base + tip), largest = KEEPER_GAS_CAP * (2n * base + tip);
+    const relayGas = BigInt(k.relayGas ?? KEEPER_RELAY_GAS) * 13n / 10n, gasCap = BigInt(k.gasCap ?? KEEPER_GAS_CAP);
+    const now = relayGas * (base + tip), spike = relayGas * (8n * base + tip), largest = gasCap * (2n * base + tip);
     const extra = { chainId: k.chainId, address, ethWei: bal.toString(), baseFeeWei: base.toString() };
     log(`${who} ${address} = ${formatEther(bal)} ETH (a relay now needs ${formatEther(now)}; after a 4x base-fee rise ${formatEther(spike)}; the largest send ${formatEther(largest)})`);
     if (bal < now) await alert('critical', `${who} ${address} holds ${formatEther(bal)} ETH, under the ${formatEther(now)} ETH it must front for one relay at today's gas: it refuses relays until topped up, and users fall back to their own wallets`, extra);
     else if (bal < spike) await alert('warning', `${who} ${address} holds ${formatEther(bal)} ETH: enough now, but a 4x base-fee rise would stop its relays (needs ${formatEther(spike)} ETH). Top it up`, extra);
-    else if (bal < largest) await alert('warning', `${who} ${address} holds ${formatEther(bal)} ETH, under the ${formatEther(largest)} ETH to front its largest transaction (up to ${KEEPER_GAS_CAP} gas, e.g. a bridge move) with full headroom`, extra);
+    else if (bal < largest) await alert('warning', `${who} ${address} holds ${formatEther(bal)} ETH, under the ${formatEther(largest)} ETH to front its largest transaction (up to ${gasCap} gas, e.g. a bridge move) with full headroom`, extra);
   }));
 }
 
