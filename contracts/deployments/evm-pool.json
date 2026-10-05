@@ -96,6 +96,32 @@
         "sourcify",
         "etherscan"
       ]
+    },
+    "4326": {
+      "pool": "0x000000c2A20657CE25f2Ba99737933D031AFBEE9",
+      "router": "0x0000006C96Afa6f1cD4DF8FE19bc0d8B6A6Cd7B5",
+      "verifier": "0x000000b1c0e84CEc8AdF8278B90c4d6400DfB153",
+      "poseidonT5": "0x555333f3f677Ca3930Bf7c56ffc75144c51D9767",
+      "createX": "0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed",
+      "deployer": "0x68575B073DE49a94e3E3ACf6F3A0d6E3b66267C7",
+      "zRouter": "0x0000000000000000000000000000000000000000",
+      "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+      "network": "megaeth",
+      "v1": "0x0000000000000000000000000000000000000000",
+      "poseidonT5Tx": "0x84dd98c68ddb117ba39efd921850a6301f9e6eaea4b98b1b10d5dd9463fdc925",
+      "verifierTx": "0xcfb84079e5bec250a2f50ccc004f3dbefd0ff96fa99ca3ba32e1197e2f2ca0ad",
+      "verifierBlock": 28397747,
+      "poolTx": "0xf1785b46e471e178c56028cf1c0df7f8507596e0fb69a4bf2cc86436737557aa",
+      "deployBlock": 28397750,
+      "routerTx": "0x4eb8c66b18707e640cf28e08c9817c77b4fab4d1b0e69436e49a716c28ee0c34",
+      "routerBlock": 28397753,
+      "keeper": "https://tacit-evm-pool-keeper-megaeth.onrender.com/evm-pool/keeper",
+      "keeperAddress": "0x69e4ea1992561Ce129713899244209Fd955E7D89",
+      "verified": [
+        "sourcify",
+        "etherscan"
+      ],
+      "note": "Core only. zRouter is not on this chain, so the router was deployed with zRouter set to zero and its zap entry points are off. The zap contract is not deployed."
     }
   }
 }
