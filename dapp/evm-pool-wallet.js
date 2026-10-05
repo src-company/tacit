@@ -711,10 +711,13 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       if (q) {
         onStep('sending through the relayer');
         // An unanswered request may still have been sent: read the chain again, and say so rather than invite a blind retry.
-        const r = await keeperPost('/relay', { tx, ...extra, ...(slot ? { reservation: slot } : {}) }).catch(() => {
+        const unanswered = () => {
           sync().catch(() => {});
-          throw Object.assign(new Error('The relay did not answer, and it may still have sent your payment. Check Activity before sending again.'), { said: true });
-        });
+          return Object.assign(new Error('The relay did not answer, and it may still have sent your payment. Check Activity before sending again.'), { said: true });
+        };
+        const r = await keeperPost('/relay', { tx, ...extra, ...(slot ? { reservation: slot } : {}) }).catch(() => { throw unanswered(); });
+        // A gateway's own timeout or error (502-504, 520-524) says nothing of whether the relay sent it: the same as no answer.
+        if ((r.status >= 502 && r.status <= 504) || (r.status >= 520 && r.status <= 524)) throw unanswered();
         if (r.status === 409 && r.body.stale) continue;
         if (r.status === 429) { if (slot) await releaseSlot(slot); await sleep(5000); continue; }
         if (r.status !== 200 || !r.body.txHash) { if (slot) await releaseSlot(slot); throw new Error(r.body.error || `relayer returned ${r.status}`); }

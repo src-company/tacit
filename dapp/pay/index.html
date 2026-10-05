@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-wkwJqCkAijTKzSu+SpvIjHHaDqRva9x+cJ+oDWx+ZZY=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-eEVE34lyn7T9M6HfqtBvxecsszcu3rTYk3cYOiPHSJc=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://tacit-api.onrender.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Simple, private payments: Bitcoin by silent payment, TAC shielded, ETH on Ethereum, Base and Robinhood Chain. One key and one tacit1 address, every payment made on your device, recovered from the key alone.">
@@ -89,7 +89,7 @@ body {
   padding: 0 max(16px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(16px, env(safe-area-inset-left));
 }
 a { color: inherit; text-underline-offset: 3px; text-decoration-thickness: 1px; }
-a:hover { text-decoration-thickness: 2px; }
+@media (hover: hover) { a:hover { text-decoration-thickness: 2px; } }
 button { font: inherit; color: inherit; letter-spacing: inherit; }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 [hidden] { display: none !important; }
@@ -117,7 +117,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
   border: 1px solid var(--hair-2); padding: 4px 6px 3px; margin-left: 2px; }
 .chip { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; min-width: 0; padding: 0 14px; background: var(--card);
   border: 1px solid var(--hair-2); cursor: pointer; white-space: nowrap; }
-.chip:hover { border-color: var(--ink); }
+@media (hover: hover) { .chip:hover { border-color: var(--ink); } }
 .chip span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .chip .narrow { display: none; }
 @media (max-width: 430px) { .chip .wide { display: none; } .chip .narrow { display: inline; } }
@@ -169,7 +169,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 
 .lbl { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--mute); margin: 14px 0 6px; }
 .lbl button { background: none; border: 0; padding: 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; }
-.lbl button:hover { color: var(--ink); }
+@media (hover: hover) { .lbl button:hover { color: var(--ink); } }
 .amt { display: flex; align-items: center; background: var(--field); border: 1px solid var(--hair); border-bottom-color: var(--ink); }
 .amt:focus-within { border-color: var(--ink); }
 .amt:has(input[aria-invalid="true"]) { border-color: var(--err); }
@@ -187,10 +187,10 @@ input::placeholder { color: var(--mute); opacity: 1; }
 
 .btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 52px; margin-top: 18px; padding: 10px 16px;
   font-weight: 500; color: var(--card); background: var(--ink); border: 1px solid var(--ink); cursor: pointer; transition: background .15s, color .15s; }
-.btn:hover:not(:disabled) { background: transparent; color: var(--ink); }
+@media (hover: hover) { .btn:hover:not(:disabled) { background: transparent; color: var(--ink); } }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 .btn.ghost { color: var(--ink); background: transparent; border-color: var(--hair-2); }
-.btn.ghost:hover:not(:disabled) { border-color: var(--ink); }
+@media (hover: hover) { .btn.ghost:hover:not(:disabled) { border-color: var(--ink); } }
 .btn.sm { width: auto; min-height: 38px; margin: 0; padding: 6px 14px; font-size: 12.5px; }
 .btn[aria-busy="true"] { cursor: progress; }
 .btn[aria-busy="true"]::after, .spin { content: ''; display: inline-block; width: 12px; height: 12px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
@@ -199,7 +199,7 @@ input::placeholder { color: var(--mute); opacity: 1; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .row2 .btn { margin-top: 10px; }
 .link { position: relative; background: none; border: 0; padding: 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; font-size: 12.5px; }
-.link:hover { color: var(--ink); }
+@media (hover: hover) { .link:hover { color: var(--ink); } }
 .link::after { content: ''; position: absolute; inset: -12px -6px; }
 
 .status { font-size: 12.5px; min-height: 20px; margin-top: 12px; overflow-wrap: anywhere; }
@@ -221,7 +221,7 @@ input::placeholder { color: var(--mute); opacity: 1; }
 
 .opts { display: grid; gap: 8px; margin-top: 4px; }
 .opt { display: grid; gap: 3px; width: 100%; padding: 12px 14px; text-align: left; cursor: pointer; background: var(--field); border: 1px solid var(--hair-2); transition: border-color .15s; }
-.opt:hover:not(:disabled) { border-color: var(--ink); }
+@media (hover: hover) { .opt:hover:not(:disabled) { border-color: var(--ink); } }
 .opt:disabled { opacity: .5; cursor: progress; }
 .opt.main { border-color: var(--ink); background: var(--card); }
 .opt-t { display: flex; align-items: center; gap: 10px; font-weight: 500; }
@@ -253,10 +253,10 @@ input::placeholder { color: var(--mute); opacity: 1; }
 .chainsum .s { margin-left: auto; color: var(--mute); text-align: right; }
 .people { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 0; }
 .pchip { display: inline-flex; align-items: stretch; background: var(--field); border: 1px solid var(--hair-2); font-size: 12.5px; }
-.pchip:hover { border-color: var(--ink); }
+@media (hover: hover) { .pchip:hover { border-color: var(--ink); } }
 .pchip button { background: none; border: 0; padding: 5px 4px 5px 10px; cursor: pointer; color: var(--ink); }
 .pchip button + button { padding: 5px 8px; color: var(--mute); }
-.pchip button + button:hover { color: var(--err); }
+@media (hover: hover) { .pchip button + button:hover { color: var(--err); } }
 .save { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 0 2px; }
 .save input { flex: 1; min-width: 0; font: inherit; font-size: 12.5px; color: var(--ink); background: none; border: 0; border-bottom: 1px solid var(--hair-2); padding: 6px 0; outline: none; }
 .save input:focus { border-bottom-color: var(--ink); }
@@ -305,7 +305,7 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8p
   border-top: 1px solid var(--hair-2); color: var(--mute); font-size: 12px; }
 footer nav { display: flex; flex-wrap: wrap; gap: 0 18px; }
 footer a { display: inline-block; padding: 12px 0; color: var(--mute); }
-footer a:hover { color: var(--ink); }
+@media (hover: hover) { footer a:hover { color: var(--ink); } }
 
 /* ── sheets ── */
 dialog.sheet { width: min(480px, calc(100vw - 32px)); max-height: min(90vh, 900px); padding: 0; overflow: auto;
@@ -319,14 +319,14 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 .sheet-head h2:focus { outline: none; }
 .x { margin-left: auto; width: var(--tap); height: var(--tap); display: grid; place-items: center; font-size: 22px; line-height: 1;
   background: none; border: 1px solid transparent; cursor: pointer; color: var(--mute); }
-.x:hover { color: var(--ink); border-color: var(--hair-2); }
+@media (hover: hover) { .x:hover { color: var(--ink); border-color: var(--hair-2); } }
 .who { text-align: center; padding: 4px 0 16px; margin-bottom: 6px; border-bottom: 1px solid var(--hair); }
 .who .a { font: 500 16px/1.4 var(--mono); overflow-wrap: anywhere; }
 .who .u { font-size: 12px; color: var(--mute); margin-top: 4px; }
 .who .u b { font-weight: 500; color: var(--ink); }
 .picker { display: grid; gap: 8px; }
 .picker button { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 14px; background: var(--field); border: 1px solid var(--hair-2); cursor: pointer; text-align: left; }
-.picker button:hover { border-color: var(--ink); }
+@media (hover: hover) { .picker button:hover { border-color: var(--ink); } }
 .picker img { width: 28px; height: 28px; }
 dialog.layer { width: min(460px, calc(100vw - 32px)); }
 #pass-modal .pass-hint { font-size: 12px; min-height: 18px; margin-top: 4px; color: var(--mute); }
@@ -355,7 +355,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
 
 .modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0 0 18px; }
 .modes a { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 10px 12px; color: var(--ink); text-decoration: none; background: var(--field); border: 1px solid var(--hair); transition: border-color .15s, background .15s; }
-.modes a:hover { border-color: var(--hair-2); }
+@media (hover: hover) { .modes a:hover { border-color: var(--hair-2); } }
 .modes a[aria-current="page"] { background: var(--card); border-color: var(--ink); }
 .modes .tk { width: 26px; height: 26px; flex: none; }
 .modes span { min-width: 0; }
@@ -534,10 +534,21 @@ function parseAmount(s, dec = 8) {
   return BigInt(w || '0') * 10n ** BigInt(dec) + BigInt((f + '0'.repeat(dec)).slice(0, dec) || '0');
 }
 const parseUnits = (s, dec = 8) => parseAmount(s, dec) ?? 0n;
+// Says why an amount is not read, beside the field, where a screen reader finds it with the field.
+function amountHint(i, msg) {
+  const box = i.closest('.amt') || i, at = box.nextElementSibling?.matches?.('[data-amt-hint]') ? box.nextElementSibling : null;
+  if (!msg) return at?.remove();
+  const h = at || Object.assign(document.createElement('p'), { className: 'note err' });
+  h.setAttribute('data-amt-hint', ''); h.setAttribute('role', 'alert'); h.textContent = msg;
+  if (!at) box.after(h);
+}
+const amountWhy = (t, dec) => (t.includes(',') ? 'Write 1500 for fifteen hundred, or 1,5 for a decimal comma.' : /^\d*\.?\d*$/.test(t) ? `Up to ${dec} decimals.` : 'Numbers only.');
 for (const ev of ['input', 'change']) document.addEventListener(ev, ({ target: i }) => {
   if (!i.matches?.('input[inputmode="decimal"]')) return;
   const t = i.value.trim(), open = ev === 'input' && (t === '.' || /^[1-9]\d{0,2}(?:,\d{3})*,\d{0,3}$/.test(t));
-  if (t && !open && parseAmount(t, 64) == null) i.setAttribute('aria-invalid', 'true'); else i.removeAttribute('aria-invalid');
+  const bad = t && !open && parseAmount(t, 8) == null;
+  if (bad) i.setAttribute('aria-invalid', 'true'); else i.removeAttribute('aria-invalid');
+  amountHint(i, bad ? amountWhy(t, 8) : '');
 }, true);
 function toast(msg, bad = false, ms = bad ? 7000 : 4200) {
   const c = $('#toast-container'), t = document.createElement('div');

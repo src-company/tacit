@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-MH6H8M3YisFTNJBIB+TYePuO36BTLUYYaR5oqPskmmU=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-L+7m0A9p9DK/PJ4lrzscdzAFFntS01R2akm3v7oV/bg=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit weld</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
@@ -77,7 +77,7 @@ body {
   padding: 0 max(16px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(16px, env(safe-area-inset-left));
 }
 a { color: inherit; text-underline-offset: 3px; text-decoration-thickness: 1px; }
-a:hover { text-decoration-thickness: 2px; }
+@media (hover: hover) { a:hover { text-decoration-thickness: 2px; } }
 button { font: inherit; color: inherit; letter-spacing: inherit; }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 [hidden] { display: none !important; }
@@ -109,7 +109,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
   border: 1px solid var(--hair-2); cursor: pointer; white-space: nowrap; }
 .chip #wallet-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .brand { flex: none; }
-.chip:hover { border-color: var(--ink); }
+@media (hover: hover) { .chip:hover { border-color: var(--ink); } }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hair-2); flex: none; }
 .dot.on { background: var(--ok); }
 .dot.live { background: var(--orange); }
@@ -136,7 +136,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .dash-g { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); }
 .di { display: flex; flex-direction: column; gap: 3px; width: 100%; min-height: 86px; padding: 12px 14px; text-align: left; cursor: pointer;
   background: var(--card); border: 1px solid var(--hair); transition: border-color .15s, box-shadow .15s; }
-.di:hover { border-color: var(--ink); box-shadow: var(--lift); }
+@media (hover: hover) { .di:hover { border-color: var(--ink); box-shadow: var(--lift); } }
 a.di { color: inherit; text-decoration: none; }
 .di-k { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--mute); letter-spacing: .02em; }
 .di-k .tk { width: 18px; height: 18px; }
@@ -176,7 +176,7 @@ a.di { color: inherit; text-decoration: none; }
 .hero p { color: var(--mute); margin: 0; max-width: 44ch; }
 .shelf { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 30px; }
 .shelf button { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mute); background: none; border: 0; padding: 4px 0; cursor: pointer; }
-.shelf button:hover { color: var(--ink); }
+@media (hover: hover) { .shelf button:hover { color: var(--ink); } }
 .shelf .tk { width: 24px; height: 24px; }
 
 /* ── first visit ── */
@@ -193,20 +193,20 @@ a.di { color: inherit; text-decoration: none; }
 .tiles { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .tile { display: flex; flex-direction: column; gap: 8px; min-height: 250px; padding: 24px; color: inherit; text-decoration: none;
   background: var(--card); border: 1px solid var(--hair); transition: border-color .18s, transform .18s, box-shadow .18s; }
-.tile:hover { border-color: var(--ink); transform: translateY(-2px); box-shadow: var(--lift); }
+@media (hover: hover) { .tile:hover { border-color: var(--ink); transform: translateY(-2px); box-shadow: var(--lift); } }
 .tile .pair { margin-bottom: 18px; }
 .tile h2 { font: 400 32px/1.02 var(--serif); letter-spacing: -.01em; margin: 0; }
 .tile p { color: var(--mute); font-size: 13px; line-height: 1.55; margin: 0; }
 .tile-foot { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--hair); font-size: 12.5px; min-width: 0; }
 .tile-foot span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile-foot .go { margin-left: auto; transition: transform .18s; }
-.tile:hover .go { transform: translateX(3px); }
+@media (hover: hover) { .tile:hover .go { transform: translateX(3px); } }
 
 footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; margin-top: 44px; padding-top: 18px;
   border-top: 1px solid var(--hair-2); color: var(--mute); font-size: 12px; }
 footer nav { display: flex; flex-wrap: wrap; gap: 6px 18px; }
 footer a { color: var(--mute); }
-footer a:hover { color: var(--ink); }
+@media (hover: hover) { footer a:hover { color: var(--ink); } }
 
 /* ── sheets ── */
 dialog.sheet { width: min(560px, calc(100vw - 32px)); max-height: min(90vh, 900px); max-height: min(90dvh, 900px); padding: 0; overflow: auto; overscroll-behavior: contain;
@@ -220,7 +220,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 .sheet-head h2:focus { outline: none; }
 .x { margin-left: auto; width: var(--tap); height: var(--tap); display: grid; place-items: center; font-size: 22px; line-height: 1;
   background: none; border: 1px solid transparent; cursor: pointer; color: var(--mute); }
-.x:hover { color: var(--ink); border-color: var(--hair-2); }
+@media (hover: hover) { .x:hover { color: var(--ink); border-color: var(--hair-2); } }
 .x.share + .x { margin-left: 0; }
 .x.share svg { width: 18px; height: 18px; }
 
@@ -240,7 +240,7 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 
 .lbl { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--mute); margin: 14px 0 6px; }
 .lbl button { background: none; border: 0; padding: 7px 0; margin: -7px 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; }
-.lbl button:hover { color: var(--ink); }
+@media (hover: hover) { .lbl button:hover { color: var(--ink); } }
 .amt { display: flex; align-items: center; background: var(--field); border: 1px solid var(--hair); border-bottom-color: var(--ink); }
 .amt:focus-within { border-color: var(--ink); }
 .amt:has(input[aria-invalid="true"]) { border-color: var(--err); }
@@ -262,10 +262,10 @@ input::placeholder { color: var(--mute); opacity: .7; }
 
 .btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 52px; margin-top: 18px; padding: 10px 16px;
   font-weight: 500; color: var(--card); background: var(--ink); border: 1px solid var(--ink); cursor: pointer; transition: background .15s, color .15s; }
-.btn:hover:not(:disabled) { background: transparent; color: var(--ink); }
+@media (hover: hover) { .btn:hover:not(:disabled) { background: transparent; color: var(--ink); } }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 .btn.ghost { color: var(--ink); background: transparent; border-color: var(--hair-2); }
-.btn.ghost:hover:not(:disabled) { border-color: var(--ink); }
+@media (hover: hover) { .btn.ghost:hover:not(:disabled) { border-color: var(--ink); } }
 a.btn { text-decoration: none; white-space: nowrap; }
 .row2 a.btn { white-space: normal; }
 .btn[aria-busy="true"] { cursor: progress; }
@@ -274,7 +274,7 @@ a.btn { text-decoration: none; white-space: nowrap; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .row2 .btn { margin-top: 10px; }
 .link { background: none; border: 0; padding: 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; font-size: 12.5px; }
-.link:hover { color: var(--ink); }
+@media (hover: hover) { .link:hover { color: var(--ink); } }
 .actr-f .link, .callout .link, .status .link, .note .link { padding: 6px 2px; margin: -6px -2px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
@@ -351,7 +351,7 @@ a.btn { text-decoration: none; white-space: nowrap; }
 .steps .kv { padding: 3px 0; }
 .opts { display: grid; gap: 8px; margin-top: 4px; }
 .opt { display: grid; gap: 3px; width: 100%; padding: 12px 14px; text-align: left; cursor: pointer; background: var(--field); border: 1px solid var(--hair-2); transition: border-color .15s; }
-.opt:hover:not(:disabled) { border-color: var(--ink); }
+@media (hover: hover) { .opt:hover:not(:disabled) { border-color: var(--ink); } }
 .opt:disabled { opacity: .5; cursor: progress; }
 .opt.main { border-color: var(--ink); background: var(--card); }
 .opt-t { display: flex; align-items: center; gap: 10px; font-weight: 500; }
@@ -409,7 +409,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
 #pass-modal .pass-hint.ok { color: var(--ok); }
 .picker { display: grid; gap: 8px; }
 .picker button { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 14px; background: var(--field); border: 1px solid var(--hair-2); cursor: pointer; text-align: left; }
-.picker button:hover { border-color: var(--ink); }
+@media (hover: hover) { .picker button:hover { border-color: var(--ink); } }
 .picker img { width: 28px; height: 28px; }
 
 .toasts { position: fixed; inset: auto 16px max(16px, env(safe-area-inset-bottom)) 16px; width: auto; height: auto; margin: 0; padding: 0; border: 0; background: transparent; overflow: visible; display: grid; gap: 8px; justify-items: center; pointer-events: none; }
@@ -1076,9 +1076,11 @@ const lossLine = (pct) => !(pct >= 0.5) ? html`` : html`<div class="kv"><span>Pr
 // ── chain access ─────────────────────────────────────────────────────────────────────────────────────────
 async function rpc(method, params, urls = RPCS) {
   let last;
-  for (const url of urls) {
+  const send = method === 'eth_sendRawTransaction';
+  for (const [n, url] of urls.entries()) {
     try {
-      const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: within(60e3) });
+      // A read that hangs gives way to the next host after 15 s; the last host, and a send, get a minute.
+      const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: within(send || n === urls.length - 1 ? 60e3 : 15e3) });
       const j = await r.json();
       if (j.error) {
         if (j.error.code === 3 || /revert/i.test(j.error.message || '')) throw Object.assign(new Error(j.error.message), { revert: true, data: j.error.data });
@@ -1765,16 +1767,16 @@ function renderAct() {
   const sig = view.s.replace(/(data-since="\d+">)[^<]*/g, '$1');                 // the running clocks tick on their own
   if (sig === ACT_VIEW && el.firstChild) return;
   ACT_VIEW = sig;
-  mount(el, view);
-  const nb = $('#act-notify', el), note = $('#act-note', el);
+  keep(el, () => mount(el, view));                                                // focus stays on the control it was on
+  const nb = $('#act-notify', el), setNote = (t) => { const n = $('#act-note'); if (n) n.textContent = t; };   // the list may be drawn again while a permission prompt is open
   if (nb) nb.onchange = async () => {
-    if (!nb.checked) { store.set(NOTIFY_KEY, null); note.textContent = ''; return; }
+    if (!nb.checked) { store.set(NOTIFY_KEY, null); setNote(''); return; }
     let p = Notification.permission;
     try { if (p === 'default') p = await Notification.requestPermission(); } catch { p = 'denied'; }
-    if (p !== 'granted') { nb.checked = false; note.textContent = 'This browser is blocking notifications from this site. Allow them in its site settings, then try again.'; return; }
+    if (p !== 'granted') { nb.checked = false; setNote('This browser is blocking notifications from this site. Allow them in its site settings, then try again.'); return; }
     try { new Notification('tacit weld', { body: 'Notifications are on. One arrives when something finishes while this tab is in the background.', tag: 'tacit-notify-on', icon: '/favicon.svg' }); }
-    catch { nb.checked = false; note.textContent = 'This browser shows notifications only from installed apps.'; return; }
-    store.set(NOTIFY_KEY, true); note.textContent = '';
+    catch { nb.checked = false; setNote('This browser shows notifications only from installed apps.'); return; }
+    store.set(NOTIFY_KEY, true); setNote('');
   };
   const cl = $('#act-clear', el);
   if (cl) cl.onclick = () => {
@@ -2335,6 +2337,19 @@ render.wallet = () => {
     } catch (e) { if (pendingSent(status, e, hash, base)) { clearField($('#ac-mv')); run.release(true); } else sayErr(status, e); }
   });
 };
+// Arrow keys, Home and End move between the tabs of a tab list.
+document.addEventListener('keydown', (e) => {
+  const t = e.target.closest?.('[role="tab"]'), box = t?.closest('[role="tablist"]');
+  if (!box || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+  const tabs = [...box.querySelectorAll('[role="tab"]:not([disabled])')], i = tabs.indexOf(t);
+  if (i < 0) return;
+  e.preventDefault();
+  const scope = box.closest('dialog.sheet') || document, lists = [...scope.querySelectorAll('[role="tablist"]')], at = lists.indexOf(box);
+  const n = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+  tabs[n].click();
+  const now = box.isConnected ? box : [...scope.querySelectorAll('[role="tablist"]')][at];       // the click may have drawn the list again
+  now?.querySelector('[aria-selected="true"]')?.focus();
+});
 // Enter in a field presses its form's one live action: the single enabled, visible "-go" button of its sheet. The button's own
 // handler still checks everything it checks on a click.
 document.addEventListener('keydown', (e) => {
@@ -3102,7 +3117,7 @@ function v1Out(el, status) {
 const DEV = { chain: DEVICE_CHAINS.find((c) => c.chainId === store.get('tacit-lite-device-chain')) || DEVICE_CHAINS[1], mode: 'deposit', dest: 'addr', W: null, bal: null, key: null, quote: null, gq: {}, err: null, self: false };
 const getDeviceMods = lazy(async () => {
   const [zkm, wm, pm, pos] = await Promise.all([
-    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=21820836'), import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
+    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=ca3642a4'), import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
   ]);
   const PO = { 2: pos.poseidon2, 3: pos.poseidon3, 4: pos.poseidon4, 5: pos.poseidon5, 7: pos.poseidon7 };
   return { zk: zkm.makeEvmPoolZk({ poseidon: (xs) => PO[xs.length](xs) }), ...wm, vkHash: pm.vkHash };
