@@ -465,6 +465,17 @@ async function checkEvmPoolKeepers() {
       await alert('critical', `${who} (${k.keeper}) does not answer: relayed private sends, withdrawals and deposit-address sweeps on ${k.name} stop; users can still send from their own wallets`, { chainId: k.chainId });
       return;
     }
+    // A keeper can answer /info and still be unable to quote (its reads of the chain fail): users then see "the relay is not
+    // answering". Asked twice, so one slow answer does not page.
+    let quote = null, quoteWhy = '';
+    for (let i = 0; i < 2 && !quote; i++) {
+      try {
+        const r = await fetch(`${k.keeper}/quote?gas=${k.relayGas ?? KEEPER_RELAY_GAS}`, { signal: AbortSignal.timeout(20_000) });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && j.fee) quote = j; else quoteWhy = j.error || `HTTP ${r.status}`;
+      } catch (e) { quoteWhy = safeErr(e); }
+    }
+    if (!quote) await alert('critical', `${who} (${k.keeper}) answers /info but cannot quote (${quoteWhy}): relayed sends and withdrawals on ${k.name} show "the relay is not answering" and users send from their own wallets. Its reads of the chain are likely failing: check its RPC`, { chainId: k.chainId });
     let address = k.address;
     if (info.keeper && info.keeper.toLowerCase() !== String(address).toLowerCase()) {
       await alert('warning', `${who} now signs as ${info.keeper}, not ${address}; checking the new account (update EVM_POOL_KEEPERS)`, { chainId: k.chainId });
@@ -479,7 +490,7 @@ async function checkEvmPoolKeepers() {
     const relayGas = BigInt(k.relayGas ?? KEEPER_RELAY_GAS) * 13n / 10n, gasCap = BigInt(k.gasCap ?? KEEPER_GAS_CAP);
     const now = relayGas * (base + tip), spike = relayGas * (8n * base + tip), largest = gasCap * (2n * base + tip);
     const extra = { chainId: k.chainId, address, ethWei: bal.toString(), baseFeeWei: base.toString() };
-    log(`${who} ${address} = ${formatEther(bal)} ETH (a relay now needs ${formatEther(now)}; after a 4x base-fee rise ${formatEther(spike)}; the largest send ${formatEther(largest)})`);
+    log(`${who} ${address} quote ${quote ? `fee ${formatEther(BigInt(quote.fee))} ETH` : 'FAILED'}, holds ${formatEther(bal)} ETH (a relay now needs ${formatEther(now)}; after a 4x base-fee rise ${formatEther(spike)}; the largest send ${formatEther(largest)})`);
     if (bal < now) await alert('critical', `${who} ${address} holds ${formatEther(bal)} ETH, under the ${formatEther(now)} ETH it must front for one relay at today's gas: it refuses relays until topped up, and users fall back to their own wallets`, extra);
     else if (bal < spike) await alert('warning', `${who} ${address} holds ${formatEther(bal)} ETH: enough now, but a 4x base-fee rise would stop its relays (needs ${formatEther(spike)} ETH). Top it up`, extra);
     else if (bal < largest) await alert('warning', `${who} ${address} holds ${formatEther(bal)} ETH, under the ${formatEther(largest)} ETH to front its largest transaction (up to ${gasCap} gas, e.g. a bridge move) with full headroom`, extra);
