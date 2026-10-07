@@ -173,9 +173,13 @@ export function makeBurnDepositUx(deps) {
   // back), and a burn is offered for minting once the attested state records it. Read from the public attested state,
   // cached briefly; the live set is keyed by outpoint, as the scan keys it.
   const PRIVATE_NOTE = 'received privately: send it to yourself first, then bridge the new note';
-  let reflCache = null;
-  async function reflected(fresh = false) {
-    if (!fresh && reflCache && now() - reflCache.at < 60000) return reflCache;
+  let reflCache = null, reflInflight = null;
+  // Reads that overlap (a page's several bridges, a check beside a tick) share the one fetch of the multi-megabyte state.
+  function reflected(fresh = false) {
+    if (!fresh && reflCache && now() - reflCache.at < 60000) return Promise.resolve(reflCache);
+    return reflInflight || (reflInflight = readReflected().finally(() => { reflInflight = null; }));
+  }
+  async function readReflected() {
     const d = await callWorker('GET', '/reflection/dump');
     const snap = d && d.snapshot;
     if (!snap || !Array.isArray(snap.liveTriples) || !Array.isArray(snap.burnNodes)) {
@@ -349,10 +353,17 @@ export function makeBurnDepositUx(deps) {
   // Picks one confirmed, safe-to-spend UTXO from `address` — chain.pickSafeCommitSats does the actual
   // filtering/sorting (see this module's own header comment on why that call is opaque here), this just
   // takes its top pick.
-  async function pickFundingUtxo(address) {
+  // A commit takes its funding coin whole and returns the rest through its reveal, so a smaller coin keeps less in the commit
+  // until the reveal confirms: the smallest coin that covers `need` sats is chosen, the largest when none does.
+  function pickFunding(utxos, need = 0) {
+    const list = (Array.isArray(utxos) ? utxos : [utxos]).filter(Boolean);
+    const cover = list.filter((u) => Number(u.value) >= need).sort((a, b) => Number(a.value) - Number(b.value));
+    return cover[0] || list.slice().sort((a, b) => Number(b.value) - Number(a.value))[0] || null;
+  }
+  async function pickFundingUtxo(address, need = 0) {
     const utxos = await chain.getUtxos(address);
     const sorted = await chain.pickSafeCommitSats(utxos);
-    const pick = Array.isArray(sorted) ? sorted[0] : sorted;
+    const pick = pickFunding(sorted, need);
     if (!pick) throw new Error('burndep-ux: no safe funding UTXO available at this address');
     return { txid: pick.txid, vout: pick.vout, value: pick.value };
   }
@@ -520,7 +531,7 @@ export function makeBurnDepositUx(deps) {
       const destLeaf = pool.leaf(withHex(tacAssetId), destCx, destCy, dest.owner);
       const envelope = { assetId: withHex(tacAssetId), nullifier: dest.nullifier, destLeaf, target };
 
-      const fundingUtxo = rec.burn && rec.burn.fundingUtxo ? rec.burn.fundingUtxo : await pickFundingUtxo(P.wallet.address());
+      const fundingUtxo = rec.burn && rec.burn.fundingUtxo ? rec.burn.fundingUtxo : await pickFundingUtxo(P.wallet.address(), Math.ceil(700 * feeRate * 1.3) + 846);
       const built = await reveal.buildBurnDepositRevealTxs({ prims: P, burnHome, envelope, fundingUtxo, feeRate });
       const check = await callWorker('POST', '/reflection/burndep/check', {
         bundle: rec.bundle, assetId: withHex(tacAssetId), burnTxHex: built.revealHex,
@@ -611,7 +622,7 @@ export function makeBurnDepositUx(deps) {
         burned: { value: BigInt(m.burned.value), blinding: BigInt(m.burned.blinding), owner: m.burned.owner },
         dest: { value: BigInt(m.dest.value), blinding: BigInt(m.dest.blinding), owner: m.dest.owner },
         // The destination blinding is derived from the wallet key and ν, which the recovery scan re-derives.
-        recovery: { seedDerived: true },
+        recovery: recoveryFor(walletPriv, m.dest.value),
         selfSettle,
         waitOpts: { onJob: (jobId) => say('submitted', { jobId }), onUpdate: (st) => say('status', { status: st.status }) },
         });
@@ -658,7 +669,7 @@ export function makeBurnDepositUx(deps) {
         // dest.blinding came from deriveBridgeMintBlinding (below), which the recovery scan re-derives on its
         // own from the seed — the { ownerPub, secret } memo-sealing path is for a blinding it has no other way
         // to find, which isn't the case here.
-        recovery: { seedDerived: true },
+        recovery: recoveryFor(walletPriv, dest.value),
         selfSettle,
         waitOpts: {
           onJob: (jobId) => say('submitted', { jobId }),
@@ -674,7 +685,17 @@ export function makeBurnDepositUx(deps) {
   // one was actually used, so nothing is lost if a future version needs to rotate this.
   function pickDestOwner(walletPriv) {
     const dn = pool.deriveNote(walletPriv, withHex(tacAssetId), 0);
-    return { destIndex: 0, owner: pool.nkToOwner(dn.secret) };
+    return { destIndex: 0, owner: pool.nkToOwner(dn.secret), secret: dn.secret };
+  }
+
+  // How the minted note stays recoverable from the key alone. The destination blinding is derived from the key, but the amount is
+  // hidden in the commitment, and the recovery scan finds it only among round amounts (m x 10^k with m under 100) and ones this
+  // browser's journal remembers. A round amount keeps the derived blinding as before; any other amount also seals a memo to the
+  // key, which any device reads back from the chain.
+  const scanRound = (v) => { let x = BigInt(v); if (x <= 0n) return false; while (x % 10n === 0n) x /= 10n; return x < 100n; };
+  function recoveryFor(walletPriv, value) {
+    if (scanRound(value)) return { seedDerived: true };
+    return { ownerPub: '0x' + bytesToHexLocal(secp.getPublicKey(walletPriv, true)), secret: pickDestOwner(walletPriv).secret };
   }
 
   // The mint-time destination note: fully re-derivable from the wallet key plus the burn-home's own commitment
@@ -864,7 +885,7 @@ export function makeBurnDepositUx(deps) {
       prims: P, walletPriv, source: { txid: rec.source.txid, vout: rec.source.vout },
       amount: rec.source.amount, burnHomeTxid: rec.burnHome.txid, chainSpk,
     });
-    const fundingUtxo = await pickFundingUtxo(P.wallet.address());
+    const fundingUtxo = await pickFundingUtxo(P.wallet.address(), Math.ceil(535 * (feeRate || 10) * 1.3) + 846);
     return reveal.buildCancelTx({ prims: P, burnHome, assetId: tacAssetId, walletPriv, walletPub, fundingUtxo, feeRate });
   }
 
@@ -915,7 +936,7 @@ export function makeBurnDepositUx(deps) {
   }
 
   return {
-    BURNDEP_BETA_CAP_RAW, eligibleNotes, isReserved, preflight, start, startReflected, advance, resumeAll, recoverFromTxid, list, abandon,
+    BURNDEP_BETA_CAP_RAW, eligibleNotes, isReserved, pickFunding, preflight, start, startReflected, advance, resumeAll, recoverFromTxid, list, abandon,
     buildCancel, reclaim, recover, verify, isLive, burnRecorded,
     slipstreamStatus: broadcaster.slipstreamStatus,
     checkTxidStatus,

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ZLvZwVbFt2F99XL8/0RGc6KFPIOB8cFWFpiTL0vYsWE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-+v3YIXSIdJm5vVzzY7JceGw0+xu25M3ZFmmTEFLDu2Y=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <script src="/front-route.js?cb=c240ced2"></script>
 <title>tacit</title>
@@ -1780,7 +1780,11 @@ setInterval(() => {
 // finishes, which keeps it as a step.
 const settleFrom = (t, { label, nest = null, say: tell }) => async (x) => {
   tell(`Sending it from ${your()}…`);
-  const hash = await sendTx({ to: t.cfg.pool, data: t.settleCalldata(x), label, nest, finishes: [nest, x.jobId && 'job:' + x.jobId].filter(Boolean) });
+  // A settle the pool would refuse costs gas and does nothing, so it is asked about first (a mint that already landed reads as one).
+  const data = t.settleCalldata(x), from = payer() === 'tacit' ? S.acct?.address : S.address;
+  try { await rpc('eth_call', [{ ...(from ? { from } : {}), to: t.cfg.pool, data }, 'latest']); }
+  catch (e) { if (/revert|execution|BurnAlreadyMinted/i.test(String(e?.message || e))) throw Object.assign(new Error('The pool would refuse this settle, so nothing was sent: it may already have gone through. Refresh the bridge to check.'), { said: true }); }
+  const hash = await sendTx({ to: t.cfg.pool, data, label, nest, finishes: [nest, x.jobId && 'job:' + x.jobId].filter(Boolean) });
   tell(html`Sent ${txLink(hash)}. Waiting for it to land…`);
   await waitTx(hash);
   return { txHash: hash };
@@ -2108,7 +2112,7 @@ function setKey(k) {
 // tacit.js opens the passphrase-locked and Bitcoin-signed keys exactly as tacit.finance does. It loads only for
 // those paths, as a library: it reads the shared network once at import, so this page pins mainnet for its visit,
 // and any call that rewrites the app's linked-wallet records is run with them put back afterwards.
-const TACIT_URL = '/tacit.js?cb=3a6a2785';
+const TACIT_URL = '/tacit.js?cb=eb2af9c9';
 const SHARED_NET = 'tacit-network-v1', PREV_NET = 'tacit-lite-prev-net-v1';
 const SHARED_WALLET_KEYS = ['tacit-eth-identity', 'tacit-btc-identity', 'tacit-active-mode-v1', 'tacit-ext-mode-v1', 'tacit-ext-state-v1',
   ...['mainnet', 'signet'].flatMap((n) => [`tacit-eth-identity:${n}`, `tacit-btc-identity:${n}`])];
@@ -4271,13 +4275,16 @@ function brRow(rec) {
   const act = rec.stage === 'traced' ? btn('burn', 'Burn it', false) : rec.stage === 'folded' || rec.stage === 'rfolded' ? btn('mint', 'Mint now', false)
     : rec.stage === 'stopped' ? btn('reclaim', 'Move back to my wallet') : rec.stage === 'not-recorded' ? btn('recover', 'Recover')
     : rec.stage === 'recovered' ? btn('dismiss', 'Done') : failing ? btn('poll', 'Try again') : '';
+  // A burn or move signed and never taken by Bitcoin, after repeated tries, can be dropped: its TAC was never touched.
+  const stuck = (rec.stage === 'rburn-signed' || rec.stage === 'migrate-signed') && failing && (rec.errorCount || 0) >= 3;
   const self = (rec.stage === 'folded' || rec.stage === 'rfolded') && failing && brRefused(rec.lastError?.message);
   return html`<li class="actr brr">
     <div class="actr-h"><b class="num">${brAmt(rec)}</b>${tx ? html`<a href="${MEMPOOL}/tx/${tx}" target="_blank" rel="noopener">${short(tx, 6)} ↗</a>` : ''}</div>
     ${held ? '' : html`<ol class="stp">${steps.map((l, i) => stepLi(l, i < at ? 'done' : i === at ? (failing ? 'bad' : 'now') : ''))}</ol>`}
     <div class="actr-f">${brNoteText(rec)}</div>
     ${failing ? html`<div class="actr-f err">${brErr(rec.lastError.message)}${rec.errorCount > 1 ? ` (${rec.errorCount} tries)` : ''}</div>` : ''}
-    ${act ? html`<div class="brr-a">${act}</div>` : ''}
+    ${act || stuck ? html`<div class="brr-a">${act}${stuck ? btn('cancel', 'Cancel this bridge') : ''}</div>` : ''}
+    ${stuck ? html`<div class="actr-f">Bitcoin has not taken this transaction. Cancelling frees the TAC for another try; if it did go through, “A bridge you started isn’t listed” finds it again from its burn id.</div>` : ''}
     ${self ? html`<div class="actr-f"><button class="link" type="button" data-bract="self" data-brid="${rec.id}">Send it from ${your()} instead</button>: no relay fee, and ${your()} pays the network fee.</div>` : ''}
   </li>`;
 }
@@ -4378,7 +4385,7 @@ function renderBridge(el) {
         let made;
         if (r.pf.path === 'reflected') made = await ux.startReflected({ note: r.note, walletPriv: priv, feeRate: r.pf.burnFeeRate });
         else {
-          const safe = await t.pickSafeCommitSats(await t.getUtxos(t.wallet.address())), u = Array.isArray(safe) ? safe[0] : safe;
+          const safe = await t.pickSafeCommitSats(await t.getUtxos(t.wallet.address())), u = ux.pickFunding(safe, Math.ceil(535 * r.pf.migrateFeeRate * 1.3) + 846);
           if (!u) throw new Error('This key’s Bitcoin address has no sats free to pay the fee. Add some, then try again.');
           made = await ux.start({ note: r.note, walletPriv: priv, fundingUtxo: { txid: u.txid, vout: u.vout, value: u.value }, feeRate: r.pf.migrateFeeRate });
         }
@@ -4438,7 +4445,7 @@ async function brAct(run, kind, id) {
   if (!rec) return;
   const amt = brAmt(rec);
   try {
-    if (kind === 'dismiss') { ux.abandon(pub, id); return; }
+    if (kind === 'dismiss' || kind === 'cancel') { ux.abandon(pub, id); return; }
     if (kind === 'recover') {
       const after = await ux.recover({ rec, walletPriv: walletPriv() });
       run.say(status(), html`<span class="ok">${after.stage === 'recovered' ? `✓ ${amt} is back on your Bitcoin address.` : `Recovering ${amt}: it returns to your Bitcoin address, usually within the hour.`}</span>`);

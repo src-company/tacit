@@ -96,6 +96,8 @@ export function makeBridgeRecover({ secp, sha256, ripemd160, pool, classifyConfi
     // A burn the reflection holds pending is keyed by the burn's first input, which is the note or the envelope's commit.
     const keyOf = (v) => lc(pool.outpointKey('0x' + rev(v.txid), v.vout));
     if (state.pending.has(keyOf(note)) || state.pending.has(keyOf(burn.vin[0]))) return no('this bridge is still pending');
+    // A note already moved to Ethereum another way (its outpoint retired there) is not refunded on Bitcoin as well.
+    if (state.consumed instanceof Set && (state.consumed.has(keyOf(note)) || state.consumed.has(keyOf(burn.vin[0])))) return no('this note was already moved to Ethereum');
     const at = made.vouts.indexOf(note.vout);
     if (!made.commitments[at]) return no('the burned note has no published commitment');
     let onChain, opened;
@@ -130,6 +132,7 @@ export function makeBridgeRecover({ secp, sha256, ripemd160, pool, classifyConfi
       pending: new Set((snap.pendingDepositRecords || []).map((r) => lc(r && r.key))),
       leaves: new Set((snap.noteLeaves || []).map((x) => lc(x))),
       spent: new Set((snap.spentLinks || []).map((l) => lc(l && l[0]))),
+      consumed: new Set((snap.consumedOutpointsLinks || []).map((l) => lc(l && l[0]))),
     };
   }
 

@@ -630,6 +630,27 @@ let rec;
 }
 
 
+// ==== a minted amount the recovery scan cannot guess is sealed to the key, so any device finds it ====
+{
+  const odd = 3712345678n;                                             // 37.12345678 TAC: not m x 10^k with m under 100
+  const { world, ux, r } = await atRfolded(makeMemStorage(), { nullifierSpent: async () => false }, odd);
+  await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV });
+  const call = world.bridgeMintCalls[0];
+  ok(call && call.recovery && call.recovery.seedDerived !== true && call.recovery.ownerPub === '0x' + Buffer.from(WALLET_PUB).toString('hex') && /^0x[0-9a-f]{64}$/.test(call.recovery.secret),
+    'an amount the scan cannot guess is minted with a memo sealed to the wallet key, not on the derived blinding alone');
+  ok(pool.nkToOwner(call.recovery.secret) === call.dest.owner, 'and the sealed secret is the one the destination note is owned by');
+}
+
+// ==== the funding coin: the smallest that covers the fee, so little sits in a commit until its reveal confirms ====
+{
+  const ux = makeUx(makeWorld(), makeMemStorage());
+  const coins = [{ txid: 'a1'.repeat(32), vout: 0, value: 90000 }, { txid: 'a2'.repeat(32), vout: 0, value: 4000 }, { txid: 'a3'.repeat(32), vout: 0, value: 12000 }, { txid: 'a4'.repeat(32), vout: 0, value: 900 }];
+  ok(ux.pickFunding(coins, 3000).value === 4000, 'the smallest coin that covers the need is chosen, not the largest');
+  ok(ux.pickFunding(coins, 20000).value === 90000, 'the next that covers it when the small ones do not');
+  ok(ux.pickFunding(coins, 500000).value === 90000, 'the largest when none covers it, so the shortfall is reported as it was');
+  ok(ux.pickFunding([], 100) === null, 'no coin, no pick');
+}
+
 // ==== TAC the reflection already tracks ====
 // Preflight: a tracked source note takes the reflected path — no provenance trace, no MARA.
 {
@@ -937,12 +958,12 @@ let rec;
 }
 // A one-step mint that landed without this page hearing of it is found in the pool and recorded, not built and sent again;
 // and a mint that fails after landing is reconciled the same way instead of leaving the bridge 'ready to mint'.
-async function atRfolded(storage, extra = {}) {
+async function atRfolded(storage, extra = {}, amount = NOTE_AMOUNT) {
   const world = makeWorld();
   world.setBurnHomeOnChain(NOTE_TXID, '0014' + Buffer.from(ripemd160(nobleSha256(WALLET_PUB))).toString('hex'));
-  world.setReflectedNote({ txid: NOTE_TXID, vout: NOTE_VOUT, value: NOTE_AMOUNT, blinding: NOTE_BLINDING });
+  world.setReflectedNote({ txid: NOTE_TXID, vout: NOTE_VOUT, value: amount, blinding: NOTE_BLINDING });
   const ux = makeUx(world, storage, extra);
-  let r = await ux.startReflected({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPriv: WALLET_PRIV, feeRate: BASE_RATE });
+  let r = await ux.startReflected({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount, blinding: NOTE_BLINDING }, walletPriv: WALLET_PRIV, feeRate: BASE_RATE });
   r = await ux.advance(r.walletPub, r.id);
   world.setChainTx(r.burn.txid, { confirmed: true });
   r = await ux.advance(r.walletPub, r.id);

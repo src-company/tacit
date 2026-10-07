@@ -1866,7 +1866,8 @@ await step('bridge', async () => {
     envelope: { destLeaf: '0x' + 'ee'.repeat(32) }, ...extra });
   const journal = [recOf('d1'.repeat(32), 'rburn-mined', { burnHeight: 970050, createdAt: Date.now() - 3e6 }),
     recOf('d2'.repeat(32), 'rfolded', { createdAt: Date.now() - 2e6, lastError: { message: 'free relayed settles for today are used up', at: Date.now() }, errorCount: 1 }),
-    recOf('d3'.repeat(32), 'not-recorded', { createdAt: Date.now() - 1e6 })];
+    recOf('d3'.repeat(32), 'not-recorded', { createdAt: Date.now() - 1e6 }),
+    recOf('d4'.repeat(32), 'rburn-signed', { createdAt: Date.now() - 5e5, lastError: { message: 'bad-txns-inputs-missingorspent', at: Date.now() }, errorCount: 3 })];
   await r.page.evaluate(([k, v]) => localStorage.setItem(k, v), [`tacit-burndep-bridge-v1:mainnet:${pub}`, JSON.stringify(journal)]);
   await r.page.click('#wallet-body [data-in="paste"]');
   await r.page.fill('#ws-hex', hex);
@@ -1895,12 +1896,16 @@ await step('bridge', async () => {
   await r.page.check('#br-ack').catch(() => {});
   ok(/short of the fee/.test(await text(r.page, '#br-rcpt')) && await r.page.isDisabled('#br-go'), 'bridge: a key with no sats for the fee cannot start it, and is told so');
   const rows = await r.page.$$eval('#bridge-body .brr', (xs) => xs.map((x) => x.textContent.replace(/\s+/g, ' ').trim()));
-  ok(rows.length === 3, `bridge: the three bridges under way are listed (${rows.length})`);
+  ok(rows.length === 4, `bridge: the four bridges under way are listed (${rows.length})`);
   ok(/Recorded/.test(rows[0] || '') && /proof is at block/.test(rows[0] || '') && !!(await r.page.$('#bridge-body .brr:nth-child(1) .stp li.now')),
     `bridge: one waiting for the proof shows its step and where the proof is (${(rows[0] || '').slice(0, 140)})`);
   ok(/Mint now/.test(rows[1] || '') && /Send it from/.test(rows[1] || '') && /free settles for today/.test(rows[1] || ''),
     `bridge: a mint the relay refused offers Mint now and sending it from the paying account (${(rows[1] || '').slice(0, 200)})`);
   ok(/didn’t complete/.test(rows[2] || '') && /Recover/.test(rows[2] || ''), 'bridge: one that did not complete offers Recover');
+  ok(/Cancel this bridge/.test(rows[3] || '') && /has not taken this transaction/.test(rows[3] || ''), 'bridge: a signed transaction Bitcoin keeps rejecting offers to be cancelled');
+  await r.page.click('#bridge-body [data-bract="cancel"]');
+  await until(r.page, () => document.querySelectorAll('#bridge-body .brr').length === 3, null, 60000);
+  ok(true, 'bridge: cancelling it drops the row');
   await r.page.click('#bridge-body [data-bract="recover"]');
   await until(r.page, () => /Recovering/.test(document.querySelector('#br-rstatus')?.textContent || '') || /err/.test(document.querySelector('#br-rstatus')?.innerHTML || ''), null, 60000);
   ok(claims.length === 1 && claims[0].burnTxid?.replace(/^0x/, '') === 'bb' + 'd3'.repeat(31) && /on its way back/.test(await text(r.page, '#bridge-body')),

@@ -168,6 +168,13 @@ test('whoever only funded the transaction that made the note cannot claim the bu
   assert.match((await r.verifyClaim(claim, { ...chain, state })).reason, /did not make/);
 });
 
+test('a note already moved to Ethereum another way is not refunded on Bitcoin as well', async () => {
+  const { r, chain, state } = world();
+  const claim = r.buildClaim({ burnTxid: BURN, amount: AMOUNT, blinding: BLINDING, walletPriv: WALLET });
+  const key = String(pool.outpointKey('0x' + HOME.match(/../g).reverse().join(''), 0)).toLowerCase();
+  assert.match((await r.verifyClaim(claim, { ...chain, state: { ...state, consumed: new Set([key]) } })).reason, /already moved to Ethereum/);
+});
+
 test('without the reflection state\'s note tree and spent set nothing is refunded', async () => {
   const { r, chain, state } = world();
   const claim = r.buildClaim({ burnTxid: BURN, amount: AMOUNT, blinding: BLINDING, walletPriv: WALLET });

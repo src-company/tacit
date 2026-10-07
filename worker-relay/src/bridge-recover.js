@@ -229,6 +229,7 @@ export function makeAuthedState({ cfg, deps, fetchImpl = fetch, logger = log }) 
       // The note tree and the spent set the digest above covers: the burned note must be found in both.
       leaves: new Set((snap.noteLeaves || []).map((x) => key0x(x))),
       spent: new Set((snap.spentLinks || []).map((l) => key0x(l && l[0]))),
+      consumed: new Set((snap.consumedOutpointsLinks || []).map((l) => key0x(l && l[0]))),
     };
   };
 }

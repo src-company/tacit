@@ -23255,9 +23255,14 @@ function _burndepAutoMintDue(rec) {
   if (!rec.lastError) return true;
   return (Number(rec.errorCount) || 0) < 4 && Date.now() - Number(rec.lastError.at || 0) > 10 * 60 * 1000;
 }
+let _burndepTickBusy = false;
 async function _burndepAutoTick() {
-  if (document.hidden || _isAppIdle()) return;
+  if (document.hidden || _isAppIdle() || _burndepTickBusy) return;     // a mint outlasts the interval: the next tick waits for it
   if (!wallet || !wallet.pub) { _stopBurndepAutoRefresh(); return; }
+  _burndepTickBusy = true;
+  try { await _burndepAutoTickRun(); } finally { _burndepTickBusy = false; }
+}
+async function _burndepAutoTickRun() {
   let ux, records;
   try { ux = _burndepUxSingleton(); records = ux.list(bytesToHex(wallet.pub)).filter((r) => !['minted', 'reclaimed', 'not-recorded', 'stopped', 'recovered'].includes(r.stage)); }
   catch { return; }
@@ -61682,7 +61687,7 @@ async function renderHoldings() {
               if (!(await ensureSatsFunded(estSats, 'Bridging'))) { errEl.textContent = 'Funding cancelled.'; return false; }
               const utxos = await getUtxos(wallet.address());
               const safe = await pickSafeCommitSats(utxos);
-              const fundingUtxo = Array.isArray(safe) ? safe[0] : safe;
+              const fundingUtxo = ux.pickFunding(safe, Math.ceil(535 * migrateRate * 1.3) + 846);
               if (!fundingUtxo) { errEl.textContent = 'no plain sats UTXO available to fund the move'; return false; }
               const strip = host.querySelector('.progress-strip');
               if (strip) strip.style.display = 'flex';

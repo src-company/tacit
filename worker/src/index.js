@@ -1995,6 +1995,7 @@ async function getReflectionSnapshotForStatus(env, network) {
     // The note tree's leaves and the nullifiers spent so far, which a recovery claim's burned note must be found in.
     noteLeaves: new Set((Array.isArray(snapshot.noteLeaves) ? snapshot.noteLeaves : []).map((x) => String(x).toLowerCase())),
     spentKeys: new Set((Array.isArray(snapshot.spentLinks) ? snapshot.spentLinks : []).map((l) => String((l && l[0]) || '').toLowerCase())),
+    consumedKeys: new Set((Array.isArray(snapshot.consumedOutpointsLinks) ? snapshot.consumedOutpointsLinks : []).map((l) => String((l && l[0]) || '').toLowerCase())),
   };
   _burndepStatusSnapCache.set(network, { at: Date.now(), snap });
   return snap;
@@ -2112,7 +2113,7 @@ const bridgeRecover = () => _bridgeRecover || (_bridgeRecover = makeBridgeRecove
 async function bridgeRecoverState(env, network) {
   const snap = await getReflectionSnapshotForStatus(env, network);
   if (!snap || !Number.isInteger(snap.attestedHeight)) return null;
-  return { height: snap.attestedHeight, dests: snap.burnDests, leaves: snap.noteLeaves, spent: snap.spentKeys, pending: new Set(snap.pendingDepositRecords.map((r) => String((r && r.key) || '').toLowerCase())) };
+  return { height: snap.attestedHeight, dests: snap.burnDests, leaves: snap.noteLeaves, spent: snap.spentKeys, consumed: snap.consumedKeys, pending: new Set(snap.pendingDepositRecords.map((r) => String((r && r.key) || '').toLowerCase())) };
 }
 const bridgeRecoverView = (c) => ({ ok: true, status: c.status, txid: c.txid || null });
 async function handleBridgeRecover(req, env, url, cors) {
