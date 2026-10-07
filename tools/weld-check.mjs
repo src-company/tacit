@@ -1834,14 +1834,16 @@ await step('bridge', async () => {
   const { makeConfidentialPool } = await import(new URL('../dapp/confidential-pool.js', import.meta.url));
   const pool = makeConfidentialPool({ secp, keccak256: keccak_256, sha256 });
   const rev = (h) => h.match(/../g).reverse().join('');
-  const N1 = 'c1'.repeat(32), N2 = 'c2'.repeat(32), N3 = 'c3'.repeat(32), SK3 = '3b'.repeat(32), TAC = 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
+  const N1 = 'c1'.repeat(32), N2 = 'c2'.repeat(32), N3 = 'c3'.repeat(32), N4 = 'c4'.repeat(32), SK3 = '3b'.repeat(32), TAC = 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
   const spk3 = '0014' + Buffer.from(ripemd160(sha256(secp.getPublicKey(SK3, true)))).toString('hex');
   const claims = [];
   const api = (re, fn) => r.page.route(re, (route) => fn(route, new URL(route.request().url())));
+  // The note tree holds the leaf the burn names for a note of this amount (blinding as the stubbed scan gives it); N4 is live but absent from it.
+  const leafOf = (amt) => { const c = pool.commitXY(amt, '0x' + (12345n + amt).toString(16).padStart(64, '0')); return pool.btcNoteLeaf('0x' + TAC, c.cx, c.cy, '0x' + '00'.repeat(32)); };
   let dumps = 0;
   await api(/^https:\/\/api\.tacit\.finance\/reflection\/dump/, (route) => { dumps++; return json(route, { attestedHeight: 970000,
-    snapshot: { height: 970000, liveTriples: [[pool.outpointKey('0x' + rev(N1), 0), '0x00', '0x00'], [pool.outpointKey('0x' + rev(N3), 0), '0x00', '0x00']], burnNodes: [], noteLeaves: [], pendingDepositRecords: [] } }); });
-  await api(/^https:\/\/api\.tacit\.finance\/chain\/tx\/(c1|c2|c3){32}/, (route, u) => json(route, { txid: u.pathname.split('/').pop(),
+    snapshot: { height: 970000, liveTriples: [[pool.outpointKey('0x' + rev(N1), 0), '0x00', '0x00', '0x00', 0], [pool.outpointKey('0x' + rev(N3), 0), '0x00', '0x00', '0x00', 0], [pool.outpointKey('0x' + rev(N4), 0), '0x00', '0x00', '0x00', 0]], burnNodes: [], noteLeaves: [leafOf(25000000000n)], pendingDepositRecords: [] } }); });
+  await api(/^https:\/\/api\.tacit\.finance\/chain\/tx\/(c1|c2|c3|c4){32}/, (route, u) => json(route, { txid: u.pathname.split('/').pop(),
     status: { confirmed: true, block_height: 960000 }, vout: [{ scriptpubkey: u.pathname.includes('c3c3') ? spk3 : spk, value: 546 }] }));
   await api(/^https:\/\/api\.tacit\.finance\/bridge\/recover/, (route) => {
     if (route.request().method() === 'POST') { claims.push(JSON.parse(route.request().postData() || '{}')); return json(route, { ok: true, status: 'queued' }); }
@@ -1849,14 +1851,14 @@ await step('bridge', async () => {
   });
   await r.page.goto(r.url + '#wallet');
   // The holdings scan is tacit.js's own, stubbed on the instance the page loads.
-  await r.page.evaluate(async ([n1, n2, n3, sk3, aid]) => {
+  await r.page.evaluate(async ([n1, n2, n3, n4, sk3, aid]) => {
     globalThis.__TACIT_NO_INIT__ = true; localStorage.setItem('tacit-network-v1', 'mainnet');
     const T = await import([...document.scripts].map((x) => x.textContent).join('').match(/\/tacit\.js\?cb=[0-9a-f]+/)[0]);
     const note = (txid, amount) => ({ utxo: { txid, vout: 0, value: 546, status: { confirmed: true } }, amount, blinding: 12345n + amount });
     const stealth = { ...note(n3, 3000000000n), stealthTweakedSk: sk3 };
-    const utxos = [note(n1, 25000000000n), note(n2, 150000000000n), stealth];
-    T._testSetScanHoldingsOverride(() => new Map([[aid, { assetIdHex: aid, ticker: 'TAC', decimals: 8, balance: 178000000000n, utxos, ghosts: [], inflated: [], pending: [] }]]));
-  }, [N1, N2, N3, SK3, TAC]);
+    const utxos = [note(n1, 25000000000n), note(n2, 150000000000n), stealth, note(n4, 4000000000n)];
+    T._testSetScanHoldingsOverride(() => new Map([[aid, { assetIdHex: aid, ticker: 'TAC', decimals: 8, balance: 182000000000n, utxos, ghosts: [], inflated: [], pending: [] }]]));
+  }, [N1, N2, N3, N4, SK3, TAC]);
   // Three bridges under way: one waiting for the proof, one ready whose mint the relay refused, one that did not complete.
   const recOf = (id, stage, extra = {}) => ({ id: `${id}:0`, network: 'mainnet', walletPub: pub, path: 'reflected', stage, createdAt: Date.now(),
     source: { txid: id, vout: 0, sats: 546, assetId: '0x' + TAC, amount: { __big: '10000000000' }, blinding: { __big: '777' } },
@@ -1876,9 +1878,9 @@ await step('bridge', async () => {
   await r.page.click('#btc-body a[data-link="bridge"]');
   await until(r.page, () => location.hash === '#bridge' && !document.querySelector('#bridge-body').hidden && document.querySelector('[data-tac-mode="bridge"]').getAttribute('aria-selected') === 'true');
   ok(true, 'bridge: the Bitcoin sheet’s TAC line opens the TAC sheet’s Bridge tab, and the link reads #bridge');
-  await until(r.page, () => document.querySelectorAll('#bridge-body .brn').length === 3, null, 120000);
+  await until(r.page, () => document.querySelectorAll('#bridge-body .brn').length === 4, null, 120000);
   const notes = (await text(r.page, '#bridge-body .brns')).replace(/\s+/g, ' ').trim();
-  ok(/^250(\.0+)? TAC.*30(\.0+)? TAC.*1,500(\.0+)? TAC\s*Over 1,000 TAC/.test(notes) && !(await r.page.$(`#bridge-body input[value="${N2}:0"]`)) && (await r.page.inputValue('#bridge-body .brsp input')) === '1000' && !!(await r.page.$('#bridge-body [data-brsplit]')),
+  ok(/^250(\.0+)? TAC.*40(\.0+)? TAC.*30(\.0+)? TAC.*1,500(\.0+)? TAC\s*Over 1,000 TAC/.test(notes) && !(await r.page.$(`#bridge-body input[value="${N2}:0"]`)) && (await r.page.inputValue('#bridge-body .brsp input')) === '1000' && !!(await r.page.$('#bridge-body [data-brsplit]')),
     `bridge: the notes are listed, the one over 1,000 TAC with its reason and a split control, not a dead choice (${notes})`);
   await r.page.check(`#bridge-body input[value="${N1}:0"]`);
   await until(r.page, () => /One Bitcoin transaction|err/.test(document.querySelector('#br-rcpt')?.innerHTML || ''), null, 120000);
@@ -1909,6 +1911,10 @@ await step('bridge', async () => {
   await r.page.check(`#bridge-body input[value="${N3}:0"]`);
   await until(r.page, () => !!document.querySelector('#br-prep'), null, 120000);
   ok(/received privately/.test(await text(r.page, '#br-rcpt')) && await r.page.isDisabled('#br-go'), 'bridge: TAC received privately is offered a send to the key’s own address, and cannot start a bridge as it is');
+  // A tracked note the tree holds in an older form is offered the same send, before anything is signed.
+  await r.page.check(`#bridge-body input[value="${N4}:0"]`);
+  await until(r.page, () => /older note form/.test(document.querySelector('#br-rcpt')?.textContent || '') && !!document.querySelector('#br-prep'), null, 120000);
+  ok(await r.page.isDisabled('#br-go'), 'bridge: a tracked note in an older form is offered a send to the key’s own address, and cannot start a bridge as it is');
   await r.page.setViewportSize({ width: 360, height: 760 });
   await sleep(300);
   const wide = await r.page.evaluate(() => { const d = document.querySelector('#sheet-tac .sheet-in'); return [d.scrollWidth, d.clientWidth, document.documentElement.scrollWidth, innerWidth]; });

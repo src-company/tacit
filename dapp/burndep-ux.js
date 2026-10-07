@@ -184,6 +184,10 @@ export function makeBurnDepositUx(deps) {
     reflCache = {
       at: now(), height: Number(snap.height ?? d.attestedHeight),
       live: new Set(snap.liveTriples.map((t) => lc(t[0]))),
+      // Whether each live note is bound to a deployment, and every leaf in the note tree: the burn names its note by a leaf
+      // of one form, which the tree must hold.
+      liveBound: new Map(snap.liveTriples.map((t) => [lc(t[0]), Number(t[4]) === 1])),
+      leaves: Array.isArray(snap.noteLeaves) ? new Set(snap.noteLeaves.map(lc)) : null,
       dests: new Set(snap.burnNodes.map((n) => lc(n[2] || ''))),
       pending: new Set((snap.pendingDepositRecords || []).map((r) => lc(r.key))),
     };
@@ -293,6 +297,15 @@ export function makeBurnDepositUx(deps) {
     if (live) {
       // Tracked: burned directly, in one standard transaction, with no provenance trace and no MARA submission.
       if (!step('reflected', !note.stealthTweakedSk, note.stealthTweakedSk ? PRIVATE_NOTE : 'tracked by the reflection: bridges in one Bitcoin transaction')) return out;
+      // The burn names the note by its leaf in the form the mint binds to. A note made before that form is in the tree under
+      // an older leaf, which the burn cannot use; sending it once to its own address makes it a note of the current form.
+      const refl = await reflected();
+      if (refl.leaves) {
+        const { cx, cy } = pool.commitXY(BigInt(note.amount), BigInt(note.blinding));
+        const bound = refl.liveBound.get(outpointOf(note.txid, note.vout));
+        const leaf = bridgeMint.sourceLeaf({ sourceClass: bound ? 2 : 1, asset: withHex(tacAssetId), cx, cy, owner: '0x' + '00'.repeat(32), chainBinding: withHex(chainBindingHex()) });
+        if (!step('old-leaf', refl.leaves.has(lc(leaf)), 'this note is in an older form the bridge cannot burn directly: send it once to your own address first')) return out;
+      }
       out.path = 'reflected';
       let burnRate = null;
       try { burnRate = await chain.getFeeRate('priority'); step('fee-estimate', true, `${burnRate} sat/vB`); }
@@ -437,15 +450,25 @@ export function makeBurnDepositUx(deps) {
     const rec = getRecord(walletPub, id);
     if (!rec) throw new Error(`burndep-ux: no bridge record for ${id}`);
     if (!tryAcquireLease(id)) throw new Error('burndep-ux: this bridge is being advanced in another tab right now');
+    // A stage can outlast the lease (a mint waits on a proof), so it is kept while this call holds it: no other page starts the
+    // same step meanwhile.
+    const renew = setInterval(() => { try { storage.setItem(leaseKey(id), JSON.stringify({ owner: sessionId, at: now() })); } catch {} }, Math.max(1000, Math.floor(LEASE_TTL_MS / 3)));
+    let at = null;
     try {
-      const fn = STAGE_ADVANCE[rec.stage];
-      if (!fn) return rec; // terminal ('minted') or unknown — nothing to do
-      const result = await fn(rec, { walletPriv, onProgress, selfSettle });
-      return rec.lastError ? putRecord({ ...result, lastError: null, errorCount: 0 }) : result;
+      // Read again under the lease: another page may have moved the record on since the read above.
+      const cur = getRecord(walletPub, id);
+      if (!cur) throw new Error(`burndep-ux: no bridge record for ${id}`);
+      at = cur;
+      const fn = STAGE_ADVANCE[cur.stage];
+      if (!fn) return cur; // terminal ('minted') or unknown — nothing to do
+      const result = await fn(cur, { walletPriv, onProgress, selfSettle });
+      return cur.lastError ? putRecord({ ...result, lastError: null, errorCount: 0 }) : result;
     } catch (e) {
-      putRecord({ ...rec, lastError: { message: String((e && e.message) || e), at: now() }, errorCount: (rec.errorCount || 0) + 1 });
+      // Only a record still where this call found it takes the error: one that another page moved on keeps what it reached.
+      const now_ = at && getRecord(walletPub, id);
+      if (now_ && now_.stage === at.stage) putRecord({ ...now_, lastError: { message: String((e && e.message) || e), at: now() }, errorCount: (now_.errorCount || 0) + 1 });
       throw e;
-    } finally { releaseLease(id); }
+    } finally { clearInterval(renew); releaseLease(id); }
   }
 
   const STAGE_ADVANCE = {
@@ -571,8 +594,18 @@ export function makeBurnDepositUx(deps) {
       if (!walletPriv) throw new Error('burndep-ux: this stage needs the wallet key');
       const say = (phase, extra) => { try { onProgress && onProgress({ phase, ...extra }); } catch { /* best-effort */ } };
       const m = rec.mint;
+      // A mint that landed without this page hearing of it (a lost answer, a wait that ran out, a settle sent by someone else)
+      // shows as the burned note's nullifier spent in the pool: the record is complete, and nothing is built or sent again.
+      const landed = async () => {
+        if (!nullifierSpent || !rec.envelope || !rec.envelope.nullifier) return null;
+        try { return (await nullifierSpent(rec.envelope.nullifier)) ? putRecord({ ...rec, stage: 'minted', mintedAt: now(), lastError: null, errorCount: 0 }) : null; } catch { return null; }
+      };
+      const already = await landed();
+      if (already) return already;
       say('fetching-snapshot');
-      const minted = await bridgeMint.bridgeMint({
+      let minted;
+      try {
+        minted = await bridgeMint.bridgeMint({
         network, sourceClass: m.sourceClass, spentTxid: m.spentTxid, spentVout: m.spentVout,
         asset: withHex(tacAssetId), chainBinding: m.chainBinding,
         burned: { value: BigInt(m.burned.value), blinding: BigInt(m.burned.blinding), owner: m.burned.owner },
@@ -581,7 +614,12 @@ export function makeBurnDepositUx(deps) {
         recovery: { seedDerived: true },
         selfSettle,
         waitOpts: { onJob: (jobId) => say('submitted', { jobId }), onUpdate: (st) => say('status', { status: st.status }) },
-      });
+        });
+      } catch (e) {
+        const done = await landed();
+        if (done) return done;
+        throw e;
+      }
       return putRecord({ ...rec, stage: 'minted', mintedAt: now(), mintedJobId: minted.jobId || null, mintedTxHash: minted.txHash || null });
     },
     // A recovery in flight: follow its claim until the TAC is sent back to this wallet.
@@ -709,7 +747,10 @@ export function makeBurnDepositUx(deps) {
 
     const rid = recordId(note.txid, note.vout);
     const existing = getRecord(walletPub, rid);
-    if (existing) return existing;
+    if (existing) {
+      if (existing.stage !== 'minted' && nullifierSpent && await nullifierSpent(env.nullifier).catch(() => false)) return putRecord({ ...existing, stage: 'minted', mintedAt: now(), lastError: null, errorCount: 0 });
+      return existing;
+    }
     const spentTxid = withHex(revHex(note.txid));                           // internal byte order, as the mint names it
     const rec = {
       id: rid, network, walletPub: bytesToHexLocal(walletPub), path: 'reflected', stage: 'rburn-mined', createdAt: now(), recoveredAt: now(),
@@ -751,6 +792,13 @@ export function makeBurnDepositUx(deps) {
     const chainSpk = burnHomeOnChain.vout[0].scriptpubkey;
     const P = freshPrims(walletPriv);
     const burnHome = reveal.reconstructBurnHome({ prims: P, walletPriv, source, amount, burnHomeTxid, chainSpk });
+    // The script check above covers the key and the outpoint; the amount is the holder's to type, so it must reproduce the
+    // commitment the burn-home carries on chain before anything is journalled or registered from it.
+    const homeEnv = classifyConfidentialTx('0x' + await fetchChainText(`/tx/${burnHomeTxid}/hex`));
+    const homeAt = homeEnv && homeEnv.type === 'cxfer' ? (homeEnv.vouts || []).indexOf(0) : -1;
+    if (homeAt < 0 || !homeEnv.commitments || !homeEnv.commitments[homeAt]) throw new Error('burndep-ux: could not read the burn-home’s commitment, so that amount cannot be checked; try again in a moment');
+    const homePt = secp.ProjectivePoint.fromHex(stripHex(homeEnv.commitments[homeAt])).toAffine();
+    if (BigInt(burnHome.cx) !== homePt.x || BigInt(burnHome.cy) !== homePt.y) throw new Error('burndep-ux: that amount does not match this bridge; check it and try again');
     const bundle = { ...traced.bundle, burned: { cx: burnHome.cx, cy: burnHome.cy } };
 
     const stageByStatus = { unconfirmed: 'burn-submitted', 'awaiting-scan': status.registered ? 'registered' : 'burn-mined', pending: status.registered ? 'registered' : 'burn-mined', folded: 'folded', 'not-recorded': 'not-recorded' };
@@ -773,6 +821,9 @@ export function makeBurnDepositUx(deps) {
       // fully determined by the wallet key and the burn-home already reconstructed above.
       dest: deriveDest(walletPriv, burnHome, burnHomeTxid, BigInt(amount)),
     };
+    // A bridge this browser already finished is not rebuilt into an earlier stage.
+    const had = getRecord(walletPub, rec.id);
+    if (had && (had.stage === 'minted' || had.stage === 'reclaimed' || had.stage === 'recovered')) return had;
     return putRecord(rec);
   }
 

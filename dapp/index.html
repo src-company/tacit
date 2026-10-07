@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-yIJ72EKg321ZRzhJXT9NDX9cJze/REwbPVVVDxVhe50=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ZLvZwVbFt2F99XL8/0RGc6KFPIOB8cFWFpiTL0vYsWE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <script src="/front-route.js?cb=c240ced2"></script>
 <title>tacit</title>
@@ -2765,7 +2765,7 @@ function wireSub(el, name, set) { $$(`[data-${name}]`, el).forEach((b) => b.oncl
 
 // ── Tacit V1 pool: shared module, loaded on first use ────────────────────────────────────────────────────
 const getUx = lazy(async () => {
-  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=60ad5859'), import('/confidential-deployments.js')]);
+  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=b4b7a2fd'), import('/confidential-deployments.js')]);
   dep.setActiveNetwork('mainnet');
   setExternalTacHolders(() => (S.wallet ? [S.wallet] : []));      // public TAC in the connected wallet counts toward the exit-fee tier, as on tacit.finance
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
@@ -4215,6 +4215,7 @@ const brFail = (e) => Object.assign(new Error(brErr(e)), { said: true });
 function brCheckText(s) {
   if (s.name === 'not-tracked') return 'This TAC arrived recently: Bitcoin’s proof on Ethereum has not reached its block yet. Try again in a few hours.';
   if (s.name === 'reflected') return 'This TAC was received privately. One Bitcoin transaction sends it to your own address, and then it can be bridged.';
+  if (s.name === 'old-leaf') return 'This TAC is held in an older note form that the bridge cannot burn directly. One Bitcoin transaction sends it to your own address in the current form, and then it can be bridged.';
   if (s.name === 'source-ownership') return 'This TAC is not at this key’s own Bitcoin address.';
   if (s.name === 'source-confirmed') return 'This TAC is waiting for its Bitcoin confirmation.';
   if (s.name === 'trace') return `This TAC has passed through too many transfers to bridge (${s.detail}).`;
@@ -4336,7 +4337,7 @@ function renderBridge(el) {
         const bad = pf.steps.find((s) => !s.ok) || { name: '' };
         mount(rc, html``); warn(rc, brCheckText(bad));
         // Tracked TAC that arrived privately sits at a one-time address; sent once to this key's own address it can be burned.
-        if (bad.name === 'reflected') {
+        if (bad.name === 'reflected' || bad.name === 'old-leaf') {
           rc.insertAdjacentHTML('beforeend', html`<button class="btn ghost" type="button" id="br-prep">Send it to my own address</button>`.s);
           const prep = $('#br-prep', rc);
           if (prep) prep.onclick = () => busy(prep, (run) => brPrep(run, n));

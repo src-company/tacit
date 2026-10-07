@@ -395,6 +395,13 @@ let rec;
     };
     const ux2 = makeUx({ ...world, fetchImpl: recoverFetch }, makeMemStorage()); // a fresh browser: no journal, recovering purely from the txid
 
+    world.setChainHex(rec.burnHome.txid, rec.migrate.revealHex);        // the burn-home's own transaction, as the chain serves it
+    // The amount is typed by the holder: one that does not reproduce the burn-home's commitment is refused, and nothing is journalled.
+    const wrongStore = makeMemStorage();
+    const uxWrong = makeUx({ ...world, fetchImpl: recoverFetch }, wrongStore);
+    let wrongErr = null;
+    try { await uxWrong.recoverFromTxid(rec.burn.txid, WALLET_PRIV, { amount: BigInt(rec.source.amount) * 9n }); } catch (e) { wrongErr = e; }
+    ok(!!wrongErr && /does not match this bridge/.test(wrongErr.message) && uxWrong.list(WALLET_PUB).length === 0, 'recoverFromTxid refuses an amount that does not open the burn-home, and journals nothing');
     const recovered = await ux2.recoverFromTxid(rec.burn.txid, WALLET_PRIV, { amount: rec.source.amount });
     ok(recovered.stage === 'folded', 'recoverFromTxid on an already-folded burn lands directly on the folded stage');
     ok(!!recovered.dest, "the recovered record carries a dest — this is exactly the field a real user hit missing (Cannot read properties of undefined (reading 'index'))");
@@ -627,12 +634,23 @@ let rec;
 // Preflight: a tracked source note takes the reflected path — no provenance trace, no MARA.
 {
   const world = makeWorld();
-  world.setLive(NOTE_TXID, NOTE_VOUT);
+  world.setReflectedNote({ txid: NOTE_TXID, vout: NOTE_VOUT, value: NOTE_AMOUNT, blinding: NOTE_BLINDING });
   world.setBurnHomeOnChain(NOTE_TXID, '0014' + Buffer.from(ripemd160(nobleSha256(WALLET_PUB))).toString('hex'));   // the wallet's real P2WPKH
   const ux = makeUx(world, makeMemStorage());
   const pf = await ux.preflight({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPub: WALLET_PUB });
   ok(pf.ok === true && pf.path === 'reflected' && pf.burnFeeRate === BASE_RATE && !pf.steps.some((x) => x.name === 'trace' || x.name === 'mara-rates'), 'preflight routes a tracked note to the reflected path, with no trace and no MARA');
   ok(world.broadcasts.length === 0, 'preflight broadcasts nothing');
+}
+// A tracked note whose leaf the tree holds in an older form cannot be burned directly: preflight says so before anything is signed.
+{
+  const world = makeWorld();
+  world.setLive(NOTE_TXID, NOTE_VOUT);                    // live, but no leaf of the burn's form in the note tree
+  world.setBurnHomeOnChain(NOTE_TXID, '0014' + Buffer.from(ripemd160(nobleSha256(WALLET_PUB))).toString('hex'));
+  const ux = makeUx(world, makeMemStorage());
+  const pf = await ux.preflight({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPub: WALLET_PUB });
+  const old = pf.steps.find((x) => x.name === 'old-leaf');
+  ok(pf.ok === false && !!old && old.ok === false, 'preflight refuses a tracked note whose leaf is in an older form, naming the step');
+  ok(world.broadcasts.length === 0, 'and broadcasts nothing');
 }
 // The reflected path end to end: one standard burn of the note itself, then the class-1 mint once it is recorded.
 {
@@ -817,6 +835,7 @@ let rec;
     }
     return world.fetchImpl(url, opts);
   };
+  world.setChainHex(notRecorded.burnHome.txid, notRecorded.migrate.revealHex);
   const fresh = makeUx({ ...world, fetchImpl: statusFetch }, makeMemStorage());
   const rebuilt = await fresh.recoverFromTxid(notRecorded.burn.txid, WALLET_PRIV, { amount: NOTE_AMOUNT });
   ok(rebuilt.stage === 'not-recorded', 'a burn the attested state did not record is rebuilt from its txid as a bridge that did not complete');
@@ -915,6 +934,64 @@ let rec;
   ok(r.stage === 'rfolded', 'sanity: the one-step bridge is ready to mint');
   r = await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV, selfSettle: async () => ({ txHash: '0x' + 'dd'.repeat(32) }) });
   ok(r.stage === 'minted' && r.mintedTxHash === '0x' + 'dd'.repeat(32), 'the one-step bridge can be finished the same way');
+}
+// A one-step mint that landed without this page hearing of it is found in the pool and recorded, not built and sent again;
+// and a mint that fails after landing is reconciled the same way instead of leaving the bridge 'ready to mint'.
+async function atRfolded(storage, extra = {}) {
+  const world = makeWorld();
+  world.setBurnHomeOnChain(NOTE_TXID, '0014' + Buffer.from(ripemd160(nobleSha256(WALLET_PUB))).toString('hex'));
+  world.setReflectedNote({ txid: NOTE_TXID, vout: NOTE_VOUT, value: NOTE_AMOUNT, blinding: NOTE_BLINDING });
+  const ux = makeUx(world, storage, extra);
+  let r = await ux.startReflected({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPriv: WALLET_PRIV, feeRate: BASE_RATE });
+  r = await ux.advance(r.walletPub, r.id);
+  world.setChainTx(r.burn.txid, { confirmed: true });
+  r = await ux.advance(r.walletPub, r.id);
+  world.setNoteHeight(1001); world.setChainTx(r.burn.txid, { confirmed: true });
+  world.foldReflected(r.burn.hex);
+  r = await ux.advance(r.walletPub, r.id);
+  return { world, ux, r };
+}
+{
+  const { world, ux, r } = await atRfolded(makeMemStorage(), { nullifierSpent: async () => true });
+  const after = await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV });
+  ok(after.stage === 'minted' && world.bridgeMintCalls.length === 0, 'a one-step mint already in the pool is recorded as minted, with nothing built or sent');
+}
+{
+  let spent = false;
+  const { world, ux, r } = await atRfolded(makeMemStorage(), { nullifierSpent: async () => spent });
+  const after = await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV, selfSettle: async () => { spent = true; throw new Error('receipt timeout'); } });
+  ok(after.stage === 'minted' && world.bridgeMintCalls.length === 1, 'a mint that failed after it landed is found in the pool and recorded as minted');
+}
+{
+  // Another page moves the record on while this call is mid-mint and then fails: the failure does not write the old stage back.
+  const storage = makeMemStorage();
+  const { ux, r } = await atRfolded(storage, { nullifierSpent: async () => false });
+  let threw = false;
+  try {
+    await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV, selfSettle: async () => {
+      const cur = ux.list(r.walletPub).find((x) => x.id === r.id);
+      storage.setItem(`tacit-burndep-bridge-v1:signet:${r.walletPub}`, JSON.stringify(ux.list(r.walletPub).map((x) => (x.id === cur.id ? { ...x, stage: 'minted' } : x)), (k, v) => (typeof v === 'bigint' ? { __big: v.toString() } : v)));
+      throw new Error('the settle reverted');
+    } });
+  } catch { threw = true; }
+  const kept = ux.list(r.walletPub).find((x) => x.id === r.id);
+  ok(threw && kept.stage === 'minted' && !kept.lastError, 'a failure after another page recorded the mint leaves the record minted, with no error written over it');
+}
+{
+  // The lease outlasts a long step: a second page cannot start the same step while the first is mid-mint.
+  const storage = makeMemStorage();
+  const { ux, r } = await atRfolded(storage, { nullifierSpent: async () => false });
+  let release; const gate = new Promise((res) => { release = res; });
+  const first = ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV, selfSettle: async () => { await gate; return { txHash: '0x' + 'ee'.repeat(32) }; } });
+  await new Promise((res) => setTimeout(res, 50));
+  const other = makeBurnDepositUx({ network: 'signet', hrp: 'tb', workerBase: 'https://worker.example', fetchImpl: async () => ({ ok: true, json: async () => ({}) }), storage,
+    secp, sha256, keccak256: keccak_256, hmac: hmacFn, pool, bridgeMint: { buildBridgeBurnEnvelope() {}, sourceLeaf() {}, bridgeMint: async () => ({}) }, chainBindingHex: () => '7c'.repeat(32), tacAssetId: ASSET, chain: {},
+    encodeCXferBppPayload, computeKernelMsg, deriveChangeBlinding, deriveAmountKeystreamSelf, encryptAmount, signSchnorr, modN });
+  let refused = null;
+  try { await other.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV }); } catch (e) { refused = e; }
+  release();
+  const done = await first;
+  ok(!!refused && /another tab/.test(refused.message) && done.stage === 'minted', 'while one page is mid-mint, another is told it is being advanced elsewhere');
 }
 
 // A note newer than the attested state is not judged yet: preflight asks to wait, and a bridge holds before its burn.

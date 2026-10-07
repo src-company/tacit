@@ -3105,6 +3105,8 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     let gasLimit = 1200000n;
     try { gasLimit = (BigInt(await rpc('eth_estimateGas', [{ from: acct.address, to: cfg.pool, data }])) * 13n) / 10n; } catch { /* the pre-send call judges it */ }
     const sent = await _sendEvmTx({ acct, to: cfg.pool, data, gasLimit });
+    // The settle counts once it is mined and has not reverted: a bridge is recorded as arrived on this answer.
+    await _waitReceipt(sent.txHash);
     return { from: acct.address, txHash: sent.txHash };
   }
 

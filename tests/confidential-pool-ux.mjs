@@ -1262,7 +1262,7 @@ test('submitSettle: priority tip follows the node suggestion and is capped at 1.
 
 // settleFromAccount: the holder's own Tacit account sends a proven op's settle and pays its gas, after the node has been
 // asked whether it can.
-function accountStub({ balanceWei, revert = false }) {
+function accountStub({ balanceWei, revert = false, receipt = 'ok' }) {
   const seen = [];
   const fetchImpl = async (url, opts) => {
     const { method, params } = JSON.parse(opts.body);
@@ -1274,6 +1274,7 @@ function accountStub({ balanceWei, revert = false }) {
     else if (method === 'eth_estimateGas') result = '0x7a120';            // 500,000
     else if (method === 'eth_getBalance') result = '0x' + balanceWei.toString(16);
     else if (method === 'eth_sendRawTransaction') result = '0x' + 'ab'.repeat(32);
+    else if (method === 'eth_getTransactionReceipt') result = receipt === 'reverted' ? { blockNumber: '0x10', status: '0x0' } : { blockNumber: '0x10', status: '0x1' };
     if (method === 'eth_call' && revert) return { ok: true, json: async () => ({ error: { message: 'execution reverted' } }) };
     return { ok: true, json: async () => ({ result }) };
   };
@@ -1291,6 +1292,12 @@ test('settleFromAccount: an account with ETH sends the settle, with gas from the
   assert.ok(call && call.params[0].data.startsWith('0x' + Buffer.from(keccak_256(Buffer.from('settle(bytes,bytes,bytes[])'))).toString('hex').slice(0, 8)), 'the call was run against the pool first, as settle()');
   assert.strictEqual(BigInt(call.params[0].gas), 650000n, '500,000 estimated + 30%');
   assert.ok(seen.findIndex((x) => x.method === 'eth_call') < seen.findIndex((x) => x.method === 'eth_sendRawTransaction'), 'and before anything was sent');
+});
+
+test('settleFromAccount: a settle that is mined and reverts is an error, not a success', async () => {
+  const { fetchImpl } = accountStub({ balanceWei: 10n ** 18n, receipt: 'reverted' });
+  const ux = makeConfidentialPoolUx({ ...deps, fetchImpl });
+  await assert.rejects(ux.settleFromAccount(fromArgs), (e) => e.reverted === true);
 });
 
 test('settleFromAccount: an account short of ETH is told what it holds and nothing is sent', async () => {
