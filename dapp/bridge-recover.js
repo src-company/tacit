@@ -58,7 +58,8 @@ export function makeBridgeRecover({ secp, sha256, ripemd160, pool, classifyConfi
   const ownerScript = (pubHex) => '0014' + toHex(ripemd160(sha256(toBytes(pubHex))));
 
   // claim: { burnTxid, amount, blinding, pubkey, sig }. chain: { getTx(txid) → esplora tx JSON, getTxHex(txid) → hex }.
-  // state: the attested reflection state as { height, dests: Set(destination leaves), pending: Set(outpoint keys) }.
+  // state: the attested reflection state as { height, dests: Set(destination leaves), pending: Set(outpoint keys),
+  // leaves: Set(every note leaf in its tree), spent: Set(every nullifier it has spent) }, all lowercase 0x hex.
   // Returns { ok: true, burnTxid, amount, pubkey, address, burnHeight } or { ok: false, reason }.
   async function verifyClaim(claim, { getTx, getTxHex, state }) {
     const no = (reason) => ({ ok: false, reason });
@@ -81,15 +82,19 @@ export function makeBridgeRecover({ secp, sha256, ripemd160, pool, classifyConfi
     if (lc(strip(env.assetId)) !== TAC) return no('not a TAC bridge');
     if (!state || !Number.isInteger(state.height) || burn.status.block_height > state.height) return no('not yet passed by the reflection');
     if (state.dests.has(lc(env.dest))) return no('this bridge completed: mint it instead');
+    if (!(state.leaves instanceof Set) || !(state.spent instanceof Set)) return no('the reflection state is not available');
     if (!burn.vin || !burn.vin.length) return no('burn has no inputs');
     // The burned note: the first of the burn's first two inputs that a confidential transfer made.
-    let note = null, home = null, made = null;
+    let note = null, made = null;
     for (const vin of burn.vin.slice(0, 2)) {
       const m = classifyConfidentialTx('0x' + strip(await getTxHex(vin.txid)));
-      if (m && m.type === 'cxfer' && (m.vouts || []).includes(vin.vout)) { note = vin; made = m; home = await getTx(vin.txid); break; }
+      if (m && m.type === 'cxfer' && (m.vouts || []).includes(vin.vout)) { note = vin; made = m; break; }
     }
-    if (!note || !home) return no('the burned note was not made by a confidential transfer');
-    if (state.pending.has(lc(pool.outpointKey('0x' + rev(note.txid), note.vout)))) return no('this bridge is still pending');
+    if (!note) return no('the burned note was not made by a confidential transfer');
+    if (lc(strip(made.assetId)) !== TAC) return no('the burned note is not TAC');
+    // A burn the reflection holds pending is keyed by the burn's first input, which is the note or the envelope's commit.
+    const keyOf = (v) => lc(pool.outpointKey('0x' + rev(v.txid), v.vout));
+    if (state.pending.has(keyOf(note)) || state.pending.has(keyOf(burn.vin[0]))) return no('this bridge is still pending');
     const at = made.vouts.indexOf(note.vout);
     if (!made.commitments[at]) return no('the burned note has no published commitment');
     let onChain, opened;
@@ -99,8 +104,18 @@ export function makeBridgeRecover({ secp, sha256, ripemd160, pool, classifyConfi
     } catch { return no('commitment could not be read'); }
     if (BigInt(opened.cx) !== onChain.x || BigInt(opened.cy) !== onChain.y) return no('amount and blinding do not open the burned note');
 
+    // A real note, one the attested state holds and this burn left spent: its leaf is built from the commitment on chain and
+    // the key its output is locked to (a P2WPKH note has none; a P2TR note carries its output key).
+    const home = lc((note.prevout && note.prevout.scriptpubkey) || '');
+    const auth = /^0014[0-9a-f]{40}$/.test(home) ? '0x' + '00'.repeat(32) : /^5120[0-9a-f]{64}$/.test(home) ? '0x' + home.slice(4) : null;
+    if (!auth) return no('the burned note is at an address this check cannot read');
+    const leaf = lc(pool.btcNoteLeaf('0x' + TAC, '0x' + onChain.x.toString(16).padStart(64, '0'), '0x' + onChain.y.toString(16).padStart(64, '0'), auth));
+    if (!state.leaves.has(leaf)) return no('the burned note is not one the reflection tracks');
+    if (!state.spent.has(lc(pool.nullifier(leaf)))) return no('the burned note was not spent by this burn');
+
+    // The holder is whoever paid into this burn itself: a transaction that only made the note earlier says nothing about who burned it.
     const spk = ownerScript(pubkey);
-    const paid = [...(burn.vin || []), ...(home.vin || [])].find((v) => v.prevout && lc(v.prevout.scriptpubkey) === spk);
+    const paid = (burn.vin || []).find((v) => v.prevout && lc(v.prevout.scriptpubkey) === spk);
     if (!paid) return no('this key did not make this bridge');
     return { ok: true, burnTxid, amount, pubkey, address: paid.prevout.scriptpubkey_address || null, burnHeight: burn.status.block_height };
   }
@@ -112,6 +127,8 @@ export function makeBridgeRecover({ secp, sha256, ripemd160, pool, classifyConfi
       height: Number(snap.height),
       dests: new Set(snap.burnNodes.map((n) => lc((n && n[2]) || ''))),
       pending: new Set((snap.pendingDepositRecords || []).map((r) => lc(r && r.key))),
+      leaves: new Set((snap.noteLeaves || []).map((x) => lc(x))),
+      spent: new Set((snap.spentLinks || []).map((l) => lc(l && l[0]))),
     };
   }
 

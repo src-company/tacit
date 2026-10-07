@@ -22,6 +22,13 @@ const WALLET = new Uint8Array(32).fill(0x31), OTHER = new Uint8Array(32).fill(0x
 const AMOUNT = 10000000000n, BLINDING = 0x1234567890abcdefn;          // 100 TAC
 const BURN = 'b1'.repeat(32), HOME = 'c2'.repeat(32), FUND = 'd3'.repeat(32);
 const DEST = '0x' + 'ee'.repeat(32);
+const ZERO32 = '0x' + '00'.repeat(32);
+// The attested state a real burned note leaves: its leaf in the note tree and its nullifier in the spent set.
+const noteState = (auth, height = 1000) => {
+  const c = pool.commitXY(AMOUNT, '0x' + BLINDING.toString(16).padStart(64, '0'));
+  const leaf = pool.btcNoteLeaf(TAC, c.cx, c.cy, auth);
+  return { height, dests: new Set(), pending: new Set(), leaves: new Set([leaf.toLowerCase()]), spent: new Set([pool.nullifier(leaf).toLowerCase()]) };
+};
 
 function world({ height = 900, payer = WALLET } = {}) {
   const r = makeBridgeRecover({ secp, sha256, ripemd160, pool, classifyConfidentialTx: (h) => kinds[h.replace(/^0x/, '')] || null, signSchnorr, verifySchnorr, tacAssetId: TAC, fromHeight: 500 });
@@ -37,7 +44,7 @@ function world({ height = 900, payer = WALLET } = {}) {
     [HOME]: { status: { confirmed: true, block_height: height - 50 }, vin: [{ txid: 'aa'.repeat(32), vout: 0, prevout: { scriptpubkey: payerSpk, scriptpubkey_address: 'bc1qholder' } }] },
   };
   const chain = { getTx: async (t) => txs[t] || null, getTxHex: async (t) => (t === BURN ? 'burnhex' : t === HOME ? 'homehex' : '') };
-  const state = { height: 1000, dests: new Set(), pending: new Set() };
+  const state = noteState('0x' + '44'.repeat(32));            // the burn-home sits at a P2TR output of that key
   return { r, chain, state };
 }
 
@@ -114,11 +121,56 @@ test('a burn of a tracked note (envelope commit first, the note second) is recov
     [NOTETX]: { status: { confirmed: true, block_height: 850 }, vin: [] },
   };
   const chain = { getTx: async (t) => txs[t] || null, getTxHex: async (t) => (t === BURN ? 'burnhex' : t === COMMIT ? 'commithex' : t === NOTETX ? 'notehex' : '') };
-  const state = { height: 1000, dests: new Set(), pending: new Set() };
+  const state = noteState(ZERO32);                           // a tracked note at the holder's own P2WPKH output has no auth key
   const claim = r.buildClaim({ burnTxid: BURN, amount: AMOUNT, blinding: BLINDING, walletPriv: WALLET });
   const v = await r.verifyClaim(claim, { ...chain, state });
   assert.equal(v.ok, true, v.reason);
   assert.equal(v.address, 'bc1qholder');
   const wrong = r.buildClaim({ burnTxid: BURN, amount: AMOUNT - 1n, blinding: BLINDING, walletPriv: WALLET });
   assert.match((await r.verifyClaim(wrong, { ...chain, state })).reason, /do not open/);
+});
+
+test('a note that is not one the reflection tracks is refused: a forged transfer cannot be refunded', async () => {
+  const { r, chain, state } = world();
+  const claim = r.buildClaim({ burnTxid: BURN, amount: AMOUNT, blinding: BLINDING, walletPriv: WALLET });
+  assert.match((await r.verifyClaim(claim, { ...chain, state: { ...state, leaves: new Set() } })).reason, /not one the reflection tracks/);
+});
+
+test('a tracked note that this burn did not leave spent is refused', async () => {
+  const { r, chain, state } = world();
+  const claim = r.buildClaim({ burnTxid: BURN, amount: AMOUNT, blinding: BLINDING, walletPriv: WALLET });
+  assert.match((await r.verifyClaim(claim, { ...chain, state: { ...state, spent: new Set() } })).reason, /not spent by this burn/);
+});
+
+test('the same opening under a key the output is not locked to finds no tracked note', async () => {
+  const { r, chain, state } = world();
+  const claim = r.buildClaim({ burnTxid: BURN, amount: AMOUNT, blinding: BLINDING, walletPriv: WALLET });
+  assert.match((await r.verifyClaim(claim, { ...chain, state: noteState('0x' + '45'.repeat(32)) })).reason, /not one the reflection tracks/);
+});
+
+test('a burned note of another asset is refused', async () => {
+  const { r, chain, state } = world();
+  const other = makeBridgeRecover({ secp, sha256, ripemd160, pool, tacAssetId: TAC, signSchnorr, verifySchnorr, fromHeight: 500,
+    classifyConfidentialTx: (h) => (/homehex/.test(h) ? { type: 'cxfer', assetId: '0x' + '11'.repeat(32), vouts: [0, 1], commitments: ['02' + '33'.repeat(32), '02' + '33'.repeat(32)] }
+      : { type: 'burn', assetId: TAC, dest: DEST }) });
+  const claim = r.buildClaim({ burnTxid: BURN, amount: AMOUNT, blinding: BLINDING, walletPriv: WALLET });
+  assert.match((await other.verifyClaim(claim, { ...chain, state })).reason, /not TAC/);
+});
+
+test('whoever only funded the transaction that made the note cannot claim the burn', async () => {
+  const { r, chain, state } = world();
+  const SENDER = new Uint8Array(32).fill(0x33);
+  const senderSpk = r.ownerScript(hex(secp.getPublicKey(SENDER, true)));
+  // The note was made by a transaction the sender funded; the burn itself is the holder's.
+  const home = await chain.getTx(HOME);
+  home.vin = [{ txid: 'aa'.repeat(32), vout: 0, prevout: { scriptpubkey: senderSpk, scriptpubkey_address: 'bc1qsender' } }];
+  const claim = r.buildClaim({ burnTxid: BURN, amount: AMOUNT, blinding: BLINDING, walletPriv: SENDER });
+  assert.match((await r.verifyClaim(claim, { ...chain, state })).reason, /did not make/);
+});
+
+test('without the reflection state\'s note tree and spent set nothing is refunded', async () => {
+  const { r, chain, state } = world();
+  const claim = r.buildClaim({ burnTxid: BURN, amount: AMOUNT, blinding: BLINDING, walletPriv: WALLET });
+  const { leaves, spent, ...bare } = state;
+  assert.match((await r.verifyClaim(claim, { ...chain, state: bare })).reason, /not available/);
 });

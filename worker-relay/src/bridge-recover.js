@@ -82,7 +82,7 @@ export function makeChain(fetchImpl = fetch, bases = ESPLORA.mainnet) {
 // The send loop. Everything it touches is injected so tests drive it with stand-ins.
 //   api:    { claims() → [claim], mark(burnTxid, status, extra) }
 //   chain:  makeChain()
-//   state:  async () → { height, dests, pending, live } from the authenticated reflection state (0x-prefixed keys)
+//   state:  async () → { height, dests, pending, live, leaves, spent } from the authenticated reflection state (0x-prefixed keys)
 //   wallet: { pubHex, spk, notes() → [{ txid, vout, amount, blinding, value }], send({ pubHex, amount, inputs }) → txid }
 //   beforeSend: optional async () → true when it did something (a fee top-up) that the send should wait for
 export function makeRecoverer({ verifier, pool, api, chain, state, wallet, beforeSend = null, graceSecs = 1200, now = () => Date.now(), logger = log }) {
@@ -183,6 +183,9 @@ export function makeAuthedState({ cfg, deps, fetchImpl = fetch, logger = log }) 
       dests: new Set((snap.burnNodes || []).map((n) => key0x(n && n[2]))),
       pending: new Set((snap.pendingDepositRecords || []).map((r) => key0x(r && r.key))),
       live: new Set((snap.liveTriples || []).map((t) => key0x(Array.isArray(t) ? t[0] : t && t.key))),
+      // The note tree and the spent set the digest above covers: the burned note must be found in both.
+      leaves: new Set((snap.noteLeaves || []).map((x) => key0x(x))),
+      spent: new Set((snap.spentLinks || []).map((l) => key0x(l && l[0]))),
     };
   };
 }

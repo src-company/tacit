@@ -58,7 +58,8 @@ function world({ status = 'queued', inputs, sendingAt = 0, notes, live = new Set
     { txid: 'a3'.repeat(32), vout: 1, amount: 20000000000n },
   ];
   const wallet = { notes: async () => held, send: async (x) => { sends.push(x); return 'ab'.repeat(32); } };
-  const state = async () => ({ height: 1000, dests, pending: new Set(), live });
+  const leaf = pool.btcNoteLeaf(TAC, c.cx, c.cy, '0x' + '44'.repeat(32));        // the burn-home's output key; the reflection holds it, spent
+  const state = async () => ({ height: 1000, dests, pending: new Set(), live, leaves: new Set([leaf.toLowerCase()]), spent: new Set([pool.nullifier(leaf).toLowerCase()]) });
   const before = { calls: 0, result: false };
   const rec = makeRecoverer({ verifier, pool, api, chain, state, wallet, beforeSend: async () => { before.calls++; return before.result; }, graceSecs: 600, now: () => 1_000_000 });
   return { rec, marks, sends, spends, claim, pub, before };
