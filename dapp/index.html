@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-gki2j2cI5/e++DpcR/ZdChjr/WH1FTM2eUBelIM76fI=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-x2nUgi8+I8AnRJ4rLjcYwX4M+U1mKSe+kPpYF+Rs4Kw=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <script src="/front-route.js?cb=c240ced2"></script>
 <title>tacit</title>
@@ -236,6 +236,23 @@ a.di { color: inherit; text-decoration: none; }
   .paycard li a:hover .go { transform: translateX(3px); color: var(--ink); }
   .paycard li a:hover b, .paycard .links-sm a:hover { text-decoration: underline; }
 }
+
+/* ── TAC's price, where it trades ── */
+.tpx { margin: 0 0 14px; background: var(--field); border: 1px solid var(--hair); }
+.tpx summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; padding: 10px 12px; cursor: pointer; list-style: none; font-size: 13px; }
+.tpx summary::-webkit-details-marker { display: none; }
+.tpx summary b { font-weight: 500; }
+.tpx summary .mute { font-size: 12px; }
+.tpx summary .more { margin-left: auto; font-size: 12px; color: var(--mute); }
+.tpx summary .more::after { content: ' ▾'; }
+.tpx[open] summary .more::after { content: ' ▴'; }
+@media (hover: hover) { .tpx summary:hover .more { color: var(--ink); } }
+.tpx table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.tpx th, .tpx td { padding: 8px 12px; border-top: 1px solid var(--hair); vertical-align: top; }
+.tpx th { text-align: left; font-weight: 400; }
+.tpx td { text-align: right; white-space: nowrap; }
+.tpx small { display: block; margin-top: 1px; font-size: 11px; color: var(--mute); }
+.tpx .note { margin: 0; padding: 8px 12px 10px; border-top: 1px solid var(--hair); }
 
 /* ── first visit ── */
 .start { margin: -14px 0 30px; padding: 22px 24px; background: var(--card); border: 1px solid var(--hair); }
@@ -705,6 +722,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
       <h2 id="tac-h" tabindex="-1" autofocus>TAC</h2>
       <button class="x" type="button" data-close aria-label="Close">×</button>
     </div>
+    <details class="tpx" id="tac-px" hidden></details>
     <div id="tac-bal"></div>
     <div class="seg" role="tablist" aria-label="TAC">
       <button type="button" role="tab" aria-selected="true" data-tac-mode="air">Airdrop</button>
@@ -812,7 +830,7 @@ import { announceWalletConnect } from '/walletconnect.js?cb=31f53606';
 import { makeEvmAccount } from '/evm-account.js';
 import { makeEvmTx } from '/evm-tx.js';
 import { makeTacAirdrop, makeRpcCall } from '/tac-airdrop.js?cb=02ef61b4';
-import { makeEvmTradeVenues, encErc20Approve } from '/evm-trade-venues.js?cb=38171d17';
+import { makeEvmTradeVenues, encErc20Approve, CETH_POOL_ASSET_ID, TAC_POOL_ASSET_ID, TACIT_AMM } from '/evm-trade-venues.js?cb=38171d17';
 import { parseRecipient } from '/confidential-payout.js?cb=c27b4853';
 import { addressId } from '/address-id.js?cb=c4fa5a58';
 // front-route.js is sending this visit to another page: nothing here starts while the browser moves on.
@@ -846,7 +864,7 @@ const SEL = {
   previewZap: 'e7cddab0', previewAdd: 'e03ec807', zapETH: '8703a0d8', addAndStake: '6d15c09b', addAndStakeWithPermit: 'ddd9f3fb',
   claim: '4e71d92d', exitAndRemove: 'bccbe38a', aggregate3: '82ad56cb', timestamp: '0f28c97d',
   wtacWithdraw: '00f714ce', transfer: 'a9059cbb', cbtcLockRedeemed: 'b5229671', escrowSlashed: 'f2d02700', helperEscrowOf: '78808388', reclaimEscrow: 'c5211d27', zapToken: '9376f34e', zapTokenWithPermit: '51291e77', withdrawAndRemove: 'bd8196a9', withdrawTo: '47d1eebd', exitTo: '6ae36ea7', stake: 'a694fc3a', stakeWithPermit: 'ecd9ba82',
-  wrapWithTip: 'fc24c435', postEscrowWithETH: 'c0e2d9a1', requiredEscrow: '034448ed', stEthPerWst: 'bb2952fc',
+  wrapWithTip: 'fc24c435', postEscrowWithETH: 'c0e2d9a1', requiredEscrow: '034448ed', stEthPerWst: 'bb2952fc', wstEthForBtc: '7dd55c2b', tacitQuote: '3bc1414a',
   escrowSufficient: '058e18b0', escrowTotal: 'e06e89c9', cbtcLockVBtc: '7cea1c1a', cbtcMinted: 'e2c2a40c', btcToUsd: 'd5901347', cdpRatioBps: '4827ecb3', liqRatioBps: '1432d93f', rate: '2c4e722e',
 };
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -2561,11 +2579,14 @@ function openAsset(key) {
   mount($('#asset-body'), html`
     ${a.lede.map((p) => html`<p class="lede-s">${p}</p>`)}
     ${(a.facts || []).map(([k, v]) => html`<div class="kv"><span>${k}</span><b>${v}</b></div>`)}
+    ${key === 'tac' && TPX.v?.mid ? html`<div class="kv"><span>Price now</span><b class="num">${sig(TPX.v.mid)} ETH${TPX.v.ethBtc ? ` · ${Math.round((TPX.v.mid / TPX.v.ethBtc) * 1e8).toLocaleString('en-US')} sats` : ''} <a href="#buy" data-open="buy">where it trades</a></b></div>` : ''}
     ${a.links?.length ? html`<ul class="links">${a.links.map(([label, href]) => href.startsWith('#') ? html`<li><a href="${href}" data-open="${href.slice(1)}">${label} →</a></li>` : html`<li><a href="${href}" target="_blank" rel="noopener">${label} ↗</a></li>`)}</ul>` : ''}`);
   $$('[data-open]', $('#asset-body')).forEach((l) => l.onclick = (e) => { e.preventDefault(); $('#asset-card').close(); openSheet(l.dataset.open); });
   const d = $('#asset-card');
   if (!d.open) d.showModal();
   syncLink();
+  // TAC's card says its price once read, the same reading as the TAC sheet's.
+  if (key === 'tac' && !TPX.v) loadTacPrice().then(() => { if (d.open && assetOpen === 'tac' && TPX.v) openAsset('tac'); }).catch(() => {});
 }
 document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-asset]'); if (b) { e.preventDefault(); openAsset(b.dataset.asset); } });
 
@@ -4057,12 +4078,93 @@ async function readAirdrop(who, current) {
   else if (s.claimed) setFoot('tac', `Airdrop claimed · ${fmt(BigInt(s.amountWei), 18, 2)} TAC`, 'on');
   else setFoot('tac', s.reason === 'not-listed' ? 'No airdrop for this wallet · buy with ETH' : s.message || 'Not claimable');
 }
+// ── TAC's price, where it trades ──────────────────────────────────────────────────────────────────────────
+// TAC in ETH and in sats on each venue: the Precision pool on Ethereum (the deepest, so the reference), the Tacit AMM and
+// the private AMM in the Tacit pool (mid prices: the AMM's quote for a small buy, less its fee; the private pool's
+// reserves), and the Bitcoin order book (recent trades, and the cheapest ask standing). Sats and ETH meet at the
+// collateral engine's validated BTC price, the one cBTC bonds are sized by. The private pool is read when asked for, since
+// reading it loads the Tacit pool's module.
+const TPX = { at: 0, p: null, v: null, amm: undefined, ammP: null };
+// The cheapest ask a buyer can take now: unexpired, and within five times the trade mark (one listing far above the market
+// is not a price).
+function bestAsk(sales, mark) {
+  const now = Date.now() / 1000;
+  const unit = sales.filter((x) => !x.expired && Number(x.expiry || 0) > now).map((x) => {
+    const u = Number(x.asset_opening?.amount ?? 0) / 10 ** (Number.isInteger(x.decimals) ? x.decimals : 8), sats = Number(x.min_price_sats ?? 0);
+    return u > 0 && sats > 0 ? sats / u : null;
+  }).filter((x) => x != null && (!mark || x <= mark * 5));
+  return unit.length ? Math.min(...unit) : null;
+}
+function loadTacPrice(force = false) {
+  if (!force && TPX.v && Date.now() - TPX.at < 60e3) return Promise.resolve();
+  return (TPX.p ||= (async () => {
+    const BTC1 = 10n ** 8n, api = (path) => fetch(`${API}${path}`, { signal: within(10e3) }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    // One multicall for the chain: the Precision pool's price, the engine's BTC price both ways, and what the Tacit AMM's
+    // founded 30 bps tier pays for a 0.01 ETH buy.
+    const IN = 10n ** 16n, AMM_FEE = 30;
+    const [[sp, wst, usd, ammOut], asset, sales] = await Promise.all([
+      multicall([{ to: ADDR.precisionPool, data: SEL.sqrtPrice }, { to: ADDR.engine, data: SEL.wstEthForBtc + word(BTC1) }, { to: ADDR.engine, data: SEL.btcToUsd + word(BTC1) },
+        { to: TACIT_AMM, data: SEL.tacitQuote + strip(CETH_POOL_ASSET_ID) + strip(TAC_POOL_ASSET_ID) + word(AMM_FEE) + word(IN) }]),
+      api(`/assets/${TAC_BTC_ID}?network=mainnet`),
+      api(`/assets/${TAC_BTC_ID}/preauth-sales?network=mainnet`),
+    ]);
+    const amm = ammOut && wordAt(ammOut, 0) > 0n ? { amountIn: IN, amountOut: wordAt(ammOut, 0), feeBps: AMM_FEE } : null;
+    const root = sp ? Number(wordAt(sp, 0)) / 1e18 : 0;
+    const ethBtc = wst ? Number(wordAt(await ethCall(ADDR.wsteth, SEL.stEthPerWst + word(wordAt(wst, 0))), 0)) / 1e18 : null;   // ETH per BTC
+    const mark = Number(asset?.mark_price?.unit) || null;                                                                       // sats per TAC, from trades
+    TPX.v = {
+      mid: root > 0 ? 1 / (root * root) : null,                                                                                 // ETH per TAC
+      ethBtc, usdBtc: usd ? Number(wordAt(usd, 0)) / 1e8 : null, mark,
+      ask: Array.isArray(sales?.sales) ? bestAsk(sales.sales, mark) : null,
+      amm: amm?.amountOut > 0n ? (Number(amm.amountIn) * (1 - Number(amm.feeBps) / 1e4)) / Number(amm.amountOut) : null,
+    };
+    TPX.at = Date.now();
+  })().finally(() => { TPX.p = null; }));
+}
+// The private AMM's mid, cETH over cTAC in its pool (both kept at the pool's own 8 decimals); the founded fee tier is the one with reserves.
+function loadPrivateAmm() {
+  if (TPX.amm !== undefined || TPX.ammP) return TPX.ammP || Promise.resolve();
+  return (TPX.ammP = (async () => {
+    const ux = await getUx();
+    for (const fee of [30, 5, 100, 1]) {
+      const r = await ux.poolReserves(ux.routePoolId(CETH_POOL_ASSET_ID, TAC_POOL_ASSET_ID, fee)).catch(() => null);
+      if (r?.reserveA > 0n && r.reserveB > 0n) { TPX.amm = Number(r.reserveA) / Number(r.reserveB); return; }   // the lower id, cETH, is reserveA
+    }
+    TPX.amm = null;
+  })().catch(() => { TPX.amm = null; }).finally(() => { TPX.ammP = null; }));
+}
+const sig = (x, n = 3) => (x >= 1 ? x.toLocaleString('en-US', { maximumFractionDigits: 2 }) : x.toPrecision(n).replace(/\.?0+$/, ''));
+function paintTacPrice() {
+  const box = $('#tac-px'), v = TPX.v;
+  if (!box) return;
+  if (!v?.mid) { box.hidden = true; return; }
+  const sats = (eth) => (v.ethBtc ? Math.round((eth / v.ethBtc) * 1e8) : null), ethOfSats = (n) => (v.ethBtc ? (n / 1e8) * v.ethBtc : null);
+  const usd = v.ethBtc && v.usdBtc ? (v.mid / v.ethBtc) * v.usdBtc : null;
+  const gap = (eth) => (eth == null ? '' : `${eth >= v.mid ? '+' : '−'}${Math.abs((eth / v.mid - 1) * 100).toFixed(1)}%`);
+  const row = (name, what, eth, satsV, cmp = gap(eth)) => html`<tr><th>${name}<small>${what}</small></th>
+    <td>${eth == null ? '—' : `${sig(eth)} ETH`}<small>${satsV == null ? '' : `${satsV.toLocaleString('en-US')} sats`}</small></td><td>${cmp}<small>&nbsp;</small></td></tr>`;
+  const open = box.open;
+  mount(box, html`<summary><span>TAC</span><b class="num">${sig(v.mid)} ETH</b><span class="mute num">${sats(v.mid) != null ? `${sats(v.mid).toLocaleString('en-US')} sats` : ''}${usd != null ? ` · $${usd.toFixed(usd < 1 ? 3 : 2)}` : ''}</span><span class="more">Where it trades</span></summary>
+    <table class="num"><tbody>
+      ${row('Precision pool', 'Ethereum, the deepest', v.mid, sats(v.mid), 'reference')}
+      ${row('Tacit AMM', 'Ethereum, public', v.amm, v.amm == null ? null : sats(v.amm))}
+      ${row('Private AMM', 'in the Tacit pool', TPX.amm ?? null, TPX.amm ? sats(TPX.amm) : null, TPX.amm === undefined ? '…' : gap(TPX.amm ?? null))}
+      ${v.mark ? row('Bitcoin order book', 'recent trades', ethOfSats(v.mark), Math.round(v.mark)) : ''}
+      ${v.ask ? row('', 'cheapest ask now', ethOfSats(v.ask), Math.round(v.ask)) : ''}
+    </tbody></table>
+    <p class="note">Mid prices, against the Precision pool's. Sats and ETH meet at the collateral engine's BTC price. <a href="${TAC_BOOK}">The Bitcoin order book →</a></p>`);
+  box.open = open;
+  box.hidden = false;
+  box.ontoggle = () => { if (box.open && TPX.amm === undefined) loadPrivateAmm().then(paintTacPrice); };
+}
 render.tac = () => {
   renderTacBal($('#tac-bal'));
+  paintTacPrice();
   for (const t of ['air', 'buy', 'sell']) $(`#${t}-body`).hidden = TAB.tac !== t;
   ({ air: renderAirdrop, buy: renderBuy, sell: renderSell })[TAB.tac]($(`#${TAB.tac}-body`));
 };
-load.tac = () => Promise.all([TAB.tac === 'air' ? loadAirdrop() : loadPrecision(), loadTacHoldings()]);
+// The price line reads on its own and paints only itself, so a slow venue never holds up the sheet's own reads.
+load.tac = () => { loadTacPrice().then(paintTacPrice).catch(() => {}); return Promise.all([TAB.tac === 'air' ? loadAirdrop() : loadPrecision(), loadTacHoldings()]); };
 // One TAC balance across its three homes: canonical TAC on Bitcoin (this key's own address and the shielded payments it
 // found), the public ERC20 on Ethereum (the connected wallet and the Tacit account) and private TAC notes in the Tacit pool.
 // `acct` is kept apart from the combined total: Shield draws only on the Tacit account's own TAC (routerWrap signs from
@@ -4307,15 +4409,19 @@ function renderAirdrop(el) {
 // Buy: the same venue search Tacit's market page runs (Precision band and Tacit's public AMM), sent through
 // zRouter. minOut is the winning venue's own quote less 0.5%.
 const venues = makeEvmTradeVenues({ ethCall: (to, data, block = 'latest', o = {}) => rpc('eth_call', [{ to, data, ...(o.gas ? { gas: o.gas } : {}) }, block]), keccak256: keccak_256 });
+// TAC also trades for sats on the Bitcoin order book, which the classic app runs: taking an ask, or listing TAC held on Bitcoin.
+const TAC_BOOK = `/classic.html#tab=market&aid=${TAC_BTC_ID}`;
+const bookLine = (sell) => html`<p class="note">${sell ? 'Want sats instead?' : 'Paying in sats?'} <a href="${TAC_BOOK}">${sell ? 'Sell TAC held on Bitcoin' : 'Buy TAC'} on the Bitcoin order book →</a></p>`;
 function renderBuy(el) {
-  if (!S.address) { mount(el, gate('Buy TAC with ETH at the best price across pools. Buying through the Precision pool earns points.', 'Connect wallet', 'buy-connect')); return wireConnect('buy-connect', () => rerender('tac')); }
+  if (!S.address) { mount(el, html`${gate('Buy TAC with ETH at the best price across pools. Buying through the Precision pool earns points.', 'Connect wallet', 'buy-connect')}${bookLine(false)}`); return wireConnect('buy-connect', () => rerender('tac')); }
   mount(el, html`
     <div class="lbl"><span>Pay</span><button type="button" id="b-max">${payName()} <span id="b-bal"><span class="sk" style="--w:5ch"></span></span> ETH</button></div>
     <div class="amt"><input id="b-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="ETH to spend"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>ETH</span></div>
     <div class="rcpt" id="b-rcpt" hidden></div>
     <div id="b-ack"></div>
     <button class="btn" type="button" id="b-go" disabled>Buy TAC</button>
-    <div class="status" role="status" id="b-status"></div>`);
+    <div class="status" role="status" id="b-status"></div>
+    ${bookLine(false)}`);
   const input = $('#b-amt'), go = $('#b-go'), rc = $('#b-rcpt'), status = $('#b-status'), ackBox = $('#b-ack');
   let bal = null, q = null, seq = 0;
   const balEl = $('#b-bal');
@@ -4371,14 +4477,15 @@ function renderBuy(el) {
 // Sell: public TAC for ETH through the same venues. A Precision sale is one transaction, zRouter taking the TAC permit as
 // its first leg; the Tacit public pool pulls the TAC itself, so it is approved first when it is the better route.
 function renderSell(el) {
-  if (!S.address) { mount(el, gate('Sell public TAC for ETH at the best quote.', 'Connect wallet', 'sell-connect')); return wireConnect('sell-connect', () => rerender('tac')); }
+  if (!S.address) { mount(el, html`${gate('Sell public TAC for ETH at the best quote.', 'Connect wallet', 'sell-connect')}${bookLine(true)}`); return wireConnect('sell-connect', () => rerender('tac')); }
   mount(el, html`
     <div class="lbl"><span>Sell</span><button type="button" id="sl-max">${payName()} <span id="sl-bal"><span class="sk" style="--w:5ch"></span></span> TAC</button></div>
     <div class="amt"><input id="sl-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="TAC to sell"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</span></div>
     <div class="rcpt" id="sl-rcpt" hidden></div>
     <div id="sl-ack"></div>
     <button class="btn" type="button" id="sl-go" disabled>Sell TAC</button>
-    <div class="status" role="status" id="sl-status"></div>`);
+    <div class="status" role="status" id="sl-status"></div>
+    ${bookLine(true)}`);
   const input = $('#sl-amt'), go = $('#sl-go'), rc = $('#sl-rcpt'), status = $('#sl-status'), ackBox = $('#sl-ack'), who = S.address;
   let bal = null, q = null, seq = 0;
   const balEl = $('#sl-bal');
