@@ -72,6 +72,7 @@ function makeWorld() {
   const liveKeys = new Set(), checkedDests = [];
   let recordBurns = true, noteHeight = 800;
   const recoverPosts = [], recoverState = new Map();
+  const chainHex = new Map();
   // A note the reflection tracks for real (its leaf in the tree, its live entry with the true commitment hash and the
   // zero auth key of a P2WPKH output), and the reflected burns the attested state has recorded.
   let reflectedNote = null, recordReflected = true;
@@ -142,13 +143,18 @@ function makeWorld() {
       // any other txid queried is a migrate-reveal-shaped check
       return json({ ok: true, status: migrateConfirmed ? 'folded' : 'unconfirmed' });
     }
+    if (u.pathname.startsWith('/chain/tx/') && u.pathname.endsWith('/hex')) {
+      const id = stripHex(u.pathname.slice('/chain/tx/'.length, -'/hex'.length));
+      if (!chainHex.has(id)) return { ok: false, status: 404, json: async () => ({}), text: async () => 'not found' };
+      return { ok: true, status: 200, json: async () => ({}), text: async () => chainHex.get(id) };
+    }
     if (u.pathname.startsWith('/chain/tx/')) {
       const txid = u.pathname.slice('/chain/tx/'.length);
       const rec = chainTxs.get(stripHex(txid));
       // Once the migrate confirms, its reveal (the burn-home) is on chain; its script is set by setBurnHomeOnChain.
       if (!rec && migrateConfirmed) return json({ status: { confirmed: true, block_height: noteHeight }, vout: [] });
       if (!rec) throw new Error('world: unknown chain tx ' + txid);
-      return json({ status: { confirmed: rec.confirmed, block_height: noteHeight }, vout: rec.vout });
+      return json({ status: { confirmed: rec.confirmed, block_height: noteHeight }, vout: rec.vout, vin: rec.vin || [] });
     }
     throw new Error('world: unstubbed path ' + u.pathname + ' ' + u.hostname);
   };
@@ -207,7 +213,8 @@ function makeWorld() {
     // The attested state records a reflected burn: its destination, read from the reveal the way the reflection reads it.
     foldReflected: (revealHex) => { const d = classifyConfidentialTx(withHex(revealHex)); if (d && d.dest) reflectedDests.push(String(d.dest).toLowerCase()); },
     setRecordReflected: (v) => { recordReflected = v; },
-    setChainTx: (txid, { confirmed = true, vout = [] } = {}) => chainTxs.set(stripHex(txid), { confirmed, vout }),
+    setChainTx: (txid, { confirmed = true, vout = [], vin = [] } = {}) => chainTxs.set(stripHex(txid), { confirmed, vout, vin }),
+    setChainHex: (txid, hex) => chainHex.set(stripHex(txid), stripHex(hex)),
     setNoteHeight: (h) => { noteHeight = h; },
   };
 }
@@ -224,8 +231,9 @@ function makeMemStorage() {
   };
 }
 
-function makeUx(world, storage) {
+function makeUx(world, storage, extra = {}) {
   return makeBurnDepositUx({
+    ...extra,
     network: 'signet', hrp: 'tb', workerBase: 'https://worker.example', fetchImpl: world.fetchImpl, storage,
     secp, sha256, keccak256: keccak_256, hmac: hmacFn, pool, bridgeMint: world.bridgeMint,
     chainBindingHex: () => '7c'.repeat(32), tacAssetId: ASSET, chain: world.chain,
@@ -817,6 +825,56 @@ let rec;
   const c2 = world.recoverPosts[before];
   const opened2 = pool.commitXY(BigInt(c2.amount), BigInt(c2.blinding));
   ok((again.stage === 'recovering' || again.stage === 'recovered') && BigInt(opened2.cx) === BigInt(notRecorded.burnHome.cx) && BigInt(opened2.cy) === BigInt(notRecorded.burnHome.cy), 'its recovery claim, built from nothing but the key, the txid and the amount, opens the burned note');
+}
+
+// A one-step bridge is rebuilt from its burn transaction and the key alone: the burned note's opening comes from the transaction
+// that made it, and the destination must be this key's own.
+{
+  const world = makeWorld();
+  const wpkh = '0014' + Buffer.from(ripemd160(nobleSha256(WALLET_PUB))).toString('hex');
+  world.setBurnHomeOnChain(NOTE_TXID, wpkh);
+  world.setReflectedNote({ txid: NOTE_TXID, vout: NOTE_VOUT, value: NOTE_AMOUNT, blinding: NOTE_BLINDING });
+  const first = makeUx(world, makeMemStorage());
+  const note = { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING };
+  let orig = await first.startReflected({ note, walletPriv: WALLET_PRIV, feeRate: BASE_RATE });
+  // What the chain shows of the burn: its two inputs (the envelope commit, then the note) and the raw transactions.
+  world.setChainTx(orig.burn.txid, { confirmed: true, vin: [{ txid: orig.burn.commitTxid, vout: 0 }, { txid: NOTE_TXID, vout: NOTE_VOUT, prevout: { value: NOTE_SATS } }] });
+  world.setChainHex(orig.burn.txid, orig.burn.hex);
+  world.setChainHex(orig.burn.commitTxid, orig.burn.commitHex);
+  const ownerOpens = async (txid, vout) => (stripHex(txid) === NOTE_TXID && vout === NOTE_VOUT ? { amount: NOTE_AMOUNT, blinding: NOTE_BLINDING } : null);
+
+  // A fresh browser: no journal, only the key and the burn's txid.
+  const fresh = makeUx(world, makeMemStorage(), { openNote: ownerOpens, nullifierSpent: async () => false });
+  const rebuilt = await fresh.recoverFromTxid(orig.burn.txid, WALLET_PRIV);
+  ok(rebuilt.stage === 'rburn-mined' && rebuilt.path === 'reflected', 'a one-step bridge is rebuilt from its burn txid alone, with no amount asked for');
+  ok(JSON.stringify(rebuilt.mint, (k, v) => (typeof v === 'bigint' ? v.toString() : v)) === JSON.stringify(orig.mint, (k, v) => (typeof v === 'bigint' ? v.toString() : v)),
+    'its mint is exactly the one the original browser planned: same burned opening, same destination blinding and owner');
+  ok(rebuilt.envelope.destLeaf === orig.envelope.destLeaf && rebuilt.envelope.burnId === orig.envelope.burnId, 'and names the same burn id and destination');
+  ok((await fresh.recoverFromTxid(orig.burn.txid, WALLET_PRIV)).id === rebuilt.id && fresh.list(rebuilt.walletPub).length === 1, 'asking again returns the same row, not a second one');
+  // It then follows the burn through the reflection and mints, like any other.
+  world.setNoteHeight(1001); world.foldReflected(orig.burn.hex);
+  let r = await fresh.advance(rebuilt.walletPub, rebuilt.id);
+  ok(r.stage === 'rfolded', 'once the reflection records the burn it is ready to mint');
+  r = await fresh.advance(rebuilt.walletPub, rebuilt.id, { walletPriv: WALLET_PRIV });
+  const rc = world.bridgeMintCalls[world.bridgeMintCalls.length - 1];
+  ok(r.stage === 'minted' && rc.sourceClass === 1 && BigInt(rc.burned.blinding) === NOTE_BLINDING && rc.spentVout === NOTE_VOUT, 'and mints the burned note as class 1');
+
+  // Not this wallet's: a key that never received the note, and a key that is given the opening but is not the burn's owner.
+  const other = new Uint8Array(32).fill(0x23);
+  const stranger = makeUx(world, makeMemStorage(), { openNote: async () => null });
+  let msg = null; try { await stranger.recoverFromTxid(orig.burn.txid, other); } catch (e) { msg = e.message; }
+  ok(/did not receive that burned note/.test(msg || ''), 'a key that never received the note cannot rebuild it');
+  const thief = makeUx(world, makeMemStorage(), { openNote: ownerOpens });
+  msg = null; try { await thief.recoverFromTxid(orig.burn.txid, other); } catch (e) { msg = e.message; }
+  ok(/not this wallet’s/.test(msg || '') && thief.list(Buffer.from(secp.getPublicKey(other, true)).toString('hex')).length === 0, 'a key given the opening but not named by the burn is refused, and nothing is journalled');
+  // Already minted: the bridge is complete.
+  const done = makeUx(world, makeMemStorage(), { openNote: ownerOpens, nullifierSpent: async () => true });
+  const doneRec = await done.recoverFromTxid(orig.burn.txid, WALLET_PRIV);
+  ok(doneRec.stage === 'minted', 'a bridge the pool has already minted is found complete');
+  // A burn-deposit is not this kind: it still wants its amount.
+  const dep = makeUx(world, makeMemStorage(), { openNote: ownerOpens });
+  msg = null; try { await dep.recoverFromTxid('ab'.repeat(32), WALLET_PRIV); } catch (e) { msg = e.message; }
+  ok(msg !== null, 'a transaction that is no burn is not mistaken for one');
 }
 
 // A mint the relay will not take is finished by the holder: the relay proves, the holder's own account sends the settle.

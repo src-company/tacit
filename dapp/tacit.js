@@ -93,6 +93,7 @@ import { renderFactoryTab } from './confidential-factory-tab.js';
 import { CONFIDENTIAL_DEPLOYMENTS as CROSSLANE_DEPLOYMENTS, setActiveNetwork as _setConfidentialNet, isProtectedOutpoint as _isProtectedOutpoint, notify as _confidentialNotify } from './confidential-deployments.js';
 import { notifyPendingWrapsOnce } from './confidential-scan-health.js';
 import { makeCrossLaneGuard } from './confidential-crosslane-guard.js';
+import { makeNoteOpener } from './note-opening.js';
 import { makeCrossChainAssets } from './cross-chain-asset-resolver.js';
 import { makeTacitAddress } from './tacit-address.js';
 import {
@@ -19901,17 +19902,33 @@ function _poolUxSingleton() {
 // changes (network is baked into the journal key and every worker/chain call), so this is cached per network
 // name rather than unconditionally, unlike _poolUxSingleton (which has no such dependency).
 let _burndepUx = null, _burndepUxNet = null;
+// The opening of a received or changed note, from the transaction that made it and this key alone (dapp/note-opening.js).
+const _noteOpener = makeNoteOpener({
+  hexToBytes, concatBytes, reverseBytes, decodeEnvelopeScript,
+  decodePayload: (opcode, payload) => (opcode === T_CXFER_BPP ? decodeCXferBppPayload(payload) : opcode === T_CXFER ? decodeCXferPayload(payload)
+    : opcode === T_CXFER_BOUND ? decodeCXferBoundPayload(payload) : null),
+  deriveAmountKeystreamECDH, deriveAmountKeystreamSelf, decryptAmount, deriveBlinding, deriveChangeBlinding, pedersenCommit, bytesToPoint,
+});
 function _burndepUxSingleton() {
   const net = NET.name;
   if (_burndepUx && _burndepUxNet === net) return _burndepUx;
   const poolUx = _poolUxSingleton();
   _burndepUxNet = net;
+  const guard = makeCrossLaneGuard({ keccak256: keccak_256 });
   return (_burndepUx = makeBurnDepositUx({
     network: net, hrp: NET.hrp, workerBase: WORKER_BASE, secp, sha256, keccak256: keccak_256, hmac,
     pool: poolUx.pool, bridgeMint: poolUx.bridgeMint, chainBindingHex: poolUx.chainBindingHex,
     tacAssetId: '0x' + CANONICAL_TAC_ASSET_ID_HEX,
     chain: { getUtxos, pickSafeCommitSats, broadcastWithRetry, getFeeRate },
     encodeCXferBppPayload, computeKernelMsg, deriveChangeBlinding, deriveAmountKeystreamSelf, encryptAmount, signSchnorr, modN,
+    // A bridge rebuilt from its burn alone: the burned note's opening comes from the transaction that made it and the key,
+    // and whether it has already minted comes from the pool's own spent set.
+    openNote: async (txid, vout) => {
+      const tx = await getTx(txid);
+      const r = tx ? _noteOpener({ tx, vout, walletPriv: wallet.priv }) : null;
+      return r ? { amount: r.amount, blinding: r.blinding } : null;
+    },
+    nullifierSpent: (nu) => guard.evmNullifierSpent((a, slot, tag) => poolUx.rpc('eth_getStorageAt', [a, slot, tag || 'latest']), poolUx.cfg.pool, nu),
   }));
 }
 // Every outpoint any bridge record (any wallet, this browser) has reserved as its source note or its Bitcoin
@@ -23049,9 +23066,9 @@ function _renderHoldingsBurndepBridges(listEl) {
   const resumeBoxHtml = `
     <details style="${records.length ? 'margin-top:10px;padding-top:8px;border-top:1px solid var(--ink-faint);' : ''}">
       <summary class="muted" style="cursor:pointer;font-size:11px;">${records.length ? "Don't see a bridge you expect? " : ''}Recover a bridge from its transaction id or amount →</summary>
-      <div class="muted" style="font-size:10px;margin-top:6px;line-height:1.5;">With the burn transaction id, a bridge still in progress is picked up again. With the amount alone, your Ethereum notes are searched for a finished one; this browser remembers the amount.</div>
+      <div class="muted" style="font-size:10px;margin-top:6px;line-height:1.5;">With the burn transaction id, a bridge still in progress is picked up again; if it asks for the amount, add it. With the amount alone, your Ethereum notes are searched for a finished one; this browser remembers the amount.</div>
       <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
-        <input type="text" data-burndep-resume-txid placeholder="Burn transaction id (optional)" style="flex:1;min-width:160px;font-size:11px;">
+        <input type="text" data-burndep-resume-txid placeholder="Burn transaction id" style="flex:1;min-width:160px;font-size:11px;">
         <input type="text" data-burndep-resume-amount placeholder="Amount (e.g. 250)" style="width:100px;font-size:11px;">
         <button data-burndep-resume-btn style="font-size:11px;padding:5px 10px;white-space:nowrap;">Recover</button>
       </div>
@@ -23180,7 +23197,9 @@ function _renderHoldingsBurndepBridges(listEl) {
       const decimals = Number.isInteger(meta.decimals) ? meta.decimals : 8;
       let amountRaw = 0n;
       try { amountRaw = parseAssetAmount(amountStr, decimals); } catch { amountRaw = 0n; }
-      if (amountRaw <= 0n) { if (statusEl) statusEl.textContent = 'Enter the TAC amount this bridge carries, for example 250 or 1234.5.'; return; }
+      // A burn txid alone is enough for a bridge of ordinary TAC (its amount follows from the key and the chain); an amount
+      // with no txid searches Ethereum; neither is nothing to go on.
+      if (amountRaw <= 0n && !txid) { if (statusEl) statusEl.textContent = 'Enter the burn transaction id, or the TAC amount this bridge carries, for example 250 or 1234.5.'; return; }
       const amountText = `${fmtAssetAmount(amountRaw, decimals)} TAC`;
       resumeBtn.disabled = true;
       // Amount alone: a finished bridge's note is on Ethereum with its value hidden; remember the amount for this key
@@ -23207,11 +23226,13 @@ function _renderHoldingsBurndepBridges(listEl) {
       if (statusEl) statusEl.textContent = 'Checking the burn and rebuilding this bridge from chain data…';
       try {
         await ensurePrivkey();
-        await ux.recoverFromTxid(txid, wallet.priv, { amount: amountRaw });
-        toast('Bridge recovered from its transaction id', 'success');
+        const found = await ux.recoverFromTxid(txid, wallet.priv, amountRaw > 0n ? { amount: amountRaw } : {});
+        toast(found && found.stage === 'minted' ? 'That bridge has already minted: its TAC is in your private Ethereum balance.' : 'Bridge recovered from its transaction id', 'success');
         renderHoldings();
       } catch (e) {
-        if (statusEl) statusEl.textContent = `Could not recover: ${e?.message || e}`;
+        const m = String(e?.message || e);
+        // Only a burn of untouched TAC needs its amount; say so rather than showing the code's own wording.
+        if (statusEl) statusEl.textContent = /needs \{ amount \}/.test(m) ? 'This bridge needs its TAC amount as well: add it in the box beside the transaction id, then press Recover again.' : `Could not recover: ${m.replace(/^burndep-ux:\s*/, '')}`;
         resumeBtn.disabled = false;
       }
     });
@@ -23219,33 +23240,53 @@ function _renderHoldingsBurndepBridges(listEl) {
 }
 
 // Advances every burndep bridge for the current wallet that can move without the private key (polling
-// stages only — 'traced' and 'folded' wait for the Continue/Mint click in _renderHoldingsBurndepBridges, same
-// as the design's own "stages that need the key wait for the user's click"). Started lazily the first time
+// stages), and mints one that is ready while this tab holds an unlocked key. A burn still waits for its own click
+// in _renderHoldingsBurndepBridges: it is the one step that spends. Started lazily the first time
 // there's at least one bridge to watch; self-stops once none remain, mirroring startHoldingsAutoRefresh's own
 // pending-work-gated lifecycle.
 const BURNDEP_POLL_INTERVAL_MS = 75 * 1000;
 let _burndepPollTimer = null;
-function _startBurndepAutoRefresh() {
-  if (_burndepPollTimer) return;
-  _burndepPollTimer = setInterval(async () => {
-    if (document.hidden || _isAppIdle()) return;
-    if (!wallet || !wallet.pub) { _stopBurndepAutoRefresh(); return; }
-    let ux, records;
-    try { ux = _burndepUxSingleton(); records = ux.list(bytesToHex(wallet.pub)).filter((r) => !['minted', 'reclaimed', 'not-recorded', 'stopped', 'recovered'].includes(r.stage)); }
-    catch { return; }
-    if (!records.length) { _stopBurndepAutoRefresh(); return; }
-    let changed = false;
-    for (const rec of records) {
-      try {
+// A bridge that is ready to mint is minted here as soon as it is seen, while this tab holds an unlocked key: the holder already
+// confirmed the bridge, and the mint signs nothing. A failure waits ten minutes and tries a few times, then leaves it to the
+// holder's own button, which also offers finishing it from their own account when the relay is what refused.
+function _burndepAutoMintDue(rec) {
+  if (!wallet || !wallet.priv) return false;
+  if (rec.stage !== 'folded' && rec.stage !== 'rfolded') return false;
+  if (!rec.lastError) return true;
+  return (Number(rec.errorCount) || 0) < 4 && Date.now() - Number(rec.lastError.at || 0) > 10 * 60 * 1000;
+}
+async function _burndepAutoTick() {
+  if (document.hidden || _isAppIdle()) return;
+  if (!wallet || !wallet.pub) { _stopBurndepAutoRefresh(); return; }
+  let ux, records;
+  try { ux = _burndepUxSingleton(); records = ux.list(bytesToHex(wallet.pub)).filter((r) => !['minted', 'reclaimed', 'not-recorded', 'stopped', 'recovered'].includes(r.stage)); }
+  catch { return; }
+  if (!records.length) { _stopBurndepAutoRefresh(); return; }
+  let changed = false;
+  for (const rec of records) {
+    try {
+      let after;
+      if (_burndepAutoMintDue(rec)) {
+        after = await ux.advance(bytesToHex(wallet.pub), rec.id, { walletPriv: wallet.priv });
+        if (after && after.stage === 'minted') {
+          const meta = getAssetMeta(after.source.assetId) || {};
+          toast(`${fmtAssetAmount(BigInt(after.source.amount), Number.isInteger(meta.decimals) ? meta.decimals : 8)} ${meta.ticker || 'TAC'} minted — now in your private Ethereum balance.`, 'success', 8000);
+        }
+      } else {
         // The key stages are user-driven; only their key-free check runs here (a tracked burn-home pauses, an unrecorded
         // burn says so).
-        const after = (rec.stage === 'traced' || rec.stage === 'folded' || rec.stage === 'rfolded') ? await ux.verify(bytesToHex(wallet.pub), rec.id) : await ux.advance(bytesToHex(wallet.pub), rec.id);
-        if (after && after.stage !== rec.stage) changed = true;
+        after = (rec.stage === 'traced' || rec.stage === 'folded' || rec.stage === 'rfolded') ? await ux.verify(bytesToHex(wallet.pub), rec.id) : await ux.advance(bytesToHex(wallet.pub), rec.id);
       }
-      catch { changed = true; /* the record's own lastError just moved even though its stage didn't — re-render so it shows */ }
+      if (after && after.stage !== rec.stage) changed = true;
     }
-    if (changed && document.querySelector('.tab.active[data-tab="holdings"]')) renderHoldings();
-  }, BURNDEP_POLL_INTERVAL_MS);
+    catch { changed = true; /* the record's own lastError just moved even though its stage didn't — re-render so it shows */ }
+  }
+  if (changed && document.querySelector('.tab.active[data-tab="holdings"]')) renderHoldings();
+}
+function _startBurndepAutoRefresh() {
+  if (_burndepPollTimer) return;
+  _burndepPollTimer = setInterval(_burndepAutoTick, BURNDEP_POLL_INTERVAL_MS);
+  setTimeout(() => { if (_burndepPollTimer) _burndepAutoTick(); }, 4000); // a returning holder does not wait out a whole interval
 }
 function _stopBurndepAutoRefresh() {
   if (_burndepPollTimer) { clearInterval(_burndepPollTimer); _burndepPollTimer = null; }

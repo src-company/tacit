@@ -358,6 +358,23 @@ async function main() {
   const selfToast = await page.evaluate(() => document.querySelector('#toast-container')?.textContent || '');
   ok(/Bridge action failed/.test(selfToast), `pressing it runs the mint through the holder's own account (the stub world has no real burn, so it stops with: ${selfToast.slice(0, 90)})`);
 
+  // A bridge ready to mint is attempted by the page itself while the key is open: nothing is pressed here. One whose last
+  // attempts failed a moment ago is left alone for the holder.
+  await page.evaluate(([walletPubHex, network]) => {
+    const key = `tacit-burndep-bridge-v1:${network}:${walletPubHex.toLowerCase()}`;
+    const existing = JSON.parse(localStorage.getItem(key) || '[]');
+    const base = { network, walletPub: walletPubHex, source: { assetId: 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b', amount: '40000000000' }, burn: { txid: 'dd'.repeat(32) }, migrate: { revealTxid: 'aa'.repeat(32) } };
+    existing.push({ ...base, id: 'f7'.repeat(31) + 'f8:0', stage: 'folded' });
+    existing.push({ ...base, id: 'f9'.repeat(31) + 'fa:0', source: { ...base.source, amount: '10000000000' }, stage: 'folded', lastError: { message: 'relay is busy', at: Date.now() }, errorCount: 4 });
+    localStorage.setItem(key, JSON.stringify(existing));
+  }, [hex(WALLET_PUB), 'signet']);
+  await page.click('.tab[data-tab="wallet"]');
+  await page.click('.tab[data-tab="holdings"]');
+  await until(([k, id]) => { const r = (JSON.parse(localStorage.getItem(k) || '[]')).find((x) => x.id === id); return !!(r && r.lastError); }, [`tacit-burndep-bridge-v1:signet:${hex(WALLET_PUB).toLowerCase()}`, 'f7'.repeat(31) + 'f8:0'], 20000).catch(() => {});
+  const auto = await page.evaluate(([k]) => { const L = JSON.parse(localStorage.getItem(k) || '[]'); const g = (id) => L.find((x) => x.id === id); return { ready: g('f7'.repeat(31) + 'f8:0'), spent: g('f9'.repeat(31) + 'fa:0') }; }, [`tacit-burndep-bridge-v1:signet:${hex(WALLET_PUB).toLowerCase()}`]);
+  ok(auto.ready && !!auto.ready.lastError, 'a bridge ready to mint is attempted by the page on its own, with no press (the stub world has no real burn, so the attempt records why it stopped)');
+  ok(auto.spent && auto.spent.errorCount === 4 && /busy/.test(auto.spent.lastError.message), 'one that failed four times, the last a moment ago, is left for the holder');
+
   if (errors.length) { fails++; console.log('FAIL page errors:\n  ' + errors.slice(0, 8).join('\n  ')); }
   console.log(fails ? `${fails} failed` : 'all passed');
   await browser.close();

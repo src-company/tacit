@@ -92,6 +92,10 @@ export function makeBurnDepositUx(deps) {
     secp, sha256, keccak256, hmac, pool, bridgeMint, chainBindingHex, tacAssetId,
     chain, encodeCXferBppPayload, computeKernelMsg, deriveChangeBlinding, deriveAmountKeystreamSelf,
     encryptAmount, signSchnorr, modN,
+    // Optional. openNote(txid, vout) → { amount, blinding } | null: the opening of a note this key received or changed, from
+    // the transaction that made it (dapp/note-opening.js). nullifierSpent(ν) → boolean: whether the pool has spent ν.
+    // Together they let a one-step bridge be rebuilt from its burn transaction and the key alone.
+    openNote = null, nullifierSpent = null,
   } = deps || {};
   for (const [k, v] of Object.entries({ workerBase, secp, sha256, keccak256, hmac, pool, bridgeMint, chainBindingHex, tacAssetId, chain })) {
     if (v == null) throw new Error(`burndep-ux: deps.${k} required`);
@@ -657,6 +661,13 @@ export function makeBurnDepositUx(deps) {
     return res.json();
   }
   function fetchChainJson(path) { return callWorker('GET', `/chain${path}`); }
+  async function fetchChainText(path) {
+    const f = fetchImpl || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
+    if (!f) throw new Error('burndep-ux: no fetch implementation');
+    const res = await f(`${workerBase}/chain${path}${path.includes('?') ? '&' : '?'}network=${network}`);
+    if (!res.ok) throw new Error(`burndep-ux: chain read failed (${res.status})`);
+    return (await res.text()).trim().replace(/^0x/, '');
+  }
 
   function list(walletPub) { return loadAll(walletPub); }
   function abandon(walletPub, id) { saveAll(walletPub, loadAll(walletPub).filter((r) => r.id !== id)); }
@@ -667,7 +678,59 @@ export function makeBurnDepositUx(deps) {
   // a record starting at whatever stage the burn's own status implies, then journals it under this wallet so
   // resumeAll/advance carry it forward normally. Does not recover a bridge stuck before the burn even exists
   // (mid-migrate, no burn tx yet) — that window is covered by the journal, not by chain data alone.
+  // A one-step burn (a tracked note burned directly) needs no amount: the burned note's opening follows from the key and the
+  // transaction that made it, and the burn must name this key's own destination. Returns the rebuilt record, or null when
+  // the burn is not of that kind (a burn-deposit, which recoverFromTxid rebuilds from its amount instead).
+  async function recoverReflectedBurn(burnTxidDisplay, walletPriv) {
+    if (!openNote) return null;
+    const id = stripHex(burnTxidDisplay).toLowerCase();
+    const burnTx = await fetchChainJson(`/tx/${id}`);
+    if (!burnTx || !burnTx.vin || burnTx.vin.length < 2) return null;
+    const env = classifyConfidentialTx('0x' + await fetchChainText(`/tx/${id}/hex`));
+    if (!env || env.type !== 'burn' || lc(stripHex(env.assetId)) !== lc(stripHex(tacAssetId))) return null;
+    const prev = classifyConfidentialTx('0x' + await fetchChainText(`/tx/${stripHex(burnTx.vin[0].txid)}/hex`));
+    if (prev && prev.type === 'cxfer') return null;                         // vin[0] is a burn-home: a burn-deposit
+    if (!burnTx.status || !burnTx.status.confirmed) throw new Error('burndep-ux: that burn has not confirmed yet; try again once it has');
+
+    const note = burnTx.vin[1];                                             // [envelope commit, the burned note]
+    const opened = await openNote(note.txid, note.vout);
+    if (!opened) throw new Error('burndep-ux: this key did not receive that burned note, so it is not this wallet’s bridge');
+    const walletPub = secp.getPublicKey(walletPriv, true);
+    const asset = withHex(tacAssetId), ZERO = '0x' + '00'.repeat(32);
+    const { cx, cy } = pool.commitXY(BigInt(opened.amount), BigInt(opened.blinding));
+    const srcLeaf = pool.btcNoteLeaf(asset, cx, cy, ZERO);
+    const nu = pool.nullifier(srcLeaf);
+    if (lc(env.nullifier) !== lc(nu)) throw new Error('burndep-ux: the burn does not match that note’s opening (a note not held at this wallet’s own address cannot be rebuilt this way)');
+    // The destination is this key's own: only its owner derives the blinding, and the burn pins the leaf that commits to it.
+    const owner = pickDestOwner(walletPriv).owner;
+    const destBlinding = mintRecovery.deriveBridgeMintBlinding({ privkey: walletPriv, nullifier: env.nullifier });
+    const { cx: dx, cy: dy } = pool.commitXY(BigInt(opened.amount), destBlinding);
+    if (lc(pool.leaf(asset, dx, dy, owner)) !== lc(env.dest)) throw new Error('burndep-ux: that burn names a destination that is not this wallet’s, so it is not this wallet’s bridge');
+
+    const rid = recordId(note.txid, note.vout);
+    const existing = getRecord(walletPub, rid);
+    if (existing) return existing;
+    const spentTxid = withHex(revHex(note.txid));                           // internal byte order, as the mint names it
+    const rec = {
+      id: rid, network, walletPub: bytesToHexLocal(walletPub), path: 'reflected', stage: 'rburn-mined', createdAt: now(), recoveredAt: now(),
+      source: { txid: stripHex(note.txid).toLowerCase(), vout: Number(note.vout), sats: note.prevout ? note.prevout.value : null, assetId: tacAssetId, amount: BigInt(opened.amount), blinding: BigInt(opened.blinding) },
+      burn: { txid: id, hex: null },
+      burnHeight: Number(burnTx.status.block_height),
+      envelope: { destLeaf: env.dest, nullifier: env.nullifier, burnId: pool.bridgeBurnId(1, spentTxid, Number(note.vout), srcLeaf, env.target) },
+      mint: {
+        sourceClass: 1, spentTxid, spentVout: Number(note.vout), chainBinding: env.target,
+        burned: { value: BigInt(opened.amount), blinding: BigInt(opened.blinding), owner: ZERO },
+        dest: { value: BigInt(opened.amount), blinding: destBlinding, owner },
+      },
+    };
+    // Already minted elsewhere: the bridge is complete, and there is nothing to press.
+    if (nullifierSpent && await nullifierSpent(env.nullifier).catch(() => false)) return putRecord({ ...rec, stage: 'minted', mintedAt: now() });
+    return putRecord(rec);
+  }
+
   async function recoverFromTxid(burnTxidDisplay, walletPriv, { amount } = {}) {
+    const reflectedBridge = await recoverReflectedBurn(burnTxidDisplay, walletPriv);
+    if (reflectedBridge) return reflectedBridge;
     if (amount == null) throw new Error('burndep-ux: recoverFromTxid needs { amount } — the confidential value the original note carried (not recoverable from chain data alone)');
     const walletPub = secp.getPublicKey(walletPriv, true);
     const status = await checkTxidStatus(burnTxidDisplay);
