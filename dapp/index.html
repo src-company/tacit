@@ -216,6 +216,27 @@ a.di { color: inherit; text-decoration: none; }
   .strip .fig > span { white-space: normal; }
 }
 
+/* ── pay ── */
+/* Payments, the everyday use, ahead of the products: each asset opens tacit pay on it. */
+.paycard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px 36px; margin: 0 0 14px; padding: 24px;
+  background: var(--card); border: 1px solid var(--hair); }
+.paycard h2 { font: 400 32px/1.02 var(--serif); letter-spacing: -.01em; margin: 0 0 10px; }
+.paycard p { color: var(--mute); font-size: 13px; line-height: 1.55; margin: 0; }
+.paycard .links-sm { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-top: 16px; font-size: 12.5px; }
+.paycard .links-sm a { color: var(--ink); text-decoration: none; }
+.paycard ul { list-style: none; margin: 0; padding: 0; align-self: center; }
+.paycard li + li { border-top: 1px solid var(--hair); }
+.paycard li a { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 0; color: inherit; text-decoration: none; }
+.paycard li .tk { width: 30px; height: 30px; }
+.paycard li span { display: grid; gap: 1px; min-width: 0; }
+.paycard li b { font-size: 14px; font-weight: 500; }
+.paycard li small { font-size: 12px; color: var(--mute); }
+.paycard .go { margin-left: auto; color: var(--mute); transition: transform .18s, color .18s; }
+@media (hover: hover) {
+  .paycard li a:hover .go { transform: translateX(3px); color: var(--ink); }
+  .paycard li a:hover b, .paycard .links-sm a:hover { text-decoration: underline; }
+}
+
 /* ── first visit ── */
 .start { margin: -14px 0 30px; padding: 22px 24px; background: var(--card); border: 1px solid var(--hair); }
 .start h2 { font: 400 26px/1 var(--serif); letter-spacing: -.01em; margin: 0 0 16px; }
@@ -466,6 +487,8 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
   .strip .fig > .tk { width: 26px; height: 26px; }
   .strip + .hero { padding-top: 32px; }
   .tiles { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .paycard { grid-template-columns: minmax(0, 1fr); gap: 12px; margin-bottom: 10px; padding: 18px; }
+  .paycard h2 { font-size: 26px; }
   .tile { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "logo title" "logo text" "foot foot"; gap: 4px 16px; min-height: 0; padding: 18px; }
   .tile .pair { grid-area: logo; margin: 2px 0 0; align-self: start; }
   .tile .tk { width: 44px; height: 44px; }
@@ -568,6 +591,19 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <div class="dash-h"><h2 id="dash-h">Your Tacit</h2><span id="dash-since"></span></div>
     <div id="dash-due"></div>
     <ul class="dash-g" id="dash-g"></ul>
+  </section>
+
+  <section class="paycard" aria-labelledby="paycard-h">
+    <div>
+      <h2 id="paycard-h">Pay privately</h2>
+      <p>Bitcoin, TAC or ETH to anyone, at one tacit1 address. Each payment is made on your device, and nobody watching the chain can tell who you paid.</p>
+      <p class="links-sm"><a href="/pay/eth/#receive">Get paid by link or QR →</a><a href="/pay/">Open tacit pay →</a></p>
+    </div>
+    <ul aria-label="Pay in">
+      <li><a href="/pay/#btc"><svg class="tk" aria-hidden="true"><use href="#tk-btc"/></svg><span><b>BTC</b><small>a silent payment</small></span><span class="go" aria-hidden="true">→</span></a></li>
+      <li><a href="/pay/#tac"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><span><b>TAC</b><small>shielded on Bitcoin</small></span><span class="go" aria-hidden="true">→</span></a></li>
+      <li><a href="/pay/eth/"><svg class="tk" aria-hidden="true"><use href="#tk-eth"/></svg><span><b>ETH</b><small>on Ethereum, Base or Robinhood</small></span><span class="go" aria-hidden="true">→</span></a></li>
+    </ul>
   </section>
 
   <main class="tiles">
