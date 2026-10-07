@@ -118,6 +118,7 @@ const server = createServer((req, res) => {
 
 const RPC_HOSTS = ['ethereum-rpc.publicnode.com', 'eth.drpc.org', '1rpc.io', 'mainnet.gateway.tenderly.co', 'cloudflare-eth.com', 'rpc.flashbots.net'];
 const submits = [], refused = [], relays = [], walletTxs = [];
+let gatewayOnce = false;                                          // the next relay meets a gateway timeout (devmove)
 // Submits the relay refuses before taking them, as it does once the day's free settles are used up.
 let refuseSubmits = 0;
 // With `proveStub`, a job asked for as a proof only reads proven (a stand-in proof, with the memos it was sent with),
@@ -195,6 +196,8 @@ async function openPage({ account, key = null, host = '127.0.0.1', init = null, 
     if (/\/relay$/.test(p)) {
       const b = JSON.parse(route.request().postData() || '{}');
       relays.push(b);
+      // A gateway in front of the relay timing out: an HTML page, no JSON error, nothing known about the send.
+      if (gatewayOnce) { gatewayOnce = false; return route.fulfill({ status: 504, contentType: 'text/html', headers: { 'access-control-allow-origin': '*' }, body: '<html><body>504 Gateway Time-out</body></html>' }); }
       // A plain spend is refused as a keeper that cannot front its gas refuses it; a bridge call is just stubbed.
       if (!b.wrap) return route.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
         body: JSON.stringify({ error: b.call ? 'stubbed in the fork check' : "the relay can't take this one right now; send it from your own wallet, or try again later" }) });
@@ -1750,6 +1753,15 @@ await step('devmove', async () => {
   await r.page.click('[data-dest="addr"]');
   await r.page.fill('#d-to', BEEF);
   await r.page.fill('#d-amt', '0.0005');
+  // A gateway's timeout says nothing of whether the relay sent it: the page reads the chain and offers no second payment.
+  gatewayOnce = true;
+  await r.page.click('#d-go');
+  await until(r.page, () => /class="err"/.test(document.querySelector('#d-status')?.innerHTML || ''), null, 600000);
+  const unknown = await st();
+  ok(/did not answer/.test(unknown) && !(await r.page.$('#d-status [data-retry="d-self"]')) && (await r.page.$eval('#d-amt', (i) => i.value)) === '',
+    `devmove: a gateway timeout is read as no answer: the amount clears and no second payment is offered (${unknown.slice(0, 90)})`);
+  await r.page.fill('#d-amt', '0.0005');
+  await until(r.page, () => !document.querySelector('#d-go').disabled, null, 60000);
   const k2 = relays.length, b0 = await balOf(BEEF);
   await r.page.click('#d-go');
   await until(r.page, () => /data-retry="d-self"|class="err"/.test(document.querySelector('#d-status')?.innerHTML || ''), null, 600000);

@@ -717,7 +717,8 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
         };
         const r = await keeperPost('/relay', { tx, ...extra, ...(slot ? { reservation: slot } : {}) }).catch(() => { throw unanswered(); });
         // A gateway's own timeout or error (502-504, 520-524) says nothing of whether the relay sent it: the same as no answer.
-        if ((r.status >= 502 && r.status <= 504) || (r.status >= 520 && r.status <= 524)) throw unanswered();
+        // The relay's own refusals come with its JSON error (a 503 when it cannot front the gas or is full) and send nothing.
+        if (((r.status >= 502 && r.status <= 504) || (r.status >= 520 && r.status <= 524)) && !r.body?.error) throw unanswered();
         if (r.status === 409 && r.body.stale) continue;
         if (r.status === 429) { if (slot) await releaseSlot(slot); await sleep(5000); continue; }
         if (r.status !== 200 || !r.body.txHash) { if (slot) await releaseSlot(slot); throw new Error(r.body.error || `relayer returned ${r.status}`); }
