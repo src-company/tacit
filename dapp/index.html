@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-HtvYJ6miyZN5fBX0FwcdC/XmcAOlZIhVnvBfh+eRMqE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-oyq36rlP2ddJ2WkHH28AgguChpaNsxGsDEtA62XPFlQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <script src="/front-route.js?cb=69e9847d"></script>
 <title>tacit</title>
@@ -104,8 +104,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
 .brand .tk { width: 30px; height: 30px; }
 .brand b { font: italic 400 30px/1 var(--serif); letter-spacing: -.01em; }
-.brand i { font: 500 10px/1 var(--mono); font-style: normal; letter-spacing: .16em; text-transform: uppercase; color: var(--mute);
-  border: 1px solid var(--hair-2); padding: 4px 6px 3px; margin-left: 2px; }
+.brand i { font: italic 400 30px/1 var(--serif); letter-spacing: -.01em; color: var(--orange); margin-left: -3px; }
 .chip { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; min-width: 0; padding: 0 14px; background: var(--card);
   border: 1px solid var(--hair-2); cursor: pointer; white-space: nowrap; }
 .chip #wallet-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -464,8 +463,11 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
   .di-v { font-size: 17px; white-space: normal; overflow-wrap: anywhere; }
 }
 @media (max-width: 400px) {
+  .brand .tk { width: 26px; height: 26px; }
+  .brand b, .brand i { font-size: 26px; }
   .top:has(.chip.act:not([hidden])) .brand i { display: none; }
 }
+@media (max-width: 340px) { .brand i { display: none; } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .sk { background: var(--skel); }
@@ -545,7 +547,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
       <p>Make your ETH private, then send it to anyone without the world seeing how much or to whom. Swap, farm and borrow with it too.</p>
       <span class="tile-foot"><span class="dot" data-dot="eth"></span><span data-foot="eth">On Ethereum, Base and Robinhood</span><span class="go" aria-hidden="true">→</span></span>
     </a>
-    <a class="tile" href="#btc" data-open="btc" aria-haspopup="dialog">
+    <a class="tile" href="#bitcoin" data-open="btc" aria-haspopup="dialog">
       <span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-btc"/></svg><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg></span>
       <h2>Bitcoin</h2>
       <p>Pay in bitcoin or TAC so that nobody watching the chain can tell who you paid.</p>
@@ -557,7 +559,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
       <p>Claim your share of the one-million-TAC airdrop, or buy TAC with ETH.</p>
       <span class="tile-foot"><span class="dot" data-dot="tac"></span><span data-foot="tac">Claim or buy</span><span class="go" aria-hidden="true">→</span></span>
     </a>
-    <a class="tile" href="#pts" data-open="pts" aria-haspopup="dialog">
+    <a class="tile" href="#points" data-open="pts" aria-haspopup="dialog">
       <span class="pair"><svg class="tk" aria-hidden="true"><use href="#i-pts"/></svg></span>
       <h2>Points</h2>
       <p>Earn TAC just for using Tacit: making ETH private, swapping, borrowing and more. Up to <span data-pgm="pot">1,111</span> TAC is shared out every day.</p>
@@ -1823,7 +1825,7 @@ function paintAct() {
   b.setAttribute('aria-label', live ? `Activity, ${live} in progress` : 'Activity');
   if ($('#sheet-act').open) renderAct();
 }
-function openAct() { renderAct(); const d = $('#sheet-act'); if (!d.open) d.showModal(); }
+function openAct() { renderAct(); const d = $('#sheet-act'); if (!d.open) d.showModal(); syncLink(); }
 $('#act').onclick = openAct;
 document.addEventListener('click', (e) => { if (e.target.closest?.('[data-act-open]')) { e.preventDefault(); openAct(); } });
 setInterval(() => { if ($('#sheet-act').open) for (const s of $$('#act-body [data-since]')) s.textContent = clock(Date.now() - Number(s.dataset.since)); }, 1000);
@@ -2430,8 +2432,9 @@ const ASSETS = {
     links: [['tacUSD on Etherscan', ETHERSCAN(ADDR.tacusd, 'token')], ['The token list', 'https://token.list.wei.limo'], ['Borrow on Bitcoin', '#borrow']] },
 };
 function openAsset(key) {
-  const a = ASSETS[key];
+  const a = Object.hasOwn(ASSETS, key) ? ASSETS[key] : null;
   if (!a) return;
+  assetOpen = key;
   $('#asset-ic').setAttribute('href', `#tk-${a.icon}`);
   $('#asset-h').textContent = a.name;
   mount($('#asset-body'), html`
@@ -2441,15 +2444,77 @@ function openAsset(key) {
   $$('[data-open]', $('#asset-body')).forEach((l) => l.onclick = (e) => { e.preventDefault(); $('#asset-card').close(); openSheet(l.dataset.open); });
   const d = $('#asset-card');
   if (!d.open) d.showModal();
+  syncLink();
 }
 document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-asset]'); if (b) { e.preventDefault(); openAsset(b.dataset.asset); } });
 
 // ── sheets + deep links ──────────────────────────────────────────────────────────────────────────────────
 const SHEETS = ['eth', 'btc', 'tac', 'pts', 'farm', 'borrow', 'wallet'];
 const ALIAS = { airdrop: ['tac', 'air'], buy: ['tac', 'buy'], sell: ['tac', 'sell'], swap: ['tac', 'buy'], private: ['eth', 'v1'], device: ['eth', 'dev'],
-  points: ['pts'], names: ['pts'], bitcoin: ['btc'], earn: ['farm'], lp: ['farm'] };
+  points: ['pts'], names: ['pts'], bitcoin: ['btc'], earn: ['farm'], lp: ['farm'], lock: ['borrow'] };
 // The link for what a sheet shows now: its tab's own name where it has one (#sell, #device), else the sheet's (#farm).
-const linkName = (sheet) => Object.keys(ALIAS).find((k) => ALIAS[k][0] === sheet && ALIAS[k][1] && ALIAS[k][1] === TAB[sheet]) || sheet;
+const linkName = (sheet) => Object.keys(ALIAS).find((k) => ALIAS[k][0] === sheet && ALIAS[k][1] && ALIAS[k][1] === TAB[sheet]) || ({ btc: 'bitcoin', pts: 'points' }[sheet] ?? sheet);
+// Every view has its own link, kept in the address bar as it changes: the sheet or its tab by name, then what it shows,
+// e.g. #private/send, #device/base/withdraw, #bitcoin/receive, #points/today, #wallet/send, #farm/private-2, #asset/cbtc.
+// #lock opens Borrow on Bitcoin at its first step, the BTC to lock for cBTC.
+// A view a sheet opens on by default adds nothing (#private, #farm), and the older single names (#eth, #pts) still work.
+const VIEW = {
+  v1: { wrap: '', send: 'send', out: 'withdraw' },
+  dev: { deposit: '', send: 'send', out: 'withdraw', receive: 'receive' },
+  btc: { send: '', receive: 'receive' },
+  pts: { all: '', day: 'today' },
+  wallet: { add: '', out: 'send' },
+};
+const viewOf = (map, slug) => Object.keys(map).find((k) => map[k] === (slug || ''));
+const chainSlug = (c) => c.name.toLowerCase();
+const SUBLINK = {
+  eth: {
+    get: () => (TAB.eth === 'dev' ? [chainSlug(DEV.chain), VIEW.dev[DEV.mode]] : [VIEW.v1[V1.mode]]),
+    set: (tab, parts) => {
+      if (tab !== 'dev') { V1.mode = viewOf(VIEW.v1, parts[0]) || 'wrap'; return; }
+      const c = DEVICE_CHAINS.find((x) => chainSlug(x) === parts[0]);
+      if (c && c !== DEV.chain) setDeviceChain(c);
+      DEV.mode = viewOf(VIEW.dev, c ? parts[1] : parts[0]) || 'deposit';
+    },
+  },
+  btc: { get: () => [VIEW.btc[BTC.mode]], set: (_, [p]) => { BTC.mode = viewOf(VIEW.btc, p) || 'send'; } },
+  pts: { get: () => [VIEW.pts[PTS.view]], set: (_, [p]) => { PTS.view = viewOf(VIEW.pts, p) || 'all'; } },
+  wallet: { get: () => [VIEW.wallet[WAL.mode]], set: (_, [p]) => { WAL.mode = viewOf(VIEW.wallet, p) || 'add'; } },
+  // The public pool is open by default; a private pool is named by its id in the farm program.
+  farm: {
+    get: () => (FARM.open?.startsWith('pid') ? ['private-' + FARM.open.slice(3)] : []),
+    set: (_, [p]) => {
+      if (p === 'public') FARM.open = 'precision';
+      else if (/^private-\d+$/.test(p || '')) FARM.open = 'pid' + p.slice(8);
+      else return;
+      FARM.touched = true;
+    },
+  },
+};
+const linkOf = (sheet) => [linkName(sheet), ...(SUBLINK[sheet]?.get() || [])].join('/').replace(/\/+$/, '');
+let assetOpen = null;
+// The link for what is on screen: a card or the activity panel over a sheet, else the open sheet, else none.
+function linkNow() {
+  if ($('#asset-card').open && assetOpen) return '#asset/' + assetOpen;
+  if ($('#sheet-act').open) return '#activity';
+  const d = $('dialog.sheet[open]:not(.layer)');
+  return d ? '#' + linkOf(d.id.replace('sheet-', '')) : '';
+}
+function syncLink() {
+  const h = linkNow();
+  if (location.hash !== h) history.replaceState(null, '', location.pathname + location.search + h);
+}
+// Opens what a link names, setting the view it asks for first. A sheet busy with an action keeps the view it is in.
+function openLink(h) {
+  const [head, ...parts] = h.split('/');
+  if (head === 'asset') return openAsset(parts[0]);
+  if (head === 'activity') return openAct();
+  if (!SHEETS.includes(head) && !Object.hasOwn(ALIAS, head)) return;
+  const [sheet, tab] = Object.hasOwn(ALIAS, head) ? ALIAS[head] : [head];
+  if (!running(sheet)) SUBLINK[sheet]?.set(tab ?? TAB[sheet], parts);
+  if (head === 'lock') LOCK.focus = true;
+  openSheet(head);
+}
 function openSheet(name) {
   const [sheet, tab] = Object.hasOwn(ALIAS, name) ? ALIAS[name] : [name];
   const d = $(`#sheet-${sheet}`);
@@ -2458,7 +2523,7 @@ function openSheet(name) {
   if (tab) selectTab(sheet, tab);
   if (render[sheet]) { if (running(sheet)) deferred.add(sheet); else keep(d, render[sheet]); }   // reopened mid-action: as it was left
   if (!d.open) d.showModal();
-  if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
+  syncLink();
   load[sheet]?.().then(() => rerender(sheet)).catch(() => {});
 }
 function rerender(name) {
@@ -2466,6 +2531,7 @@ function rerender(name) {
   if (!d?.open || !render[name]) return;
   if (running(name)) { deferred.add(name); return; }
   keep(d, render[name]);
+  syncLink();
 }
 const backdropClose = (d) => {
   let down = null;
@@ -2478,10 +2544,12 @@ for (const d of $$('dialog.sheet:not(.layer)')) {
     for (const k of Object.keys(FLASH)) if (FLASH_OF[k] === d.id) delete FLASH[k];   // every line this sheet wrote, shown now or not
     for (const k of Object.keys(KEPT)) delete KEPT[k];
     for (const k of Object.keys(TICKED)) delete TICKED[k];
-    if (location.hash.length > 1 && !$('dialog.sheet[open]:not(.layer)')) history.replaceState(null, '', location.pathname + location.search);
+    syncLink();
   });
 }
 backdropClose($('#sheet-act'));
+$('#sheet-act').addEventListener('close', syncLink);
+$('#asset-card').addEventListener('close', () => { assetOpen = null; syncLink(); });
 for (const b of $$('dialog [data-close]')) b.onclick = () => b.closest('dialog').close();
 $$('[data-open]').forEach((t) => t.onclick = (e) => { e.preventDefault(); openSheet(t.dataset.open); });
 const TABS = { eth: 'eth-mode', tac: 'tac-mode' };
@@ -2494,19 +2562,19 @@ for (const [sheet, attr] of Object.entries(TABS)) {
   $$(`[data-${attr}]`).forEach((b) => b.onclick = () => {
     if (running(sheet)) return;                                   // tabs hold still while an action in the sheet runs
     selectTab(sheet, b.dataset[attr.replace(/-(\w)/, (_, c) => c.toUpperCase())]);
-    history.replaceState(null, '', '#' + linkName(sheet));
     keep($(`#sheet-${sheet}`), render[sheet]);
+    syncLink();
     load[sheet]?.().then(() => rerender(sheet)).catch(() => {});
   });
 }
-// Every sheet copies a link to what it shows (tacit.finance/#airdrop, #swap, #farm…), to share.
-for (const d of $$('dialog.sheet:not(.layer)')) {
+// Every sheet, and the asset card, copies a link to what it shows (tacit.finance/#airdrop, #device/base/withdraw…), to share.
+for (const d of $$('dialog.sheet:not(.layer), #asset-card')) {
   const x = d.querySelector('.sheet-head [data-close]');
   if (!x) continue;
   const b = document.createElement('button');
   b.type = 'button'; b.className = 'x share'; b.setAttribute('aria-label', 'Copy a link to this');
   b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.6 13.4a4 4 0 0 0 5.65 0l3-3a4 4 0 0 0-5.65-5.66l-1.2 1.2M13.4 10.6a4 4 0 0 0-5.65 0l-3 3a4 4 0 0 0 5.65 5.66l1.2-1.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
-  b.onclick = () => copy(`${location.origin}${location.pathname}#${linkName(d.id.replace('sheet-', ''))}`, 'Link copied');
+  b.onclick = () => copy(`${location.origin}${location.pathname}${linkNow()}`, 'Link copied');
   x.before(b);
 }
 const setFoot = (name, text, dot = '') => { $(`[data-foot="${name}"]`).textContent = text; $(`[data-dot="${name}"]`).className = 'dot' + (dot ? ' ' + dot : ''); dashSoon(); };
@@ -2523,7 +2591,7 @@ function needKey(el, why) {
   return false;
 }
 const segSub = (name, cur, items) => html`<div class="seg sub" role="tablist">${items.map(([k, label]) => html`<button type="button" role="tab" data-${name}="${k}" aria-selected="${k === cur}">${label}</button>`)}</div>`;
-function wireSub(el, name, set) { $$(`[data-${name}]`, el).forEach((b) => b.onclick = () => { if (!running(sheetOf(b))) set(b.getAttribute(`data-${name}`)); }); }
+function wireSub(el, name, set) { $$(`[data-${name}]`, el).forEach((b) => b.onclick = () => { if (!running(sheetOf(b))) { set(b.getAttribute(`data-${name}`)); syncLink(); } }); }
 
 // ── Tacit V1 pool: shared module, loaded on first use ────────────────────────────────────────────────────
 const getUx = lazy(async () => {
@@ -3339,7 +3407,7 @@ function renderDevice(el) {
       <p class="note">The same pool, balances and key as here, on Ethereum, Base and Robinhood Chain.</p>
     </div>`);
   const syncFailed = (e) => { DEV.err = e; rerender('eth'); sayErr($('#d-status'), e); };
-  wireSub(el, 'chain', (id) => { DEV.chain = DEVICE_CHAINS.find((x) => String(x.chainId) === id); store.set('tacit-lite-device-chain', DEV.chain.chainId); DEV.W = null; DEV.bal = null; DEV.quote = null; DEV.gq = {}; DEV.err = null; DEV.self = false; keep($('#sheet-eth'), render.eth); });
+  wireSub(el, 'chain', (id) => { setDeviceChain(DEVICE_CHAINS.find((x) => String(x.chainId) === id)); keep($('#sheet-eth'), render.eth); });
   wireSub(el, 'dev', (m) => { DEV.mode = m; keep($('#sheet-eth'), render.eth); });
   if ((!W || DEV.bal == null) && !DEV.err) deviceSync().then(() => rerender('eth')).catch(syncFailed);
   const re = $('#d-rescan'); if (re) re.onclick = () => busy(re, async () => { try { await deviceSync(true); DEV.err = null; rerender('eth'); } catch (e) { syncFailed(e); } });
@@ -3633,6 +3701,12 @@ function renderDevice(el) {
 // BIP-352 silent payments, and shielded asset sends. A tacit1 address carries its owner's silent-payment keys, so BTC sent
 // to it is a silent payment and TAC sent to it is shielded; neither leaves an address on chain that points at them.
 // got: how much of this key's read is in (1 sats, 2 held assets, 3 silent payments); part: a read is still filling it in.
+// Another chain for the device pool: its reads start afresh there, and the choice is kept for the next visit.
+function setDeviceChain(c) {
+  DEV.chain = c; store.set('tacit-lite-device-chain', c.chainId);
+  DEV.W = null; DEV.bal = null; DEV.quote = null; DEV.gq = {}; DEV.err = null; DEV.self = false;
+}
+
 const BTC = { mode: 'send', asset: 'btc', pub: null, at: 0, loading: null, err: null, share: null, check: null, sp: null, held: [], got: 0, part: false };
 // Silent-payment outputs seen spent and confirmed, and each other one's last answer: a failed lookup keeps the last one.
 const SPENT = new Set(), SPENT_LAST = new Map();
@@ -4893,6 +4967,7 @@ render.farm = () => {
     const key = b.parentElement.dataset.farm;
     FARM.open = FARM.open === key ? null : key; FARM.touched = true;
     keep($('#sheet-farm'), render.farm);
+    syncLink();
   });
   if (FARM.open === 'precision') renderPrecision($('#farm-precision'));
   else if (FARM.open?.startsWith('pid')) renderShielded($(`#farm-${FARM.open}`), (prog?.pools || []).find((p) => 'pid' + p.pid === FARM.open));
@@ -5459,7 +5534,7 @@ function farmJoin(el, p, status, has) {
 
 // ── borrow on Bitcoin: lock → bond → mint cBTC → borrow cUSD ─────────────────────────────────────────────
 // The lock record holds no secret: the cBTC note's blinding re-derives from the key and the lock's funding anchor.
-const LOCK = { rec: null, state: null, lm: null, bonds: [], list: [], pick: null, found: null, repayOver: null, q: null };
+const LOCK = { rec: null, state: null, lm: null, bonds: [], list: [], pick: null, found: null, repayOver: null, q: null, focus: false };
 const lockKey = () => `tacit-lite-cbtc-v1:${S.key.pubHex}`;
 const outpointOf = (t, rec) => t.pool.outpointKey('0x' + rec.lockTxid.match(/../g).reverse().join(''), rec.lockVout);
 const getLockMod = lazy(async () => {
@@ -5814,6 +5889,12 @@ render.borrow = () => {
     <div class="blk" id="bw-send" hidden></div>
     <div class="status" role="status" id="bw-status"></div>`);
   const status = $('#bw-status');
+  // Opened by #lock: the amount to lock, in view (and in focus where typing does not raise a keyboard).
+  if (LOCK.focus) {
+    LOCK.focus = false;
+    const a = $('#bw-amt');
+    if (a) { a.scrollIntoView({ block: 'center' }); if (matchMedia('(hover: hover)').matches) a.focus({ preventScroll: true }); }
+  }
   // Each step reports under its own buttons, where the person pressing them is looking; the latest action's line is the only one.
   const at = (n) => $('#bw-s' + n) || status;
   const only = (el) => { for (const x of [status, $('#bw-s1'), $('#bw-s2'), $('#bw-s3'), $('#bw-s4')]) if (x && x !== el) say(x, ''); };
@@ -6493,8 +6574,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && Da
 const route = () => {
   const h = location.hash.slice(1), pay = h.match(/^(sp|st)=([0-9a-fA-F]{64})/);
   if (pay) { BTC.mode = 'receive'; BTC.check = { kind: pay[1], txid: pay[2].toLowerCase() }; openSheet('btc'); }
-  else if (SHEETS.includes(h) || Object.hasOwn(ALIAS, h)) openSheet(h);
-  else if (h === 'activity') openAct();
+  else if (h) openLink(h);
 };
 window.addEventListener('hashchange', route);
 route();
