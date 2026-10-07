@@ -1557,6 +1557,7 @@ async function handleReflectionState(req, env, url, cors) {
 //   tipHeight       the newest block the pool can attest today (header relay tip minus REFLECTION_CONFIRMATIONS);
 //                   a Bitcoin block folds once this reaches its height
 //   foldedCrossoutCount  cross-outs the reflection state has folded; compare with the pool's crossOutCount()
+//   bridgeBurns     bridge-in burns the reflection has recorded (Bitcoin notes burned for a mint on Ethereum)
 // The record is large, so the parsed summary is held for a few seconds and shared by every caller.
 const REFLECTION_STATUS_TTL_MS = 10000;
 // The persisted snapshot stores counters as decimal strings (they are u64 in the guest); accept either form.
@@ -1603,6 +1604,8 @@ async function reflectionStatusBody(env, network) {
     lagBlocks: Number.isInteger(attested) && Number.isInteger(tip) ? tip - attested : null,
     confirmations: reflectionConf(env, network),
     foldedCrossoutCount: _statusCount(snap.foldedCrossoutCount),
+    // The burn set opens with one sentinel entry; every other entry is a recorded burn.
+    bridgeBurns: Array.isArray(snap.burnNodes) && snap.burnNodes.length ? snap.burnNodes.length - 1 : null,
     consumedCount: _statusCount(snap.consumedCount),
     liveNotes: Array.isArray(snap.liveTriples) ? snap.liveTriples.length : null,
     burnDeposits: Array.isArray(snap.pendingDepositRecords) ? snap.pendingDepositRecords.length : null,

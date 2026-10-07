@@ -2484,7 +2484,7 @@ await step('stats', async () => {
   });
   let snapshot = null;
   await r.ctx.route(/^https:\/\/api\.tacit\.finance\/stats/, (route) => (snapshot ? route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: snapshot }) : route.fulfill({ status: 404, body: '' })));
-  await r.ctx.route(/^https:\/\/api\.tacit\.finance\/reflection\/status/, (route) => json(route, { attestedHeight: 969159, tipHeight: 969159, foldedCrossoutCount: 5, consumedCount: 2, liveNotes: 1234 }));
+  await r.ctx.route(/^https:\/\/api\.tacit\.finance\/reflection\/status/, (route) => json(route, { attestedHeight: 969159, tipHeight: 969159, foldedCrossoutCount: 5, consumedCount: 2, bridgeBurns: 27, liveNotes: 1234 }));
   await r.ctx.route(/^https:\/\/api\.tacit\.finance\/leaderboard/, (route) => json(route, [{ address: W1, points: 10 }, { address: W2, points: 20 }]));
   await r.ctx.route(/^https:\/\/(mempool\.space|blockstream\.info)\/api\/blocks\/tip\/height/, (route) => route.fulfill({ status: 200, contentType: 'text/plain', headers: { 'access-control-allow-origin': '*' }, body: '969200' }));
   // A card as "key | value | context".
@@ -2512,7 +2512,9 @@ await step('stats', async () => {
     const pa = await card('Participants'), pp = await card('Points'), ta = await card('TAC allocated');
     ok(/^Participants \| 2 \|/.test(pa) && /^Points \| 30 \|/.test(pp) && /^TAC allocated \| [\d,]+TAC/.test(ta), `stats: points participants and totals from the leaderboard, TAC allocated from the distributor (${pa} | ${pp} | ${ta})`);
     const ac = await card('Cross-chain');
-    ok(/\(5 folded\)/.test(ac) && /from Bitcoin/.test(ac), `stats: moves out to Bitcoin, with the reflection's folded count, and in from Bitcoin (${ac})`);
+    ok(/\(5 folded\)/.test(ac) && /\d+ spent on Ethereum/.test(ac) && /27 bridged in/.test(ac), `stats: moves out to Bitcoin with the reflection's folded count, Bitcoin notes spent on Ethereum, and the bridges in the reflection has recorded (${ac})`);
+    const nums = { toBtc: Number((ac.match(/(\d+) to Bitcoin/) || [])[1]), spent: Number((ac.match(/(\d+) spent on Ethereum/) || [])[1]), total: Number(((ac.match(/^Cross-chain \| ([\d,]+)/) || [])[1] || '').replace(/,/g, '')) };
+    ok(Number.isFinite(nums.total) && nums.total === nums.toBtc + nums.spent + 27, `stats: the total counts all three kinds of move (${ac})`);
     const bl = await card('BTC locked'), bh = await card('Bonds');
     const cm = await card('cBTC minted');
     ok(/^BTC locked \| 0\.000007BTC \| 1 lock · 1 unlocked$/.test(bl) && /^cBTC minted \| 0\.000027cBTC \| 2 mints/.test(cm) && /on 2 locks$/.test(bh),
