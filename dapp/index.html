@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-FfbrhKikabnHZcpJm2BrQniuemtttIGuriYniE7B0d4=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-XjMoBa0FIhQFZL2AMFw8Vhlu2y1bGRdtIxCASS1+bE0=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <script src="/front-route.js?cb=c240ced2"></script>
 <title>tacit</title>
@@ -2085,6 +2085,7 @@ function setKey(k) {
   rememberKey(key);
   S.pay = store.get(PAY)?.[pubHex] || null;
   syncAccount(); resetPrivate(); paintWallet(); refreshAll();
+  setTimeout(() => brTick(true), 4000);                            // a bridge waiting on this key moves on as soon as it opens
   const opened = () => { if (S.key === key) toast(`Opened ${short(key.tacit, 8)}`); };
   if (UNI) return opened();
   loadUnified().catch(() => {}).then(() => {
@@ -4206,15 +4207,15 @@ const brFail = (e) => Object.assign(new Error(brErr(e)), { said: true });
 // The first check a note failed, in words.
 function brCheckText(s) {
   if (s.name === 'not-tracked') return 'This TAC arrived recently: Bitcoin’s proof on Ethereum has not reached its block yet. Try again in a few hours.';
-  if (s.name === 'reflected') return 'This TAC was received privately. Send it to yourself in the classic app first, then bridge the new note.';
+  if (s.name === 'reflected') return 'This TAC was received privately. One Bitcoin transaction sends it to your own address, and then it can be bridged.';
   if (s.name === 'source-ownership') return 'This TAC is not at this key’s own Bitcoin address.';
   if (s.name === 'source-confirmed') return 'This TAC is waiting for its Bitcoin confirmation.';
   if (s.name === 'trace') return `This TAC has passed through too many transfers to bridge (${s.detail}).`;
   return `Could not check this TAC: ${brErr(s.detail || s.name)}`;
 }
 const BR_REASON = { unconfirmed: 'Waiting for its Bitcoin confirmation' };
-const brReason = (r) => BR_REASON[r] || (/beta limit/.test(r || '') ? 'Over 1,000 TAC, the most one bridge takes. Split it in the classic app first.'
-  : /stealth/.test(r || '') ? 'Received privately: open it in the classic app first.' : r);
+const brReason = (r) => BR_REASON[r] || (/beta limit/.test(r || '') ? html`Over 1,000 TAC, the most one bridge takes. <a href="/classic.html" target="_blank" rel="noopener">Split it in the classic app</a> first.`
+  : /stealth/.test(r || '') ? html`Received privately: <a href="/classic.html" target="_blank" rel="noopener">open it in the classic app</a> first.` : r);
 function loadBridge(force = false) {
   if (!S.key) return Promise.resolve();
   if (BR.loading) return BR.loading;
@@ -4282,7 +4283,7 @@ function renderBridge(el) {
   if (BR.pick && !open.some((n) => brId(n) === BR.pick)) BR.pick = null;
   if (!BR.pick && open.length === 1) BR.pick = brId(open[0]);
   mount(el, html`
-    <p class="lede-s">TAC on your Bitcoin address becomes private TAC on Ethereum. One Bitcoin transaction burns it, paid in sats from that address, with no relay fee. It arrives once Bitcoin’s proof on Ethereum records the burn: usually within a few hours, sometimes up to a day.</p>
+    <p class="lede-s">TAC on your Bitcoin address becomes private TAC on Ethereum, with no relay fee: you pay only a Bitcoin fee, in sats. It arrives once Bitcoin’s proof on Ethereum records the burn, usually within a few hours and sometimes up to a day. You can close this page meanwhile: open it again with the same wallet and it finishes. Make public then turns it into ERC20 TAC.</p>
     ${recs.length ? html`<div class="lbl"><span>On the way</span></div><ul class="acts brs">${recs.map(brRow)}</ul><div class="status" role="status" id="br-rstatus"></div>` : ''}
     <div class="lbl"><span>TAC on Bitcoin</span>${b?.notes ? html`<button type="button" id="br-re">refresh</button>` : ''}</div>
     ${!b?.notes ? (b?.err ? html`<p class="note err">${errText(b.err)} <button class="link" type="button" id="br-re">Try again</button></p>` : html`<p class="note">Reading your TAC on Bitcoin…</p>`)
@@ -4315,7 +4316,17 @@ function renderBridge(el) {
     try {
       const pf = await (await brUx()).preflight({ note: n, walletPub: hexToBytes(pub) });
       if (my !== seq || !rc.isConnected) return;
-      if (!pf.ok) { mount(rc, html``); warn(rc, brCheckText(pf.steps.find((s) => !s.ok) || { name: '' })); return; }
+      if (!pf.ok) {
+        const bad = pf.steps.find((s) => !s.ok) || { name: '' };
+        mount(rc, html``); warn(rc, brCheckText(bad));
+        // Tracked TAC that arrived privately sits at a one-time address; sent once to this key's own address it can be burned.
+        if (bad.name === 'reflected') {
+          rc.insertAdjacentHTML('beforeend', html`<button class="btn ghost" type="button" id="br-prep">Send it to my own address</button>`.s);
+          const prep = $('#br-prep', rc);
+          if (prep) prep.onclick = () => busy(prep, (run) => brPrep(run, n));
+        }
+        return;
+      }
       const one = pf.path === 'reflected', sats = Math.ceil((one ? 410 : 535) * (one ? pf.burnFeeRate : pf.migrateFeeRate)) + 846;
       const have = BTC.pub === pub && BTC.got >= 1 ? BTC.sats : null;
       review = { note: n, pf, short: have != null && have < BigInt(sats) };
@@ -4351,7 +4362,7 @@ function renderBridge(el) {
       BR.pick = null; review = null;
       const tx = rec.burn?.txid || rec.migrate?.revealTxid, sent = !/-signed$/.test(rec.stage);
       toast(sent ? `Bridging ${amt} to Ethereum` : `${amt}: signed, not yet sent`, !sent);
-      say(status, sent ? html`<span class="ok">✓ ${r.pf.path === 'reflected' ? 'Burn' : 'Move'} sent</span> ${tx ? html`<a href="${MEMPOOL}/tx/${tx}" target="_blank" rel="noopener">${short(tx, 6)} ↗</a>` : ''}. It shows under On the way, and this page finishes it while it is open.`
+      say(status, sent ? html`<span class="ok">✓ ${r.pf.path === 'reflected' ? 'Burn' : 'Move'} sent</span> ${tx ? html`<a href="${MEMPOOL}/tx/${tx}" target="_blank" rel="noopener">${short(tx, 6)} ↗</a>` : ''}. It shows under On the way, and finishes on its own whenever this page is open with your wallet.`
         : html`<span class="err">Signed, but Bitcoin did not take it yet. Try again from its row under On the way.</span>`);
       BR.at = 0;
       Promise.allSettled([loadBridge(true), loadBtc(true)]).then(() => rerender('tac'));
@@ -4374,6 +4385,24 @@ function renderBridge(el) {
       run.fail(fst, brFail(e));
     }
   });
+}
+// TAC received privately, to its holder's own address: the one Bitcoin transaction that makes it a note the bridge can burn.
+async function brPrep(run, n) {
+  const status = $('#br-status'), pub = S.key.pubHex, amt = `${fmt(BigInt(n.amount), 8, 4)} TAC`;
+  try {
+    run.say(status, 'Sending it to your own address…');
+    const txid = await withKey(async (t) => {
+      const h = await t.scanHoldings(true), u = h.get(TAC_BTC_ID)?.utxos.find((x) => x.utxo.txid === n.txid && x.utxo.vout === n.vout);
+      if (!u) throw new Error('That TAC is no longer at this address. Refresh, then try again.');
+      const r = await t.buildAndBroadcastCXfer({ assetIdHex: TAC_BTC_ID, amount: u.amount, recipientPubHex: bytesToHex(t.wallet.pub), forceUtxos: [u] });
+      try { t.invalidateHoldingsCache?.(); } catch {}
+      return r.revealTxid;
+    }, pub);
+    actBtc(txid, `Send ${amt} to your own address`);
+    BR.pick = null; BR.at = 0;
+    say(status, html`<span class="ok">✓ ${amt} sent to your own address</span> <a href="${MEMPOOL}/tx/${txid}" target="_blank" rel="noopener">${short(txid, 6)} ↗</a>. It can be bridged from here once Bitcoin’s proof on Ethereum has seen it, usually within a few hours.`);
+    Promise.allSettled([loadBridge(true), loadBtc(true)]).then(() => rerender('tac'));
+  } catch (e) { run.fail(status, /insufficient sats|no plain-sats/i.test(String(e?.message)) ? new Error('Not enough BTC for this and its network fee.') : brFail(e)); }
 }
 // One press on a row. The burn and a move back spend this key's sats, so they run in a tacit.js turn (its coin choice
 // reads this key's holdings); the mint and the recovery spend nothing on Bitcoin and run beside it.
@@ -4409,7 +4438,7 @@ async function brAct(run, kind, id) {
       onProgress: (p) => { if (p.phase === 'submitted' && !selfSettle) run.say(status(), `Minting ${amt}: proving…`); } });
     if (after.stage === 'minted') {
       toast(`${amt} from Bitcoin is in your private TAC`);
-      run.say(status(), html`<span class="ok">✓ ${amt} arrived in your private TAC.</span> ${after.mintedTxHash ? txLink(after.mintedTxHash) : ''}`);
+      run.say(status(), html`<span class="ok">✓ ${amt} arrived in your private TAC.</span> ${after.mintedTxHash ? txLink(after.mintedTxHash) : ''} <span>Make public, above, turns it into ERC20 TAC.</span>`);
       scanPrivate(true).then(() => rerender('tac')).catch(() => {});
     } else if (after.stage !== rec.stage) run.say(status(), brNoteText(after));
   } catch (e) { run.fail(status(), brFail(e)); } finally { BR.at = 0; rerender('tac'); }
@@ -4417,9 +4446,9 @@ async function brAct(run, kind, id) {
 // While this page is open with the key, bridges go on by themselves: their waits are checked, and one ready to mint is
 // minted, since its holder already confirmed it and the mint spends nothing more. A burn waits for its own press. A
 // mint that failed is tried again after ten minutes, a few times, and then waits for Mint now.
-async function brTick() {
+async function brTick(first = false) {
   const pub = S.key?.pubHex;
-  if (!pub || BR.auto || Date.now() - BR.autoAt < 75e3 || !brJournaled(pub)) return;
+  if (!pub || BR.auto || (!first && Date.now() - BR.autoAt < 75e3) || !brJournaled(pub)) return;
   BR.auto = true; BR.autoAt = Date.now();
   let moved = false;
   try {
@@ -4433,6 +4462,7 @@ async function brTick() {
           : ready || rec.stage === 'traced' ? await ux.verify(pub, rec.id) : await ux.advance(pub, rec.id);
         if (after?.stage !== rec.stage) moved = true;
         if (after?.stage === 'minted') { toast(`${brAmt(after)} from Bitcoin is in your private TAC`); scanPrivate(true).catch(() => {}); }
+        else if (after?.stage === 'traced' && rec.stage !== 'traced') toast(`${brAmt(after)} is moved and ready to burn: open Bridge to finish`);
       } catch { moved = true; }                                    // its row shows the error the record now carries
     }
   } catch {} finally { BR.auto = false; }
