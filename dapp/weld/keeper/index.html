@@ -7,7 +7,7 @@
      data stats does, plus an injected wallet to sign advanceTip(bytes) — permissionless on chain
      (contracts/src/lib/BitcoinLightRelay.sol:253) — so anyone can push the header relay forward and pay their
      own gas, instead of waiting on Tacit's own cron. No Tacit key touches this page. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-34fQyVBDiTyMjCHGbwKVhoma22pohzTQed6g0rHTl88=' 'wasm-unsafe-eval'; connect-src https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-lg0+r0+Nxy8Xz6kbRhpmeuN5z72MBYKXz93wHnfFKvw=' 'wasm-unsafe-eval'; connect-src https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>Tacit community ops</title>
 <meta name="description" content="Advance Tacit's Bitcoin header relay yourself, from your own wallet: a permissionless, on-chain function anyone can call, so a stuck bridge or reflection never has to wait on Tacit's own operators.">
@@ -197,8 +197,14 @@ footer a:hover { color: var(--ink); }
 
   <section class="grp" id="g-attest">
     <h2><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>Attesting</h2>
+    <div class="panel">
+      <p class="lede" style="margin:0 0 4px">Tacit's prover publishes each proof here the moment it has one, before it submits it. If its own wallet can't land it, any wallet can: <code>attestBitcoinStateProven</code> takes no permission, only a valid proof over the pool's current state.</p>
+      <div id="proof-box"><p class="status">Reading the latest proof…</p></div>
+      <button class="btn" id="btn-proof" type="button" disabled>Submit the proof</button>
+      <p class="status" id="proof-status"></p>
+    </div>
     <div class="callout">
-      <p>Once enough headers are in, folding Bitcoin's state into the pool needs one more thing: a real SP1 zero-knowledge proof over the batch, bought with <a href="https://etherscan.io/address/0x6BEF15D938d4E72056AC92Ea4bDD0D76B1C4ad29" target="_blank" rel="noopener">PROVE</a> credits on the Succinct network. <code>attestBitcoinStateProven</code> is permissionless too — anyone holding a valid proof can submit it — but generating one isn't something a browser page can safely do yet: it needs a funded prover account, and there's no way today to ask for one without a signature that looks identical to draining that account.</p>
+      <p>Folding Bitcoin's state into the pool needs a real SP1 zero-knowledge proof over each batch, bought with <a href="https://etherscan.io/address/0x6BEF15D938d4E72056AC92Ea4bDD0D76B1C4ad29" target="_blank" rel="noopener">PROVE</a> credits on the Succinct network. Generating one isn't something a browser page can safely do yet: it needs a funded prover account, and there's no way today to ask for one without a signature that looks identical to draining that account.</p>
       <p>Tacit's own <code>tacit-reflection</code> cron does this every 5 minutes when there's a new batch ready. Anyone can also run it themselves, against the same public inputs, with their own funded key: see <a href="https://github.com/src-company/tacit/blob/main/worker-relay/src/reflection-folder.js" target="_blank" rel="noopener">reflection-folder.js</a>.</p>
     </div>
   </section>
@@ -261,7 +267,8 @@ const S = { provider: null, address: null };
 
 async function rpc(method, params) {
   const r = await fetch(RPC, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) }).then((r) => r.json());
-  if (r.error) throw new Error(r.error.message);
+  // A node reports a contract's revert reason as data next to the message; keep it so a caller can read it.
+  if (r.error) throw new Error(r.error.message + (typeof r.error.data === 'string' ? ` ${r.error.data}` : ''));
   return r.result;
 }
 async function ensureChain() {
@@ -298,6 +305,9 @@ const advance = makeHeaderRelayAdvance({});
 const POOL = '0x000000000Ed1eabD231Be41d93b719056F7febFC';
 const SEL_ADVANCE_ANCESTRY = '0xaa9e6609'; // advanceReflectionAncestry()
 const REFLECTION_MAX_LAG = 2016;
+const API = 'https://api.tacit.finance';
+const SEL_ATTEST = '0x0b36171c';        // attestBitcoinStateProven(bytes,bytes)
+const SEL_ATTESTED_DIGEST = '0xb909cdaf'; // attestedReflectionDigest()
 
 // #need=<height>&why=bridge|lock — a deep link from a stuck row elsewhere in the dapp, preselecting the target.
 const params = new URLSearchParams(location.hash.replace(/^#/, ''));
@@ -386,6 +396,57 @@ async function doAdvance() {
   await refresh();
 }
 
+// ── a proof Tacit's prover has bought and published: submit it from this wallet ───────────────────────────────
+// attestBitcoinStateProven(bytes publicValues, bytes proof): two dynamic arguments, offsets from the start of the arguments.
+function encodeAttest(publicValues, proof) {
+  const pad32 = (n) => n.toString(16).padStart(64, '0');
+  const body = (hex) => { const h = hex.replace(/^0x/, ''); return pad32(h.length / 2) + h + '0'.repeat((64 - (h.length % 64)) % 64); };
+  const a = body(publicValues), b = body(proof);
+  return SEL_ATTEST + pad32(0x40) + pad32(0x40 + a.length / 2) + a + b;
+}
+let readyProof = null;
+async function refreshProof() {
+  const box = $('#proof-box'), btn = $('#btn-proof');
+  let rec = null, onchain = null;
+  try {
+    const [r, d] = await Promise.all([
+      fetch(`${API}/reflection/proof?network=mainnet`).then((x) => x.json()),
+      rpc('eth_call', [{ to: POOL, data: SEL_ATTESTED_DIGEST }, 'latest']),
+    ]);
+    rec = r && r.proof; onchain = String(d || '').toLowerCase();
+  } catch { box.innerHTML = '<p class="status">Could not read the latest proof right now.</p>'; btn.disabled = true; readyProof = null; return; }
+  if (!rec) { box.innerHTML = '<p class="status">No proof is waiting. Tacit’s prover submits each one itself, usually within minutes of buying it.</p>'; btn.disabled = true; readyProof = null; return; }
+  if (rec.priorDigest !== onchain) {
+    box.innerHTML = `<p class="status">The latest published proof (up to block ${int(rec.attestedTo)}) has already landed, or builds on a state the pool has moved past. Nothing to submit.</p>`;
+    btn.disabled = true; readyProof = null; return;
+  }
+  const mins = Math.max(0, Math.round((Date.now() - rec.at) / 60000));
+  box.innerHTML = `<p class="status"><b>A proof is ready</b> for the batch ending at block ${int(rec.attestedTo)}, published ${mins < 1 ? 'just now' : `${int(mins)} min ago`}. It has not landed on-chain. Submitting it costs about 0.5–0.6 million gas.</p>`;
+  btn.disabled = false; readyProof = rec;
+}
+async function doSubmitProof() {
+  if (!S.address) await connect();
+  await refreshProof();
+  if (!readyProof) { toast('That proof is no longer needed.'); return; }
+  const data = encodeAttest(readyProof.publicValues, readyProof.proof);
+  // Run it first: a proof the pool no longer accepts costs gas to find out, and the node tells us for free.
+  try { await rpc('eth_call', [{ from: S.address, to: POOL, data }, 'latest']); }
+  catch (e) {
+    const m = String(e?.message || e);
+    const why = /e677decb/i.test(m) ? 'the pool has already moved past this batch' : /d3897419/i.test(m) ? 'the header relay has not matured this batch yet' : errText(e);
+    throw new Error(`The pool would not accept this proof right now: ${why}.`);
+  }
+  const est = BigInt(await rpc('eth_estimateGas', [{ from: S.address, to: POOL, data }]));
+  const txHash = await send({ to: POOL, data, gas: (est * 125n) / 100n });
+  $('#proof-status').innerHTML = `Sent <a href="https://etherscan.io/tx/${txHash}" target="_blank" rel="noopener">${short(txHash, 8)} ↗</a> — waiting for confirmation…`;
+  const rcpt = await waitReceipt(txHash);
+  if (rcpt.status !== '0x1') throw new Error('The transaction reverted — the batch may have landed first. Check the pool on Etherscan.');
+  $('#proof-status').innerHTML = `Landed: <a href="https://etherscan.io/tx/${txHash}" target="_blank" rel="noopener">${short(txHash, 8)} ↗</a>. Bitcoin is attested up to block ${int(readyProof.attestedTo)}; bridge deposits up to there can now mint.`;
+  toast('Proof submitted');
+  await refresh(); await refreshProof();
+}
+$('#btn-proof').addEventListener('click', (e) => busy(e.currentTarget, doSubmitProof));
+
 $('#btn-advance').addEventListener('click', (e) => busy(e.currentTarget, doAdvance));
 $('#btn-ancestry').addEventListener('click', (e) => busy(e.currentTarget, async () => {
   const txHash = await send({ to: POOL, data: SEL_ADVANCE_ANCESTRY, gas: 300000n });
@@ -396,8 +457,9 @@ $('#btn-ancestry').addEventListener('click', (e) => busy(e.currentTarget, async 
 }));
 
 paintWallet();
+refreshProof().catch(() => {});
 refresh().catch((e) => { $('#asof').textContent = 'Could not read the relay right now.'; toast(errText(e), true); });
-setInterval(() => refresh().catch(() => {}), 60000);
+setInterval(() => { refresh().catch(() => {}); refreshProof().catch(() => {}); }, 60000);
 </script>
 </body>
 </html>

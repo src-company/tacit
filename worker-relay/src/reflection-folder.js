@@ -24,7 +24,7 @@
 
 import { CFG } from './lib/config.js';
 import { isMatured } from './lib/maturity.js';
-import { reflectionJob, reflectionAck, reflectionPending, reflectionAttestState, reflectionSubmitted, reflectionEthState, heartbeat, heartbeatIdle } from './lib/worker-client.js';
+import { reflectionJob, reflectionAck, reflectionPending, reflectionAttestState, reflectionSubmitted, reflectionProofPublish, reflectionEthState, heartbeat, heartbeatIdle } from './lib/worker-client.js';
 import { awaitAttestLanding, digestDeepEnough } from './lib/attest-wait.js';
 import { recoverLostAck } from './lib/reflection-reconcile.js';
 import { proveReflection } from './lib/prover.js';
@@ -159,6 +159,12 @@ async function cycle() {
   await heartbeat('reflection', `proving ${newDigest}`);
   const { publicValues, proofBytes } = await proveReflection(job.input);
 
+  // Make the proof available to any wallet before this one tries to land it: a proof that cannot be submitted from
+  // here (the wallet is short, the node is down) is still good for as long as the pool sits on its prior.
+  if (job.priorDigest && newDigest) {
+    const published = await reflectionProofPublish({ priorDigest: job.priorDigest, newDigest, attestedTo, publicValues, proof: proofBytes });
+    if (!published) log('could not publish the proof for other wallets (continuing)');
+  }
   log('proved — submitting attestBitcoinStateProven...');
   // A bare estimate leaves no headroom if state moves between estimating and inclusion, and a revert here costs the
   // whole proof. Unused gas is refunded, so the pad only insures.

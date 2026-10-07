@@ -627,7 +627,7 @@ const reverseBytes = b => { const r = new Uint8Array(b); r.reverse(); return r; 
 // caller (curl, another server) could already do. This is what lets a third-party page with no fixed
 // origin (an IPFS/web3-gateway-hosted frontend, e.g.) use the relay directly from a browser instead of
 // needing its own backend proxy or a per-deploy entry in ALLOWED_ORIGINS.
-const OPEN_ORIGIN_PATHS = new Set(['/stats', '/bridge/recover', '/confidential/submit', '/confidential/status', '/confidential/quote', '/confidential/index', '/reflection/dump', '/reflection/status', '/reflection/note-witness', '/reflection/burndep', '/reflection/eth-state/covers', '/crossout/minted', '/farm/program', '/farm/health']);
+const OPEN_ORIGIN_PATHS = new Set(['/stats', '/bridge/recover', '/reflection/proof', '/confidential/submit', '/confidential/status', '/confidential/quote', '/confidential/index', '/reflection/dump', '/reflection/status', '/reflection/note-witness', '/reflection/burndep', '/reflection/eth-state/covers', '/crossout/minted', '/farm/program', '/farm/health']);
 function corsHeaders(env, reqOrigin, openOrigin) {
   const list = (env.ALLOWED_ORIGINS || '*').split(',').map(s => s.trim());
   const allow = openOrigin || list.includes('*') ? '*' : (list.includes(reqOrigin) ? reqOrigin : list[0]);
@@ -870,6 +870,7 @@ function scanReflectionAttesterFor(env, network) {
 const reflectionPendingKey = (network, jobId) => `reflection:pending:${network}:${String(jobId).replace(/^0x/, '').toLowerCase()}`;
 
 const reflectionSubmittedKey = (network) => `reflection:submitted:${network}`;
+const reflectionProofKey = (network) => `reflection:proof:${network}`;
 const reflectionLastAckKey = (network) => `reflection:lastack:${network}`;
 const reflectionDriftKey = (network) => `reflection:driftstreak:${network}`;
 // Consecutive monitor runs that have seen the pool's crossOutCount running ahead of reflection's folded
@@ -897,6 +898,11 @@ async function readReflectionStash(env, network, jobId) {
 async function applyReflectionAck(env, network, att, jobId, stash, attestedTo, txHash = '') {
   const r = await att.ackJob(attestedTo, stash.newSnapshot);
   await env.REGISTRY_KV.delete(reflectionPendingKey(network, jobId));
+  // A published proof for this batch has done its job once the batch is on-chain.
+  try {
+    const raw = await env.REGISTRY_KV.get(reflectionProofKey(network));
+    if (raw && String(JSON.parse(raw).newDigest || '').toLowerCase() === String(jobId).toLowerCase()) await env.REGISTRY_KV.delete(reflectionProofKey(network));
+  } catch { /* an unreadable record is replaced by the next publish */ }
   // Only a real advance counts as the lane moving: a stale or duplicate ack must not restart the stall clock.
   if (r.advanced) await env.REGISTRY_KV.put(reflectionLastAckKey(network), JSON.stringify({ at: Date.now(), attestedTo, jobId: String(jobId), txHash: txHash || '' }));
   // Promotion: this job's newDigest is on-chain. If it folded a pending eth-state candidate, that candidate is
@@ -980,6 +986,43 @@ async function handleReflectionPending(req, env, url, cors) {
 //   POST {network, driftSeen:boolean}      bumps (true) or clears (false) the drift streak
 // A first GET with no ack on record starts the stall clock at that moment, so a stall that predates this record
 // is still caught within the stall window rather than never.
+// The proof for the batch the reflection is about to attest. The cron buys it and then submits it from its own wallet; it
+// also publishes it here first, so that when that wallet cannot pay, any wallet can submit the same proof
+// (attestBitcoinStateProven takes no permission, only a valid proof over the pool's current state).
+//   POST /reflection/proof (box token) { network, priorDigest, newDigest, attestedTo, publicValues, proof }
+//   GET  /reflection/proof?network=    (public) → { ok, proof: { priorDigest, newDigest, attestedTo, publicValues, proof, at } | null }
+// A reader checks the pool's digest still equals priorDigest before offering it: once the batch lands the proof is
+// spent, and it is dropped when the batch is acked.
+const REFLECTION_PROOF_TTL_S = 6 * 3600;
+const HEX32_RE = /^0x[0-9a-fA-F]{64}$/;
+const hexBytes = (v, min, max) => typeof v === 'string' && /^0x(?:[0-9a-fA-F]{2})+$/.test(v) && v.length >= 2 + 2 * min && v.length <= 2 + 2 * max;
+async function handleReflectionProof(req, env, url, cors) {
+  const h = { ...cors, 'Cache-Control': 'no-store' };
+  if (!env.REGISTRY_KV) return jsonResponse({ error: 'no kv' }, 500, h);
+  if (req.method === 'POST') {
+    if (!checkConfidentialAuth(req, env)) return jsonResponse({ error: 'not found' }, 404, h);
+    let b;
+    try { b = await req.json(); } catch { return jsonResponse({ ok: false, error: 'bad json' }, 400, h); }
+    const network = b.network === 'signet' ? 'signet' : 'mainnet';
+    const attestedTo = Number(b.attestedTo);
+    if (!HEX32_RE.test(String(b.priorDigest || '')) || !HEX32_RE.test(String(b.newDigest || '')) || !Number.isInteger(attestedTo) || attestedTo <= 0
+      || !hexBytes(b.publicValues, 64, 8192) || !hexBytes(b.proof, 32, 8192)) {
+      return jsonResponse({ ok: false, error: 'needs 32-byte priorDigest and newDigest, attestedTo, and hex publicValues and proof' }, 400, h);
+    }
+    const rec = { priorDigest: b.priorDigest.toLowerCase(), newDigest: b.newDigest.toLowerCase(), attestedTo, publicValues: b.publicValues.toLowerCase(), proof: b.proof.toLowerCase(), at: Date.now() };
+    await env.REGISTRY_KV.put(reflectionProofKey(network), JSON.stringify(rec), { expirationTtl: REFLECTION_PROOF_TTL_S });
+    return jsonResponse({ ok: true }, 200, h);
+  }
+  const ip = req.headers.get('CF-Connecting-IP') || 'anon';
+  const rl = await dumpRateLimit(env, ip);
+  if (!rl.ok) return jsonResponse({ error: `too many requests — retry in ~${rl.retryAfter}s` }, 429, { ...h, 'Retry-After': String(rl.retryAfter) });
+  const network = url.searchParams.get('network') === 'signet' ? 'signet' : 'mainnet';
+  const raw = await env.REGISTRY_KV.get(reflectionProofKey(network));
+  let proof = null;
+  try { proof = raw ? JSON.parse(raw) : null; } catch { proof = null; }
+  return jsonResponse({ ok: true, proof }, 200, { ...cors, 'Cache-Control': 'public, max-age=10' });
+}
+
 async function handleReflectionAttestState(req, env, url, cors) {
   const h = { ...cors, 'Cache-Control': 'no-store' };
   if (!checkConfidentialAuth(req, env)) return jsonResponse({ error: 'not found' }, 404, h);
@@ -26056,7 +26099,7 @@ export {
   // Exported so tests can drive the burn-deposit auto-completion sweep and its shared bundle-builder directly
   // against a fake KV + real esplora data, without needing a live REGISTRY_KV.
   sweepPendingBurnDeposits, buildBurndepBundle, assetKey, handleBurnDepositStatus, handleBurnDepositCheck, handleBridgeRecover, handleBridgeRecoverQueue, handleBridgeRecoverMark,
-  buildProbeBurnTxHex, handleBurndepCacheStatus,
+  buildProbeBurnTxHex, handleBurndepCacheStatus, applyReflectionAck,
 };
 
 // ============== DISCORD TOKEN-GATE HANDLERS ==============
@@ -26338,6 +26381,7 @@ async function _routeFetch(req, env, ctx) {
     if (url.pathname === '/reflection/job' && req.method === 'GET') return handleReflectionJob(req, env, url, cors);
     if (url.pathname === '/reflection/ack' && req.method === 'POST') return handleReflectionAck(req, env, cors);
     if (url.pathname === '/reflection/pending' && req.method === 'GET') return handleReflectionPending(req, env, url, cors);
+    if (url.pathname === '/reflection/proof' && (req.method === 'GET' || req.method === 'POST')) return handleReflectionProof(req, env, url, cors);
     if (url.pathname === '/reflection/attest-state' && (req.method === 'GET' || req.method === 'POST')) return handleReflectionAttestState(req, env, url, cors);
     if (url.pathname === '/reflection/reset' && req.method === 'POST') return handleReflectionReset(req, env, url, cors);
     if (url.pathname === '/reflection/seed' && req.method === 'POST') return handleReflectionSeed(req, env, url, cors);

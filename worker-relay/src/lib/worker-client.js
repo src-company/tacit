@@ -47,6 +47,15 @@ export async function reflectionSubmitted({ newDigest, txHash, attestedTo }) {
   try { await postJson('/reflection/attest-state', { network: CFG.network, submitted: { newDigest, txHash, attestedTo } }); }
   catch { /* the tx is on-chain regardless; the digest poll still finds it */ }
 }
+// Publish a proof this run has paid for, ahead of its own submit, so that another wallet can submit it when this one cannot
+// (the proof is over public Bitcoin data and attestBitcoinStateProven takes no permission). Best-effort: the submit
+// does not depend on it.
+export async function reflectionProofPublish({ priorDigest, newDigest, attestedTo, publicValues, proof }) {
+  try {
+    const res = await postJson('/reflection/proof', { network: CFG.network, priorDigest, newDigest, attestedTo, publicValues, proof });
+    return res.ok;
+  } catch { return false; }
+}
 export async function reflectionDriftSeen(driftSeen) {
   try {
     const res = await postJson('/reflection/attest-state', { network: CFG.network, driftSeen });
