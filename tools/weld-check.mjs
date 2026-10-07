@@ -22,7 +22,7 @@
 //   sell     TAC sold for ETH through zRouter in one transaction, the permit riding as its first leg
 //   v1       the identity signature unlocks the key; a tipped wrap lands and its settle is submitted
 //   v1refuse the relay refuses a wrap's settle after its deposit landed: the form empties and the line points to Finish
-//   devsend  the EVM pool's Send takes a bp1… pool address (a private send) or an 0x… address (a withdrawal to it)
+//   devsend  the EVM pool's Send opens tacit pay on the same chain, and Receive keeps the pool and deposit addresses
 //   device   a deposit into the EVM pool, proved in the page's worker
 //   borrow   the Bitcoin deposit address renders; a bond for a lock record posts through the escrow helper
 //   keys     an Ethereum signature opens a key; after locking, "continue" reopens the same tacit1 address; a pasted key opens
@@ -662,24 +662,12 @@ await step('devsend', async () => {
   await page.waitForSelector('[data-dev="send"]', { timeout: 60000 });
   await page.click('[data-dev="receive"]');
   await page.waitForSelector('#d-form [data-copy]', { timeout: 120000 });
-  const bp1 = await page.$eval('#d-form [data-copy]', (b) => b.dataset.copy);
+  const recv = await page.evaluate(() => ({ bp1: document.querySelector('#d-form [data-copy]')?.dataset.copy, ask: document.querySelector('#d-form a[href^="/pay/eth/#receive"]')?.getAttribute('href') }));
+  ok(/^bp1/.test(recv.bp1 || '') && /^\/pay\/eth\/#receive&chain=\d+$/.test(recv.ask || ''), `devsend: Receive keeps the pool and deposit addresses here, and asks for an amount in tacit pay (${recv.ask})`);
+  // Paying from this balance is tacit pay's (tools/pay-check.mjs covers it): the tab opens it on the same chain.
   await page.click('[data-dev="send"]');
-  await page.waitForSelector('#d-to');
-  await page.fill('#d-to', '0x000000000000000000000000000000000000beef');
-  ok(/Send to this address/.test(await text(page, '#d-go')) && /leaves the pool/.test(await text(page, '#d-to-note')), 'devsend: an 0x… address is paid by a withdrawal to it');
-  await page.fill('#d-to', bp1);
-  ok(/^bp1/.test(bp1) && /Send privately/.test(await text(page, '#d-go')) && /inside the pool/.test(await text(page, '#d-to-note')), 'devsend: a bp1… pool address is paid privately');
-  // A tacit1 with the pool lane pays its pool address (tests/tacit-address-pool.mjs vectors); one from before it is sent to the Tacit pool tab.
-  const UNI = 'tacit1qzzs9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxqngxmx5kxhvt2xqfmf4rufjqgcrgplldjykhww6nnq83gv2kcplcplm0hgggeadk2kqtqtqrk6qpedvat59c6sdeam6ankwjfjgldpjp05v82lv45dajuwype9n88tfdv4d0ta6qyvd9zzzwq58ed9pq75emyyf75';
-  const OLD = 'tacit1qqps9xyupdmvk43ew87un0hnrmqxcdtq7vjf6mhfuhvrc4mz2ktwqhm0qdk5lnmv6yyy73yd0mccau2em5n66y5a0pyh3xfuhzwmf8g39kctxq5cns9hdj6k89clmjd77v0vqmp4vrejf8twa8jas0zhvf2edczlduk6e0c7';
-  await page.fill('#d-amt', '0.001');
-  await page.fill('#d-to', UNI);
-  await page.waitForFunction(() => /→ bp1q/.test(document.querySelector('#d-rcpt').textContent), null, { timeout: 30000 }).catch(() => {});
-  ok(/tacit1qzzs.*→ bp1qf5rd/.test((await text(page, '#d-rcpt')).replace(/\s+/g, ' ')), `devsend: a unified tacit1 pays its pool address: ${(await text(page, '#d-rcpt')).replace(/\s+/g, ' ').slice(0, 80)}`);
-  await page.fill('#d-to', OLD);
-  await page.waitForFunction(() => /before pool payments/.test(document.querySelector('#d-rcpt').textContent), null, { timeout: 30000 }).catch(() => {});
-  ok(/Tacit pool tab/.test(await text(page, '#d-rcpt')), 'devsend: a tacit1 from before the pool lane points to the Tacit pool tab');
-  await page.fill('#d-amt', '');
+  const links = await page.$$eval('#d-form a', (as) => as.map((a) => a.getAttribute('href')));
+  ok(links.some((h) => /^\/pay\/eth\/#send&chain=\d+$/.test(h)) && links.some((h) => /^\/pay\/eth\/#link&chain=\d+$/.test(h)), `devsend: Send opens tacit pay on this chain (${links.join(', ')})`);
 });
 
 await step('device', async () => {
@@ -688,8 +676,10 @@ await step('device', async () => {
   await page.waitForSelector('[data-chain="1"]', { timeout: 60000 });
   await page.click('[data-chain="1"]');
   await page.waitForSelector('#d-amt', { timeout: 60000 });
-  const hl = await page.$$eval('#d-pay a', (as) => as.map((a) => a.getAttribute('href')));
-  ok(['/pay/eth/', '/pay/eth/#link', '/pay/eth/#receive'].every((h) => hl.includes(h)), `device: tacit pay is highlighted, with its links (${hl.join(' ')})`);
+  // Paying from this balance is tacit pay's: the Send tab opens it on the chain picked here.
+  await page.click('[data-dev="send"]');
+  const hl = await page.$$eval('#d-form a', (as) => as.map((a) => a.getAttribute('href')));
+  ok(['/pay/eth/#send&chain=1', '/pay/eth/#link&chain=1'].every((h) => hl.includes(h)), `device: Send opens tacit pay on the chain picked here (${hl.join(' ')})`);
   // DEV.mode (the sub-tab) persists across sheet reopens, a deliberate feature: a scenario run right after devsend
   // (which leaves it on Send) must not inherit that here.
   await page.click('[data-dev="deposit"]');

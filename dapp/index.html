@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-HXSAEaGmowc7nnu8IKElHmI5BCW84BMb6dK4ADexSgM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-j5yfAuGS6sPmijJuyPPuWT58kxIi9ZkIBjXG8bNyalw=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <script src="/front-route.js?cb=c240ced2"></script>
 <title>tacit</title>
@@ -3535,17 +3535,7 @@ function renderDevice(el) {
     </div>
     ${segSub('dev', DEV.mode, [['deposit', 'Deposit'], ['send', 'Send'], ['out', 'Withdraw'], ['receive', 'Receive']])}
     <div id="d-form"></div>
-    <div class="status" role="status" id="d-status"></div>
-    <div class="hl" id="d-pay">
-      <div class="hl-h"><b>Pay anyone privately</b><a class="btn sm" href="/pay/eth/">Open tacit pay</a></div>
-      <ul>
-        <li>An 0x address or a name, held until it blends in</li>
-        <li>Someone with no wallet yet: <a href="/pay/eth/#link">send a link</a> they take to any wallet, gas-free</li>
-        <li>Get paid <a href="/pay/eth/#receive">by link or QR</a>, from any wallet or exchange</li>
-        <li>Prove a payment later, from your key alone</li>
-      </ul>
-      <p class="note">The same pool, balances and key as here, on Ethereum, Base and Robinhood Chain.</p>
-    </div>`);
+    <div class="status" role="status" id="d-status"></div>`);
   const syncFailed = (e) => { DEV.err = e; rerender('eth'); sayErr($('#d-status'), e); };
   wireSub(el, 'chain', (id) => { setDeviceChain(DEVICE_CHAINS.find((x) => String(x.chainId) === id)); keep($('#sheet-eth'), render.eth); });
   wireSub(el, 'dev', (m) => { DEV.mode = m; keep($('#sheet-eth'), render.eth); });
@@ -3663,74 +3653,18 @@ function renderDevice(el) {
       } catch (e) { sayErr(status, e); }
     });
   } else if (DEV.mode === 'send') {
-    // One field for any of them: a bp1… pool address is paid inside the pool, and so is a tacit1… address or a name
-    // whose record carries the pool keys (the pool lane); an 0x… address is paid by a withdrawal to it. A tacit1…
-    // address from before the pool lane cannot be paid in this pool, only from the Tacit pool tab.
-    const kind = (v) => (/^0x[0-9a-fA-F]{40}$/.test(v) ? 'addr' : /^bp1/i.test(v) ? 'pool' : /^tacit1/i.test(v) || /^[^\s]+\.(g?wei|eth)$/i.test(v) ? 'uni' : '');
-    const rsv = { raw: '', r: null };
-    let shown = 0n;                                                                 // the relay fee the preview shows
-    const resolve = devResolve;
-    mount(f, html`<div class="lbl"><span>To</span></div>
-      <div class="amt text"><input id="d-to" placeholder="bp1…, tacit1…, name.wei or 0x…" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Recipient"></div>
-      <p class="note" id="d-to-note"></p>
-      ${amountField('d-amt', 'Amount', maxPriv)}
-      <div class="rcpt" id="d-rcpt" hidden></div>
-      <button class="btn" type="button" id="d-go" disabled>Send privately</button>${selfNote()}`);
-    wireMax();
-    const toEl = $('#d-to'), amt = $('#d-amt'), note = $('#d-to-note'), go = $('#d-go'), rc = $('#d-rcpt');
-    const check = () => {
-      const raw = toEl.value.trim(), k = kind(raw), amount = parseUnits(amt.value);
-      if (k === 'uni' && rsv.raw !== raw) { rsv.raw = raw; rsv.r = null; resolve(raw).then((r) => { if (rsv.raw === raw) { rsv.r = r; check(); } }); }
-      go.textContent = k === 'addr' ? 'Send to this address' : 'Send privately';
-      note.textContent = k === 'addr' ? 'This leaves the pool: the amount and the address show on chain; which note paid does not.'
-        : k ? 'It stays inside the pool. Nothing on chain links the payment to either of you.'
-        : 'A pool address (bp1…), a Tacit address or a name is paid inside the pool, unlinked. An 0x… address is paid by a withdrawal to it.';
-      go.disabled = true; mount(rc, html``); rc.hidden = true;
-      if (k === 'uni' && raw && !rsv.r) { mount(rc, html`<p class="note">Looking it up…</p>`); rc.hidden = false; return; }
-      if (k === 'uni' && rsv.r?.error) { warn(rc, rsv.r.error); return; }
-      if (!raw || !amount) return;
-      let bad = null;
-      if (k === 'addr') { try { recipientOf(raw); } catch (x) { bad = x; } }
-      if (k === 'uni') mount(rc, html`<div class="kv"><span>To</span><b>${rsv.r.label} → ${short(rsv.r.bp, 8)}</b></div>${idRow(rsv.r.id)}`);
-      if (k === 'pool') mount(rc, idRow(raw));
-      if (k && feeUnread()) { rc.insertAdjacentHTML('beforeend', feeNote().s); rc.hidden = false; return; }
-      const relayFee = k ? relayFeeNow() : 0n;
-      shown = relayFee;
-      if (relayFee) rc.insertAdjacentHTML('beforeend', html`<div class="kv"><span>Relay fee, from your private balance</span><b>${fmt(relayFee, 18, 6)} ETH</b></div><div class="kv"><span>Arrives</span><b>${fmt(amount, 18, 6)} ETH</b></div>`.s);
-      const over = DEV.bal != null && amount + relayFee > DEV.bal;
-      go.disabled = !k || !!bad || over;
-      if (!k) { if (!/^(0x[0-9a-fA-F]{0,39}|bp1[a-z0-9]*)$/i.test(raw)) warn(rc, 'Not a bp1 pool address or an 0x address.'); }        // not while one is still being typed
-      else if (bad) warn(rc, bad.message);
-      else if (over) warn(rc, 'More than your private balance.');
-      else rc.hidden = !relayFee && k === 'addr';
-    };
-    for (const el of [toEl, amt]) el.addEventListener('input', check);          // synchronous: no network in this check
-    check();
-    for (const id of ['d-to', 'd-amt']) $('#' + id).addEventListener('focus', warm, { once: true });
-    go.onclick = () => busy(go, async () => {
-      try {
-        const amount = parseUnits(amt.value), raw = toEl.value.trim(), k = kind(raw), maxFee = capOf(shown);
-        if (!amount) throw new Error('Enter an amount.');
-        let to = raw;
-        if (k === 'uni') {                                                          // looked up again as it is sent, and must still point where it was shown
-          const r = await resolve(raw);
-          if (r.error) throw new Error(r.error);
-          if (r.bp !== rsv.r?.bp) throw new Error('Where that address or name points changed. Check it and send again.');
-          to = r.bp;
-        }
-        const W2 = await deviceWallet(), via = DEV.self ? 'self' : null, label = `Send ${fmt(amount, 18, 6)} ETH ${k === 'addr' ? 'out' : 'privately'} from this device${c.chainId === 1 ? '' : `, on ${c.name}`}`;
-        if (via) { await payingAccount(); W2.connect(payFrom(c.chainId, label)); }
-        const sent = k === 'addr' ? await W2.withdraw({ to: recipientOf(to), amount, via, maxFee, onStep: step }) : await W2.send({ to, amount, via, maxFee, onStep: step });
-        const h = via ? sent : keeperTx(sent, c.chainId, label);
-        clearField(amt); rc.hidden = true;
-        afterAction(html`<span class="ok">${k === 'addr' ? 'Sent to the address.' : 'Sent privately.'}</span> ${explorer(h)}`);
-      } catch (e) {
-        // A relay that did not answer may still have sent it: the field empties and the balance is read again.
-        if (e?.said) { clearField(amt); rc.hidden = true; afterAction(html`<span class="err">${errText(e)}</span>`); }
-        else if (e?.feeMoved != null) await feeMoved(e);
-        else failed(e);
-      }
-    });
+    // Paying from this balance is done in tacit pay, the one place for payments: the same key, pool and balance, with send
+    // by link, saved recipients and proofs besides. Deposit, Withdraw and Receive stay here.
+    const at = (h) => `/pay/eth/#${h}&chain=${c.chainId}`;
+    mount(f, html`<div class="hl">
+      <div class="hl-h"><b>Pay from this balance in tacit pay</b><a class="btn sm" href="${at('send')}">Pay privately</a></div>
+      <ul>
+        <li>To a pool or Tacit address, a name, or an 0x address, held until it blends in</li>
+        <li>Someone with no wallet yet: <a href="${at('link')}">send a link</a> they take to any wallet, gas-free</li>
+        <li>Saved recipients, and proof of any payment later, from your key alone</li>
+      </ul>
+      <p class="note">The same key, pool and balance as here, on ${c.name}. You open your wallet there once more, the same way as here.</p>
+    </div>`);
   } else if (DEV.mode === 'out') {
     // From Ethereum, pool ETH also moves privately: into the Tacit pool as tETH, or to this key's balance on an L2.
     const dest = c.chainId === 1 ? DEV.dest : 'addr', l2 = DEVICE_CHAINS.find((x) => String(x.chainId) === dest);
@@ -3817,7 +3751,8 @@ function renderDevice(el) {
       <div class="blk"><div class="kv"><span>Deposit address</span><b class="mono">${short(W.receiveBox, 8)}</b><button class="link" type="button" data-copy="${W.receiveBox}">copy</button></div>
         <p class="note">Send ETH here from any wallet or exchange, choosing ${c.name} as the network. It moves into your private balance within minutes, less at most 0.25%.${min ? html` The relay takes it in from ${fmt(min, 18, 4)} ETH, a floor that moves with gas prices${c.chainId === 1 ? '; for less, pick Base' : ''}. Less waits there for more, or you sweep it in yourself.` : ''}</p>
         <p class="note">Send only ETH, and only on Ethereum, Base or Robinhood Chain: anything else can’t be collected.</p></div>
-      <div id="d-wait"></div>` : html`<p class="note">Reading your addresses…</p>`);
+      <div id="d-wait"></div>
+      <p class="note">To ask for an amount, <a href="/pay/eth/#receive&chain=${c.chainId}">get paid by link or QR</a> in tacit pay: each link has a deposit address of its own.</p>` : html`<p class="note">Reading your addresses…</p>`);
     $$('[data-copy]', f).forEach((b) => b.onclick = () => copy(b.dataset.copy));
     // Anything below the keeper's minimum, or not swept yet, can be swept in here: proved on this device, no fee.
     if (W) W.waiting().then((w) => {
