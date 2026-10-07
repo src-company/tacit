@@ -104,7 +104,7 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
 .brand .tk { width: 30px; height: 30px; }
 .brand b { font: italic 400 30px/1 var(--serif); letter-spacing: -.01em; }
-.brand i { font: italic 400 30px/1 var(--serif); letter-spacing: -.01em; color: var(--orange); margin-left: -3px; }
+.brand i { font-style: normal; font-size: 12px; color: var(--mute); text-transform: uppercase; letter-spacing: .12em; }
 .chip { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; min-width: 0; padding: 0 14px; background: var(--card);
   border: 1px solid var(--hair-2); cursor: pointer; white-space: nowrap; }
 .chip #wallet-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -508,7 +508,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
 }
 @media (max-width: 400px) {
   .brand .tk { width: 26px; height: 26px; }
-  .brand b, .brand i { font-size: 26px; }
+  .brand b { font-size: 26px; }
   .top:has(.chip.act:not([hidden])) .brand i { display: none; }
 }
 @media (max-width: 340px) { .brand i { display: none; } }
