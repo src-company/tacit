@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-M9X+dA3sQIV5x44QMECWsnyPYkvS5oLUN2SUlfhhrxo=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-RWOYlK340S3Jg75QIwog1kYtRywfDMyOQG3I2AlAqro=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <script src="/front-route.js?cb=69e9847d"></script>
 <title>tacit</title>
@@ -181,6 +181,17 @@ a.di { color: inherit; text-decoration: none; }
 .shelf button { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mute); background: none; border: 0; padding: 4px 0; cursor: pointer; }
 @media (hover: hover) { .shelf button:hover { color: var(--ink); } }
 .shelf .tk { width: 24px; height: 24px; }
+
+/* ── in numbers ── */
+.pulse { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; align-items: end; gap: 14px 20px; padding: 14px 0;
+  border-block: 1px solid var(--hair); color: inherit; text-decoration: none; }
+.pulse .fig { display: grid; gap: 3px; min-width: 0; }
+.pulse .fig b { font: 500 17px/1.15 var(--mono); letter-spacing: -.02em; white-space: nowrap; }
+.pulse .fig b small { margin-left: 5px; font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--mute); }
+.pulse .fig > span { font-size: 11px; line-height: 1.3; color: var(--mute); }
+.pulse .more { font-size: 12px; color: var(--mute); white-space: nowrap; }
+@media (hover: hover) { .pulse:hover .more { color: var(--ink); text-decoration: underline; } }
+.pulse + .hero { padding-top: 48px; }
 
 /* ── first visit ── */
 .start { margin: -14px 0 30px; padding: 22px 24px; background: var(--card); border: 1px solid var(--hair); }
@@ -427,6 +438,9 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
   .chip { padding: 0 10px; }
   .chip.act { width: 38px; }
   .hero { padding: 40px 0 32px; }
+  .pulse { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+  .pulse .more { grid-column: 1 / -1; justify-self: start; text-align: left; }
+  .pulse + .hero { padding-top: 32px; }
   .tiles { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .tile { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "logo title" "logo text" "foot foot"; gap: 4px 16px; min-height: 0; padding: 18px; }
   .tile .pair { grid-area: logo; margin: 2px 0 0; align-self: start; }
@@ -482,6 +496,14 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
       <button class="chip" id="wallet" type="button"><span class="dot" id="wallet-dot"></span><span id="wallet-label">Sign in</span></button>
     </div>
   </header>
+
+  <a class="pulse" id="pulse" href="/weld/stats/">
+    <span class="fig"><b class="num"><span data-pulse="in"><span class="sk" style="--w:5ch"></span></span><small>ETH</small></b><span>made private</span></span>
+    <span class="fig"><b class="num"><span data-pulse="held"><span class="sk" style="--w:5ch"></span></span><small>ETH</small></b><span>held privately now</span></span>
+    <span class="fig"><b class="num"><span data-pulse="cusd"><span class="sk" style="--w:4ch"></span></span><small>cUSD</small></b><span>borrowed against bitcoin</span></span>
+    <span class="fig"><b class="num"><span data-pulse="pts"><span class="sk" style="--w:3ch"></span></span></b><span>earning points</span></span>
+    <span class="more">All stats →</span>
+  </a>
 
   <section class="hero" aria-labelledby="hero-h">
     <h1 id="hero-h">Confidential money<br>across <em>Bitcoin</em> and <em>Ethereum</em>.</h1>
@@ -6409,6 +6431,36 @@ function dashWrite() {
 addEventListener('pagehide', () => { if (dashSaveT) dashWrite(); });
 
 // ── boot ─────────────────────────────────────────────────────────────────────────────────────────────────
+// ── in numbers ──────────────────────────────────────────────────────────────────────────────────────────────
+// Headline figures from the stats page's shared reading (the API's /stats, refreshed every quarter hour). Only that
+// snapshot is read here, never the chains or an explorer. The last figures paint at once; with none, and no snapshot,
+// the strip goes.
+const PULSE_KEY = 'tacit-front-pulse-v1', PULSE_MS = 15 * 60e3;
+let pulseAt = 0;
+function paintPulse(p) {
+  const el = $('#pulse');
+  if (!p?.v) { el.hidden = true; return; }
+  for (const [k, v] of Object.entries(p.v)) { const b = $(`[data-pulse="${k}"]`, el); if (b) b.textContent = v; }
+  el.title = `As of ${new Date(p.at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}`;
+  el.hidden = false;
+}
+async function loadPulse() {
+  pulseAt = Date.now();
+  const { fromJson, privateEth } = await import('/weld/stats/read.js?cb=1f5c31d9');
+  const r = await fetch(`${API}/stats`, { signal: AbortSignal.timeout(8e3) }).then((x) => (x.ok ? x.text() : null)).then((t) => (t ? fromJson(t) : null));
+  if (!r?.at) throw new Error('no reading');
+  const v = { ...store.get(PULSE_KEY)?.v };
+  if (r.eth && r.dev) { const t = privateEth(r.eth, r.dev); v.in = fmt(t.inWei, 18, 2); v.held = fmt(t.held, 18, 2); }
+  if (r.btc) v.cusd = fmt(r.btc.out, 8, 0);
+  if (r.pts) v.pts = Number(r.pts.participants).toLocaleString('en-US');
+  const p = { at: r.at, v };
+  store.set(PULSE_KEY, p);
+  paintPulse(p);
+}
+const refreshPulse = () => loadPulse().catch(() => { if (!store.get(PULSE_KEY)) paintPulse(null); });
+if (store.get(PULSE_KEY)) paintPulse(store.get(PULSE_KEY));
+refreshPulse();
+
 function refreshAll() {
   AIR = null; FARM.positions = null;
   loadAirdrop().then(() => rerender('tac')).catch(() => setFoot('tac', 'Could not read the airdrop'));
@@ -6431,7 +6483,7 @@ if (typeof farmFoot === 'string' && farmFoot) setFoot('farm', farmFoot, 'live');
 refreshAll();
 resumeActivity();
 let lastTick = Date.now();
-const tick = () => { lastTick = Date.now(); for (const n of SHEETS) if ($(`#sheet-${n}`).open && !running(n)) load[n]?.().then(() => rerender(n)).catch(() => {}); };
+const tick = () => { lastTick = Date.now(); if (lastTick - pulseAt > PULSE_MS) refreshPulse(); for (const n of SHEETS) if ($(`#sheet-${n}`).open && !running(n)) load[n]?.().then(() => rerender(n)).catch(() => {}); };
 setInterval(() => { if (!document.hidden) tick(); }, 60e3);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - lastTick > 60e3) tick(); });
 const route = () => {
