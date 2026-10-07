@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-I4+dJuj8XJaUeFkDM87cgBntDkzCPoRv+vbu0tGN9A8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-ekZQVRvT9c8sueMliIbFM+lSahqWtAeNg8ibvr6SOuo=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
-<script src="/front-route.js?cb=4b1c22ad"></script>
+<script src="/front-route.js?cb=c240ced2"></script>
 <title>tacit</title>
 <meta name="description" content="Private ETH, Bitcoin payments, TAC, points, farms and dollars borrowed against Bitcoin. The Tacit essentials on one page.">
 <meta property="og:type" content="website">
@@ -773,13 +773,15 @@ import { knownWallets } from '/tacit-wallet-known.js?cb=49410363';
 import { makeTacitAddress } from '/tacit-address.js';
 import { bip352TaggedHash } from '/bip352.js';
 import { makeEvmWallet } from '/evm-wallet.js?cb=16740dae';
-import { announceWalletConnect } from '/walletconnect.js?cb=661148d9';
+import { announceWalletConnect } from '/walletconnect.js?cb=31f53606';
 import { makeEvmAccount } from '/evm-account.js';
 import { makeEvmTx } from '/evm-tx.js';
 import { makeTacAirdrop, makeRpcCall } from '/tac-airdrop.js?cb=02ef61b4';
 import { makeEvmTradeVenues, encErc20Approve } from '/evm-trade-venues.js?cb=38171d17';
 import { parseRecipient } from '/confidential-payout.js?cb=c27b4853';
 import { addressId } from '/address-id.js?cb=c4fa5a58';
+// front-route.js is sending this visit to another page: nothing here starts while the browser moves on.
+if (window.__tacitAway) await new Promise(() => {});
 
 if (!secp.etc.hmacSha256Sync) secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, concatBytes(...m));
 
@@ -1912,12 +1914,13 @@ const evm = makeEvmWallet({ secp, sha256, keccak256: keccak_256, bytesToHex, hex
 // WalletConnect joins the browser wallets in the picker: a wallet app on a phone signs and sends for this page.
 // The project is zSwap's, shared: an allowlist set on it must name tacit.finance too.
 const WC_PROJECT_ID = '1e8390ef1c1d8a185e035912a1409749';
-announceWalletConnect({
+const WC = announceWalletConnect({
   projectId: WC_PROJECT_ID,
   chains: DEVICE_CHAINS.map((c) => c.chainId),
   rpcMap: Object.fromEntries(DEVICE_CHAINS.map((c) => [c.chainId, c.rpc[0]])),
   metadata: { name: 'tacit', description: 'Confidential crosschain DeFi', url: location.origin, icons: [`${location.origin}/tac-logo.png`] },
   onPair: showPairing,
+  onAsk: showAsk,
 });
 // The pairing link WalletConnect gives: a QR code for a wallet app on a phone, the link to copy, and on a phone a button
 // that opens the wallet app. Closing the sheet cancels the pairing.
@@ -1926,6 +1929,7 @@ $('#sheet-wc').addEventListener('close', () => { const p = pairing; pairing = nu
 function showPairing({ uri, qrSvg, cancel }) {
   const d = $('#sheet-wc'), phone = matchMedia('(pointer: coarse)').matches;
   pairing = { cancel };
+  $('#wc-h').textContent = 'Connect a wallet app';
   mount($('#wc-body'), html`<p class="lede-s">${phone ? 'Open your wallet app to connect, or scan the code from another device.' : 'Scan the code with a wallet app on your phone: MetaMask, Rainbow, Trust, Zerion or any other WalletConnect wallet.'}</p>
     <div class="wc-qr">${new Raw(qrSvg)}</div>
     <div class="row2">${phone ? html`<a class="btn" href="${uri}">Open wallet app</a>` : ''}<button class="btn ghost" type="button" id="wc-copy">Copy link</button></div>
@@ -1934,6 +1938,24 @@ function showPairing({ uri, qrSvg, cancel }) {
   if (!d.open) d.showModal();
   return () => { pairing = null; if (d.open) d.close(); };
 }
+// A request waiting in the wallet app, where it is approved. On a phone the sheet has a button that opens the app: a
+// browser follows that link only from a tap. Closing the sheet leaves the request waiting there.
+function showAsk({ name, link }) {
+  const d = $('#sheet-wc'), phone = matchMedia('(pointer: coarse)').matches;
+  pairing = null;
+  $('#wc-h').textContent = 'Approve in your wallet';
+  mount($('#wc-body'), html`<p class="lede-s">${phone ? `Open ${name} to approve the request, then come back here.` : `Approve the request in ${name} on your phone.`}</p>
+    ${phone && link ? html`<div class="row2"><a class="btn" href="${link}"${/^https:/i.test(link) ? html` target="_blank" rel="noopener"` : ''}>Open ${name}</a></div>` : ''}
+    <p class="note">This closes once the wallet answers.</p>`);
+  if (!d.open) d.showModal();
+  return () => { if (d.open && !pairing) d.close(); };
+}
+// Ends a WalletConnect session from here, so the next sign-in can pair another wallet app or account.
+document.addEventListener('click', (e) => {
+  if (!e.target.closest?.('[data-wc-off]') || midAction()) return;
+  WC.disconnect().finally(() => { evm.deselectProvider(); if (S.provider?.isWalletConnect) S.provider = null; rerender('wallet'); });
+});
+const wcLine = () => (S.provider?.isWalletConnect && S.wallet ? html`<div class="kv"><span>WalletConnect</span><b>${short(S.wallet, 6)} <button class="link" type="button" data-wc-off>Disconnect</button></b></div>` : '');
 // wallet: the connected Ethereum wallet. address: the account public transactions come from (see payer).
 const S = { address: null, wallet: null, provider: null, key: null, acct: null, pay: null };
 const walletPriv = () => hexToBytes(S.key.priv);
@@ -2340,7 +2362,7 @@ render.wallet = () => {
   const el = $('#wallet-body');
   if (!S.key) {
     mount(el, html`<p class="lede-s">Open your Tacit wallet. It is the same wallet, with the same balances, as in the classic app. Signing in with an Ethereum wallet sends nothing and costs no gas, and the same account always opens the same wallet.</p>${signIn('ws')}
-      ${S.wallet ? html`<div class="kv"><span>Ethereum</span><b>${S.wallet}</b></div>` : ''}`);
+      ${S.wallet && !S.provider?.isWalletConnect ? html`<div class="kv"><span>Ethereum</span><b>${S.wallet}</b></div>` : wcLine()}`);
     return wireSignIn(el, 'ws', () => $('#sheet-wallet').close());
   }
   const k = S.key, a = S.acct, pays = payer(), btcAddr = T?.extWallet?.state?.address || (k.mode === 'btc' || k.mode === 'ext' ? k.address : null);
@@ -2359,6 +2381,7 @@ render.wallet = () => {
     <div id="ac-form"></div>
     <div class="status" role="status" id="ac-status"></div>
     <div class="kv sep"><span>Bitcoin</span>${btcAddr ? html`<b>${short(btcAddr, 8)}</b>` : html`<span class="mute">connects when you lock BTC to borrow</span>`}</div>
+    ${wcLine()}
     <p class="note">The key stays in this tab, and whoever holds it holds the Tacit account too. Private payments to your Tacit address reach you here and in the classic app.</p>`);
   $('#w-copy').onclick = () => k.tacit && copy(k.tacit, 'Tacit address copied');
   $('#w-lock').onclick = () => { if (midAction()) return; evm.deselectProvider(); S.key = null; syncAccount(); resetPrivate(); paintWallet(); refreshAll(); rerender('wallet'); };
@@ -2614,6 +2637,8 @@ for (const d of $$('dialog.sheet:not(.layer)')) {
     for (const k of Object.keys(FLASH)) if (FLASH_OF[k] === d.id) delete FLASH[k];   // every line this sheet wrote, shown now or not
     for (const k of Object.keys(KEPT)) delete KEPT[k];
     for (const k of Object.keys(TICKED)) delete TICKED[k];
+    if (d.id === 'sheet-pts') PTS.jump = false;
+    if (d.id === 'sheet-borrow') LOCK.focus = false;
     syncLink();
   });
 }
@@ -2923,15 +2948,14 @@ const STATS = { p: null, at: 0 };
 function readStats() {
   if (STATS.p && Date.now() - STATS.at < 300e3) return STATS.p;
   STATS.at = Date.now();
-  return (STATS.p = fetch(`${API}/stats?network=mainnet`, { signal: within(20e3) })
-    .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`stats ${r.status}`))))
-    .then((t) => JSON.parse(t, (_, x) => (x && typeof x === 'object' && '$n' in x ? BigInt(x.$n) : x)))
+  return (STATS.p = Promise.all([import('/weld/stats/read.js?cb=1f5c31d9'), fetch(`${API}/stats?network=mainnet`, { signal: within(20e3) })])
+    .then(([{ fromJson }, r]) => (r.ok ? r.text().then(fromJson) : Promise.reject(new Error(`stats ${r.status}`))))
     .catch((e) => { STATS.p = null; throw e; }));
 }
 function readOutlook() {
   if (OUT.p || (OUT.at && Date.now() - OUT.at < 300e3)) return;
   OUT.p = readStats().then((d) => {
-    const n = (x) => BigInt(x?.$n ?? x ?? 0);
+    const n = (x) => BigInt(x ?? 0);
     if (d.eth) OUT.v1 = { held: n(d.eth.held), in: n(d.eth.inWei), deposits: Number(d.eth.deposits) || 0 };
     for (const x of d.dev || []) if (x.bal != null && x.dep != null) OUT.dev[x.chain] = { held: n(x.bal), in: n(x.dep), deposits: Number(x.nd) || 0 };   // a chain it could not read is unknown, not empty
   }).then(() => { OUT.at = Date.now(); }, () => { OUT.at = Date.now() - 240e3; }).finally(() => { OUT.p = null; outlookPaint(); });
@@ -4982,16 +5006,15 @@ async function readFarms(current, force = false) {
   const pub = x ? Number(x.perDay / 10n ** 14n) / 1e4 : 0;
   const total = Math.round(shielded + pub);
   const mine = (FARM.positions || []).length;
-  const apr0 = x?.live ? precisionApr(x) : null, perDay = `${total.toLocaleString('en-US')} TAC a day`;
-  FARM.headline = total ? (apr0 != null ? `${aprShort(apr0)} on TAC/ETH · ${perDay}` : `${perDay} across ${1 + (prog?.pools?.length || 0)} farms`)
+  const apr = x?.live ? precisionApr(x) : null, across = `${total.toLocaleString('en-US')} TAC a day across ${1 + (prog?.pools?.length || 0)} farms`;
+  FARM.headline = total ? (apr != null ? `${aprShort(apr)} on TAC/ETH · ${total.toLocaleString('en-US')} TAC a day` : across)
     : !x && !prog ? null : 'Between reward periods';
   paintEarn();
   if (x && (x.staked > 0n || x.earned > 0n)) setFoot('farm', `Farming · ${fmt(x.earned, 18, 2)} TAC earned`, 'on');
   else if (mine) setFoot('farm', `${mine} shielded position${mine === 1 ? '' : 's'} earning`, 'on');
   else if (total) {
     // The public farm's APR leads, read fresh each time; the kept copy shown on the next visit leaves it out.
-    const t = `${total.toLocaleString('en-US')} TAC a day across ${1 + (prog?.pools?.length || 0)} farms`, apr = x?.live ? precisionApr(x) : null;
-    setFoot('farm', apr != null ? `${aprShort(apr)} on TAC/ETH · ${t}` : t, 'live'); store.set(FARM_FOOT_KEY, t);
+    setFoot('farm', apr != null ? `${aprShort(apr)} on TAC/ETH · ${across}` : across, 'live'); store.set(FARM_FOOT_KEY, across);
   }
   else if (!x && !prog) setFoot('farm', 'Reading farms…');            // both reads failed; a real "between periods" claim needs at least one to answer
   else setFoot('farm', 'Farms are between reward periods');
@@ -6619,7 +6642,7 @@ let numsAt = 0;
 function paintNums(p) {
   const el = $('#nums');
   if (!p?.v) { el.hidden = true; return; }
-  for (const [k, v] of Object.entries(p.v)) { const b = $(`[data-num="${k}"]`, el); if (b) b.textContent = v; }
+  for (const b of $$('[data-num]', el)) b.textContent = p.v[b.dataset.num] ?? '—';
   el.title = `As of ${new Date(p.at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}`;
   el.hidden = false;
 }
@@ -6629,7 +6652,7 @@ async function loadNums() {
   if (!r?.at) throw new Error('no reading');
   const v = { ...store.get(NUMS_KEY)?.v };
   if (r.eth && r.dev) { const t = privateEth(r.eth, r.dev); v.in = fmt(t.inWei, 18, 2); v.held = fmt(t.held, 18, 2); }
-  if (r.btc) v.cusd = fmt(r.btc.out, 8, 0);
+  if (r.btc) v.cusd = fmt(r.btc.borrowed, 8, 0);
   if (r.pts) v.pts = Number(r.pts.participants).toLocaleString('en-US');
   const p = { at: r.at, v };
   store.set(NUMS_KEY, p);

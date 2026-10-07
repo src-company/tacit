@@ -1,16 +1,21 @@
 // Builds dapp/vendor/tacit-walletconnect.min.js from entry-walletconnect.mjs as one ES module with no imports. The
 // provider's own modal (@reown/appkit) is left out: the page draws the pairing QR itself, so the modal's code, fonts
-// and wallet images never load. Prints the output's SHA-384.
-//   node build/build-walletconnect.mjs
+// and wallet images never load. Prints the output's SHA-384. With --verify it writes nothing: it rebuilds from the pinned
+// packages and fails unless the result is byte for byte the committed bundle.
+//   node build/build-walletconnect.mjs [--verify]
 
 import { build } from 'esbuild';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUT = join(resolve(HERE, '..'), 'dapp/vendor/tacit-walletconnect.min.js');
+const BUNDLE = join(resolve(HERE, '..'), 'dapp/vendor/tacit-walletconnect.min.js');
+const verify = process.argv.includes('--verify');
+const scratch = verify ? mkdtempSync(join(tmpdir(), 'tacit-wc-')) : null;
+const OUT = verify ? join(scratch, 'tacit-walletconnect.min.js') : BUNDLE;
 const PINNED = { '@walletconnect/ethereum-provider': '2.24.0', 'qrcode-generator': '2.0.4' };
 for (const [name, want] of Object.entries(PINNED)) {
   const got = JSON.parse(readFileSync(join(HERE, 'node_modules', name, 'package.json'), 'utf8')).version;
@@ -39,5 +44,10 @@ await build({
   outfile: OUT,
   logLevel: 'warning',
 });
-const out = readFileSync(OUT);
-console.log(`${OUT}\n  ${out.length.toLocaleString()} bytes · sha384-${createHash('sha384').update(out).digest('base64')}`);
+const out = readFileSync(OUT), sha = (b) => 'sha384-' + createHash('sha384').update(b).digest('base64');
+if (verify) {
+  const committed = readFileSync(BUNDLE);
+  rmSync(scratch, { recursive: true, force: true });
+  if (!out.equals(committed)) { console.error(`✗ ${BUNDLE} is not what the pinned packages build: ${sha(committed)}, built ${sha(out)}`); process.exit(1); }
+  console.log(`• ${BUNDLE} verified: ${sha(out)}`);
+} else console.log(`${OUT}\n  ${out.length.toLocaleString()} bytes · ${sha(out)}`);

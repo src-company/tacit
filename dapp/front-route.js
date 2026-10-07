@@ -15,22 +15,24 @@
   // Readable paths for this page's own views (/lock, /farm, /device/base/withdraw): each becomes its link, the part after
   // the #, on this same page, with no reload. Names the classic app used for its tabs (/points, /airdrop) stay its own.
   var VIEWS = ['lock', 'borrow', 'farm', 'leaderboard', 'bitcoin', 'private', 'device', 'buy', 'sell', 'swap', 'activity', 'asset'];
+  // Leaving for another page: the front page's own module sees the flag and stays idle until the browser moves on.
+  var away = function (to) { window.__tacitAway = true; window.location.replace(to); };
   try {
     var loc = window.location, path = loc.pathname, q = loc.search, h = loc.hash;
     var seg = ((path.match(/^\/([a-z0-9-]+)\/?$/i) || [])[1] || '').toLowerCase();
-    if (PAGES.indexOf(seg) !== -1 && !/\/$/.test(path)) return loc.replace('/' + seg + '/' + q + h);
-    if (seg === 'classic') return loc.replace(CLASSIC + q + h);
+    if (PAGES.indexOf(seg) !== -1 && !/\/$/.test(path)) return away('/' + seg + '/' + q + h);
+    if (seg === 'classic') return away(CLASSIC + q + h);
     if (TABS.indexOf(seg) !== -1) {
-      if (h) return loc.replace(CLASSIC + q + h);
+      if (h) return away(CLASSIC + q + h);
       // The tab rides in the fragment, as preboot.js would put it, so the classic page opens on it.
       var qs = new URLSearchParams(q), aid = qs.get('aid') || '', lane = qs.get('lane') || '', tab = '#tab=' + seg;
       qs.delete('aid'); qs.delete('lane');
       if (/^[0-9a-f]{64}$/i.test(aid)) tab += '&aid=' + aid.toLowerCase() + (lane === 'btc' || lane === 'eth' ? '&lane=' + lane : '');
       var rest = qs.toString();
-      return loc.replace(CLASSIC + (rest ? '?' + rest : '') + tab);
+      return away(CLASSIC + (rest ? '?' + rest : '') + tab);
     }
     var params = new URLSearchParams(q);
-    if (CLASSIC_HASH.test(h) || CLASSIC_QUERY.some(function (k) { return params.has(k); })) return loc.replace(CLASSIC + q + h);
+    if (CLASSIC_HASH.test(h) || CLASSIC_QUERY.some(function (k) { return params.has(k); })) return away(CLASSIC + q + h);
     var parts = path.toLowerCase().replace(/^\/+|\/+$/g, '').split('/');
     var view = VIEWS.indexOf(parts[0]) !== -1 && parts.every(function (x) { return /^[a-z0-9-]+$/.test(x); });
     if (path !== '/') window.history.replaceState(null, '', '/' + q + (view && !h ? '#' + parts.join('/') : h));

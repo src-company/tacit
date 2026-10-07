@@ -1,7 +1,9 @@
 // Checks WalletConnect on the front page (dapp/index.html) end to end, over WalletConnect's real relay: a wallet in
 // Node, holding a test key, pairs with the link the page shows, approves the session and answers personal_sign; the
-// page must open the Tacit wallet that signature derives. After a reload, "Continue as" must open the same wallet
-// through the kept session, with no new pairing. Nothing is sent on any chain.
+// page must open the Tacit wallet that signature derives, showing "Approve in your wallet" while each request waits.
+// After a reload, "Continue as" must open the same wallet through the kept session, with no new pairing; Disconnect in
+// the wallet sheet must end the session in the wallet app, and the next sign-in must pair afresh. Nothing is sent on
+// any chain.
 //   node tools/walletconnect-check.mjs        (build/'s dependencies installed: cd build && npm install)
 
 import { createServer } from 'node:http';
@@ -46,7 +48,9 @@ function personalSign(msgHex) {
 }
 
 const wallet = await SignClient.init({ projectId: PROJECT, metadata: { name: 'walletconnect-check', description: 'test wallet', url: 'https://example.com', icons: [] } });
-const asked = [];
+const asked = [], waiting = [], ended = [];
+let page = null;
+wallet.on('session_delete', ({ topic }) => ended.push(topic));
 wallet.on('session_proposal', async ({ id, params }) => {
   const want = [...(params.requiredNamespaces?.eip155?.chains || []), ...(params.optionalNamespaces?.eip155?.chains || [])];
   const methods = [...new Set([...(params.requiredNamespaces?.eip155?.methods || []), ...(params.optionalNamespaces?.eip155?.methods || [])])];
@@ -57,11 +61,12 @@ wallet.on('session_proposal', async ({ id, params }) => {
 wallet.on('session_request', async ({ topic, id, params }) => {
   const { method, params: p } = params.request;
   asked.push(method);
+  waiting.push(await page.evaluate(() => (document.querySelector('#sheet-wc[open]') ? document.querySelector('#wc-h').textContent : '')).catch(() => ''));
   await wallet.respond({ topic, response: method === 'personal_sign' ? { id, jsonrpc: '2.0', result: personalSign(p[0]) } : { id, jsonrpc: '2.0', error: { code: 4200, message: 'not in this check' } } });
 });
 
 const browser = await chromium.launch();
-const page = await (await browser.newContext()).newPage();
+page = await (await browser.newContext()).newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (/Content Security Policy/i.test(m.text())) errors.push(m.text().slice(0, 160)); });
@@ -80,6 +85,7 @@ try {
   const first = await label();
   ok(/^tacit1/.test(first) && !(await page.$('#sheet-wc[open]')), `sign-in: the wallet opens (${first}), the pairing sheet goes`);
   ok(asked.join(' ') === 'proposal:tacit personal_sign personal_sign', `the wallet app was asked: ${asked.join(' → ')}`);
+  ok(waiting.length === 2 && waiting.every((t) => t === 'Approve in your wallet'), `while each request waits, the page says so (${waiting.join(' | ')})`);
 
   asked.length = 0;
   await page.goto('about:blank');
@@ -87,6 +93,20 @@ try {
   await page.click('#sheet-wallet [data-in="known"]');
   await opened();
   ok((await label()) === first && !(await page.$('#sheet-wc[open]')) && asked.join(' ') === 'personal_sign', `again after a reload: the kept session opens ${await label()}, no pairing (asked: ${asked.join(' → ')})`);
+
+  await page.goto('about:blank');
+  await page.goto(URL_, { waitUntil: 'domcontentloaded' });
+  await page.click('#sheet-wallet [data-in="known"]');
+  await opened();
+  await page.click('#wallet');
+  await page.waitForSelector('#sheet-wallet[open] [data-wc-off]', { timeout: 15000 });
+  await page.click('#sheet-wallet [data-wc-off]');
+  await page.waitForFunction(() => !/^tacit1/.test(document.querySelector('#wallet-label')?.textContent || ''), null, { timeout: 30000 }).catch(() => {});
+  for (let i = 0; i < 40 && !ended.length; i++) await new Promise((r) => setTimeout(r, 250));
+  ok(ended.length === 1 && !/^tacit1/.test(await label()), `Disconnect: the session ends in the wallet app and the key opened with it locks (${await label()})`);
+  await page.click('#sheet-wallet [data-in="eth"]');
+  await page.waitForSelector('#sheet-wc[open] .wc-qr svg', { timeout: 30000 }).catch(() => {});
+  ok(!!(await page.$('#sheet-wc[open] .wc-qr svg')), 'after Disconnect, WalletConnect pairs afresh: another wallet app or account can sign in');
   ok(!errors.length, `no page errors ${errors.join(' | ')}`);
 } catch (e) { fails++; console.log('FAIL', e.message.split('\n')[0]); }
 await browser.close();
