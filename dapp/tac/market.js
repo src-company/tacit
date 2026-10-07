@@ -101,8 +101,9 @@ function priceChart(series, { w = 660, h = 132, pad = 4 } = {}) {
   return svg;
 }
 
-// The asks actually standing on the book, cheapest first. These are what a buyer can take right now.
-function askDepth(sales, decimals = 8, mark = null) {
+// The asks actually standing on the book, cheapest first. These are what a buyer can take right now; with `onBuy`, each
+// row has a button that buys it.
+function askDepth(sales, decimals = 8, mark = null, onBuy = null) {
   // The listing carries its size in its opening, and the feed keeps sales past their expiry — an expired
   // one is not takeable, so counting it would overstate the book.
   const now = Math.floor(Date.now() / 1000);
@@ -112,7 +113,7 @@ function askDepth(sales, decimals = 8, mark = null) {
       const d = Number.isInteger(s.decimals) ? s.decimals : decimals;
       const units = Number(s.asset_opening?.amount ?? 0) / 10 ** d;
       const sats = Number(s.min_price_sats ?? 0);
-      return units > 0 && sats > 0 ? { units, sats, unit: sats / units } : null;
+      return units > 0 && sats > 0 ? { units, sats, unit: sats / units, sale: s } : null;
     })
     .filter(Boolean)
     .sort((a, b) => a.unit - b.unit);
@@ -135,11 +136,14 @@ function askDepth(sales, decimals = 8, mark = null) {
 
   const list = el('div', { class: 'depth' });
   for (const r of shown.slice(0, 8)) {
-    list.append(el('div', { class: 'dep' },
+    const buy = onBuy && r.sale?.sale_id ? el('button', { class: 'buy', type: 'button' }, 'Buy') : null;
+    if (buy) buy.onclick = () => onBuy(r, buy, list);
+    list.append(el('div', { class: `dep${buy ? ' buyable' : ''}` },
       el('span', { class: 'bar', style: `width:${Math.max(4, (r.units / max) * 100)}%` }),
       el('b', { class: 'num' }, `${num(r.unit, 1)}`),
       el('span', { class: 'num' }, `${num(r.units, 0)} TAC`),
-      el('span', { class: 'num mute' }, `${num(r.sats, 0)} sats`)));
+      el('span', { class: 'num mute' }, `${num(r.sats, 0)} sats`),
+      buy));
   }
   return el('div', {},
     el('div', { class: 'kv' }, el('span', {}, 'Best ask'), el('b', { class: 'num' }, `${num(best.unit, 1)} sats / TAC`)),
@@ -148,6 +152,76 @@ function askDepth(sales, decimals = 8, mark = null) {
     list,
     shown.length > 8 ? el('p', { class: 'note' }, `Showing the 8 cheapest of ${shown.length}.`) : null,
     far ? el('p', { class: 'note' }, `${far} further ask${far === 1 ? '' : 's'} priced above ${num(band, 0)} sats — far over the market, and left out of the total.`) : null);
+}
+
+// ── buying with sats ──
+// An ask is bought whole, from this key's own Bitcoin address, in two transactions: a commit, then the reveal that hands
+// the TAC over. tacit.js takes it as the classic order book does: it checks the seller's listing on chain before any sats
+// move, and records the commit before sending it, so sats it locks can be recovered should another buyer get there first.
+const STAGE = { 'fetch-start': 'Checking the listing on chain…', 'commit-start': 'Sending the commit…', 'wait-visible': 'Waiting for the commit to show…', 'broadcast-start': 'Sending the reveal that hands the TAC over…' };
+// Sats at this key's Bitcoin address that carry no asset: what a purchase can spend.
+async function freeSats(T) {
+  const addr = T.wallet.address();
+  const [utxos, h] = await Promise.all([T.getUtxos(addr), T.scanHoldings().catch(() => null)]);
+  const held = new Set();
+  if (h instanceof Map) for (const e of h.values()) for (const u of e?.utxos || []) held.add(`${u.txid}:${u.vout}`);
+  return { addr, sats: (utxos || []).filter((u) => !held.has(`${u.txid}:${u.vout}`)).reduce((t, u) => t + Number(u.value || 0), 0) };
+}
+function buyer(host, ctx) {
+  if (!ctx.ensureKey || !ctx.turn) return null;
+  const st = 'st-market', fund = el('div', { class: 'fund' });
+  let pending = null, rate = null;
+  const paintFund = async () => {
+    if (!ctx.unlocked?.()) {
+      const open = el('button', { class: 'link', type: 'button' }, 'Open your wallet');
+      open.onclick = () => ctx.busy(open, st, async () => { await ctx.ensureKey(); await paintFund(); });
+      fund.replaceChildren(el('p', { class: 'note' }, 'Buying takes sats from your Tacit wallet’s Bitcoin address. ', open, ' to buy.'));
+      return;
+    }
+    fund.replaceChildren(el('p', { class: 'note' }, 'Reading your Bitcoin address…'));
+    try {
+      const T = ctx.T, f = await freeSats(T);
+      const copy = el('button', { class: 'link', type: 'button' }, 'copy');
+      copy.onclick = () => navigator.clipboard?.writeText(f.addr).then(() => { copy.textContent = 'copied'; }).catch(() => {});
+      fund.replaceChildren(
+        el('div', { class: 'kv' }, el('span', {}, 'Pay from'), el('b', { class: 'num' }, `${f.addr.slice(0, 10)}…${f.addr.slice(-6)} `, copy)),
+        el('div', { class: 'kv' }, el('span', {}, 'Sats there'), el('b', { class: 'num' }, `${num(f.sats, 0)} sats`)),
+        f.sats ? null : el('p', { class: 'note' }, 'Send sats to that address from any Bitcoin wallet, then buy.'));
+    } catch (e) { fund.replaceChildren(el('p', { class: 'note err' }, `Could not read your Bitcoin address: ${e?.message || e}`)); }
+  };
+  // The first press says what it costs; a second press on the same ask pays.
+  const ask = (r) => ctx.say(st, `Buy ${num(r.units, 2)} TAC for ${num(r.sats, 0)} sats, plus the fees for two Bitcoin transactions${rate ? `, at about ${rate} sat/vB` : ''}. Press Confirm to pay.`);
+  const onBuy = (r, btn, list) => {
+    if (pending !== r) {
+      pending = r;
+      for (const b of list.querySelectorAll('.buy')) b.textContent = 'Buy';
+      btn.textContent = 'Confirm';
+      ask(r);
+      if (rate == null) ctx.T?.getFeeRate?.().then((x) => { if (Number.isFinite(Number(x))) { rate = Math.ceil(Number(x)); if (pending === r) ask(r); } }).catch(() => {});
+      return;
+    }
+    pending = null;
+    btn.textContent = 'Buy';
+    return ctx.busy(btn, st, async () => {
+      await ctx.ensureKey();
+      try {
+        const res = await ctx.turn(() => ctx.T.takePreauthSale({ assetIdHex: ASSET, saleIdHex: r.sale.sale_id, sale: r.sale, onProgress: (s) => ctx.say(st, STAGE[s] || 'Working…') }));
+        ctx.say(st, el('span', { class: 'ok' }, `Bought ${num(r.units, 2)} TAC.`), ' ', ctx.txLink(res.reveal_txid));
+        ctx.refresh?.();
+        setTimeout(() => mount(host, ctx), 2000);                  // that ask has left the book
+      } catch (e) {
+        if (/insufficient sats/i.test(String(e?.message || ''))) throw new Error(`Your Bitcoin address has too few sats for this ask: it costs ${num(r.sats, 0)} sats, plus the fees for two transactions. Nothing was sent.`);
+        if (!/recover/i.test(String(e?.message || ''))) throw e;
+        ctx.errSay(st, e);
+        document.getElementById(st)?.append(' ', el('a', { href: '/classic.html#tab=holdings' }, 'Recover the locked sats in the classic app →'));
+      }
+    });
+  };
+  paintFund();
+  if (host.__fund) window.removeEventListener('tac:wallet', host.__fund);      // a re-read of the book replaces the last listener
+  host.__fund = paintFund;
+  window.addEventListener('tac:wallet', paintFund);
+  return { fund, onBuy, status: el('div', { class: 'status', id: st, role: 'status' }) };
 }
 
 export async function mount(host, ctx = {}) {
@@ -160,6 +234,7 @@ export async function mount(host, ctx = {}) {
 
   const mark = Number(row?.mark_price?.unit) || null;
   const chg = Number(row.price_24h_change_pct);
+  const buy = buyer(host, ctx);
   wrap.append(
     el('p', { class: 'eyebrow' }, 'TAC on the Bitcoin orderbook'),
     el('div', { class: 'bal' },
@@ -173,7 +248,9 @@ export async function mount(host, ctx = {}) {
       .map(([k, v]) => el('span', { class: 'chipx' }, el('i', {}, k), el('b', { class: Number(v) >= 0 ? 'ok' : 'err' }, pct(v))))),
     el('p', { class: 'note' }, `Price comes from real trades on the book, not a quote. ${(row.price_summary || []).length} points, holders ${num(row.holder_count || 0, 0)}.`),
     el('p', { class: 'eyebrow', style: 'margin-top:22px' }, 'Asks on the book'),
-    sales ? askDepth(sales, Number(row.decimals) || 8, mark) : el('p', { class: 'note' }, 'Could not read the book.'),
+    ...(buy ? [buy.fund] : []),
+    sales ? askDepth(sales, Number(row.decimals) || 8, mark, buy?.onBuy) : el('p', { class: 'note' }, 'Could not read the book.'),
+    ...(buy ? [buy.status] : []),
     el('p', { class: 'eyebrow', style: 'margin-top:22px' }, 'TAC / ETH precision pool'),
     el('div', { id: 'prec-body' }, el('p', { class: 'note' }, 'Reading Ethereum…')),
   );

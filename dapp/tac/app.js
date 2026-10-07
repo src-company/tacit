@@ -9,7 +9,7 @@
 // their own carrier, by design, so those need a little BTC in the wallet.
 
 const SATS_URL = '/tac/sats.js?cb=6655b51b';     // tokens rewritten by build/build.mjs (TAC_CB_FILES)
-const MARKET_URL = '/tac/market.js?cb=b5a39c64';
+const MARKET_URL = '/tac/market.js?cb=300eec2a';
 const CLAIM_URL = '/tac/claim.js?cb=25c5f1f4';
 const UNIFIED_URL = '/tacit-unified.js?cb=a5b3a042';
 const KNOWN_URL = '/tacit-wallet-known.js?cb=49410363';
@@ -222,6 +222,7 @@ function afterUnlock() {
   tacitAddress = null;
   paintReceive(); loadTacitAddress();
   refreshChip(); renderKnownLine();
+  window.dispatchEvent(new Event('tac:wallet'));                  // the market says what this key can buy with
   // One quiet pass so a stealth payment shows up without the owner knowing to go looking for it.
   if (!stealthScanned) {
     findStealth().then((n) => { if (n) say('st-recv', `Found ${n} stealth payment${n === 1 ? '' : 's'} paid to you.`); }).catch(() => {});
@@ -270,6 +271,7 @@ function lock() {
   pub = { loading: false, notes: [], decimals: DECIMALS };
   paintReceive();
   refreshChip(); renderBalances(); renderShieldPicker(); renderKnownLine();
+  window.dispatchEvent(new Event('tac:wallet'));
   say('st-connect', 'Locked. The key stays saved in this browser.');
 }
 
@@ -760,7 +762,9 @@ function renderMarket() {
   if (marketMounted) return;
   marketMounted = true;
   import(MARKET_URL)
-    .then((m) => m.mount($('market-body'), { markSats }))
+    .then((m) => m.mount($('market-body'), {
+      markSats, get T() { return T; }, unlocked, ensureKey, turn, busy, say, errSay, txLink, refresh: () => loadPublic(),
+    }))
     .catch((e) => { marketMounted = false; $('market-body').replaceChildren(); errSay('st-recv', e); });
 }
 

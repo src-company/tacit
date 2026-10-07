@@ -108,7 +108,8 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .panel { background: var(--card); border: 1px solid var(--hair); padding: 24px; }
 .panel + .panel { margin-top: 14px; }
 
-.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--hair-2); margin: 0 0 18px; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); border: 1px solid var(--hair-2); margin: 0 0 18px; }
+@media (max-width: 420px) { #tabs button { padding: 8px 2px; font-size: 12.5px; } }   /* five tabs share a phone's width */
 .seg button { min-height: var(--tap); padding: 8px 10px; background: none; border: 0; cursor: pointer; color: var(--mute); line-height: 1.25; }
 .seg button + button { border-left: 1px solid var(--hair-2); }
 .seg button[aria-selected="true"] { background: var(--ink); color: var(--card); }
@@ -176,6 +177,13 @@ code { font-size: 12px; overflow-wrap: anywhere; }
 .dep .bar { position: absolute; left: 0; top: 0; bottom: 0; background: var(--orange); opacity: .10; }
 .dep b { font-weight: 500; }
 .dep span.mute { text-align: right; }
+.dep.buyable { grid-template-columns: 62px 1fr auto auto; }
+.dep .buy { position: relative; min-height: 30px; padding: 3px 12px; font: inherit; font-size: 12px; color: var(--ink); background: var(--paper); border: 1px solid var(--hair-2); cursor: pointer; }
+.dep .buy:hover:not(:disabled) { border-color: var(--ink); }
+.dep .buy:disabled { opacity: .5; cursor: progress; }
+.fund { margin: 6px 0 4px; }
+@media (max-width: 420px) { .dep.buyable { grid-template-columns: 40px 1fr auto auto; gap: 8px; } .dep.buyable b, .dep.buyable span.num:not(.mute) { white-space: nowrap; } }
+.fund .link { padding: 0; font: inherit; color: var(--ink); background: none; border: 0; text-decoration: underline; cursor: pointer; }
 
 .facts { list-style: none; margin: 14px 0 0; padding: 0; border-top: 1px solid var(--hair); }
 .facts li { display: flex; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--hair); font-size: 12.5px; color: var(--mute); }
@@ -394,6 +402,6 @@ dialog.sheet::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
   </form>
 </div>
 <div id="toast-container" aria-live="polite"></div>
-<script type="module" src="/tac/app.js?cb=97cfa1a4"></script>
+<script type="module" src="/tac/app.js?cb=ca29831c"></script>
 </body>
 </html>
