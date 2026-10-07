@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-P1Tz/dTS7HSujOiuLcxbzoVa4GSXg+cmNf/8aFAS13Q=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-yIJ72EKg321ZRzhJXT9NDX9cJze/REwbPVVVDxVhe50=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <script src="/front-route.js?cb=c240ced2"></script>
 <title>tacit</title>
@@ -4191,7 +4191,7 @@ load.tac = () => { loadTacPrice().then(paintTacPrice).catch(() => {}); return Pr
 // tracks (what an ordinary transfer leaves) is burned in one Bitcoin transaction; TAC it has never seen first moves to a
 // burn address and is then burned through a miner, a second step its row offers when it is ready. Either way the mint
 // follows once the proof records the burn. The journal is only a cache: a bridge is rebuilt from its burn and the key.
-const BR = { pub: null, notes: null, at: 0, loading: null, err: null, pick: null, refl: null, autoAt: 0, auto: false };
+const BR = { pub: null, notes: null, at: 0, loading: null, err: null, pick: null, refl: null, autoAt: 0, auto: false, rv: null };
 const BR_DONE = ['minted', 'reclaimed'], BR_HELD = ['not-recorded', 'stopped', 'recovered'];   // held: waiting for the holder
 const BR_STEPS = { reflected: ['Burn sent', 'Confirmed', 'Recorded', 'Arrived'], deposit: ['Moved', 'Burned', 'Recorded', 'Arrived'] };
 const BR_AT = { 'rburn-signed': 0, 'rburn-sent': 1, 'rburn-mined': 2, rfolded: 3,
@@ -4311,7 +4311,7 @@ function renderBridge(el) {
       <button class="btn ghost" type="button" id="br-find">Find it</button>
       <div class="status" role="status" id="br-fstatus"></div>
     </details>`);
-  for (const r of $$('#br-re', el)) r.onclick = () => busy(r, async () => { BR.err = null; await Promise.allSettled([loadBridge(true), loadBtc(true)]); rerender('tac'); });
+  for (const r of $$('#br-re', el)) r.onclick = () => busy(r, async () => { BR.err = null; BR.rv = null; await Promise.allSettled([loadBridge(true), loadBtc(true)]); rerender('tac'); });
   $$('[data-bract]', el).forEach((x) => x.onclick = () => busy(x, (run) => brAct(run, x.dataset.bract, x.dataset.brid)));
   const go = $('#br-go'), rc = $('#br-rcpt'), ackRow = $('#br-ackrow'), ack = $('#br-ack'), status = $('#br-status');
   let review = null, seq = 0;
@@ -4323,9 +4323,14 @@ function renderBridge(el) {
     review = null; ack.checked = false; ackRow.hidden = true; gateOk();
     const n = open.find((x) => brId(x) === BR.pick);
     if (!n) { rc.hidden = true; return; }
-    mount(rc, html`<p class="note">Checking this TAC and Bitcoin’s fees…</p>`); rc.hidden = false;
+    // The check reads the whole reflection state, so it is made once per note and kept for two minutes: the sheet is drawn
+    // again every minute, and by every other action in it.
+    const rvKey = `${pub}:${brId(n)}`, kept = BR.rv?.key === rvKey && Date.now() - BR.rv.at < 120e3 ? BR.rv.pf : null;
+    if (!kept) mount(rc, html`<p class="note">Checking this TAC and Bitcoin’s fees…</p>`);
+    rc.hidden = false;
     try {
-      const pf = await (await brUx()).preflight({ note: n, walletPub: hexToBytes(pub) });
+      const pf = kept || await (await brUx()).preflight({ note: n, walletPub: hexToBytes(pub) });
+      if (!kept) BR.rv = { key: rvKey, at: Date.now(), pf };
       if (my !== seq || !rc.isConnected) return;
       if (!pf.ok) {
         const bad = pf.steps.find((s) => !s.ok) || { name: '' };
@@ -4346,7 +4351,8 @@ function renderBridge(el) {
         <div class="kv"><span>Bitcoin fee</span><b>about ${sats.toLocaleString('en-US')} sats${one ? '' : ', and the burn’s own fee later'}</b></div>
         <div class="kv"><span>Relay fee</span><b>None</b></div>
         <div class="kv"><span>How</span><b>${one ? 'One Bitcoin transaction' : 'A move, then a burn through a miner'}</b></div>`);
-      if (review.short) warn(rc, html`This key’s Bitcoin address holds ${fmt(have, 8, 8)} BTC, short of the fee. <a href="#bitcoin/receive" data-link="bitcoin/receive">Add bitcoin to it</a>`);
+      if (review.short) warn(rc, BTC.pending > 0n ? html`This key’s Bitcoin address holds ${fmt(have, 8, 8)} BTC, with ${fmt(BTC.pending, 8, 8)} still arriving. Once that confirms it covers the fee.`
+        : html`This key’s Bitcoin address holds ${fmt(have, 8, 8)} BTC, short of the fee. <a href="#bitcoin/receive" data-link="bitcoin/receive">Add bitcoin to it</a>`);
       ackRow.hidden = false; gateOk();
     } catch (e) { if (my === seq && rc.isConnected) quoteErr(rc, brFail(e)); }
   };
@@ -4377,7 +4383,7 @@ function renderBridge(el) {
         }
         try { return await ux.advance(made.walletPub, made.id); } catch { return ux.list(made.walletPub).find((x) => x.id === made.id) || made; }
       }, pub);
-      BR.pick = null; review = null;
+      BR.pick = null; BR.rv = null; review = null;
       const tx = rec.burn?.txid || rec.migrate?.revealTxid, sent = !/-signed$/.test(rec.stage);
       toast(sent ? `Bridging ${amt} to Ethereum` : `${amt}: signed, not yet sent`, !sent);
       say(status, sent ? html`<span class="ok">✓ ${r.pf.path === 'reflected' ? 'Burn' : 'Move'} sent</span> ${tx ? html`<a href="${MEMPOOL}/tx/${tx}" target="_blank" rel="noopener">${short(tx, 6)} ↗</a>` : ''}. It shows under On the way, and finishes on its own whenever this page is open with your wallet.`
@@ -4419,7 +4425,7 @@ async function brSend(run, n, amount, verb) {
       return r.revealTxid;
     }, pub);
     actBtc(txid, `${verb} ${amt}${split ? '' : ' to your own address'}`);
-    BR.pick = null; BR.at = 0;
+    BR.pick = null; BR.rv = null; BR.at = 0;
     say(status, html`<span class="ok">✓ ${split ? `${amt} split off to your own address` : `${amt} sent to your own address`}</span> <a href="${MEMPOOL}/tx/${txid}" target="_blank" rel="noopener">${short(txid, 6)} ↗</a>. It can be bridged from here once it confirms and Bitcoin’s proof on Ethereum has seen it, usually within a few hours.`);
     Promise.allSettled([loadBridge(true), loadBtc(true)]).then(() => rerender('tac'));
   } catch (e) { run.fail(status, /insufficient sats|no plain-sats/i.test(String(e?.message)) ? new Error('Not enough BTC for this and its network fee.') : brFail(e)); }
@@ -4444,8 +4450,12 @@ async function brAct(run, kind, id) {
     }
     if (kind === 'burn') {
       run.say(status(), `Signing the burn of ${amt} and sending it to a miner…`);
-      const after = await withKey(() => ux.advance(pub, id, { walletPriv: walletPriv() }), pub);
-      run.say(status(), after.stage === 'traced' ? 'Not yet: it waits for Bitcoin’s proof to reach the move. Try again later.' : html`<span class="ok">✓ Burn sent for ${amt}.</span>`);
+      let after = await withKey(() => ux.advance(pub, id, { walletPriv: walletPriv() }), pub);
+      // Signed first; the next step hands it to the miner, which needs no key.
+      if (after.stage === 'burn-signed') after = await ux.advance(pub, id).catch(() => ux.list(pub).find((r) => r.id === id) || after);
+      run.say(status(), after.stage === 'traced' ? 'Not yet: it waits for Bitcoin’s proof to reach the move. Try again later.'
+        : after.stage === 'burn-signed' ? html`<span class="err">Signed, but the miner did not take it yet. It is tried again on its own, or press Try again on its row.</span>`
+        : html`<span class="ok">✓ Burn sent for ${amt}.</span>`);
       return;
     }
     let selfSettle = null;

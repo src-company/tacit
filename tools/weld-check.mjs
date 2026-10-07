@@ -1838,8 +1838,9 @@ await step('bridge', async () => {
   const spk3 = '0014' + Buffer.from(ripemd160(sha256(secp.getPublicKey(SK3, true)))).toString('hex');
   const claims = [];
   const api = (re, fn) => r.page.route(re, (route) => fn(route, new URL(route.request().url())));
-  await api(/^https:\/\/api\.tacit\.finance\/reflection\/dump/, (route) => json(route, { attestedHeight: 970000,
-    snapshot: { height: 970000, liveTriples: [[pool.outpointKey('0x' + rev(N1), 0), '0x00', '0x00'], [pool.outpointKey('0x' + rev(N3), 0), '0x00', '0x00']], burnNodes: [], noteLeaves: [], pendingDepositRecords: [] } }));
+  let dumps = 0;
+  await api(/^https:\/\/api\.tacit\.finance\/reflection\/dump/, (route) => { dumps++; return json(route, { attestedHeight: 970000,
+    snapshot: { height: 970000, liveTriples: [[pool.outpointKey('0x' + rev(N1), 0), '0x00', '0x00'], [pool.outpointKey('0x' + rev(N3), 0), '0x00', '0x00']], burnNodes: [], noteLeaves: [], pendingDepositRecords: [] } }); });
   await api(/^https:\/\/api\.tacit\.finance\/chain\/tx\/(c1|c2|c3){32}/, (route, u) => json(route, { txid: u.pathname.split('/').pop(),
     status: { confirmed: true, block_height: 960000 }, vout: [{ scriptpubkey: u.pathname.includes('c3c3') ? spk3 : spk, value: 546 }] }));
   await api(/^https:\/\/api\.tacit\.finance\/bridge\/recover/, (route) => {
@@ -1884,6 +1885,11 @@ await step('bridge', async () => {
   const rc = (await text(r.page, '#br-rcpt')).replace(/\s+/g, ' ');
   ok(/One Bitcoin transaction/.test(rc) && /250(\.0+)? private TAC on Ethereum/.test(rc) && /Relay fee\s*None/.test(rc), `bridge: a tracked note checks out as one Bitcoin transaction with no relay fee (${rc.slice(0, 160)})`);
   await until(r.page, () => /short of the fee/.test(document.querySelector('#br-rcpt')?.textContent || ''), null, 120000).catch(() => {});
+  // The check reads the whole reflection state: redrawing the sheet (another tab and back) must not read it again.
+  const before = dumps;
+  await r.page.click('[data-tac-mode="airdrop"], [data-tac-mode="air"]'); await sleep(300); await r.page.click('[data-tac-mode="bridge"]');
+  await until(r.page, () => /short of the fee/.test(document.querySelector('#br-rcpt')?.textContent || ''), null, 60000);
+  ok(dumps === before, `bridge: redrawing the sheet does not run the check, or read the reflection state, again (${before} → ${dumps})`);
   await r.page.check('#br-ack').catch(() => {});
   ok(/short of the fee/.test(await text(r.page, '#br-rcpt')) && await r.page.isDisabled('#br-go'), 'bridge: a key with no sats for the fee cannot start it, and is told so');
   const rows = await r.page.$$eval('#bridge-body .brr', (xs) => xs.map((x) => x.textContent.replace(/\s+/g, ' ').trim()));
