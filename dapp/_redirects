@@ -28,6 +28,10 @@
 #
 # The catch-all serves the classic app, so its tab paths (/market?aid=…, /cdp) open it directly as they always
 # have. Every rule that pointed at /weld/ points at / instead, or the catch-all would hand those paths to it.
+#
+# The live /weld → /weld/ rule also matches /weld/ itself, so /weld/ must stay a file (dapp/weld/index.html, which
+# forwards to / with the fragment kept) for as long as that rule is in the dashboard; without it, /weld/ redirects to
+# itself.
 /classic  /classic.html  301
 /weld     /              301
 /weld/    /              301
