@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-immDdIsAKZaS/BYuC2+xprU0qgZ2zXpwhhYDP5t2zKk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Bz7/1u13CG4SCHyGE62t9siMRZwKGahRCiH/nDC9KFo=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <script src="/front-route.js?cb=c240ced2"></script>
 <title>tacit</title>
@@ -182,39 +182,38 @@ a.di { color: inherit; text-decoration: none; }
 .shelf .tk { width: 24px; height: 24px; }
 
 /* ── in numbers ── */
-.strip { border-block: 1px solid var(--hair); }
-.nums { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; align-items: center; gap: 16px 20px; padding: 16px 0;
+/* Two rows on one grid: the pools' figures, then what earning pays. The last column carries each row's link, at one width
+   so the four columns above line up with the two below. */
+.strip { display: grid; gap: 18px; padding: 18px 0; border-block: 1px solid var(--hair); }
+.nums, .earn { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) 7.5rem; align-items: center; gap: 18px 20px;
   color: inherit; text-decoration: none; }
-.nums .fig { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 1px 10px; min-width: 0; }
-.nums .fig .tk { grid-row: span 2; width: 28px; height: 28px; }
-.nums .fig b { font: 500 16px/1.2 var(--mono); letter-spacing: -.02em; white-space: nowrap; }
-.nums .fig b small { margin-left: 4px; font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--mute); }
-.nums .fig > span { font-size: 11px; line-height: 1.3; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nums .more { font-size: 12px; color: var(--mute); white-space: nowrap; }
-@media (hover: hover) { .nums:hover .more { color: var(--ink); text-decoration: underline; } }
-.strip + .hero { padding-top: 48px; }
-.earn { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: center; gap: 14px 20px; padding: 14px 0;
-  border-top: 1px dashed var(--hair); }
-.nums[hidden] + .earn { border-top: 0; }
-.ern { display: flex; align-items: center; gap: 10px; min-width: 0; color: inherit; text-decoration: none; }
-.ern .pair { display: flex; flex: none; margin: 0; }
-.ern .tk { width: 28px; height: 28px; }
-.ern .pair .tk + .tk { margin-left: -9px; box-shadow: 0 0 0 2px var(--paper); }
-.ern-t { display: grid; gap: 1px; min-width: 0; }
-.ern-t b { font-size: 13px; font-weight: 500; }
-.ern-t > span { font-size: 11px; line-height: 1.3; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.strip .fig { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 1px 10px; min-width: 0;
+  color: inherit; text-decoration: none; }
+.strip .fig > .tk, .strip .fig > .pair { grid-row: span 2; }
+.strip .fig .tk { width: 28px; height: 28px; }
+.strip .fig .pair { position: relative; width: 28px; height: 28px; margin: 0; }
+.strip .fig .pair .tk { position: absolute; top: 0; left: 0; width: 19px; height: 19px; }
+.strip .fig .pair .tk + .tk { top: auto; left: auto; right: 0; bottom: 0; margin: 0; box-shadow: 0 0 0 2px var(--paper); }
+.strip .fig b { font: 500 17px/1.2 var(--mono); letter-spacing: -.02em; white-space: nowrap; }
+.strip .fig b small { margin-left: 4px; font-size: 11.5px; font-weight: 400; letter-spacing: 0; color: var(--mute); }
+.strip .fig > span { font-size: 12px; line-height: 1.35; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.earn .fig { grid-column: span 2; }
+.strip .more { justify-self: end; font-size: 12px; color: var(--mute); white-space: nowrap; text-decoration: none; }
 .earn .ern-go { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 18px; }
-.earn .more { font-size: 12px; color: var(--mute); white-space: nowrap; text-decoration: none; }
 .earn .narrow { display: none; }
+@media (hover: hover) {
+  .nums:hover .more, .earn .more:hover { color: var(--ink); text-decoration: underline; }
+  a.fig:hover > span { color: var(--ink); }
+}
+.strip + .hero { padding-top: 48px; }
 #pts-lb { scroll-margin-top: 18px; }
-@media (hover: hover) { .ern:hover b, .earn .more:hover { color: var(--ink); text-decoration: underline; } }
 @media (max-width: 800px) {
-  .nums { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .nums, .earn { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
   .nums .more { display: none; }
-  .earn { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+  .earn .fig { grid-column: auto; }
   .earn .ern-go { grid-column: 1 / -1; justify-content: flex-start; }
   .earn .narrow { display: inline; }
-  .ern-t > span { white-space: normal; }
+  .strip .fig > span { white-space: normal; }
 }
 
 /* ── first visit ── */
@@ -464,7 +463,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
   .chip { padding: 0 10px; }
   .chip.act { width: 38px; }
   .hero { padding: 40px 0 32px; }
-  .nums .fig .tk { width: 26px; height: 26px; }
+  .strip .fig > .tk { width: 26px; height: 26px; }
   .strip + .hero { padding-top: 32px; }
   .tiles { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .tile { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "logo title" "logo text" "foot foot"; gap: 4px 16px; min-height: 0; padding: 18px; }
@@ -534,10 +533,10 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <span class="more">All stats →</span>
   </a>
   <div class="earn">
-    <a class="ern" href="#farm" data-link="farm"><span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><svg class="tk" aria-hidden="true"><use href="#tk-eth"/></svg></span>
-      <span class="ern-t"><b>Farm TAC →</b><span id="ern-farm"><span class="sk" style="--w:22ch"></span></span></span></a>
-    <a class="ern" href="#points" data-link="points"><svg class="tk" aria-hidden="true"><use href="#i-pts"/></svg>
-      <span class="ern-t"><b>Points →</b><span id="ern-pts"><span class="sk" style="--w:22ch"></span></span></span></a>
+    <a class="fig" href="#farm" data-link="farm"><span class="pair"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><svg class="tk" aria-hidden="true"><use href="#tk-eth"/></svg></span>
+      <b class="num" id="ern-farm-v"><span class="sk" style="--w:4ch"></span></b><span id="ern-farm">TAC/ETH farm</span></a>
+    <a class="fig" href="#points" data-link="points"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>
+      <b class="num" id="ern-pts-v"><span class="sk" style="--w:5ch"></span></b><span id="ern-pts">points pot today</span></a>
     <span class="ern-go"><a class="more narrow" href="/weld/stats/">All stats →</a><a class="more" href="#leaderboard" data-link="leaderboard">Leaderboard →</a></span>
   </div>
   </div>
@@ -4597,13 +4596,16 @@ async function readPoints(current) {
 }
 load.pts = () => loadPoints();
 RETRY.points = () => loadPoints(true).then(() => rerender('pts')).catch(() => {});
-// The farm and points lines under the stats: what the farms pay now, and the day's points pot and the time left in it.
+// The earning row under the stats: what the TAC/ETH farm pays now, and the day's points pot with the time left in it.
 function paintEarn() {
-  const farm = FARM.headline ?? store.get(FARM_FOOT_KEY);
-  if (farm) $('#ern-farm').textContent = farm;
-  else if (FARM.headline === null) $('#ern-farm').textContent = 'ETH and TAC pools, public or private';
-  mount($('#ern-pts'), now() < ptsEnd() ? html`<span data-pgm="pot">${potTac()}</span> TAC shared today · ${dayLeft()} left`
-    : html`Ended ${dayShort(PGM.startDay + PGM.days - 1)} · what you earned stays claimable`);
+  const f = FARM.top, per = (n) => n.toLocaleString('en-US');
+  if (f) {
+    mount($('#ern-farm-v'), f.apr != null ? html`${f.apr >= 1000 ? '1,000+' : per(Math.round(f.apr))}%<small>APR</small>` : f.perDay ? html`${per(f.perDay)}<small>TAC a day</small>` : '—');
+    $('#ern-farm').textContent = f.apr != null ? `TAC/ETH farm · ${per(f.perDay)} TAC a day` : f.perDay ? `across ${f.farms} farms` : 'farms between reward periods';
+  } else if (f === null) { $('#ern-farm-v').textContent = '—'; $('#ern-farm').textContent = 'farms not read yet'; }
+  const on = now() < ptsEnd();
+  mount($('#ern-pts-v'), on ? html`<span data-pgm="pot">${potTac()}</span><small>TAC</small>` : '—');
+  $('#ern-pts').textContent = on ? `points pot today · ${dayLeft()} left` : `points ended ${dayShort(PGM.startDay + PGM.days - 1)}; claims stay open`;
 }
 function paintPointsFoot() {
   const rows = PTS.key && PTS.key === pointsWho().map(([a]) => a).join() ? PTS.rows : null;
@@ -5006,15 +5008,14 @@ async function readFarms(current, force = false) {
   const pub = x ? Number(x.perDay / 10n ** 14n) / 1e4 : 0;
   const total = Math.round(shielded + pub);
   const mine = (FARM.positions || []).length;
-  const apr = x?.live ? precisionApr(x) : null, across = `${total.toLocaleString('en-US')} TAC a day across ${1 + (prog?.pools?.length || 0)} farms`;
-  FARM.headline = total ? (apr != null ? `${aprShort(apr)} on TAC/ETH · ${total.toLocaleString('en-US')} TAC a day` : across)
-    : !x && !prog ? null : 'Between reward periods';
+  const apr = x?.live ? precisionApr(x) : null, farms = 1 + (prog?.pools?.length || 0), across = `${total.toLocaleString('en-US')} TAC a day across ${farms} farms`;
+  FARM.top = !x && !prog ? null : { apr, perDay: total, farms };
   paintEarn();
   if (x && (x.staked > 0n || x.earned > 0n)) setFoot('farm', `Farming · ${fmt(x.earned, 18, 2)} TAC earned`, 'on');
   else if (mine) setFoot('farm', `${mine} shielded position${mine === 1 ? '' : 's'} earning`, 'on');
   else if (total) {
     // The public farm's APR leads, read fresh each time; the kept copy shown on the next visit leaves it out.
-    setFoot('farm', apr != null ? `${aprShort(apr)} on TAC/ETH · ${across}` : across, 'live'); store.set(FARM_FOOT_KEY, across);
+    setFoot('farm', apr != null ? `${aprShort(apr)} on TAC/ETH` : across, 'live'); store.set(FARM_FOOT_KEY, across);
   }
   else if (!x && !prog) setFoot('farm', 'Reading farms…');            // both reads failed; a real "between periods" claim needs at least one to answer
   else setFoot('farm', 'Farms are between reward periods');
