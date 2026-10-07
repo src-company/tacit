@@ -78379,6 +78379,9 @@ export {
   buildAndBroadcastCBurn,
   carveExactAmount,
   scanHoldings, invalidateHoldingsCache,
+  // The TAC bridge to Ethereum, for pages that load this file as a library: the same instance, journal and coin
+  // reservations the Holdings tab uses, so a bridge started on one page is followed on the other.
+  _burndepUxSingleton as bridgeUx, pickSafeCommitSats,
   discoverStealthFromTxid, scanAssetForStealthReceipts,
   recordStealthCredit, getStealthCredit, loadStealthCredits, removeStealthCredit,
   markStealthTxidSeen, isStealthTxidSeen,

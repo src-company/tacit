@@ -53,6 +53,9 @@
 //            transaction; the fork's stubbed settle leaves it pending, offered to Finish like any other TAC deposit
 //   btc      a pasted key's Bitcoin sheet: balances read, BTC routes (tacit1 and sp1 as silent payments, bc1 plain), TAC
 //            routes refuse plain addresses, a tacit1's silent-payment keys are the ones this wallet scans, a payment link checks
+//   bridge   the TAC sheet's Bridge: stubbed TAC notes on Bitcoin listed (one over the limit refused), a tracked note checks out
+//            as one Bitcoin transaction but waits for sats for its fee, bridges under way show their steps and actions, and
+//            Recover files its claim
 //   activity relayed jobs (dispatched as tacit:job, as the relay client does) move Queued → Proving → Done or Failed, with
 //            toasts and Etherscan links; a transaction the page sends is followed to its receipt; after a reload the list
 //            is still there, a job left proving is followed to its settle, a failure from the last six hours is asked
@@ -88,7 +91,7 @@ const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_module
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
 // Borrow reports under each step's own line (#bw-s1…#bw-s4) as well as the sheet's: read them all.
 const bwText = (page) => page.evaluate((s) => [...document.querySelectorAll(s)].map((e) => e.textContent).join(' '), '#bw-status, #bw-s1, #bw-s2, #bw-s3, #bw-s4');
-const ONLY = new Set((process.argv[2] || 'airdrop,links,ux,apr,farmgate,pair,farm,reinvest,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,selfexit,selfmore,selflocks,selfsplit,makepub,farmjoin,farmpos,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,ux,apr,farmgate,pair,farm,reinvest,buy,tacfarm,sell,v1,v1refuse,devsend,device,borrow,bonds,mainbond,locks,repay,csend,tacsend,selfexit,selfmore,selflocks,selfsplit,makepub,farmjoin,farmpos,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,bridge,pts,ptsview,activity,receipts,stats,dash,tacdeposit').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -1817,6 +1820,89 @@ await step('btc', async () => {
   await until(r.page, () => /not addressed|not found|not indexed/.test(document.querySelector('#btc-status')?.textContent || ''), null, 120000);
   ok(true, `btc: a payment link is checked against this key (${(await text(r.page, '#btc-status')).trim().slice(0, 50)})`);
   if (r.errors.length) { fails++; console.log('FAIL btc page errors: ' + r.errors.slice(0, 3).join(' | ')); }
+  await r.browser.close();
+});
+// The TAC sheet's Bridge: TAC notes on Bitcoin (a stubbed holdings scan) are listed, one over the limit refused with its
+// reason; a note the stubbed reflection tracks checks out as one Bitcoin transaction, held back while the key holds no
+// sats for its fee; bridges already under way (seeded in the journal tacit.js keeps) show their steps and actions, a
+// mint the relay refused offers the paying account, and Recover on one that did not complete files its claim.
+await step('bridge', async () => {
+  const r = await openPage({ account: A0, key: K0 });
+  const hex = 'b41d'.padEnd(64, '9'), pubB = secp.getPublicKey(hex, true), pub = Buffer.from(pubB).toString('hex');
+  const { ripemd160 } = await import('@noble/hashes/ripemd160');
+  const spk = '0014' + Buffer.from(ripemd160(sha256(pubB))).toString('hex');
+  const { makeConfidentialPool } = await import(new URL('../dapp/confidential-pool.js', import.meta.url));
+  const pool = makeConfidentialPool({ secp, keccak256: keccak_256, sha256 });
+  const rev = (h) => h.match(/../g).reverse().join('');
+  const N1 = 'c1'.repeat(32), N2 = 'c2'.repeat(32), TAC = 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b';
+  const claims = [];
+  const api = (re, fn) => r.page.route(re, (route) => fn(route, new URL(route.request().url())));
+  await api(/^https:\/\/api\.tacit\.finance\/reflection\/dump/, (route) => json(route, { attestedHeight: 970000,
+    snapshot: { height: 970000, liveTriples: [[pool.outpointKey('0x' + rev(N1), 0), '0x00', '0x00']], burnNodes: [], noteLeaves: [], pendingDepositRecords: [] } }));
+  await api(/^https:\/\/api\.tacit\.finance\/chain\/tx\/(c1|c2){32}/, (route, u) => json(route, { txid: u.pathname.split('/').pop(),
+    status: { confirmed: true, block_height: 960000 }, vout: [{ scriptpubkey: spk, value: 546 }] }));
+  await api(/^https:\/\/api\.tacit\.finance\/bridge\/recover/, (route) => {
+    if (route.request().method() === 'POST') { claims.push(JSON.parse(route.request().postData() || '{}')); return json(route, { ok: true, status: 'queued' }); }
+    return json(route, { status: 'queued' });
+  });
+  await r.page.goto(r.url + '#wallet');
+  // The holdings scan is tacit.js's own, stubbed on the instance the page loads.
+  await r.page.evaluate(async ([n1, n2, aid]) => {
+    globalThis.__TACIT_NO_INIT__ = true; localStorage.setItem('tacit-network-v1', 'mainnet');
+    const T = await import([...document.scripts].map((x) => x.textContent).join('').match(/\/tacit\.js\?cb=[0-9a-f]+/)[0]);
+    const note = (txid, amount) => ({ utxo: { txid, vout: 0, value: 546, status: { confirmed: true } }, amount, blinding: 12345n + amount });
+    const utxos = [note(n1, 25000000000n), note(n2, 150000000000n)];
+    T._testSetScanHoldingsOverride(() => new Map([[aid, { assetIdHex: aid, ticker: 'TAC', decimals: 8, balance: 175000000000n, utxos, ghosts: [], inflated: [], pending: [] }]]));
+  }, [N1, N2, TAC]);
+  // Three bridges under way: one waiting for the proof, one ready whose mint the relay refused, one that did not complete.
+  const recOf = (id, stage, extra = {}) => ({ id: `${id}:0`, network: 'mainnet', walletPub: pub, path: 'reflected', stage, createdAt: Date.now(),
+    source: { txid: id, vout: 0, sats: 546, assetId: '0x' + TAC, amount: { __big: '10000000000' }, blinding: { __big: '777' } },
+    burn: { txid: id.replace(/^../, 'bb'), hex: '00', commitTxid: 'cc'.repeat(32), commitHex: '00', fundingUtxo: { txid: 'dd'.repeat(32), vout: 1 } },
+    envelope: { destLeaf: '0x' + 'ee'.repeat(32) }, ...extra });
+  const journal = [recOf('d1'.repeat(32), 'rburn-mined', { burnHeight: 970050, createdAt: Date.now() - 3e6 }),
+    recOf('d2'.repeat(32), 'rfolded', { createdAt: Date.now() - 2e6, lastError: { message: 'free relayed settles for today are used up', at: Date.now() }, errorCount: 1 }),
+    recOf('d3'.repeat(32), 'not-recorded', { createdAt: Date.now() - 1e6 })];
+  await r.page.evaluate(([k, v]) => localStorage.setItem(k, v), [`tacit-burndep-bridge-v1:mainnet:${pub}`, JSON.stringify(journal)]);
+  await r.page.click('#wallet-body [data-in="paste"]');
+  await r.page.fill('#ws-hex', hex);
+  await r.page.click('#wallet-body [data-in="key"]');
+  await until(r.page, () => !!document.querySelector('#wallet-dot.on'));
+  // The Bitcoin sheet's TAC line links here.
+  await go(r.page, '#bitcoin');
+  await until(r.page, () => !!document.querySelector('#btc-body a[data-link="bridge"]'), null, 120000);
+  await r.page.click('#btc-body a[data-link="bridge"]');
+  await until(r.page, () => location.hash === '#bridge' && !document.querySelector('#bridge-body').hidden && document.querySelector('[data-tac-mode="bridge"]').getAttribute('aria-selected') === 'true');
+  ok(true, 'bridge: the Bitcoin sheet’s TAC line opens the TAC sheet’s Bridge tab, and the link reads #bridge');
+  await until(r.page, () => document.querySelectorAll('#bridge-body .brn').length === 2, null, 120000);
+  const notes = (await text(r.page, '#bridge-body .brns')).replace(/\s+/g, ' ').trim();
+  ok(/^250(\.0+)? TAC.*1,500(\.0+)? TAC\s*Over 1,000 TAC/.test(notes) && await r.page.isDisabled(`#bridge-body input[value="${N2}:0"]`),
+    `bridge: both notes are listed, the one over 1,000 TAC refused with its reason (${notes})`);
+  ok(await r.page.isChecked(`#bridge-body input[value="${N1}:0"]`), 'bridge: the one note that can go is picked');
+  await until(r.page, () => /One Bitcoin transaction|err/.test(document.querySelector('#br-rcpt')?.innerHTML || ''), null, 120000);
+  const rc = (await text(r.page, '#br-rcpt')).replace(/\s+/g, ' ');
+  ok(/One Bitcoin transaction/.test(rc) && /250(\.0+)? private TAC on Ethereum/.test(rc) && /Relay fee\s*None/.test(rc), `bridge: a tracked note checks out as one Bitcoin transaction with no relay fee (${rc.slice(0, 160)})`);
+  await until(r.page, () => /short of the fee/.test(document.querySelector('#br-rcpt')?.textContent || ''), null, 120000).catch(() => {});
+  await r.page.check('#br-ack').catch(() => {});
+  ok(/short of the fee/.test(await text(r.page, '#br-rcpt')) && await r.page.isDisabled('#br-go'), 'bridge: a key with no sats for the fee cannot start it, and is told so');
+  const rows = await r.page.$$eval('#bridge-body .brr', (xs) => xs.map((x) => x.textContent.replace(/\s+/g, ' ').trim()));
+  ok(rows.length === 3, `bridge: the three bridges under way are listed (${rows.length})`);
+  ok(/Recorded/.test(rows[0] || '') && /proof is at block/.test(rows[0] || '') && !!(await r.page.$('#bridge-body .brr:nth-child(1) .stp li.now')),
+    `bridge: one waiting for the proof shows its step and where the proof is (${(rows[0] || '').slice(0, 140)})`);
+  ok(/Mint now/.test(rows[1] || '') && /Send it from/.test(rows[1] || '') && /free settles for today/.test(rows[1] || ''),
+    `bridge: a mint the relay refused offers Mint now and sending it from the paying account (${(rows[1] || '').slice(0, 200)})`);
+  ok(/didn’t complete/.test(rows[2] || '') && /Recover/.test(rows[2] || ''), 'bridge: one that did not complete offers Recover');
+  await r.page.click('#bridge-body [data-bract="recover"]');
+  await until(r.page, () => /Recovering/.test(document.querySelector('#br-rstatus')?.textContent || '') || /err/.test(document.querySelector('#br-rstatus')?.innerHTML || ''), null, 60000);
+  ok(claims.length === 1 && claims[0].burnTxid?.replace(/^0x/, '') === 'bb' + 'd3'.repeat(31) && /on its way back/.test(await text(r.page, '#bridge-body')),
+    `bridge: Recover files one signed claim for that burn, and the row says the TAC is on its way back (${await text(r.page, '#br-rstatus')})`);
+  if (process.env.SHOT) await r.page.screenshot({ path: process.env.SHOT + '-wide.png' });
+  // Phone width: nothing scrolls sideways.
+  await r.page.setViewportSize({ width: 360, height: 760 });
+  await sleep(300);
+  const wide = await r.page.evaluate(() => { const d = document.querySelector('#sheet-tac .sheet-in'); return [d.scrollWidth, d.clientWidth, document.documentElement.scrollWidth, innerWidth]; });
+  if (process.env.SHOT) await r.page.screenshot({ path: process.env.SHOT + '-phone.png', fullPage: true });
+  ok(wide[0] <= wide[1] + 1 && wide[2] <= wide[3] + 1, `bridge: no sideways scroll at phone width (${wide})`);
+  if (r.errors.length) { fails++; console.log('FAIL bridge page errors: ' + r.errors.slice(0, 3).join(' | ')); }
   await r.browser.close();
 });
 const WNS = '0x0000000000696760E15f265e828DB644A0c242EB';
