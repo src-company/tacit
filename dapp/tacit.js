@@ -35622,13 +35622,54 @@ async function reclaimWatchtowerBid(assetIdHex, bidIdHex) {
 
 // Holdings-page panel: the buyer's registered walk-away bids (cross-asset,
 // owner-scoped) with per-bid Reclaim (sweep the dedicated wallet back) + Cancel
-// (deregister). Async-populated so it never blocks the holdings paint; renders
-// nothing when the buyer has no registrations.
+// (deregister). Async-populated so it never blocks the holdings paint. With no
+// registrations it shows only the by-id recovery form.
+function _wtRecoverFormHtml() {
+  return `<details data-wt-recover style="margin-bottom:14px;">
+    <summary class="muted" style="font-size:10px;cursor:pointer;">Recover a bid wallet by bid id</summary>
+    <div class="muted" style="font-size:10px;margin-top:6px;">A cancelled or expired walk-away bid no longer lists above, but its bid wallet can still be swept back to your main wallet with the bid id.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;">
+      <input type="text" data-wt-recover-bid placeholder="Bid id (32 hex characters)" spellcheck="false" autocomplete="off" style="flex:1;min-width:220px;font-size:11px;">
+      <input type="text" data-wt-recover-asset value="${CANONICAL_TAC_ASSET_ID_HEX}" title="Asset id (TAC unless the bid was for another asset)" spellcheck="false" autocomplete="off" style="flex:2;min-width:220px;font-size:11px;">
+      <button data-wt-recover-go type="button" style="font-size:10px;padding:3px 10px;">Reclaim</button>
+    </div>
+    <div class="muted" data-wt-recover-status style="font-size:10px;margin-top:6px;word-break:break-all;"></div>
+  </details>`;
+}
+function _wireWtRecoverForm(host) {
+  const box = host.querySelector('[data-wt-recover]');
+  if (!box) return;
+  const bidIn = box.querySelector('[data-wt-recover-bid]'), assetIn = box.querySelector('[data-wt-recover-asset]');
+  const go = box.querySelector('[data-wt-recover-go]'), status = box.querySelector('[data-wt-recover-status]');
+  go.onclick = async () => {
+    if (go.disabled) return;
+    const bidId = bidIn.value.trim().toLowerCase(), assetId = assetIn.value.trim().toLowerCase().replace(/^0x/, '');
+    if (!/^[0-9a-f]{32}$/.test(bidId)) { status.textContent = 'The bid id is 32 hex characters.'; return; }
+    if (!/^[0-9a-f]{64}$/.test(assetId)) { status.textContent = 'The asset id is 64 hex characters.'; return; }
+    go.disabled = true; go.textContent = 'reclaiming…';
+    try {
+      const addr = await watchtowerBidAddress(assetId, bidId);
+      status.textContent = `Bid wallet ${addr} — sweeping to your main wallet…`;
+      const r = await reclaimWatchtowerBid(assetId, bidId);
+      const meta = (typeof getAssetMeta === 'function' && getAssetMeta(assetId)) || {};
+      const parts = [];
+      try { if (r && BigInt(r.asset_swept || '0') > 0n) parts.push(`${fmtAssetAmount(BigInt(r.asset_swept), Number.isInteger(meta.decimals) ? meta.decimals : 0)} ${meta.ticker || 'tokens'}`); } catch {}
+      if (r && r.swept > 0) parts.push(`${Number(r.swept).toLocaleString()} sats`);
+      if (parts.length) {
+        status.textContent = `Recovered ${parts.join(' + ')} from ${addr} to your main wallet.`;
+        toast(`Recovered ${parts.join(' + ')} to your main wallet`, 'success', 8000);
+      } else {
+        status.textContent = `Nothing at ${addr}. Check the bid id and asset id.`;
+      }
+    } catch (e) { status.textContent = `Reclaim failed: ${e?.message || String(e)}`; }
+    go.disabled = false; go.textContent = 'Reclaim';
+  };
+}
 async function renderWatchtowerBidsInto(host) {
   if (!host) return;
   let bids = [];
-  try { bids = await listWatchtowerBids(); } catch { host.innerHTML = ''; return; }
-  if (!bids.length) { host.innerHTML = ''; return; }
+  try { bids = await listWatchtowerBids(); } catch { /* the by-id form below needs only the wallet, not the worker */ }
+  if (!bids.length) { host.innerHTML = _wtRecoverFormHtml(); _wireWtRecoverForm(host); return; }
   const rows = bids.map((b) => {
     const dec = Number.isInteger(b.decimals) ? b.decimals : 0;
     const amt = (() => { try { return fmtAssetAmount(BigInt(b.bid_amount_base || '0'), dec); } catch { return '?'; } })();
@@ -35648,8 +35689,9 @@ async function renderWatchtowerBidsInto(host) {
   host.innerHTML = `<div style="margin-bottom:14px;border:1px solid var(--ink);background:var(--bg-warm);padding:10px 12px;">
     <div style="font-size:12px;font-weight:bold;margin-bottom:6px;">Walk-away bids <span class="muted" style="font-weight:normal;font-size:10px;">— the watchtower completes these while you're away</span></div>
     ${rows}
-    <div class="muted" style="font-size:10px;margin-top:6px;">Reclaim brings everything in the dedicated bid wallet back to your main wallet — bought tokens first, then unspent sats. Cancel deregisters from the watchtower (then Reclaim to recover funds).</div>
-  </div>`;
+    <div class="muted" style="font-size:10px;margin-top:6px;">Reclaim brings everything in the dedicated bid wallet back to your main wallet — bought tokens first, then unspent sats. Cancel deregisters from the watchtower and then does the same sweep.</div>
+  </div>${_wtRecoverFormHtml()}`;
+  _wireWtRecoverForm(host);
   host.querySelectorAll('[data-wt-row]').forEach((row) => {
     const bidId = row.getAttribute('data-bid'), assetId = row.getAttribute('data-asset');
     const reclaimBtn = row.querySelector('[data-wt-reclaim]');
@@ -35674,9 +35716,21 @@ async function renderWatchtowerBidsInto(host) {
       cancelBtn.disabled = true; cancelBtn.textContent = 'cancelling…';
       try {
         await cancelWatchtowerBid(bidId);
-        toast('Watchtower bid cancelled — use Reclaim to recover any unspent funds', 'success', 7000);
+      } catch (e) { cancelBtn.disabled = false; cancelBtn.textContent = 'Cancel'; toast(`Cancel failed: ${e?.message || String(e)}`, 'error', 8000); return; }
+      // The registration is gone from the worker, so this row is the only place left that
+      // holds the bid id; it stays until the bid wallet is swept home.
+      cancelBtn.textContent = 'reclaiming…';
+      try {
+        const r = await reclaimWatchtowerBid(assetId, bidId);
+        const parts = [];
+        try { if (r && BigInt(r.asset_swept || '0') > 0n) parts.push(`${fmtAssetAmount(BigInt(r.asset_swept), dec)} ${ticker}`); } catch {}
+        if (r && r.swept > 0) parts.push(`${Number(r.swept).toLocaleString()} sats`);
+        toast(parts.length ? `Bid cancelled — ${parts.join(' + ')} back in your main wallet` : 'Bid cancelled — nothing was left in the bid wallet', 'success', 8000);
         row.remove();
-      } catch (e) { cancelBtn.disabled = false; cancelBtn.textContent = 'Cancel'; toast(`Cancel failed: ${e?.message || String(e)}`, 'error', 8000); }
+      } catch (e) {
+        cancelBtn.remove();
+        toast(`Bid cancelled, but the bid wallet was not swept: ${e?.message || String(e)}. Press Reclaim to retry.`, 'warn', 12000);
+      }
     };
   });
 }
