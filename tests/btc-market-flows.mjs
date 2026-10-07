@@ -32,7 +32,7 @@ function extractRootBlocks(css) {
   return out;
 }
 const HARNESS = `<!doctype html><html><head><meta charset="utf-8"><style>${
-  (() => { const h = readFileSync(join(DAPP, 'index.html'), 'utf8'); const i = h.indexOf('/* ── Market page (btc-market.js)'); const j = h.indexOf("/* ── TAC's Ethereum trading lane"); return extractRootBlocks(h) + 'body{font-family:monospace;background:#e8e0cc}' + h.slice(i, j); })()
+  (() => { const h = readFileSync(join(DAPP, 'classic.html'), 'utf8'); const i = h.indexOf('/* ── Market page (btc-market.js)'); const j = h.indexOf("/* ── TAC's Ethereum trading lane"); return extractRootBlocks(h) + 'body{font-family:monospace;background:#e8e0cc}' + h.slice(i, j); })()
 }</style></head><body><div id="host"></div><div id="host2"></div>
 <script type="module">
 import { mountBtcMarket } from '/btc-market.js';

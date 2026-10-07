@@ -22655,7 +22655,7 @@ async function _renderHoldingsUnifiedStrip(force = false) {
     // open on this same key with send, make-public and make-private; other notes send from the Send tab.
     const sumOf = (src) => (e.byLane || []).filter((x) => x.source === src).reduce((a, x) => a + x.balance, 0n);
     const priv = sumOf('eth-confidential'), pub = sumOf('eth-canonical');
-    const flow = /^c?TAC$/i.test(ticker) ? '/weld/#tac' : /^[ct]?ETH$/i.test(ticker) ? '/weld/#eth' : '#tab=csend';
+    const flow = /^c?TAC$/i.test(ticker) ? '/#tac' : /^[ct]?ETH$/i.test(ticker) ? '/#eth' : '#tab=csend';
     const split = [priv > 0n ? `${fmtAssetAmount(priv, decs)} private` : '', pub > 0n ? `${fmtAssetAmount(pub, decs)} public` : ''].filter(Boolean).join(' · ');
     const act = (label, title) => `<a href="${flow}" class="btn-go" style="font-size:11px;padding:4px 10px;text-decoration:none;" title="${escapeHtml(title)}">${label}</a>`;
     const acts = [];
@@ -22668,7 +22668,7 @@ async function _renderHoldingsUnifiedStrip(force = false) {
         <div><strong>${escapeHtml(ticker)}</strong>
           <span class="chain-badge ${spanCls}" style="margin-left:6px;"><span class="dot"></span>${spanCls === 'both' ? 'both chains' : 'ethereum'}</span></div>
         <div class="muted" style="font-size:11px;margin-top:2px;">${escapeHtml(fmtAssetAmount(e.total, decs))} ${escapeHtml(ticker)} total${split ? ` · ${escapeHtml(split)} on Ethereum` : ''}</div>
-        ${acts.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">${acts.join('')}</div>${flow.startsWith('/weld/') ? '<div class="muted" style="font-size:10px;margin-top:4px;">Opens Tacit weld on this same key.</div>' : ''}` : ''}
+        ${acts.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">${acts.join('')}</div>${flow.startsWith('/#') ? '<div class="muted" style="font-size:10px;margin-top:4px;">Opens Tacit weld on this same key.</div>' : ''}` : ''}
       </div>
       <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;">${badges.join('')}</div>
     </div>`);
@@ -58646,6 +58646,8 @@ window.addEventListener('hashchange', () => {
 // checks), so nothing downstream changed; this just swaps what ends up
 // visible in the address bar once a hash has already been acted on.
 // preboot.js does the reverse translation (path → hash) on cold load.
+// The Wallet tab is this page's own path, /classic.html: the site root is
+// the front page, which sends the other tab paths back here.
 //
 // Market tab special-case: preserve any `&aid=<assetId>` already in the URL
 // so a deep-link landing flow doesn't erase the focused-asset signal. The
@@ -58667,7 +58669,7 @@ function _writeTabHash(tabName) {
       if (rawLane === 'btc' || rawLane === 'eth') lane = rawLane;
     } catch {}
   }
-  const path = tabName === 'wallet' ? '/' : `/${tabName}`;
+  const path = tabName === 'wallet' ? '/classic.html' : `/${tabName}`;
   const qs = new URLSearchParams(location.search);
   if (aid) qs.set('aid', aid); else qs.delete('aid');
   if (aid === CANONICAL_TAC_ASSET_ID_HEX && lane === 'eth') qs.set('lane', 'eth'); else qs.delete('lane');

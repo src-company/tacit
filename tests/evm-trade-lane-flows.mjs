@@ -28,7 +28,7 @@ function extractRootBlocks(css) {
 }
 // The real market-page CSS (Bitcoin lane + the Ethereum lane's additions), real :root tokens.
 const HARNESS = `<!doctype html><html><head><meta charset="utf-8"><style>${
-  (() => { const h = readFileSync(join(DAPP, 'index.html'), 'utf8'); const i = h.indexOf('/* ── Market page (btc-market.js)'); const j = h.indexOf('/* ── Shielded Send composer'); return extractRootBlocks(h) + 'body{font-family:monospace;background:#e8e0cc}' + h.slice(i, j); })()
+  (() => { const h = readFileSync(join(DAPP, 'classic.html'), 'utf8'); const i = h.indexOf('/* ── Market page (btc-market.js)'); const j = h.indexOf('/* ── Shielded Send composer'); return extractRootBlocks(h) + 'body{font-family:monospace;background:#e8e0cc}' + h.slice(i, j); })()
 }</style></head><body><section class="bm"><div class="bm-lane" data-lane="eth"><div id="host"></div></div></section>
 <script type="module">
 import { mountEvmTradeLane } from '/evm-trade-tile.js';

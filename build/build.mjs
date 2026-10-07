@@ -10,7 +10,7 @@
 //
 // `npm run build:verify` (--verify-only) checks the fingerprints and writes nothing.
 //
-// The dApp source is split: ../dapp/index.html (markup + meta-CSP) loads
+// The classic app's source is split: ../dapp/classic.html (markup + meta-CSP) loads
 // ../dapp/tacit.js (the application module), which imports from
 // ./vendor/tacit-deps.min.js.
 
@@ -29,13 +29,13 @@ const BUNDLE_OUT = join(VENDOR_DIR, 'tacit-deps.min.js');
 const MIXER_OUT  = join(VENDOR_DIR, 'tacit-mixer.min.js'); // separate bundle, lazy-loaded
 const SATSCONNECT_OUT = join(VENDOR_DIR, 'tacit-satsconnect.min.js'); // separate bundle, lazy-loaded
 const POSEIDON_OUT = join(VENDOR_DIR, 'tacit-poseidon.min.js'); // separate bundle, lazy-loaded (Bitcoin pool)
-const HTML       = join(DAPP_DIR, 'index.html');
+const HTML       = join(DAPP_DIR, 'classic.html');                // the classic app, at /classic.html
 const APP_JS     = join(DAPP_DIR, 'tacit.js');               // app code (extracted from inline)
 const PREBOOT    = join(DAPP_DIR, 'preboot.js');             // head-loaded, SW-cached like tacit.js
 const PRF_WALLET = join(DAPP_DIR, 'prf-wallet.js');          // passkey/PRF key derivation, SW-cached like tacit.js
 const SW_JS      = join(DAPP_DIR, 'sw.js');
 const VERIFY_HTML = join(DAPP_DIR, 'verify.html');   // self-contained verifier; its inline module is CSP-hash-pinned
-const WELD_HTML  = join(DAPP_DIR, 'weld', 'index.html');     // tacit weld: one file, its inline module CSP-hash-pinned
+const WELD_HTML  = join(DAPP_DIR, 'index.html');             // the front page (tacit weld, formerly /weld/): one file, its inline module CSP-hash-pinned
 const WELD_STATS_HTML = join(DAPP_DIR, 'weld', 'stats', 'index.html');   // weld stats: public reads only, its inline module CSP-hash-pinned
 const WELD_KEEPER_HTML = join(DAPP_DIR, 'weld', 'keeper', 'index.html'); // community ops: permissionless keeper actions (advanceTip etc.), its inline module CSP-hash-pinned
 const PAY_HTML = join(DAPP_DIR, 'pay', 'index.html');         // tacit pay: BTC and TAC payments, one file, its inline module CSP-hash-pinned
@@ -138,12 +138,12 @@ async function bundlePoseidon() {
 const sha384b64 = buf => 'sha384-' + createHash('sha384').update(buf).digest('base64');
 
 // Rewrite the `?cb=<token>` cache-bust handle on tacit.js URLs in
-// index.html so it tracks the current bytes of dapp/tacit.js. iOS Safari
+// classic.html so it tracks the current bytes of dapp/tacit.js. iOS Safari
 // serves stale modulepreloaded ESM to long-lived tabs even with
 // max-age=0; bumping the URL forces all clients to fetch fresh on next
 // load. Token is a short sha256 prefix of tacit.js — idempotent (no-op
 // if tacit.js bytes haven't changed) and impossible to forget because
-// it runs on every build. Returns true if index.html changed.
+// it runs on every build. Returns true if classic.html changed.
 function updateCacheBust(htmlBytes, appJsBytes, prebootBytes) {
   const token = createHash('sha256').update(appJsBytes).digest('hex').slice(0, 8);
   // preboot.js is cached cache-first by the service worker exactly like
@@ -164,9 +164,9 @@ function updateCacheBust(htmlBytes, appJsBytes, prebootBytes) {
 // then app.js, then the page that loads app.js) so each token covers bytes already final. Returns the drift it found; writes only
 // when asked, so --verify-only reuses the same walk.
 const SATS_CB_FILES = ['sats/join-worker.js', 'sats/mix.js', 'sats/secret.js', 'sats/eth.js', 'sats/app.js', 'sats/index.html'];
-// dapp/weld/ and its stats page each keep their imports in their inline module, so their tokens are rewritten before
+// The front page (dapp/index.html) and weld's stats and keeper pages each keep their imports in their inline module, so their tokens are rewritten before
 // those modules' CSP hashes are taken (updatePinnedCsp below).
-const WELD_CB_FILES = ['weld/index.html', 'weld/stats/index.html', 'weld/keeper/index.html'];
+const WELD_CB_FILES = ['index.html', 'weld/stats/index.html', 'weld/keeper/index.html'];
 // dapp/pay/ and dapp/pay/eth/ are built the same way as weld: one page each, every import in its inline module.
 const PAY_CB_FILES = ['pay/index.html', 'pay/eth/index.html'];
 // dapp/tac/ is the shielded-TAC page: app.js lazy-imports sats.js, so sats.js is hashed first and the page
@@ -286,7 +286,7 @@ function verifyCspDigest(htmlText) {
 // the hash (it also imports same-origin modules).
 const PINNED_PAGES = [
   { name: 'verify.html', file: VERIFY_HTML, re: /script-src '(unsafe-inline|sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src '${d}'` },
-  { name: 'weld/index.html', file: WELD_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
+  { name: 'index.html', file: WELD_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
   { name: 'weld/stats/index.html', file: WELD_STATS_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
   { name: 'weld/keeper/index.html', file: WELD_KEEPER_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
   { name: 'pay/index.html', file: PAY_HTML, re: /script-src 'self' '(sha256-[A-Za-z0-9+/=]+)'/, put: (d) => `script-src 'self' '${d}'` },
@@ -355,8 +355,8 @@ async function main() {
     const gotCb = found(/\.\/tacit\.js\?cb=([A-Za-z0-9_-]+)/, htmlText);
     const gotPreboot = found(/\.\/preboot\.js\?cb=([A-Za-z0-9_-]+)/, htmlText);
     const gotSw = found(/const CACHE_VERSION = '[^']*?-([0-9a-f]{8})'/, swText);
-    if (gotCb !== wantCb) drift.push(`index.html tacit.js ?cb=${gotCb} but sha256(dapp/tacit.js)=${wantCb}`);
-    if (gotPreboot !== wantPreboot) drift.push(`index.html preboot.js ?cb=${gotPreboot} but sha256(dapp/preboot.js)=${wantPreboot}`);
+    if (gotCb !== wantCb) drift.push(`classic.html tacit.js ?cb=${gotCb} but sha256(dapp/tacit.js)=${wantCb}`);
+    if (gotPreboot !== wantPreboot) drift.push(`classic.html preboot.js ?cb=${gotPreboot} but sha256(dapp/preboot.js)=${wantPreboot}`);
     if (gotSw !== wantSw) drift.push(`sw.js CACHE_VERSION suffix ${gotSw} but sha256(vendor‖prf-wallet)=${wantSw}`);
     drift.push(...pageCacheBust(SATS_CB_FILES, false), ...pageCacheBust(WELD_CB_FILES, false), ...pageCacheBust(TAC_CB_FILES, false), ...pageCacheBust(PAY_CB_FILES, false));
     drift.push(...pagePreloads(false));
@@ -439,7 +439,7 @@ async function main() {
   console.log(`  vendor/tacit-mixer.min.js       ${sha384b64(mixerBundle)}`);
   console.log(`  vendor/tacit-satsconnect.min.js ${sha384b64(satsConnectBundle)}`);
   console.log(`  tacit.js                        ${sha384b64(appJs)}`);
-  console.log(`  index.html                      ${sha384b64(html)}`);
+  console.log(`  classic.html                    ${sha384b64(html)}`);
   if (brBytes && cb) {
     console.log('\nEdge-compressed copy (serve via the worker /tacit.js route):');
     console.log(`  cd ${join(ROOT, 'worker')} && npx wrangler kv key put "dapp:tacit.js.br" --path ${BR_OUT} --binding REGISTRY_KV --remote --metadata '{"cb":"${cb.token}"}'`);

@@ -1,4 +1,4 @@
-// Checks dapp/weld/index.html in a real browser against an anvil fork of Ethereum: public RPC hosts are routed to
+// Checks dapp/index.html (the front page, formerly /weld/) in a real browser against an anvil fork of Ethereum: public RPC hosts are routed to
 // the fork and window.ethereum is an EIP-1193 stub that sends as the chosen account (anvil's first key, or an
 // impersonated one). The relay's submit and the EVM-pool keepers are stubbed, so nothing reaches a live service.
 //   airdrop  a listed recipient claims its TAC; the tile updates
@@ -231,7 +231,7 @@ async function openPage({ account, key = null, host = '127.0.0.1', init = null, 
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(`${e.message} @ ${(e.stack || '').split('\n').slice(1, 3).map((s) => s.trim()).join(' < ')}`));
-  return { browser, ctx, page, errors, url: `http://${host}:${WEB}/weld/` };
+  return { browser, ctx, page, errors, url: `http://${host}:${WEB}/` };
 }
 
 let fails = 0;
@@ -776,7 +776,7 @@ await step('bonds', async () => {
 const { makeEvmAccount } = await import(new URL('../dapp/evm-account.js', import.meta.url));
 await step('mainbond', async () => {
   const r = await openPage({ account: A0, key: K0 });
-  const root = r.url.replace(/weld\/$/, ''), hex = 'bd'.padEnd(64, '5'), pass = 'correct horse battery staple';
+  const root = r.url + 'classic.html', hex = 'bd'.padEnd(64, '5'), pass = 'correct horse battery staple';
   const POOL = '0x000000000Ed1eabD231Be41d93b719056F7febFC', ENGINE = '0x000000003f608BDdF0ca45934003ffb9DbDF70DB';
   const OP = Buffer.from(keccak_256(Buffer.concat([Buffer.from('aa'.repeat(32), 'hex'), Buffer.from([1, 0, 0, 0])]))).toString('hex');
   const call = async (to, data) => BigInt(await rpc('eth_call', [{ to, data }, 'latest']));

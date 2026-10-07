@@ -8,7 +8,7 @@ Dev-time tooling for the dapp in `../dapp/`. It is not part of the pinned dapp.
   - `tacit-deps.min.js` (`@noble/secp256k1`, `@noble/hashes`, `@scure/base`, `poseidon-lite`) from `entry.mjs`
   - `tacit-mixer.min.js` (snarkjs), lazy-loaded, from `entry-mixer.mjs`
   - `tacit-satsconnect.min.js` (sats-connect), lazy-loaded, from `entry-satsconnect.mjs`
-- rewrites the `?cb=` cache-bust tokens for `tacit.js` and `preboot.js` in `../dapp/index.html`
+- rewrites the `?cb=` cache-bust tokens for `tacit.js` and `preboot.js` in `../dapp/classic.html`
   (a short sha256 prefix of each file)
 - writes a brotli-q11 copy of `tacit.js` to `build/out/tacit.js.br` for the API's `/tacit.js`
   edge route, and prints the `wrangler kv key put` command that uploads it
@@ -30,7 +30,7 @@ Run it after any change to `dapp/tacit.js` or `dapp/preboot.js`, so the `?cb=` t
 
 ## Integrity
 
-All code runs same-origin from the pinned `dapp/` directory; the CSP in `dapp/index.html` allows
+All code runs same-origin from the pinned `dapp/` directory; the CSP in `dapp/classic.html` allows
 `script-src 'self'` (plus `'wasm-unsafe-eval'`), so nothing loads from a third-party CDN. The
 runtime known-answer tests (`runStartupKAT` in `tacit.js`) check the bundled primitives against
 published vectors at startup, independently of the bundle hashes.

@@ -209,7 +209,7 @@ the next. A retired pool keeps every exit open ([SPEC §8](./SPEC.md#8-deploymen
 
 ## Run the dapp
 
-The dapp is static files: `dapp/index.html`, `tacit.js` and a vendored crypto bundle.
+The dapp is static files: the front page `dapp/index.html`, the classic app `dapp/classic.html` with `tacit.js`, and a vendored crypto bundle.
 
 ```sh
 cd dapp && python3 -m http.server 8000     # http://localhost:8000

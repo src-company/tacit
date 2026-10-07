@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
-const cfg = read('worker-relay/src/lib/config.js'), pay = read('dapp/pay/eth/index.html'), weld = read('dapp/weld/index.html');
+const cfg = read('worker-relay/src/lib/config.js'), pay = read('dapp/pay/eth/index.html'), weld = read('dapp/index.html');
 let n = 0;
 const test = async (name, fn) => { await fn(); n++; console.log(`ok - ${name}`); };
 const def = (key, env) => Number(cfg.match(new RegExp(`${key}: num\\('${env}', ([0-9.]+)\\)`))?.[1]);

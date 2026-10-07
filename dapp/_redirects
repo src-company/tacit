@@ -21,3 +21,16 @@
 /pay/eth  /pay/eth/  301
 /pay/wei  /pay/eth/index.html  200
 /pay/wei/*  /pay/eth/index.html  200
+
+# The front page is dapp/index.html (tacit weld, formerly at /weld/); the classic app is dapp/classic.html. The
+# front page's head script (front-route.js) already forwards classic links, so none of the rules below is needed
+# for anything to work. They save a page load per classic link, and keep the address bar tidy.
+#
+# The catch-all serves the classic app, so its tab paths (/market?aid=…, /cdp) open it directly as they always
+# have. Every rule that pointed at /weld/ points at / instead, or the catch-all would hand those paths to it.
+/classic  /classic.html  301
+/weld     /              301
+/weld/    /              301
+/lite     /              301
+/lite/*   /              301
+/*        /classic.html  200

@@ -1,4 +1,4 @@
-// Checks the TAC "Bridge to Ethereum" UI (Holdings tab, dapp/index.html + dapp/tacit.js) in a real browser.
+// Checks the TAC "Bridge to Ethereum" UI (Holdings tab, dapp/classic.html + dapp/tacit.js) in a real browser.
 // Unlike tests/burndep-ux.test.mjs (which drives dapp/burndep-ux.js directly, headless, no DOM), this exercises
 // the actual click path: the note picker's eligible/ineligible rendering, the review panel, the irreversibility
 // gate, and the first real broadcast — catching DOM-wiring bugs (wrong selector, a handler that never fires,
@@ -127,7 +127,7 @@ async function main() {
   const until = (fn, arg, timeout = 30000) => page.waitForFunction(fn, arg, { timeout });
   const shot = (name) => SHOTS ? page.screenshot({ path: join(SHOTS, `bridge-${name}.png`) }) : null;
 
-  await page.goto(ROOT + '/');
+  await page.goto(ROOT + '/classic.html');
   await page.waitForSelector('#toast-container', { state: 'attached' });
   // A fresh, wallet-less visitor gets the welcome/onboarding modal from init() — dismiss it directly rather
   // than clicking through its own flow, since _passphraseModal refuses to stack on top of it (dapp/tacit.js
