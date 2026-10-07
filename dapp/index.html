@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-XjMoBa0FIhQFZL2AMFw8Vhlu2y1bGRdtIxCASS1+bE0=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-FumThfM/nl/XPk3MTdBbZpo/4ieUCbV+OfLiKnRgwEU=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <script src="/front-route.js?cb=c240ced2"></script>
 <title>tacit</title>
@@ -578,7 +578,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <span class="fig"><svg class="tk" aria-hidden="true"><use href="#tk-eth"/></svg><b class="num"><span data-num="in"><span class="sk" style="--w:5ch"></span></span><small>ETH</small></b><span>made private</span></span>
     <span class="fig"><svg class="tk" aria-hidden="true"><use href="#tk-teth"/></svg><b class="num"><span data-num="held"><span class="sk" style="--w:5ch"></span></span><small>ETH</small></b><span>private now</span></span>
     <span class="fig"><svg class="tk" aria-hidden="true"><use href="#tk-cusd"/></svg><b class="num"><span data-num="cusd"><span class="sk" style="--w:4ch"></span></span><small>cUSD</small></b><span>borrowed on BTC</span></span>
-    <span class="fig"><svg class="tk" aria-hidden="true"><use href="#i-pts"/></svg><b class="num"><span data-num="pts"><span class="sk" style="--w:3ch"></span></span></b><span>earning points</span></span>
+    <span class="fig"><svg class="tk" aria-hidden="true"><use href="#i-pts"/></svg><b class="num"><span data-num="pts"><span class="sk" style="--w:3ch"></span></span></b><span title="Accounts that have earned points">points earners</span></span>
     <span class="more">All stats →</span>
   </a>
   <div class="earn">
@@ -4982,7 +4982,7 @@ function paintEarn() {
   const f = FARM.top, per = (n) => n.toLocaleString('en-US');
   if (f) {
     mount($('#ern-farm-v'), f.apr != null ? html`${f.apr >= 1000 ? '1,000+' : per(Math.round(f.apr))}%<small>APR</small>` : f.perDay ? html`${per(f.perDay)}<small>TAC a day</small>` : '—');
-    $('#ern-farm').textContent = f.apr != null ? `TAC/ETH farm · ${per(f.perDay)} TAC a day` : f.perDay ? `across ${f.farms} farms` : 'farms between reward periods';
+    $('#ern-farm').textContent = f.apr != null ? `TAC/ETH farm · ${per(f.pubDay)} TAC a day` : f.perDay ? `across ${f.farms} farms` : 'farms between reward periods';
   } else if (f === null) { $('#ern-farm-v').textContent = '—'; $('#ern-farm').textContent = 'farms not read yet'; }
   const on = now() < ptsEnd();
   mount($('#ern-pts-v'), on ? html`<span data-pgm="pot">${potTac()}</span><small>TAC</small>` : '—');
@@ -5390,7 +5390,7 @@ async function readFarms(current, force = false) {
   const total = Math.round(shielded + pub);
   const mine = (FARM.positions || []).length;
   const apr = x?.live ? precisionApr(x) : null, farms = 1 + (prog?.pools?.length || 0), across = `${total.toLocaleString('en-US')} TAC a day across ${farms} farms`;
-  FARM.top = !x && !prog ? null : { apr, perDay: total, farms };
+  FARM.top = !x && !prog ? null : { apr, perDay: total, pubDay: Math.round(pub), farms };
   paintEarn();
   if (x && (x.staked > 0n || x.earned > 0n)) setFoot('farm', `Farming · ${fmt(x.earned, 18, 2)} TAC earned`, 'on');
   else if (mine) setFoot('farm', `${mine} shielded position${mine === 1 ? '' : 's'} earning`, 'on');
@@ -7035,7 +7035,7 @@ async function loadNums() {
   const v = { ...store.get(NUMS_KEY)?.v };
   if (r.eth && r.dev) { const t = privateEth(r.eth, r.dev); v.in = fmt(t.inWei, 18, 2); v.held = fmt(t.held, 18, 2); }
   if (r.btc) v.cusd = fmt(r.btc.borrowed, 8, 0);
-  if (r.pts) v.pts = Number(r.pts.participants).toLocaleString('en-US');
+  if (r.pts) v.pts = Number(r.pts.participants).toLocaleString('en-US') + (r.pts.full ? '+' : '');
   const p = { at: r.at, v };
   store.set(NUMS_KEY, p);
   paintNums(p);
