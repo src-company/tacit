@@ -12,6 +12,9 @@
   // The fragments and queries the classic app reads; this page's own are bare names (#eth, #farm) and #sp=/#st=.
   var CLASSIC_HASH = /^#(?:(?:tab|recv|claim|dclaim|gate|tacit-invoice|amm)=|amm-?ceremony$)/;
   var CLASSIC_QUERY = ['ceremony', 'coordinator', 'amm', 'ammceremony'];
+  // Readable paths for this page's own views (/lock, /farm, /device/base/withdraw): each becomes its link, the part after
+  // the #, on this same page, with no reload. Names the classic app used for its tabs (/points, /airdrop) stay its own.
+  var VIEWS = ['lock', 'borrow', 'farm', 'leaderboard', 'bitcoin', 'private', 'device', 'buy', 'sell', 'swap', 'activity', 'asset'];
   try {
     var loc = window.location, path = loc.pathname, q = loc.search, h = loc.hash;
     var seg = ((path.match(/^\/([a-z0-9-]+)\/?$/i) || [])[1] || '').toLowerCase();
@@ -28,6 +31,8 @@
     }
     var params = new URLSearchParams(q);
     if (CLASSIC_HASH.test(h) || CLASSIC_QUERY.some(function (k) { return params.has(k); })) return loc.replace(CLASSIC + q + h);
-    if (path !== '/') window.history.replaceState(null, '', '/' + q + h);
+    var parts = path.toLowerCase().replace(/^\/+|\/+$/g, '').split('/');
+    var view = VIEWS.indexOf(parts[0]) !== -1 && parts.every(function (x) { return /^[a-z0-9-]+$/.test(x); });
+    if (path !== '/') window.history.replaceState(null, '', '/' + q + (view && !h ? '#' + parts.join('/') : h));
   } catch (e) { /* never keep the page from loading */ }
 })();

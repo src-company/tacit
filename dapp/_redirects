@@ -23,18 +23,18 @@
 /pay/wei/*  /pay/eth/index.html  200
 
 # The front page is dapp/index.html (tacit weld, formerly at /weld/); the classic app is dapp/classic.html. The
-# front page's head script (front-route.js) already forwards classic links, so none of the rules below is needed
-# for anything to work. They save a page load per classic link, and keep the address bar tidy.
+# catch-all keeps serving the front page: its head script (front-route.js) turns readable paths (/lock, /farm,
+# /device/base/withdraw) into their # links on the page, and forwards the classic app's links (its tab paths such as
+# /market?aid=… and /cdp, its #tab= and other fragments) to /classic.html.
 #
-# The catch-all serves the classic app, so its tab paths (/market?aid=…, /cdp) open it directly as they always
-# have. Every rule that pointed at /weld/ points at / instead, or the catch-all would hand those paths to it.
+# None of the rules below is needed for anything to work. /classic saves a page load, and /lite now goes straight to /.
+# Rules sending the classic tab paths straight to /classic.html would save one more, but must keep each tab in the
+# fragment (/market → /classic.html#tab=market), so they are left to front-route.js.
 #
 # The live /weld → /weld/ rule also matches /weld/ itself, so /weld/ must stay a file (dapp/weld/index.html, which
 # forwards to / with the fragment kept) for as long as that rule is in the dashboard; without it, /weld/ redirects to
 # itself.
 /classic  /classic.html  301
-/weld     /              301
-/weld/    /              301
 /lite     /              301
 /lite/*   /              301
-/*        /classic.html  200
+/*        /index.html    200
