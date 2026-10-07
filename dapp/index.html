@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-FumThfM/nl/XPk3MTdBbZpo/4ieUCbV+OfLiKnRgwEU=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-P1Tz/dTS7HSujOiuLcxbzoVa4GSXg+cmNf/8aFAS13Q=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <script src="/front-route.js?cb=c240ced2"></script>
 <title>tacit</title>
@@ -178,6 +178,13 @@ a.di { color: inherit; text-decoration: none; }
 .brn b { font-weight: 500; color: var(--ink); }
 .brn small { font-size: 11.5px; }
 .brn.off { cursor: default; opacity: .6; }
+.brsp { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 8px; }
+.brsp .amt input { min-width: 0; }
+.brsp > span { display: grid; gap: 2px; }
+.brsp b { font-weight: 500; color: var(--ink); }
+.brsp small { font-size: 11.5px; color: var(--mute); }
+.brsp .amt { margin: 0; }
+.brsp .btn { width: auto; margin: 0; min-height: 36px; padding: 6px 14px; justify-self: start; }
 .act-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 16px; margin-top: 12px; font-size: 12px; color: var(--mute); }
 
 /* ── hero ── */
@@ -4273,7 +4280,11 @@ function brRow(rec) {
     ${self ? html`<div class="actr-f"><button class="link" type="button" data-bract="self" data-brid="${rec.id}">Send it from ${your()} instead</button>: no relay fee, and ${your()} pays the network fee.</div>` : ''}
   </li>`;
 }
-const brNote = (n) => html`<label class="pick brn${n.eligible ? '' : ' off'}"><input type="radio" name="br-note" value="${brId(n)}" ${n.eligible ? '' : 'disabled'} ${BR.pick === brId(n) ? 'checked' : ''}>
+const brOver = (n) => !n.eligible && /beta limit/.test(n.reason || '');
+const brNote = (n) => brOver(n) ? html`<div class="brn brsp"><span><b class="num">${fmt(BigInt(n.amount), 8, 4)} TAC</b><small>Over 1,000 TAC, the most one bridge takes. Split some off to your own address, then bridge that.</small></span>
+  <div class="amt"><input id="brsp-${n.txid.slice(0, 8)}-${n.vout}" inputmode="decimal" value="1000" autocomplete="off" aria-label="TAC to split off"><span class="u">TAC</span></div>
+  <button class="btn ghost" type="button" data-brsplit="${brId(n)}" data-brsplit-in="brsp-${n.txid.slice(0, 8)}-${n.vout}">Split off</button></div>`
+  : html`<label class="pick brn${n.eligible ? '' : ' off'}"><input type="radio" name="br-note" value="${brId(n)}" ${n.eligible ? '' : 'disabled'} ${BR.pick === brId(n) ? 'checked' : ''}>
   <span><b class="num">${fmt(BigInt(n.amount), 8, 4)} TAC</b>${n.eligible ? '' : html`<small>${brReason(n.reason)}</small>`}</span></label>`;
 function renderBridge(el) {
   if (!needKey(el, 'Bring TAC from your Bitcoin address into your private TAC on Ethereum. Open your Tacit wallet to start.')) return;
@@ -4340,6 +4351,13 @@ function renderBridge(el) {
     } catch (e) { if (my === seq && rc.isConnected) quoteErr(rc, brFail(e)); }
   };
   $$('input[name="br-note"]', el).forEach((r) => r.onchange = () => { BR.pick = r.value; check(); });
+  $$('[data-brsplit]', el).forEach((x) => x.onclick = () => busy(x, (run) => {
+    const n = notes.find((y) => brId(y) === x.dataset.brsplit), v = parseUnits($(`#${x.dataset.brsplitIn}`).value, 8);
+    if (!n) return;
+    if (!v || v > BigInt(T.bridgeUx().BURNDEP_BETA_CAP_RAW)) return say($('#br-status'), html`<span class="err">Enter an amount up to 1,000 TAC.</span>`);
+    if (v >= BigInt(n.amount)) return say($('#br-status'), html`<span class="err">Enter less than this note holds.</span>`);
+    return brSend(run, n, v, 'Split off');
+  }));
   if (BR.pick) check();
   go.onclick = () => busy(go, async (run) => {
     const r = review;
@@ -4387,20 +4405,22 @@ function renderBridge(el) {
   });
 }
 // TAC received privately, to its holder's own address: the one Bitcoin transaction that makes it a note the bridge can burn.
-async function brPrep(run, n) {
-  const status = $('#br-status'), pub = S.key.pubHex, amt = `${fmt(BigInt(n.amount), 8, 4)} TAC`;
+const brPrep = (run, n) => brSend(run, n, BigInt(n.amount), 'Send');
+// `amount` of one note to this key's own address, spending exactly that note: the rest comes back as its change.
+async function brSend(run, n, amount, verb) {
+  const status = $('#br-status'), pub = S.key.pubHex, amt = `${fmt(amount, 8, 4)} TAC`, split = amount < BigInt(n.amount);
   try {
-    run.say(status, 'Sending it to your own address…');
+    run.say(status, split ? `Splitting ${amt} off…` : 'Sending it to your own address…');
     const txid = await withKey(async (t) => {
       const h = await t.scanHoldings(true), u = h.get(TAC_BTC_ID)?.utxos.find((x) => x.utxo.txid === n.txid && x.utxo.vout === n.vout);
       if (!u) throw new Error('That TAC is no longer at this address. Refresh, then try again.');
-      const r = await t.buildAndBroadcastCXfer({ assetIdHex: TAC_BTC_ID, amount: u.amount, recipientPubHex: bytesToHex(t.wallet.pub), forceUtxos: [u] });
+      const r = await t.buildAndBroadcastCXfer({ assetIdHex: TAC_BTC_ID, amount, recipientPubHex: bytesToHex(t.wallet.pub), forceUtxos: [u] });
       try { t.invalidateHoldingsCache?.(); } catch {}
       return r.revealTxid;
     }, pub);
-    actBtc(txid, `Send ${amt} to your own address`);
+    actBtc(txid, `${verb} ${amt}${split ? '' : ' to your own address'}`);
     BR.pick = null; BR.at = 0;
-    say(status, html`<span class="ok">✓ ${amt} sent to your own address</span> <a href="${MEMPOOL}/tx/${txid}" target="_blank" rel="noopener">${short(txid, 6)} ↗</a>. It can be bridged from here once Bitcoin’s proof on Ethereum has seen it, usually within a few hours.`);
+    say(status, html`<span class="ok">✓ ${split ? `${amt} split off to your own address` : `${amt} sent to your own address`}</span> <a href="${MEMPOOL}/tx/${txid}" target="_blank" rel="noopener">${short(txid, 6)} ↗</a>. It can be bridged from here once it confirms and Bitcoin’s proof on Ethereum has seen it, usually within a few hours.`);
     Promise.allSettled([loadBridge(true), loadBtc(true)]).then(() => rerender('tac'));
   } catch (e) { run.fail(status, /insufficient sats|no plain-sats/i.test(String(e?.message)) ? new Error('Not enough BTC for this and its network fee.') : brFail(e)); }
 }

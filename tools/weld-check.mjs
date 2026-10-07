@@ -1877,8 +1877,8 @@ await step('bridge', async () => {
   ok(true, 'bridge: the Bitcoin sheet’s TAC line opens the TAC sheet’s Bridge tab, and the link reads #bridge');
   await until(r.page, () => document.querySelectorAll('#bridge-body .brn').length === 3, null, 120000);
   const notes = (await text(r.page, '#bridge-body .brns')).replace(/\s+/g, ' ').trim();
-  ok(/^250(\.0+)? TAC.*30(\.0+)? TAC.*1,500(\.0+)? TAC\s*Over 1,000 TAC/.test(notes) && await r.page.isDisabled(`#bridge-body input[value="${N2}:0"]`),
-    `bridge: both notes are listed, the one over 1,000 TAC refused with its reason (${notes})`);
+  ok(/^250(\.0+)? TAC.*30(\.0+)? TAC.*1,500(\.0+)? TAC\s*Over 1,000 TAC/.test(notes) && !(await r.page.$(`#bridge-body input[value="${N2}:0"]`)) && (await r.page.inputValue('#bridge-body .brsp input')) === '1000' && !!(await r.page.$('#bridge-body [data-brsplit]')),
+    `bridge: the notes are listed, the one over 1,000 TAC with its reason and a split control, not a dead choice (${notes})`);
   await r.page.check(`#bridge-body input[value="${N1}:0"]`);
   await until(r.page, () => /One Bitcoin transaction|err/.test(document.querySelector('#br-rcpt')?.innerHTML || ''), null, 120000);
   const rc = (await text(r.page, '#br-rcpt')).replace(/\s+/g, ' ');
