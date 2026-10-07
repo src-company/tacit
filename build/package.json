@@ -12,7 +12,9 @@
     "@noble/hashes": "1.4.0",
     "@noble/secp256k1": "2.1.0",
     "@scure/base": "1.1.6",
+    "@walletconnect/ethereum-provider": "2.24.0",
     "poseidon-lite": "^0.3.0",
+    "qrcode-generator": "2.0.4",
     "sats-connect": "^3.6.1",
     "snarkjs": "^0.7.6"
   },

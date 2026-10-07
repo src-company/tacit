@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-oyq36rlP2ddJ2WkHH28AgguChpaNsxGsDEtA62XPFlQ=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-vuCCtXJmXkpctRrgjX1p0dvSQmSyrUDHdvMIR8PGlsU=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <script src="/front-route.js?cb=69e9847d"></script>
 <title>tacit</title>
@@ -429,6 +429,8 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
 .picker button { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 14px; background: var(--field); border: 1px solid var(--hair-2); cursor: pointer; text-align: left; }
 @media (hover: hover) { .picker button:hover { border-color: var(--ink); } }
 .picker img { width: 28px; height: 28px; }
+.wc-qr { width: min(264px, 100%); margin: 6px auto 18px; padding: 14px; background: #fff; border: 1px solid var(--hair); }
+.wc-qr svg { display: block; width: 100%; height: auto; }
 
 .toasts { position: fixed; inset: auto 16px max(16px, env(safe-area-inset-bottom)) 16px; width: auto; height: auto; margin: 0; padding: 0; border: 0; background: transparent; overflow: visible; display: grid; gap: 8px; justify-items: center; pointer-events: none; }
 .toasts:not(:popover-open) { display: none; }
@@ -712,6 +714,12 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
     <div id="pick-body"></div>
   </div>
 </dialog>
+<dialog class="sheet layer" id="sheet-wc" aria-labelledby="wc-h">
+  <div class="sheet-in">
+    <div class="sheet-head"><h2 id="wc-h" tabindex="-1" autofocus>Connect a wallet app</h2><button class="x" type="button" data-close aria-label="Close">×</button></div>
+    <div id="wc-body"></div>
+  </div>
+</dialog>
 <dialog class="sheet layer" id="pass-dialog" aria-labelledby="pass-title">
   <div id="pass-modal" style="display:none">
     <form id="pass-form" class="sheet-in">
@@ -736,6 +744,7 @@ import { knownWallets } from '/tacit-wallet-known.js?cb=49410363';
 import { makeTacitAddress } from '/tacit-address.js';
 import { bip352TaggedHash } from '/bip352.js';
 import { makeEvmWallet } from '/evm-wallet.js?cb=16740dae';
+import { announceWalletConnect } from '/walletconnect.js?cb=661148d9';
 import { makeEvmAccount } from '/evm-account.js';
 import { makeEvmTx } from '/evm-tx.js';
 import { makeTacAirdrop, makeRpcCall } from '/tac-airdrop.js?cb=02ef61b4';
@@ -1871,6 +1880,30 @@ const render = {}, load = {};
 // this tab only. Public transactions come from an Ethereum account: a connected wallet, or the key's own Tacit
 // account. A Bitcoin wallet funds a lock. None of this changes which wallet tacit.finance opens.
 const evm = makeEvmWallet({ secp, sha256, keccak256: keccak_256, bytesToHex, hexToBytes, prfBytesToScalar, netName: 'mainnet' });
+// WalletConnect joins the browser wallets in the picker: a wallet app on a phone signs and sends for this page.
+const WC_PROJECT_ID = '1e8390ef1c1d8a185e035912a1409749';
+announceWalletConnect({
+  projectId: WC_PROJECT_ID,
+  chains: DEVICE_CHAINS.map((c) => c.chainId),
+  rpcMap: Object.fromEntries(DEVICE_CHAINS.map((c) => [c.chainId, c.rpc[0]])),
+  metadata: { name: 'tacit', description: 'Confidential crosschain DeFi', url: location.origin, icons: [`${location.origin}/tac-logo.png`] },
+  onPair: showPairing,
+});
+// The pairing link WalletConnect gives: a QR code for a wallet app on a phone, the link to copy, and on a phone a button
+// that opens the wallet app. Closing the sheet cancels the pairing.
+let pairing = null;
+$('#sheet-wc').addEventListener('close', () => { const p = pairing; pairing = null; p?.cancel(); });
+function showPairing({ uri, qrSvg, cancel }) {
+  const d = $('#sheet-wc'), phone = matchMedia('(pointer: coarse)').matches;
+  pairing = { cancel };
+  mount($('#wc-body'), html`<p class="lede-s">${phone ? 'Open your wallet app to connect, or scan the code from another device.' : 'Scan the code with a wallet app on your phone: MetaMask, Rainbow, Trust, Zerion or any other WalletConnect wallet.'}</p>
+    <div class="wc-qr">${new Raw(qrSvg)}</div>
+    <div class="row2">${phone ? html`<a class="btn" href="${uri}">Open wallet app</a>` : ''}<button class="btn ghost" type="button" id="wc-copy">Copy link</button></div>
+    <p class="note">The page waits here until the wallet app approves. Signing in costs nothing.</p>`);
+  $('#wc-copy').onclick = () => copy(uri, 'Link copied');
+  if (!d.open) d.showModal();
+  return () => { pairing = null; if (d.open) d.close(); };
+}
 // wallet: the connected Ethereum wallet. address: the account public transactions come from (see payer).
 const S = { address: null, wallet: null, provider: null, key: null, acct: null, pay: null };
 const walletPriv = () => hexToBytes(S.key.priv);
@@ -2068,7 +2101,7 @@ function signIn(id) {
   return html`<div class="opts" id="${id}-in">
     ${known ? opt('known', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>${known.tacit ? html`Continue as <b>${short(known.tacit, 7)}</b>` : 'Continue with your Tacit wallet'}`, html`Opens with ${viaText(known)}, as in the classic app. The same key handles Bitcoin, TAC and ETH here.`, 'main') : ''}
     ${other ? opt('other', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-tac"/></svg>${other.tacit ? html`Continue as <b>${short(other.tacit, 7)}</b>` : 'Your other Tacit key'}`, html`A different key, opened here before with ${viaText(other)}. Not the one the classic app has open.`) : ''}
-    ${opt('eth', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Ethereum wallet`, 'MetaMask, Rabby, Rainbow or any browser wallet. A free message signature, two the first time.')}
+    ${opt('eth', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>Ethereum wallet`, 'MetaMask, Rabby or any browser wallet, or a wallet app through WalletConnect. A free message signature, two the first time.')}
     ${opt('btc', html`<svg class="tk sm" aria-hidden="true"><use href="#tk-btc"/></svg>Bitcoin wallet`, 'Xverse, Leather or UniSat. One signature, two the first time.')}
     ${pk ? opt('passkey', html`<svg class="tk sm" aria-hidden="true"><use href="#i-key"/></svg>Passkey`, 'Already made one? Touch ID, Windows Hello or a security key.') : ''}
     ${pk && !known ? opt('new', html`<svg class="tk sm" aria-hidden="true"><use href="#i-key"/></svg>No wallet yet? Create one`, 'With Face ID, Touch ID or Windows Hello. Nothing to install.') : ''}
