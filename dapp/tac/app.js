@@ -662,6 +662,7 @@ async function scanEverything(statusId = 'st-recv') {
   const openFrag = () => {
     const frag = location.hash || '';
     if (/tacclaim=/.test(frag)) showClaim(frag).catch((e) => console.warn('[tac] claim link', e));
+    else if (/^#(market|buy)$/.test(frag)) $('tab-market').click();          // a link to the market, or to buying with sats
   };
   window.addEventListener('hashchange', openFrag);
   openFrag();
