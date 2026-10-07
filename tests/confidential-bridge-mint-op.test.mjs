@@ -223,4 +223,45 @@ const built = bm.buildBridgeMintOp({ chainBinding: CHAIN_BINDING, asset: ASSET, 
   ok('bridgeMint submits a fee-carrying bridgemint job with a recoverable memo');
 }
 
+// ── self-settle: the relay only proves, the caller sends settle() and pays its gas ──
+{
+  const dump = { attestedHeight: 900000, snapshot: { height: 900000, ...S.snapshot } };
+  const submitted = [];
+  const fetchImpl = async (url, init) => {
+    if (String(url).includes('/reflection/dump')) return new Response(JSON.stringify(dump), { status: 200 });
+    if (String(url).endsWith('/confidential/submit')) { submitted.push(JSON.parse(init.body)); return new Response(JSON.stringify({ ok: true, jobId: 'jp1' }), { status: 200 }); }
+    if (String(url).includes('/confidential/status')) return new Response(JSON.stringify({ jobId: 'jp1', mode: 'prove', status: 'proven', publicValues: '0x' + '0a'.repeat(32), proof: '0x' + '0b'.repeat(32) }), { status: 200 });
+    return new Response('{}', { status: 404 });
+  };
+  const relay = makeConfidentialRelay({ base: 'https://relay.test', fetchImpl, guard: makeRecoveryGuard({ memo }) });
+  const client = makeConfidentialBridgeMint({ pool, ct, relay, fetchImpl, relayBase: 'https://relay.test' });
+  const settles = [];
+  const r = await client.bridgeMint({
+    chainBinding: CHAIN_BINDING, asset: ASSET, spentTxid: SPENT_TXID, spentVout: SPENT_VOUT, burned: S.burned, dest: S.dest, snapshot: S.snapshot, recovery: { seedDerived: true },
+    selfSettle: async (x) => { settles.push(x); return { txHash: '0x' + 'cc'.repeat(32) }; },
+  });
+  assert.strictEqual(submitted.length, 1);
+  assert.strictEqual(submitted[0].mode, 'prove', 'the relay is asked to prove only');
+  assert.strictEqual(submitted[0].type, 'bridgemint');
+  assert.strictEqual(settles.length, 1, 'the caller settles once');
+  assert.strictEqual(settles[0].publicValues, '0x' + '0a'.repeat(32));
+  assert.strictEqual(settles[0].proof, '0x' + '0b'.repeat(32));
+  assert.ok(Array.isArray(settles[0].memos), 'with the memos the proof commits to');
+  assert.strictEqual(r.txHash, '0x' + 'cc'.repeat(32), 'the result carries the caller\'s transaction');
+  assert.strictEqual(r.jobId, 'jp1');
+  assert.strictEqual(r.destLeaf, client.buildBridgeMintOp({ chainBinding: CHAIN_BINDING, asset: ASSET, spentTxid: SPENT_TXID, spentVout: SPENT_VOUT, burned: S.burned, dest: S.dest, snapshot: S.snapshot }).destLeaf, 'and the mint it built');
+  // A relay that cannot prove it: nothing is sent.
+  const failing = async (url, init) => (String(url).includes('/confidential/status')
+    ? new Response(JSON.stringify({ jobId: 'jp1', status: 'failed', error: 'prover down' }), { status: 200 }) : fetchImpl(url, init));
+  const relay2 = makeConfidentialRelay({ base: 'https://relay.test', fetchImpl: failing, guard: makeRecoveryGuard({ memo }) });
+  const client2 = makeConfidentialBridgeMint({ pool, ct, relay: relay2, fetchImpl: failing, relayBase: 'https://relay.test' });
+  let sent = 0;
+  await assert.rejects(client2.bridgeMint({
+    chainBinding: CHAIN_BINDING, asset: ASSET, spentTxid: SPENT_TXID, spentVout: SPENT_VOUT, burned: S.burned, dest: S.dest, snapshot: S.snapshot, recovery: { seedDerived: true },
+    selfSettle: async () => { sent++; return { txHash: '0x1' }; },
+  }), /could not prove|prover down|failed/i);
+  assert.strictEqual(sent, 0, 'a mint that could not be proved is never settled');
+  ok('bridgeMint with selfSettle has the relay prove only, hands the proof to the caller, and never settles an unproved mint');
+}
+
 console.log(`\n${n}/${n} confidential-bridge-mint-op checks passed`);

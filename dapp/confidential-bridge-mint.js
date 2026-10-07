@@ -206,7 +206,9 @@ export function makeConfidentialBridgeMint({ pool, ct, relay = null, fetchImpl =
   // deriveBridgeMintBlinding (bridge-mint-recovery.js), which the recovery scan re-derives on its own. That scan tries
   // round amounts and caller-supplied values, and a destination net of a fee is usually not round, so a fee'd mint
   // should seal a memo.
-  async function bridgeMint({ network = 'mainnet', snapshot = null, recovery, ephRand, waitOpts, ...args }) {
+  // `selfSettle({ jobId, publicValues, proof, memos })` → { txHash }: the relay only proves, and the caller sends settle()
+  // from its own account and pays that gas (no relay fee). The proof is still built by the relay.
+  async function bridgeMint({ network = 'mainnet', snapshot = null, recovery, ephRand, waitOpts, selfSettle = null, ...args }) {
     if (!relay) throw new Error('bridge-mint: no relay wired');
     if (!recovery || (!recovery.seedDerived && recovery.ownerPub == null)) {
       throw new Error('bridge-mint: pass recovery { ownerPub, secret } or { seedDerived: true } so the minted note stays recoverable');
@@ -217,8 +219,13 @@ export function makeConfidentialBridgeMint({ pool, ct, relay = null, fetchImpl =
       ? { seedDerived: true }
       : { ownerPub: recovery.ownerPub, value: String(args.dest.value), blinding: hex32(args.dest.blinding), secret: recovery.secret == null ? 0 : recovery.secret,
           asset: built.op.asset, owner: args.dest.owner, cx: built.op.output.cx, cy: built.op.output.cy };
-    const r = await relay.settle({ type: 'bridgemint', op: built.op, leaves: [built.destLeaf], outputs: [output], ephRand: ephRand || freshScalar }, waitOpts);
-    return { ...r, ...built };
+    const spec = { type: 'bridgemint', op: built.op, leaves: [built.destLeaf], outputs: [output], ephRand: ephRand || freshScalar };
+    if (!selfSettle) return { ...(await relay.settle(spec, waitOpts)), ...built };
+    const proven = await relay.prove(spec, waitOpts);
+    if (proven.status === 'settled') return { ...proven, ...built };
+    if (proven.status !== 'proven') throw new Error(`bridge-mint: the relay could not prove this mint (${proven.error || proven.status})`);
+    const sent = await selfSettle({ jobId: proven.jobId, publicValues: proven.publicValues, proof: proven.proof, memos: proven.memos || [] });
+    return { jobId: proven.jobId, ...sent, ...built };
   }
 
   return { sourceLeaf, buildBridgeBurnEnvelope, buildBridgeMintOp, fetchReflectionSnapshot, bridgeMint, feeIsQuantized, ladderFee, destValueFor, txidInternal };

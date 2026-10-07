@@ -427,14 +427,16 @@ export function makeBurnDepositUx(deps) {
   // onProgress({ phase, ... }): best-effort, fire-and-forget UI feedback for a step that can take real time
   // (today only the mint, which fetches a multi-MB snapshot and waits on real network proving — everything
   // else here is a broadcast or a single small request, over before a progress indicator would even paint).
-  async function advance(walletPub, id, { walletPriv = null, onProgress = null } = {}) {
+  // selfSettle({ jobId, publicValues, proof, memos }) → { txHash }: at the mint, the relay proves and the caller sends the
+  // settle itself and pays its gas, for a relay that will not take the mint (a fee floor, a spent free budget, load).
+  async function advance(walletPub, id, { walletPriv = null, onProgress = null, selfSettle = null } = {}) {
     const rec = getRecord(walletPub, id);
     if (!rec) throw new Error(`burndep-ux: no bridge record for ${id}`);
     if (!tryAcquireLease(id)) throw new Error('burndep-ux: this bridge is being advanced in another tab right now');
     try {
       const fn = STAGE_ADVANCE[rec.stage];
       if (!fn) return rec; // terminal ('minted') or unknown — nothing to do
-      const result = await fn(rec, { walletPriv, onProgress });
+      const result = await fn(rec, { walletPriv, onProgress, selfSettle });
       return rec.lastError ? putRecord({ ...result, lastError: null, errorCount: 0 }) : result;
     } catch (e) {
       putRecord({ ...rec, lastError: { message: String((e && e.message) || e), at: now() }, errorCount: (rec.errorCount || 0) + 1 });
@@ -561,7 +563,7 @@ export function makeBurnDepositUx(deps) {
       if (!Number.isInteger(h) || !Number.isInteger(r.height) || h > r.height) return rec;
       return putRecord({ ...rec, stage: 'not-recorded', notRecordedAt: now() });
     },
-    rfolded: async (rec, { walletPriv, onProgress }) => {
+    rfolded: async (rec, { walletPriv, onProgress, selfSettle }) => {
       if (!walletPriv) throw new Error('burndep-ux: this stage needs the wallet key');
       const say = (phase, extra) => { try { onProgress && onProgress({ phase, ...extra }); } catch { /* best-effort */ } };
       const m = rec.mint;
@@ -573,6 +575,7 @@ export function makeBurnDepositUx(deps) {
         dest: { value: BigInt(m.dest.value), blinding: BigInt(m.dest.blinding), owner: m.dest.owner },
         // The destination blinding is derived from the wallet key and ν, which the recovery scan re-derives.
         recovery: { seedDerived: true },
+        selfSettle,
         waitOpts: { onJob: (jobId) => say('submitted', { jobId }), onUpdate: (st) => say('status', { status: st.status }) },
       });
       return putRecord({ ...rec, stage: 'minted', mintedAt: now(), mintedJobId: minted.jobId || null, mintedTxHash: minted.txHash || null });
@@ -593,7 +596,7 @@ export function makeBurnDepositUx(deps) {
       if (recorded !== true) return rec;
       return putRecord({ ...rec, stage: 'folded', foldedAt: now() });
     },
-    folded: async (rec, { walletPriv, onProgress }) => {
+    folded: async (rec, { walletPriv, onProgress, selfSettle }) => {
       const recorded = await burnRecorded(rec);
       if (recorded === false) return putRecord({ ...rec, stage: 'not-recorded', notRecordedAt: now() });
       if (!walletPriv) throw new Error('burndep-ux: this stage needs the wallet key');
@@ -614,6 +617,7 @@ export function makeBurnDepositUx(deps) {
         // own from the seed — the { ownerPub, secret } memo-sealing path is for a blinding it has no other way
         // to find, which isn't the case here.
         recovery: { seedDerived: true },
+        selfSettle,
         waitOpts: {
           onJob: (jobId) => say('submitted', { jobId }),
           onUpdate: (st) => say('status', { status: st.status }),

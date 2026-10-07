@@ -49,7 +49,12 @@ const server = createServer((req, res) => {
   const json = (obj, status = 200) => { res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(obj)); };
 
   if (u.pathname === `/chain/tx/${NOTE_TXID}`) {
-    return json({ status: { confirmed: true }, vout: [{ scriptpubkey: OWN_SPK }, { scriptpubkey: OWN_SPK }] });
+    return json({ status: { confirmed: true, block_height: 900 }, vout: [{ scriptpubkey: OWN_SPK }, { scriptpubkey: OWN_SPK }] });
+  }
+  // The attested reflection state the app checks a note against before bridging it: past the note's block, tracking
+  // nothing, so the note takes the burn-deposit path this check drives.
+  if (u.pathname === '/reflection/dump') {
+    return json({ attestedHeight: 1000, snapshot: { height: 1000, noteLeaves: [], liveTriples: [], spentLinks: [], burnNodes: [], pendingDepositRecords: [] } });
   }
   if (u.pathname === '/reflection/burndep/trace') {
     let body = '';
@@ -86,6 +91,8 @@ async function main() {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ fastestFee: 5, halfHourFee: 3, hourFee: 2, economyFee: 1, minimumFee: 1 }) }));
   await ctx.route(/^https:\/\/(mempool\.space|blockstream\.info)\/signet\/api\/fee-estimates$/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ '1': 5, '2': 4, '3': 3, '6': 2 }) }));
+  await ctx.route(/^https:\/\/(mempool\.space|blockstream\.info)\/signet\/api\/blocks\/tip\/height$/, (route) =>
+    route.fulfill({ status: 200, contentType: 'text/plain', body: '1000' }));
   await ctx.route(/^https:\/\/(mempool\.space|blockstream\.info)\/signet\/api\/tx$/, (route) =>
     route.fulfill({ status: 200, contentType: 'text/plain', body: 'cc'.repeat(32) }));
   await ctx.route(/^https:\/\/(mempool\.space|blockstream\.info)\/signet\/api\/address\/[^/]+$/, (route) =>
@@ -326,6 +333,30 @@ async function main() {
   ok(!!secondRow && /not on public explorers yet/.test(secondRow) && new RegExp(`tx/${'aa'.repeat(32)}`).test(secondRow) && !secondRow.includes('bb'.repeat(32)),
     `pre-mined burn: the row links the confirmed move, not the unmined burn, and says why (${secondRow ? 'found' : 'row missing'})`);
   await shot('pre-mined-burn');
+
+  // A mint the relay refused: the row offers to finish it from the holder's own Tacit account. Rows that failed for
+  // another reason, or are at another stage, do not.
+  await page.evaluate(([walletPubHex, network]) => {
+    const key = `tacit-burndep-bridge-v1:${network}:${walletPubHex.toLowerCase()}`;
+    const existing = JSON.parse(localStorage.getItem(key) || '[]');
+    const base = { network, walletPub: walletPubHex, source: { assetId: 'f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b', amount: '70000000000' }, burn: { txid: 'cc'.repeat(32) }, migrate: { revealTxid: 'aa'.repeat(32) } };
+    existing.push({ ...base, id: 'f1'.repeat(31) + 'f2:0', stage: 'folded', lastError: { message: 'relay 400: submitJob: relay fee below the current floor — re-quote higher or self-settle', at: Date.now() }, errorCount: 1 });
+    existing.push({ ...base, id: 'f3'.repeat(31) + 'f4:0', source: { ...base.source, amount: '30000000000' }, stage: 'folded', lastError: { message: 'cannot read properties of undefined', at: Date.now() }, errorCount: 1 });
+    existing.push({ ...base, id: 'f5'.repeat(31) + 'f6:0', source: { ...base.source, amount: '20000000000' }, stage: 'registered', lastError: { message: 'relay is busy', at: Date.now() }, errorCount: 1 });
+    localStorage.setItem(key, JSON.stringify(existing));
+  }, [hex(WALLET_PUB), 'signet']);
+  await page.click('.tab[data-tab="wallet"]');
+  await page.click('.tab[data-tab="holdings"]');
+  await sleep(500);
+  const rowsBy = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('[data-burndep-row]')].map((r) => [(r.textContent.match(/(\d+) TAC/) || [])[1], { self: !!r.querySelector('[data-burndep-act="selfmint"]'), text: r.textContent }])));
+  ok(rowsBy['700'] && rowsBy['700'].self && /Finish it myself/.test(rowsBy['700'].text) && /can’t take this mint right now/.test(rowsBy['700'].text), 'a mint the relay refused offers "Finish it myself", with what it costs');
+  ok(rowsBy['300'] && !rowsBy['300'].self, 'a mint that failed for another reason does not');
+  ok(rowsBy['200'] && !rowsBy['200'].self, 'and neither does a bridge still waiting for the reflection');
+  await shot('self-mint-offer');
+  await page.evaluate(() => { document.querySelector('#toast-container').innerHTML = ''; document.querySelector('[data-burndep-act="selfmint"]').click(); });
+  await until(() => /Bridge action failed/.test(document.querySelector('#toast-container')?.textContent || ''), null, 20000).catch(() => {});
+  const selfToast = await page.evaluate(() => document.querySelector('#toast-container')?.textContent || '');
+  ok(/Bridge action failed/.test(selfToast), `pressing it runs the mint through the holder's own account (the stub world has no real burn, so it stops with: ${selfToast.slice(0, 90)})`);
 
   if (errors.length) { fails++; console.log('FAIL page errors:\n  ' + errors.slice(0, 8).join('\n  ')); }
   console.log(fails ? `${fails} failed` : 'all passed');

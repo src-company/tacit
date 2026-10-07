@@ -22956,7 +22956,15 @@ function _burndepFriendlyError(e) {
   if (/rate.?limit|too many requests|\b429\b/i.test(m)) return 'That service is busy right now. Try again in a moment.';
   if (/timed? ?out|timeout/i.test(m)) return 'That took too long to answer. Try again.';
   if (/another tab/i.test(m)) return 'This bridge is being advanced in another open tab right now. Wait for it to finish there, or close that tab and retry here.';
+  const short = m.match(/insufficient ETH for gas: (0x[0-9a-fA-F]{40})/);
+  if (short) return `Your Tacit account ${short[1]} needs a little ETH for gas to finish this: send about 0.003 ETH to it, then press Finish again.`;
   return m;
+}
+// A mint the relay would not take (a fee floor, a spent free budget, load): the holder can send the settle from their own
+// Tacit account instead, paying only gas. Offered whenever the last attempt failed in a way that looks like the relay's side.
+function _burndepRelayRefused(err) {
+  const m = String((err && err.message) || err || '');
+  return /relay|free relayed|fee below|floor|capacity|memory cap|temporarily|too many|rate.?limit|\b(429|502|503)\b|settle/i.test(m);
 }
 function _renderHoldingsBurndepBridges(listEl) {
   if (!wallet || !wallet.pub || !WORKER_BASE) return;
@@ -22997,7 +23005,9 @@ function _renderHoldingsBurndepBridges(listEl) {
       : rec.stage === 'not-recorded' ? 'Recover' : rec.stage === 'recovered' ? 'Done' : failing ? 'Retry' : 'Refresh';
     const actKind = rec.stage === 'stopped' ? 'reclaim' : rec.stage === 'not-recorded' ? 'recover' : rec.stage === 'recovered' ? 'dismiss' : needsKey ? 'sign' : 'poll';
     const noteText = rec.stage === 'recovering' && rec.recover?.status === 'held' ? 'Your recovery is being checked. Nothing else to do.' : _BURNDEP_NOTE[rec.stage];
-    const noteHtml = noteText ? `<div style="margin-top:3px;max-width:52ch;">${escapeHtml(noteText)}</div>` : '';
+    const selfOffer = (rec.stage === 'folded' || rec.stage === 'rfolded') && failing && _burndepRelayRefused(rec.lastError);
+    const noteHtml = (noteText ? `<div style="margin-top:3px;max-width:52ch;">${escapeHtml(noteText)}</div>` : '')
+      + (selfOffer ? `<div style="margin-top:3px;max-width:52ch;">The relay can’t take this mint right now. You can finish it from your Tacit account instead: it pays a little ETH for gas (about 0.001–0.003 ETH) and no relay fee.</div>` : '');
     // A stage label alone can't distinguish "waiting normally" from "stuck on a repeating error" — this is the
     // only place a background-poller failure (never seen by anyone unless they look here) becomes visible.
     const errorHtml = failing
@@ -23022,7 +23032,10 @@ function _renderHoldingsBurndepBridges(listEl) {
           ${maraHtml}
           ${foldHtml}
         </div>
-        <button data-burndep-act="${actKind}" data-burndep-id="${escapeHtml(rec.id)}" style="font-size:11px;padding:5px 10px;white-space:nowrap;">${actLabel}</button>
+        <div style="display:flex;flex-direction:column;gap:4px;align-items:stretch;">
+          <button data-burndep-act="${actKind}" data-burndep-id="${escapeHtml(rec.id)}" style="font-size:11px;padding:5px 10px;white-space:nowrap;">${actLabel}</button>
+          ${selfOffer ? `<button data-burndep-act="selfmint" data-burndep-id="${escapeHtml(rec.id)}" style="font-size:11px;padding:5px 10px;white-space:nowrap;">Finish it myself</button>` : ''}
+        </div>
       </div>`;
   }).join('');
   // Always present, regardless of whether any record is currently journalled — the whole point is to recover
@@ -23126,8 +23139,10 @@ function _renderHoldingsBurndepBridges(listEl) {
           renderHoldings();
           return;
         }
-        if (isSign) await ensurePrivkey();
-        const after = await ux.advance(bytesToHex(wallet.pub), id, { walletPriv: wallet.priv, onProgress });
+        if (isSign || kind === 'selfmint') await ensurePrivkey();
+        // The holder's own Tacit account sends the settle (and pays its gas) when the relay would not take the mint.
+        const selfSettle = kind === 'selfmint' ? (x) => _poolUxSingleton().settleFromAccount({ settlerPriv: wallet.priv, ...x }) : null;
+        const after = await ux.advance(bytesToHex(wallet.pub), id, { walletPriv: wallet.priv, onProgress, ...(selfSettle ? { selfSettle } : {}) });
         // Always confirm the outcome via toast — independent of this card's own DOM, so a background refresh
         // rebuilding the row mid-click (the auto-poller, or any other renderHoldings() call landing in the same
         // window) can never leave the click looking like it silently did nothing, which is exactly what made

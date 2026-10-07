@@ -175,6 +175,11 @@ function makeWorld() {
       // Mirrors confidential-relay.js's real shape: onJob once the job is accepted, onUpdate as its status
       // moves — the only way a caller finds out this call isn't hung during the tens of seconds a real mint
       // spends fetching a multi-MB snapshot and waiting on network proving.
+      // A caller settling it itself gets the relay's proof to send, and its own transaction is the mint's.
+      if (args.selfSettle) {
+        const x = await args.selfSettle({ jobId: 'job-self', publicValues: '0x' + '0a'.repeat(32), proof: '0x' + '0b'.repeat(32), memos: [] });
+        return { jobId: 'job-self', ...x };
+      }
       const w = args.waitOpts || {};
       if (w.onJob) w.onJob('job1', 'bridgemint');
       if (w.onUpdate) { w.onUpdate({ status: 'pending' }); w.onUpdate({ status: 'proving' }); w.onUpdate({ status: 'settled' }); }
@@ -812,6 +817,46 @@ let rec;
   const c2 = world.recoverPosts[before];
   const opened2 = pool.commitXY(BigInt(c2.amount), BigInt(c2.blinding));
   ok((again.stage === 'recovering' || again.stage === 'recovered') && BigInt(opened2.cx) === BigInt(notRecorded.burnHome.cx) && BigInt(opened2.cy) === BigInt(notRecorded.burnHome.cy), 'its recovery claim, built from nothing but the key, the txid and the amount, opens the burned note');
+}
+
+// A mint the relay will not take is finished by the holder: the relay proves, the holder's own account sends the settle.
+{
+  // untracked TAC: the burn-deposit path, at 'folded'
+  const world = makeWorld();
+  const ux = makeUx(world, makeMemStorage());
+  let r = await ux.start({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPriv: WALLET_PRIV, fundingUtxo: { txid: FUND_TXID_1, vout: 0, value: 30_000 }, feeRate: BASE_RATE });
+  r = await ux.advance(r.walletPub, r.id); world.setMigrateConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id); r = await ux.advance(r.walletPub, r.id);
+  world.setBurnHomeOnChain(r.burnHome.txid, r.burnHome.spk);
+  r = await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV });
+  world.setBurnSubmitted(r.burn.txid);
+  r = await ux.advance(r.walletPub, r.id); world.setBurnConfirmed(true);
+  r = await ux.advance(r.walletPub, r.id); r = await ux.advance(r.walletPub, r.id);
+  world.setBurnFolded(true);
+  r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'folded', 'sanity: ready to mint');
+  const settles = [];
+  r = await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV, selfSettle: async (x) => { settles.push(x); return { txHash: '0x' + 'ee'.repeat(32) }; } });
+  ok(r.stage === 'minted' && r.mintedTxHash === '0x' + 'ee'.repeat(32) && r.mintedJobId === 'job-self', 'a self-settled mint is minted, under the holder’s own transaction');
+  ok(settles.length === 1 && settles[0].publicValues === '0x' + '0a'.repeat(32) && settles[0].proof === '0x' + '0b'.repeat(32), 'the holder is handed the relay’s proof to send');
+  ok(world.bridgeMintCalls.length === 1 && typeof world.bridgeMintCalls[0].selfSettle === 'function', 'the mint was asked for with the self-settle option');
+}
+{
+  // tracked TAC: the one-step path, at 'rfolded'
+  const world = makeWorld();
+  world.setBurnHomeOnChain(NOTE_TXID, '0014' + Buffer.from(ripemd160(nobleSha256(WALLET_PUB))).toString('hex'));
+  world.setReflectedNote({ txid: NOTE_TXID, vout: NOTE_VOUT, value: NOTE_AMOUNT, blinding: NOTE_BLINDING });
+  const ux = makeUx(world, makeMemStorage());
+  let r = await ux.startReflected({ note: { txid: NOTE_TXID, vout: NOTE_VOUT, sats: NOTE_SATS, amount: NOTE_AMOUNT, blinding: NOTE_BLINDING }, walletPriv: WALLET_PRIV, feeRate: BASE_RATE });
+  r = await ux.advance(r.walletPub, r.id);
+  world.setChainTx(r.burn.txid, { confirmed: true });
+  r = await ux.advance(r.walletPub, r.id);
+  world.setNoteHeight(1001); world.setChainTx(r.burn.txid, { confirmed: true });
+  world.foldReflected(r.burn.hex);
+  r = await ux.advance(r.walletPub, r.id);
+  ok(r.stage === 'rfolded', 'sanity: the one-step bridge is ready to mint');
+  r = await ux.advance(r.walletPub, r.id, { walletPriv: WALLET_PRIV, selfSettle: async () => ({ txHash: '0x' + 'dd'.repeat(32) }) });
+  ok(r.stage === 'minted' && r.mintedTxHash === '0x' + 'dd'.repeat(32), 'the one-step bridge can be finished the same way');
 }
 
 // A note newer than the attested state is not judged yet: preflight asks to wait, and a bridge holds before its burn.

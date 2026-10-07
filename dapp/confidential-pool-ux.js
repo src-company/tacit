@@ -3096,6 +3096,18 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
     return { from: acct.address, txHash, signedRaw: signed.raw };
   }
 
+  // Sends a proven op's settle() from this key's own Tacit account, which pays the gas. The node is asked first: the
+  // account must cover the fee reserve (the error names the account and what it holds), and a call that would revert is
+  // never sent. → { from, txHash }
+  async function settleFromAccount({ settlerPriv, publicValues, proof, memos = [], pair = null } = {}) {
+    const acct = account(settlerPriv);
+    const data = settleCalldata({ publicValues, proof, memos, pair });
+    let gasLimit = 1200000n;
+    try { gasLimit = (BigInt(await rpc('eth_estimateGas', [{ from: acct.address, to: cfg.pool, data }])) * 13n) / 10n; } catch { /* the pre-send call judges it */ }
+    const sent = await _sendEvmTx({ acct, to: cfg.pool, data, gasLimit });
+    return { from: acct.address, txHash: sent.txHash };
+  }
+
   // The pool call that settles a proven op, for any sender to submit: settle(bytes publicValues, bytes proof,
   // bytes[] memos), or createPairAndSettle for a founding LP add. Sent to cfg.pool with no value.
   function settleCalldata({ publicValues, proof, memos = [], pair = null } = {}) {
@@ -3788,7 +3800,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
 
   return { cfg, assets: _poolAssets, assetByTicker, account, identity, rpc, ethCall, fetchEvents, balance, poolStatsFromEvents, tickerOf, poolTickerOf,
     deriveOutput, buildWrap, nextWrapIndex, wrap, submitWrapSettle, buildRouterWrap, routerWrap, routerConfigured, buildWrapTransferOp, wrapAndSend, resumeWrapAndSend, sendPreparedTx, buildTransferOp, transfer, stealthSend, scanStealthLocks, stealthClaim, stealthRefund, stealthLockPosition, crossOut, payInvoice, quoteUnwrapFee, holderFeeBps, setPublicTacHeld, quoteTransferFee, quoteOpFee: gasAwareMinFee, feeUsdFor, relayFeeEligible, buildUnwrap, unwrap, sendUnwrap, addBridgeAmountHint, buildAttestMeta, chainBindingHex,
-    erc2612Nonce: _erc2612Nonce, waitReceipt: _waitReceipt, poolReserves, poolCurrentRoot, sameRoot, routePoolId, quoteRoute, route, swapBatched, swapBatchPending, swapBatchFlush, lpBondPosition, buildLpBondOp, lpBond, farmProgram, farmBond, farmPositions, importFarmPosition, recover, recoverCdpPositions, scanSentLocks, farmHarvest, farmUnbond, farmRedeem, buildFastlaneExitOp, fastlaneExit, lpAdd, lpRemove, quoteLpAdd, wrapLp, wrapSwap, ensureExactNote, mintCbtc, defiActions, cdp: _cdp, cdpPositionTree, submitSettle, settleCalldata,
+    settleFromAccount, erc2612Nonce: _erc2612Nonce, waitReceipt: _waitReceipt, poolReserves, poolCurrentRoot, sameRoot, routePoolId, quoteRoute, route, swapBatched, swapBatchPending, swapBatchFlush, lpBondPosition, buildLpBondOp, lpBond, farmProgram, farmBond, farmPositions, importFarmPosition, recover, recoverCdpPositions, scanSentLocks, farmHarvest, farmUnbond, farmRedeem, buildFastlaneExitOp, fastlaneExit, lpAdd, lpRemove, quoteLpAdd, wrapLp, wrapSwap, ensureExactNote, mintCbtc, defiActions, cdp: _cdp, cdpPositionTree, submitSettle, settleCalldata,
     cbtcLockState, syncCbtcLockReservations, cbtcBonds,
     relay, indexer, evmLog, evmTx, pool, memo, router: _router, stealth: _stealth, bridgeMint: _bridgeMint, bridgeBurn: _bridgeBurn, bridgeBurnToPool, airdrop: _airdrop, tacAirdrop: _tacAirdrop, lockScan: _lockScan };
 }

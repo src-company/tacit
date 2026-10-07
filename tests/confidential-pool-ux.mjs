@@ -1260,6 +1260,53 @@ test('submitSettle: priority tip follows the node suggestion and is capped at 1.
   assert.ok(high.signedRaw.includes('8459682f00'), 'a suggestion above the cap is clamped to 1.5 gwei');
 });
 
+// settleFromAccount: the holder's own Tacit account sends a proven op's settle and pays its gas, after the node has been
+// asked whether it can.
+function accountStub({ balanceWei, revert = false }) {
+  const seen = [];
+  const fetchImpl = async (url, opts) => {
+    const { method, params } = JSON.parse(opts.body);
+    seen.push({ method, params });
+    let result = '0x';
+    if (method === 'eth_getTransactionCount') result = '0x5';
+    else if (method === 'eth_gasPrice') result = '0x3b9aca00';
+    else if (method === 'eth_maxPriorityFeePerGas') result = '0x2faf080';
+    else if (method === 'eth_estimateGas') result = '0x7a120';            // 500,000
+    else if (method === 'eth_getBalance') result = '0x' + balanceWei.toString(16);
+    else if (method === 'eth_sendRawTransaction') result = '0x' + 'ab'.repeat(32);
+    if (method === 'eth_call' && revert) return { ok: true, json: async () => ({ error: { message: 'execution reverted' } }) };
+    return { ok: true, json: async () => ({ result }) };
+  };
+  return { fetchImpl, seen };
+}
+const fromArgs = { settlerPriv: '0x' + '11'.repeat(32), publicValues: '0x' + 'ab'.repeat(40), proof: '0x' + 'cd'.repeat(40) };
+
+test('settleFromAccount: an account with ETH sends the settle, with gas from the node\'s estimate plus 30%', async () => {
+  const { fetchImpl, seen } = accountStub({ balanceWei: 10n ** 18n });
+  const ux = makeConfidentialPoolUx({ ...deps, fetchImpl });
+  const r = await ux.settleFromAccount(fromArgs);
+  assert.strictEqual(r.txHash, '0x' + 'ab'.repeat(32));
+  assert.strictEqual(r.from.toLowerCase(), ux.account(fromArgs.settlerPriv).address.toLowerCase(), 'sent from the key\'s own Tacit account');
+  const call = seen.find((x) => x.method === 'eth_call');
+  assert.ok(call && call.params[0].data.startsWith('0x' + Buffer.from(keccak_256(Buffer.from('settle(bytes,bytes,bytes[])'))).toString('hex').slice(0, 8)), 'the call was run against the pool first, as settle()');
+  assert.strictEqual(BigInt(call.params[0].gas), 650000n, '500,000 estimated + 30%');
+  assert.ok(seen.findIndex((x) => x.method === 'eth_call') < seen.findIndex((x) => x.method === 'eth_sendRawTransaction'), 'and before anything was sent');
+});
+
+test('settleFromAccount: an account short of ETH is told what it holds and nothing is sent', async () => {
+  const { fetchImpl, seen } = accountStub({ balanceWei: 1000n });
+  const ux = makeConfidentialPoolUx({ ...deps, fetchImpl });
+  await assert.rejects(ux.settleFromAccount(fromArgs), (e) => /insufficient ETH for gas/.test(e.message) && e.message.toLowerCase().includes(ux.account(fromArgs.settlerPriv).address.toLowerCase()) && /holds 1000 wei/.test(e.message));
+  assert.ok(!seen.some((x) => x.method === 'eth_sendRawTransaction'));
+});
+
+test('settleFromAccount: a settle the pool would reject is never sent', async () => {
+  const { fetchImpl, seen } = accountStub({ balanceWei: 10n ** 18n, revert: true });
+  const ux = makeConfidentialPoolUx({ ...deps, fetchImpl });
+  await assert.rejects(ux.settleFromAccount(fromArgs), (e) => e.wouldRevert === true);
+  assert.ok(!seen.some((x) => x.method === 'eth_sendRawTransaction'));
+});
+
 test('submitSettle: a founding LP add goes through createPairAndSettle, an ordinary settle stays settle()', async () => {
   const ux = makeConfidentialPoolUx({ ...deps, fetchImpl: settleStub('0x2faf080') });
   const sel = (sig) => Buffer.from(keccak_256(Buffer.from(sig))).toString('hex').slice(0, 8);
