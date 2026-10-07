@@ -125,25 +125,23 @@ export function makeRecoverer({ verifier, pool, api, chain, state, wallet, befor
     return txid;
   }
 
-  async function tick() {
-    const all = await api.claims();
-    const open = all.filter((c) => c.status === 'queued' || c.status === 'sending')
-      .sort((a, b) => (a.at || 0) - (b.at || 0));
-    if (!open.length) return { sent: 0 };
-    const claim = open[0];
+  // Claims whose send keeps failing are held for a person after this many tries in a row.
+  const MAX_FAILS = 3, LOST_NOTES_SECS = 6 * 3600;
+  const fails = new Map();
+  const byAt = (a, b) => (a.at || 0) - (b.at || 0);
 
-    // A send cut short: its notes say whether it went out.
-    if (claim.status === 'sending') {
-      const paid = await paidBy(claim);
-      if (paid && paid.pays) { await api.mark(claim.burnTxid, 'sent', { txid: paid.txid }); logger(`${claim.burnTxid} was sent in ${paid.txid}`); return { sent: 0, resolved: paid.txid }; }
-      if (paid && !paid.pays) { await api.mark(claim.burnTxid, 'held', { note: `its notes were spent by ${paid.txid}, which does not pay the claim` }); return { sent: 0, held: claim.burnTxid }; }
-      if (now() - (claim.sendingAt || 0) < graceSecs * 1000) return { sent: 0, waiting: claim.burnTxid };
-    }
-
+  // One claim: checked again on its own, its notes chosen, and sent. Returns the outcome, or null when it can wait without
+  // holding up the others (a reason that clears by itself, a send that failed this time).
+  async function attempt(claim) {
     const st = await state();
-    if (!st) { logger('reflection state not authenticated yet; retrying'); return { sent: 0 }; }
-    const v = await verifier.verifyClaim(claim, { getTx: chain.getTx, getTxHex: chain.getTxHex, state: st });
-    if (!v.ok) { await api.mark(claim.burnTxid, 'held', { note: v.reason }); logger(`held ${claim.burnTxid}: ${v.reason}`); return { sent: 0, held: claim.burnTxid }; }
+    if (!st) { logger('reflection state not authenticated yet; retrying'); return { sent: 0, stop: true }; }
+    let v;
+    try { v = await verifier.verifyClaim(claim, { getTx: chain.getTx, getTxHex: chain.getTxHex, state: st }); }
+    catch (e) { logger(`${claim.burnTxid} could not be checked yet (${(e && e.message) || e}); retrying`); return null; }
+    if (!v.ok) {
+      if (v.transient) { logger(`${claim.burnTxid} waits: ${v.reason}`); return { sent: 0, waiting: claim.burnTxid }; }
+      await api.mark(claim.burnTxid, 'held', { note: v.reason }); logger(`held ${claim.burnTxid}: ${v.reason}`); return { sent: 0, held: claim.burnTxid };
+    }
 
     const notes = await wallet.notes();
     let inputs = null;
@@ -151,12 +149,57 @@ export function makeRecoverer({ verifier, pool, api, chain, state, wallet, befor
       const byKey = new Map(notes.map((n) => [`${lc(n.txid)}:${n.vout}`, n]));
       const again = claim.inputs.map((o) => byKey.get(`${lc(o.txid)}:${o.vout}`));
       if (again.every(Boolean)) inputs = again;
+      else if (now() - (claim.sendingAt || 0) < LOST_NOTES_SECS * 1000) {
+        // Its notes have left the wallet, but no spend of them shows yet (an explorer can trail the wallet's own view): other notes are
+        // never picked in their place while the first send may still be landing.
+        logger(`${claim.burnTxid}: its notes are no longer in the wallet and no spend of them is visible yet; waiting`);
+        return { sent: 0, waiting: claim.burnTxid };
+      } else {
+        await api.mark(claim.burnTxid, 'held', { note: 'its notes left the wallet and no transaction paying the claim was found' });
+        return { sent: 0, held: claim.burnTxid };
+      }
     }
     if (!inputs) inputs = pick(notes, v.amount, st.live || new Set());
     if (!inputs) { logger(`not enough TAC on hand for ${claim.burnTxid} (${claim.amount}); waiting`); return { sent: 0, short: claim.burnTxid }; }
     if (beforeSend && await beforeSend()) return { sent: 0, toppedUp: true };
-    const txid = await sendOne(claim, v.amount, inputs);
-    return { sent: 1, txid };
+    try {
+      const txid = await sendOne(claim, v.amount, inputs);
+      fails.delete(claim.burnTxid);
+      return { sent: 1, txid };
+    } catch (e) {
+      const n = (fails.get(claim.burnTxid) || 0) + 1;
+      fails.set(claim.burnTxid, n);
+      logger(`send for ${claim.burnTxid} failed (${n} of ${MAX_FAILS}): ${(e && e.message) || e}`);
+      if (n >= MAX_FAILS) { try { await api.mark(claim.burnTxid, 'held', { note: `the send failed ${n} times: ${String((e && e.message) || e).slice(0, 160)}` }); } catch {} fails.delete(claim.burnTxid); }
+      return null;
+    }
+  }
+
+  async function tick() {
+    const all = await api.claims();
+    const sending = all.filter((c) => c.status === 'sending').sort(byAt);
+    const queued = all.filter((c) => c.status === 'queued').sort(byAt);
+    if (!sending.length && !queued.length) return { sent: 0 };
+    let first = null;                                              // what the first claim that did not send was waiting for
+    const keep = (r) => { if (r && !first) first = r; };
+
+    // A send cut short: its notes say whether it went out. One send is settled at a time, so two claims never hold the same notes
+    // (a payment to one key would otherwise read as the other's), and a send within its grace period holds the rest back.
+    for (const claim of sending) {
+      const paid = await paidBy(claim);
+      if (paid && paid.pays) { await api.mark(claim.burnTxid, 'sent', { txid: paid.txid }); logger(`${claim.burnTxid} was sent in ${paid.txid}`); return { sent: 0, resolved: paid.txid }; }
+      if (paid && !paid.pays) { await api.mark(claim.burnTxid, 'held', { note: `its notes were spent by ${paid.txid}, which does not pay the claim` }); return { sent: 0, held: claim.burnTxid }; }
+      if (now() - (claim.sendingAt || 0) < graceSecs * 1000) return { sent: 0, waiting: claim.burnTxid };
+      const r = await attempt(claim);
+      if (r && (r.sent || r.toppedUp || r.stop)) return r;
+      keep(r);
+    }
+    for (const claim of queued) {
+      const r = await attempt(claim);
+      if (r && (r.sent || r.toppedUp || r.stop)) return r;
+      keep(r);
+    }
+    return first || { sent: 0 };
   }
 
   return { tick, pick };

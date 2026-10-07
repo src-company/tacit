@@ -2133,7 +2133,8 @@ async function handleBridgeRecover(req, env, url, cors) {
   try { claim = await req.json(); } catch { return jsonResponse({ ok: false, error: 'bad json' }, 400, nostore); }
   const burn = String((claim && claim.burnTxid) || '').replace(/^0x/, '').toLowerCase();
   const existing = /^[0-9a-f]{64}$/.test(burn) ? await read(burn) : null;
-  if (existing) return jsonResponse(bridgeRecoverView(existing), 200, nostore);
+  // A claim the service holds is checked afresh when its holder asks again; any other keeps the answer it has.
+  if (existing && existing.status !== 'held') return jsonResponse(bridgeRecoverView(existing), 200, nostore);
   const v = await bridgeRecover().verifyClaim(claim, {
     getTx: async (t) => JSON.parse(await apiText(env, `/tx/${t}`, {}, network)),
     getTxHex: async (t) => (await apiText(env, `/tx/${t}/hex`, {}, network)).trim(),
@@ -2144,6 +2145,9 @@ async function handleBridgeRecover(req, env, url, cors) {
     burnTxid: v.burnTxid, amount: v.amount.toString(), blinding: String(claim.blinding), pubkey: v.pubkey,
     sig: String(claim.sig).replace(/^0x/, '').toLowerCase(), address: v.address, burnHeight: v.burnHeight, status: 'queued', at: Date.now(),
   };
+  // The check takes seconds: read again before writing, so a claim the service moved on in the meantime is never reset to queued.
+  const now = await read(v.burnTxid);
+  if (now && now.status !== 'held') return jsonResponse(bridgeRecoverView(now), 200, nostore);
   await env.REGISTRY_KV.put(bridgeRecoverKey(network, v.burnTxid), JSON.stringify(rec));
   return jsonResponse(bridgeRecoverView(rec), 200, nostore);
 }
@@ -2180,7 +2184,11 @@ async function handleBridgeRecoverMark(req, env, url, cors) {
   const raw = await env.REGISTRY_KV.get(key);
   if (!raw) return jsonResponse({ ok: false, error: 'no claim for that burn' }, 404, cors);
   const c = JSON.parse(raw);
-  if (c.status === 'sent') return jsonResponse(bridgeRecoverView(c), 200, cors);
+  // A claim moves one way: queued → sending → sent, and to held from any of them. A send is only allowed from queued or an
+  // earlier send of the same claim, so a stale or repeated mark can never start a second payment: the service stops on the refusal.
+  if (c.status === 'sent' && b.status === 'sent') return jsonResponse(bridgeRecoverView(c), 200, cors);
+  const FROM = { sending: ['queued', 'sending'], sent: ['sending'], held: ['queued', 'sending', 'held'] };
+  if (!FROM[b.status].includes(c.status)) return jsonResponse({ ok: false, error: `that claim is ${c.status}` }, 409, cors);
   const txid = b.txid ? String(b.txid).replace(/^0x/, '').toLowerCase() : null;
   const inputs = Array.isArray(b.inputs) ? b.inputs.slice(0, 8).map((o) => ({ txid: String((o && o.txid) || '').replace(/^0x/, '').toLowerCase(), vout: Number(o && o.vout) }))
     .filter((o) => /^[0-9a-f]{64}$/.test(o.txid) && Number.isInteger(o.vout) && o.vout >= 0) : null;

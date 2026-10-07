@@ -23,7 +23,7 @@ const AMOUNT = 10000000000n, BLINDING = 0x1234567890abcdefn;
 const BURN = 'b1'.repeat(32), HOME = 'c2'.repeat(32), FUND = 'd3'.repeat(32), PAID = 'e4'.repeat(32), ELSE = 'f5'.repeat(32);
 const opKey = (txid, vout) => String(pool.outpointKey('0x' + txid.match(/../g).reverse().join(''), vout)).toLowerCase();
 
-function world({ status = 'queued', inputs, sendingAt = 0, notes, live = new Set(), dests = new Set() } = {}) {
+function world({ status = 'queued', inputs, sendingAt = 0, notes, live = new Set(), dests = new Set(), before: ahead = [], refuseSending = false, sendFails = false, stateHeight = 1000, nowMs = 1_000_000 } = {}) {
   const verifier = makeBridgeRecover({ secp, sha256, ripemd160, pool, classifyConfidentialTx: (h) => kinds[h.replace(/^0x/, '')] || null, signSchnorr, verifySchnorr, tacAssetId: TAC, fromHeight: 500 });
   const c = pool.commitXY(AMOUNT, '0x' + BLINDING.toString(16).padStart(64, '0'));
   const compressed = (BigInt(c.cy) % 2n === 0n ? '02' : '03') + c.cx.replace(/^0x/, '').padStart(64, '0');
@@ -49,19 +49,19 @@ function world({ status = 'queued', inputs, sendingAt = 0, notes, live = new Set
   const marks = [];
   const sends = [];
   const api = {
-    claims: async () => [claim],
-    mark: async (burnTxid, st, extra = {}) => { marks.push({ burnTxid, status: st, ...extra }); Object.assign(claim, { status: st, ...extra }); },
+    claims: async () => [...ahead, claim],
+    mark: async (burnTxid, st, extra = {}) => { if (refuseSending && st === 'sending') throw new Error('mark sending 409: that claim is sent'); marks.push({ burnTxid, status: st, ...extra }); Object.assign(claim, { status: st, ...extra }); },
   };
   const held = notes || [
     { txid: 'a1'.repeat(32), vout: 0, amount: 6000000000n },
     { txid: 'a2'.repeat(32), vout: 0, amount: 30000000000n },
     { txid: 'a3'.repeat(32), vout: 1, amount: 20000000000n },
   ];
-  const wallet = { notes: async () => held, send: async (x) => { sends.push(x); return 'ab'.repeat(32); } };
+  const wallet = { notes: async () => held, send: async (x) => { if (sendFails) throw new Error('the broadcast failed'); sends.push(x); return 'ab'.repeat(32); } };
   const leaf = pool.btcNoteLeaf(TAC, c.cx, c.cy, '0x' + '44'.repeat(32));        // the burn-home's output key; the reflection holds it, spent
-  const state = async () => ({ height: 1000, dests, pending: new Set(), live, leaves: new Set([leaf.toLowerCase()]), spent: new Set([pool.nullifier(leaf).toLowerCase()]) });
+  const state = async () => ({ height: stateHeight, dests, pending: new Set(), live, leaves: new Set([leaf.toLowerCase()]), spent: new Set([pool.nullifier(leaf).toLowerCase()]) });
   const before = { calls: 0, result: false };
-  const rec = makeRecoverer({ verifier, pool, api, chain, state, wallet, beforeSend: async () => { before.calls++; return before.result; }, graceSecs: 600, now: () => 1_000_000 });
+  const rec = makeRecoverer({ verifier, pool, api, chain, state, wallet, beforeSend: async () => { before.calls++; return before.result; }, graceSecs: 600, now: () => nowMs });
   return { rec, marks, sends, spends, claim, pub, before };
 }
 
@@ -161,4 +161,58 @@ test('fee money: one top-up from the fee key when plain sats run low, never more
   t = 7 * 3600 * 1000;
   assert.equal(await topUp(), false, 'not when enough plain sats are on hand (546-sat notes do not count)');
   assert.equal(sent.length, 1);
+});
+
+test('a mark the service refuses stops the send: nothing is paid', async () => {
+  const w = world({ refuseSending: true });
+  const r = await w.rec.tick();
+  assert.equal(w.sends.length, 0);
+  assert.notEqual(r.sent, 1);
+});
+
+test('a reason that clears by itself leaves the claim queued, not held', async () => {
+  const w = world({ stateHeight: 899 });                          // the reflection has not reached the burn's block
+  const r = await w.rec.tick();
+  assert.equal(r.waiting, BURN);
+  assert.equal(w.marks.length, 0, 'nothing is marked, so it is looked at again next round');
+  assert.equal(w.sends.length, 0);
+});
+
+test('a claim held for good does not hold up the one behind it', async () => {
+  const bad = { burnTxid: BURN, amount: '1', blinding: '1', pubkey: '02' + '11'.repeat(32), sig: '00'.repeat(64), address: 'bc1qbad', status: 'queued', at: 0 };
+  const w = world({ before: [bad] });
+  const r = await w.rec.tick();
+  assert.deepEqual(w.marks.map((m) => m.status), ['held', 'sending', 'sent']);
+  assert.equal(r.sent, 1);
+  assert.equal(w.sends.length, 1);
+});
+
+test('while one claim is being sent, no other starts', async () => {
+  const inflight = { burnTxid: 'c9'.repeat(32), amount: '1', blinding: '1', pubkey: '02' + '11'.repeat(32), sig: '00'.repeat(64), status: 'sending', at: 0, sendingAt: 999_900, inputs: [{ txid: 'a2'.repeat(32), vout: 0 }] };
+  const w = world({ before: [inflight] });
+  const r = await w.rec.tick();
+  assert.equal(r.waiting, 'c9'.repeat(32));
+  assert.equal(w.sends.length, 0);
+});
+
+test('a send whose notes left the wallet is not repeated with other notes while it may still be landing', async () => {
+  const w = world({ status: 'sending', inputs: [{ txid: 'ff'.repeat(32), vout: 0 }], sendingAt: 1 });
+  const r = await w.rec.tick();
+  assert.equal(r.waiting, BURN);
+  assert.equal(w.sends.length, 0);
+  const old = world({ status: 'sending', inputs: [{ txid: 'ff'.repeat(32), vout: 0 }], sendingAt: 1, nowMs: 100_000_000 });
+  assert.equal((await old.rec.tick()).held, BURN, 'and after hours with no sign of a payment it is held for a person');
+  assert.equal(old.sends.length, 0);
+});
+
+
+test('a send that keeps failing is held for a person after three tries, not retried for ever', async () => {
+  const w = world({ sendFails: true });
+  await w.rec.tick(); await w.rec.tick();
+  assert.notEqual(w.marks[w.marks.length - 1].status, 'held', 'two failures are still retried');
+  await w.rec.tick();
+  const last = w.marks[w.marks.length - 1];
+  assert.equal(last.status, 'held');
+  assert.match(last.note, /failed 3 times/);
+  assert.equal(w.sends.length, 0);
 });

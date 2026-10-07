@@ -75,3 +75,25 @@ test('a mark for a burn with no claim, or an unknown status, is refused', async 
   assert.equal((await call(e, '/bridge/recover/mark?network=mainnet', { method: 'POST', token: TOKEN, body: { burnTxid: BURN, status: 'sent' } })).status, 404);
   assert.equal((await call(e, '/bridge/recover/mark?network=mainnet', { method: 'POST', token: TOKEN, body: { burnTxid: BURN, status: 'paid' } })).status, 400);
 });
+
+test('a claim moves one way: a send is refused for one already sent or held', async () => {
+  const e = env();
+  const put = (status) => e.REGISTRY_KV.put(`bridge:recover:mainnet:${BURN}`, JSON.stringify({ ...claim(), status, at: 1 }));
+  const mark = (status) => call(e, '/bridge/recover/mark?network=mainnet', { method: 'POST', token: TOKEN, body: { burnTxid: BURN, status } });
+  await put('sent');
+  assert.equal((await mark('sending')).status, 409, 'a sent claim is never sent again');
+  await put('held');
+  assert.equal((await mark('sending')).status, 409, 'nor a held one');
+  await put('queued');
+  assert.equal((await mark('sent')).status, 409, 'a claim is sent only after it was being sent');
+  assert.equal((await mark('sending')).status, 200);
+  assert.equal((await mark('sending')).status, 200, 'the same send can be marked again when it resumes');
+  assert.equal((await mark('held')).status, 200);
+});
+
+test('a held claim is checked again when its holder asks; any other keeps its answer', async () => {
+  const e = env();
+  await e.REGISTRY_KV.put(`bridge:recover:mainnet:${BURN}`, JSON.stringify({ ...claim(), status: 'held', at: 1 }));
+  const r = await call(e, '/bridge/recover?network=mainnet', { method: 'POST', body: claim({ sig: '33'.repeat(64) }) });
+  assert.equal(r.status, 400, 'it goes through the whole check again (this signature does not match)');
+});

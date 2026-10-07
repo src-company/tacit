@@ -62,7 +62,8 @@ export function makeBridgeRecover({ secp, sha256, ripemd160, pool, classifyConfi
   // leaves: Set(every note leaf in its tree), spent: Set(every nullifier it has spent) }, all lowercase 0x hex.
   // Returns { ok: true, burnTxid, amount, pubkey, address, burnHeight } or { ok: false, reason }.
   async function verifyClaim(claim, { getTx, getTxHex, state }) {
-    const no = (reason) => ({ ok: false, reason });
+    // transient: a reason that can clear on its own (not confirmed yet, not reached yet, state unavailable), so it is retried, not held.
+    const no = (reason, transient = false) => (transient ? { ok: false, reason, transient: true } : { ok: false, reason });
     const burnTxid = lc(strip(claim && claim.burnTxid));
     if (!/^[0-9a-f]{64}$/.test(burnTxid)) return no('burn transaction id must be 64 hex characters');
     let amount, blinding;
@@ -75,14 +76,14 @@ export function makeBridgeRecover({ secp, sha256, ripemd160, pool, classifyConfi
     if (!verifySchnorr(toBytes(sig), claimDigest({ burnTxid, amount, pubkey }), toBytes(pubkey).slice(1))) return no('signature does not match');
 
     const burn = await getTx(burnTxid);
-    if (!burn || !burn.status || !burn.status.confirmed) return no('burn not confirmed');
+    if (!burn || !burn.status || !burn.status.confirmed) return no('burn not confirmed', true);
     if (burn.status.block_height < fromHeight) return no('this burn predates the in-app bridge');
     const env = classifyConfidentialTx('0x' + strip(await getTxHex(burnTxid)));
     if (!env || env.type !== 'burn') return no('not a bridge burn');
     if (lc(strip(env.assetId)) !== TAC) return no('not a TAC bridge');
-    if (!state || !Number.isInteger(state.height) || burn.status.block_height > state.height) return no('not yet passed by the reflection');
+    if (!state || !Number.isInteger(state.height) || burn.status.block_height > state.height) return no('not yet passed by the reflection', true);
     if (state.dests.has(lc(env.dest))) return no('this bridge completed: mint it instead');
-    if (!(state.leaves instanceof Set) || !(state.spent instanceof Set)) return no('the reflection state is not available');
+    if (!(state.leaves instanceof Set) || !(state.spent instanceof Set)) return no('the reflection state is not available', true);
     if (!burn.vin || !burn.vin.length) return no('burn has no inputs');
     // The burned note: the first of the burn's first two inputs that a confidential transfer made.
     let note = null, made = null;
