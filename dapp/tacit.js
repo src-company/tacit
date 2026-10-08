@@ -35453,11 +35453,54 @@ const _WT_ENC_TAG = new TextEncoder().encode('tacit-watchtower-enc-v1');
 const _wtU64 = (n) => { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(n), true); return b; };
 const _wtU32 = (n) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n >>> 0, true); return b; };
 
-function deriveWatchtowerBidKey(mainPriv, assetIdHex, bidIdHex) {
-  const h = sha256(concatBytes(_WT_DERIVE_TAG, mainPriv, hexToBytes(assetIdHex), hexToBytes(bidIdHex)));
+function _wtScalar(h) {
   let s = BigInt('0x' + bytesToHex(h)) % SECP_N;
   if (s === 0n) s = 1n;
   return bigintToBytes32(s);
+}
+// The per-bid derivation: how bid wallets were keyed before they were numbered, still used to reclaim those.
+function deriveWatchtowerBidKey(mainPriv, assetIdHex, bidIdHex) {
+  return _wtScalar(sha256(concatBytes(_WT_DERIVE_TAG, mainPriv, hexToBytes(assetIdHex), hexToBytes(bidIdHex))));
+}
+
+// Bid wallets are numbered per main key: wallet i is H(tag ‖ main key ‖ i). A key and the chain are
+// enough to find every bid wallet that ever held funds (recoverWatchtowerBidWallets), with no bid id,
+// registration or asset id. A new bid takes the first wallet with no history.
+const _WT_WALLET_TAG = new TextEncoder().encode('tacit-watchtower-bid-wallet-v2');
+const _WT_WALLET_GAP = 10;      // unused wallets in a row that end a scan
+const _WT_WALLET_MAX = 1000;    // wallets one key can number
+function deriveWatchtowerBidWalletKey(mainPriv, index) {
+  return _wtScalar(sha256(concatBytes(_WT_WALLET_TAG, mainPriv, _wtU32(index))));
+}
+function _wtWalletPub(mainPriv, index) { return secp.getPublicKey(deriveWatchtowerBidWalletKey(mainPriv, index), true); }
+// The index of the numbered wallet whose public key is bidPubHex, or -1.
+function watchtowerBidWalletIndexOf(mainPriv, bidPubHex) {
+  const want = String(bidPubHex || '').toLowerCase();
+  for (let i = 0; i < _WT_WALLET_MAX; i++) if (bytesToHex(_wtWalletPub(mainPriv, i)) === want) return i;
+  return -1;
+}
+async function _wtWalletUsed(addr) {
+  const info = await apiJson(`/address/${addr}`);
+  return ((info?.chain_stats?.tx_count || 0) + (info?.mempool_stats?.tx_count || 0)) > 0;
+}
+// Indices handed out in this tab, so two bids placed together never share a wallet while the first
+// funding transaction is still reaching the indexer.
+const _wtWalletClaimed = new Set();
+async function nextWatchtowerBidWalletIndex(mainPriv) {
+  const owner = bytesToHex(secp.getPublicKey(mainPriv, true));
+  for (let i = 0; i < _WT_WALLET_MAX; i++) {
+    const claim = `${owner}:${i}`;
+    if (_wtWalletClaimed.has(claim)) continue;
+    _wtWalletClaimed.add(claim);
+    let used;
+    try { used = await _wtWalletUsed(p2wpkhAddress(_wtWalletPub(mainPriv, i))); }
+    catch (e) { _wtWalletClaimed.delete(claim); throw e; }
+    if (!used) return i;
+  }
+  throw new Error('every numbered bid wallet has been used');
+}
+function _wtWalletRelease(mainPriv, index) {
+  _wtWalletClaimed.delete(`${bytesToHex(secp.getPublicKey(mainPriv, true))}:${index}`);
 }
 function _wtEncKeystream(localPriv, remotePub, assetIdHex, bidIdHex) {
   const shared = secp.getSharedSecret(localPriv, remotePub); // 33-byte compressed
@@ -35512,33 +35555,39 @@ async function registerWatchtowerBid({ assetIdHex, bidIdHex, amountBase, priceSa
   catch { throw new Error('could not reach the watchtower to confirm it is accepting registrations — try again in a moment'); }
   if (_preStatus === 410) throw new Error('the watchtower is not accepting registrations right now — your bid is still live; complete fills manually or try again later');
   const mainPriv = wallet.priv, ownerPub = wallet.pub;
-  const bidPriv = deriveWatchtowerBidKey(mainPriv, assetIdHex, bidIdHex);
+  const walletIndex = await nextWatchtowerBidWalletIndex(mainPriv);
+  const bidPriv = deriveWatchtowerBidWalletKey(mainPriv, walletIndex);
   const bidPub = secp.getPublicKey(bidPriv, true);
   const bidAddr = p2wpkhAddress(bidPub);
 
   // Fund the dedicated bid wallet from the main wallet (recipient is vout 0).
   const fundingSats = Number(priceSats) + Number(feeBudgetSats);
-  const sent = await buildAndBroadcastSatsSend({ recipientAddr: bidAddr, amountSats: fundingSats });
+  let sent;
+  try { sent = await buildAndBroadcastSatsSend({ recipientAddr: bidAddr, amountSats: fundingSats }); }
+  catch (e) { _wtWalletRelease(mainPriv, walletIndex); throw e; }
   const fundingTxidHex = sent.txid, fundingVout = 0;
 
-  const encBidPrivkeyHex = encryptWatchtowerBidKey(bidPriv, mainPriv, hexToBytes(WATCHTOWER_SERVICE_PUB), assetIdHex, bidIdHex);
-  const msg = watchtowerRegisterMsg({
-    network: NET.name, assetIdHex, bidIdHex, bidPubHex: bytesToHex(bidPub), ownerPubHex: bytesToHex(ownerPub),
-    encBidPrivkeyHex, bidPriceSats: Number(priceSats), bidAmountBaseStr: BigInt(amountBase).toString(),
-    decimals: decimals | 0, expiry, fundingTxidHex, fundingVout,
-  });
-  const sig = signSchnorr(msg, mainPriv);
-  const resp = await fetch(withNet(`${WORKER_BASE}/watchtower/bids`), {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      asset_id: assetIdHex, bid_id: bidIdHex, owner_pubkey: bytesToHex(ownerPub), bid_pubkey: bytesToHex(bidPub),
-      enc_bid_privkey: encBidPrivkeyHex, bid_price_sats: Number(priceSats), bid_amount_base: BigInt(amountBase).toString(),
-      decimals: decimals | 0, expiry, funding_outpoint: { txid: fundingTxidHex, vout: fundingVout }, auth_sig: bytesToHex(sig),
-    }),
-  });
-  const j = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(j.error || `register failed (${resp.status})`);
-  return { bid_id: bidIdHex, bid_address: bidAddr, funding_txid: fundingTxidHex };
+  // Past this point the wallet holds the bid's sats, so a failure names the wallet for the caller to sweep.
+  try {
+    const encBidPrivkeyHex = encryptWatchtowerBidKey(bidPriv, mainPriv, hexToBytes(WATCHTOWER_SERVICE_PUB), assetIdHex, bidIdHex);
+    const msg = watchtowerRegisterMsg({
+      network: NET.name, assetIdHex, bidIdHex, bidPubHex: bytesToHex(bidPub), ownerPubHex: bytesToHex(ownerPub),
+      encBidPrivkeyHex, bidPriceSats: Number(priceSats), bidAmountBaseStr: BigInt(amountBase).toString(),
+      decimals: decimals | 0, expiry, fundingTxidHex, fundingVout,
+    });
+    const sig = signSchnorr(msg, mainPriv);
+    const resp = await fetch(withNet(`${WORKER_BASE}/watchtower/bids`), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        asset_id: assetIdHex, bid_id: bidIdHex, owner_pubkey: bytesToHex(ownerPub), bid_pubkey: bytesToHex(bidPub),
+        enc_bid_privkey: encBidPrivkeyHex, bid_price_sats: Number(priceSats), bid_amount_base: BigInt(amountBase).toString(),
+        decimals: decimals | 0, expiry, funding_outpoint: { txid: fundingTxidHex, vout: fundingVout }, auth_sig: bytesToHex(sig),
+      }),
+    });
+    const j = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(j.error || `register failed (${resp.status})`);
+  } catch (e) { e.bidWalletPub = bytesToHex(bidPub); throw e; }
+  return { bid_id: bidIdHex, bid_address: bidAddr, bid_pubkey: bytesToHex(bidPub), funding_txid: fundingTxidHex };
 }
 
 async function listWatchtowerBids() {
@@ -35563,34 +35612,33 @@ async function cancelWatchtowerBid(bidIdHex) {
   return { ok: true };
 }
 
-// Sweep a dedicated bid wallet's unspent sats back to the buyer's main wallet.
-// The bid key is re-derived (not stored), so this works even after a wipe.
-// Recover everything in the dedicated bid wallet to the buyer's MAIN wallet:
-// first CXFER the bought tokens home (the watchtower delivered them to the bid
-// wallet, signed by the derived bid key), then sweep the remaining sats. Both
-// go to the buyer's own main wallet, so this is a self-recovery — a failure
-// leaves funds in the bid wallet (re-derivable, retryable), never lost.
-async function reclaimWatchtowerBid(assetIdHex, bidIdHex) {
+// Recover everything in a dedicated bid wallet to the buyer's MAIN wallet: first
+// CXFER the bought tokens home (the watchtower delivered them to the bid wallet,
+// signed by its key), then sweep the remaining sats. Both go to the buyer's own
+// main wallet, so this is a self-recovery — a failure leaves funds in the bid
+// wallet (re-derivable, retryable), never lost. assetIds names the assets to
+// move; null moves every asset the wallet holds.
+async function sweepWatchtowerBidWallet(bidPriv, assetIds) {
   await ensurePrivkey();
-  const bidPriv = deriveWatchtowerBidKey(wallet.priv, assetIdHex, bidIdHex);
   const bidPub = secp.getPublicKey(bidPriv, true);
   const bidAddr = p2wpkhAddress(bidPub);
   const mainPubHex = bytesToHex(wallet.pub);
   const mainPub = wallet.pub;
   const mainAddr = wallet.address();
   const savedPriv = wallet.priv, savedPub = wallet.pub;
-  let assetSwept = 0n, satsSwept = 0, assetTxid = null, satsTxid = null;
+  const assets = [];
+  let satsSwept = 0, satsTxid = null;
   try {
     wallet.priv = bidPriv; wallet.pub = bidPub;
     invalidateHoldingsCache();
-    // 1. Bring the bought tokens home: CXFER the bid wallet's balance of this
-    //    asset to the main wallet.
-    let bal = 0n;
-    try { const h = await scanHoldings(true); bal = (h.get(assetIdHex)?.balance) || 0n; } catch {}
-    if (bal > 0n) {
+    // 1. Bring the bought tokens home: CXFER the bid wallet's balance of each asset to the main wallet.
+    let held = new Map();
+    try { const h = await scanHoldings(true); if (h instanceof Map) held = h; } catch {}
+    for (const assetIdHex of (assetIds || [...held.keys()])) {
+      const bal = (held.get(assetIdHex)?.balance) || 0n;
+      if (bal <= 0n) continue;
       const r = await buildAndBroadcastCXfer({ assetIdHex, recipientPubHex: mainPubHex, amount: bal });
-      assetSwept = bal;
-      assetTxid = r?.revealTxid || r?.txid || null;
+      assets.push({ asset_id: assetIdHex, amount: bal.toString(), txid: r?.revealTxid || r?.txid || null });
       invalidateHoldingsCache();
     }
     // 2. Sweep the remaining sats (incl. the CXFER's change) to the main wallet.
@@ -35613,10 +35661,61 @@ async function reclaimWatchtowerBid(assetIdHex, bidIdHex) {
     wallet.priv = savedPriv; wallet.pub = savedPub;
     invalidateHoldingsCache();
   }
-  if (assetSwept === 0n && satsSwept === 0) {
-    return { swept: 0, asset_swept: '0', reason: 'nothing to reclaim — the bid wallet is empty' };
+  if (!assets.length && satsSwept === 0) {
+    return { swept: 0, asset_swept: '0', assets, reason: 'nothing to reclaim — the bid wallet is empty' };
   }
-  return { swept: satsSwept, asset_swept: assetSwept.toString(), asset_txid: assetTxid, txid: satsTxid, dest: mainAddr };
+  return { swept: satsSwept, asset_swept: assets[0]?.amount || '0', asset_txid: assets[0]?.txid || null, assets, txid: satsTxid, dest: mainAddr };
+}
+
+// Registered bids, strictly: any failure to read the list throws rather than reading as "none".
+async function _wtRegisteredBids() {
+  await ensurePrivkey();
+  if (!WORKER_BASE) throw new Error('worker disabled');
+  const resp = await fetch(withNet(`${WORKER_BASE}/watchtower/bids`, `owner=${bytesToHex(wallet.pub)}`));
+  const j = await resp.json().catch(() => ({}));
+  if (!resp.ok || !Array.isArray(j.bids)) throw new Error(j.error || `could not read registered bids (${resp.status})`);
+  return j.bids;
+}
+
+// Reclaim one registered bid's wallet. The registration names the wallet's public key, which picks the
+// numbered wallet or the per-bid derivation of a bid placed before numbering; with no registration left
+// the per-bid derivation is used, so a numbered wallet is then found by recoverWatchtowerBidWallets.
+async function reclaimWatchtowerBid(assetIdHex, bidIdHex, bidPubHex = '') {
+  await ensurePrivkey();
+  if (!bidPubHex) { try { bidPubHex = (await _wtRegisteredBids()).find((b) => b.bid_id === bidIdHex)?.bid_pubkey || ''; } catch {} }
+  let bidPriv = deriveWatchtowerBidKey(wallet.priv, assetIdHex, bidIdHex);
+  if (bidPubHex && bytesToHex(secp.getPublicKey(bidPriv, true)) !== bidPubHex.toLowerCase()) {
+    const i = watchtowerBidWalletIndexOf(wallet.priv, bidPubHex);
+    if (i < 0) throw new Error('this bid wallet is not derived from the connected wallet');
+    bidPriv = deriveWatchtowerBidWalletKey(wallet.priv, i);
+  }
+  return sweepWatchtowerBidWallet(bidPriv, [assetIdHex]);
+}
+
+// Find every numbered bid wallet from the key and the chain, and sweep the ones holding funds back to
+// the main wallet. A wallet behind a live registration is left to the watchtower, so the registration
+// list must be readable. A scan ends after _WT_WALLET_GAP unused wallets in a row.
+async function recoverWatchtowerBidWallets({ onProgress = null, sweep = sweepWatchtowerBidWallet } = {}) {
+  await ensurePrivkey();
+  let live;
+  try { live = new Set((await _wtRegisteredBids()).map((b) => String(b.bid_pubkey || '').toLowerCase())); }
+  catch (e) { throw new Error(`could not read your registered bids, so the live ones cannot be told apart (${e?.message || e}) — try again in a moment`); }
+  const wallets = [], failed = [];
+  let scanned = 0, unusedRun = 0;
+  for (let i = 0; i < _WT_WALLET_MAX && unusedRun < _WT_WALLET_GAP; i++) {
+    const priv = deriveWatchtowerBidWalletKey(wallet.priv, i);
+    const pub = secp.getPublicKey(priv, true);
+    const addr = p2wpkhAddress(pub);
+    scanned++;
+    try { onProgress && onProgress(`checking bid wallet ${i + 1}`); } catch {}
+    if (!(await _wtWalletUsed(addr))) { unusedRun++; continue; }
+    unusedRun = 0;
+    if (live.has(bytesToHex(pub))) continue;
+    if (!(await getUtxos(addr))?.length) continue;
+    try { wallets.push({ index: i, address: addr, ...(await sweep(priv, null)) }); }
+    catch (e) { failed.push({ index: i, address: addr, error: e?.message || String(e) }); }
+  }
+  return { scanned, wallets, failed, swept: wallets.reduce((s, w) => s + (w.swept || 0), 0), assets: wallets.flatMap((w) => w.assets || []) };
 }
 
 
@@ -35626,8 +35725,13 @@ async function reclaimWatchtowerBid(assetIdHex, bidIdHex) {
 // registrations it shows only the by-id recovery form.
 function _wtRecoverFormHtml() {
   return `<details data-wt-recover style="margin-bottom:14px;">
-    <summary class="muted" style="font-size:10px;cursor:pointer;">Recover a bid wallet by bid id</summary>
-    <div class="muted" style="font-size:10px;margin-top:6px;">A cancelled or expired walk-away bid no longer lists above, but its bid wallet can still be swept back to your main wallet with the bid id.</div>
+    <summary class="muted" style="font-size:10px;cursor:pointer;">Recover bid wallets</summary>
+    <div class="muted" style="font-size:10px;margin-top:6px;">A cancelled or expired walk-away bid no longer lists above, but its bid wallet is found again from your key. Scan sweeps every bid wallet that is not behind a live bid back to your main wallet.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;">
+      <button data-wt-scan type="button" style="font-size:10px;padding:3px 10px;">Scan</button>
+      <span class="muted" data-wt-scan-status style="font-size:10px;word-break:break-all;"></span>
+    </div>
+    <div class="muted" style="font-size:10px;margin-top:10px;">A bid placed before bid wallets were numbered is swept with its bid id.</div>
     <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;">
       <input type="text" data-wt-recover-bid placeholder="Bid id (32 hex characters)" spellcheck="false" autocomplete="off" style="flex:1;min-width:220px;font-size:11px;">
       <input type="text" data-wt-recover-asset value="${CANONICAL_TAC_ASSET_ID_HEX}" title="Asset id (TAC unless the bid was for another asset)" spellcheck="false" autocomplete="off" style="flex:2;min-width:220px;font-size:11px;">
@@ -35641,6 +35745,24 @@ function _wireWtRecoverForm(host) {
   if (!box) return;
   const bidIn = box.querySelector('[data-wt-recover-bid]'), assetIn = box.querySelector('[data-wt-recover-asset]');
   const go = box.querySelector('[data-wt-recover-go]'), status = box.querySelector('[data-wt-recover-status]');
+  const scan = box.querySelector('[data-wt-scan]'), scanStatus = box.querySelector('[data-wt-scan-status]');
+  scan.onclick = async () => {
+    if (scan.disabled) return;
+    scan.disabled = true; scan.textContent = 'scanning…'; scanStatus.textContent = '';
+    try {
+      const r = await recoverWatchtowerBidWallets({ onProgress: (m) => { scanStatus.textContent = m; } });
+      const parts = [];
+      if (r.swept > 0) parts.push(`${Number(r.swept).toLocaleString()} sats`);
+      for (const a of r.assets) {
+        const meta = (typeof getAssetMeta === 'function' && getAssetMeta(a.asset_id)) || {};
+        try { parts.push(`${fmtAssetAmount(BigInt(a.amount), Number.isInteger(meta.decimals) ? meta.decimals : 0)} ${meta.ticker || 'tokens'}`); } catch {}
+      }
+      const left = r.failed.length ? ` ${r.failed.length} bid wallet${r.failed.length > 1 ? 's' : ''} could not be swept (${r.failed[0].error}); press Scan to retry.` : '';
+      scanStatus.textContent = (parts.length ? `Recovered ${parts.join(' + ')} to your main wallet.` : `Checked ${r.scanned} bid wallets, nothing to recover.`) + left;
+      if (parts.length) toast(`Recovered ${parts.join(' + ')} to your main wallet`, 'success', 8000);
+    } catch (e) { scanStatus.textContent = `Scan failed: ${e?.message || String(e)}`; }
+    scan.disabled = false; scan.textContent = 'Scan';
+  };
   go.onclick = async () => {
     if (go.disabled) return;
     const bidId = bidIn.value.trim().toLowerCase(), assetId = assetIn.value.trim().toLowerCase().replace(/^0x/, '');
@@ -35678,7 +35800,7 @@ async function renderWatchtowerBidsInto(host) {
     const ticker = escapeHtml(meta.ticker || (String(b.asset_id || '').slice(0, 8) + '…'));
     const status = escapeHtml(b.status || 'active');
     const price = Number(b.bid_price_sats || 0).toLocaleString();
-    return `<div data-wt-row data-bid="${escapeHtml(b.bid_id)}" data-asset="${escapeHtml(b.asset_id)}" data-dec="${dec}" data-ticker="${ticker}" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--ink-faint);font-size:11px;flex-wrap:wrap;">
+    return `<div data-wt-row data-bid="${escapeHtml(b.bid_id)}" data-asset="${escapeHtml(b.asset_id)}" data-pub="${escapeHtml(b.bid_pubkey || '')}" data-dec="${dec}" data-ticker="${ticker}" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--ink-faint);font-size:11px;flex-wrap:wrap;">
       <span><strong>${ticker}</strong> · ${escapeHtml(filled)}/${escapeHtml(amt)} filled · ≤ ${price} sats · <span class="muted">${status}</span></span>
       <span style="display:flex;gap:6px;">
         <button data-wt-reclaim type="button" style="font-size:10px;padding:3px 10px;">Reclaim</button>
@@ -35693,7 +35815,7 @@ async function renderWatchtowerBidsInto(host) {
   </div>${_wtRecoverFormHtml()}`;
   _wireWtRecoverForm(host);
   host.querySelectorAll('[data-wt-row]').forEach((row) => {
-    const bidId = row.getAttribute('data-bid'), assetId = row.getAttribute('data-asset');
+    const bidId = row.getAttribute('data-bid'), assetId = row.getAttribute('data-asset'), bidPub = row.getAttribute('data-pub') || '';
     const reclaimBtn = row.querySelector('[data-wt-reclaim]');
     const cancelBtn = row.querySelector('[data-wt-cancel]');
     const dec = Number(row.getAttribute('data-dec') || '0');
@@ -35702,7 +35824,7 @@ async function renderWatchtowerBidsInto(host) {
       if (reclaimBtn.disabled) return;
       reclaimBtn.disabled = true; reclaimBtn.textContent = 'reclaiming…';
       try {
-        const r = await reclaimWatchtowerBid(assetId, bidId);
+        const r = await reclaimWatchtowerBid(assetId, bidId, bidPub);
         const parts = [];
         try { if (r && BigInt(r.asset_swept || '0') > 0n) parts.push(`${fmtAssetAmount(BigInt(r.asset_swept), dec)} ${ticker}`); } catch {}
         if (r && r.swept > 0) parts.push(`${Number(r.swept).toLocaleString()} sats`);
@@ -35721,7 +35843,7 @@ async function renderWatchtowerBidsInto(host) {
       // holds the bid id; it stays until the bid wallet is swept home.
       cancelBtn.textContent = 'reclaiming…';
       try {
-        const r = await reclaimWatchtowerBid(assetId, bidId);
+        const r = await reclaimWatchtowerBid(assetId, bidId, bidPub);
         const parts = [];
         try { if (r && BigInt(r.asset_swept || '0') > 0n) parts.push(`${fmtAssetAmount(BigInt(r.asset_swept), dec)} ${ticker}`); } catch {}
         if (r && r.swept > 0) parts.push(`${Number(r.swept).toLocaleString()} sats`);
@@ -70543,11 +70665,11 @@ function _btcMarketCtx(aid) {
         } catch (e) {
           if (isUnlockCancelled(e)) throw e;
           let back = null;
-          try { back = await reclaimWatchtowerBid(aid, bidId); } catch {}
+          if (e?.bidWalletPub) { try { back = await reclaimWatchtowerBid(aid, bidId, e.bidWalletPub); } catch {} }
           const moved = back && (Number(back.swept) > 0);
           throw new Error(`the watchtower didn't take the bid (${e?.message || e}). ${moved
             ? `The ${Number(back.swept).toLocaleString('en-US')} sats set aside for it are back in your wallet.`
-            : 'If sats were set aside for it, reclaim them from Holdings → Walk-away bids.'}`);
+            : e?.bidWalletPub ? 'The sats set aside for it are in a bid wallet; Holdings → Recover bid wallets brings them back.' : ''}`.trim());
         }
       },
       listForSale: (o) => _btcMarketListForSale(aid, o),
@@ -70558,12 +70680,18 @@ function _btcMarketCtx(aid) {
       },
       cancelOffer: (raw) => cancelAxferIntent({ assetIdHex: aid, intentIdHex: raw.intent_id }),
       cancelBid: async (raw) => {
+        // The registration names the bid wallet's key and cancelling deletes it, so read it first.
+        let wtPub = '';
+        if (raw.watchtower) { try { wtPub = (await _wtRegisteredBids()).find((b) => b.bid_id === raw.bid_id)?.bid_pubkey || ''; } catch {} }
         const r = await cancelBidIntent(aid, raw.bid_id);
         _invalidateBidsCache(aid);
         if (raw.watchtower) {
           try { await cancelWatchtowerBid(raw.bid_id); } catch {}
-          try { await reclaimWatchtowerBid(aid, raw.bid_id); } catch (e) {
-            toast(`Bid cancelled. Reclaim the bid wallet from Holdings → Walk-away bids (${e?.message || e})`, 'warn', 10000);
+          try {
+            const back = await reclaimWatchtowerBid(aid, raw.bid_id, wtPub);
+            if (!(back.swept > 0) && !back.assets?.length) toast('Bid cancelled. If its bid wallet still holds funds, Holdings → Recover bid wallets finds it.', 'warn', 10000);
+          } catch (e) {
+            toast(`Bid cancelled. Recover the bid wallet from Holdings → Recover bid wallets (${e?.message || e})`, 'warn', 10000);
           }
         }
         return r;
@@ -78703,6 +78831,7 @@ export {
   // the browser UI.
   publishBidIntent, fulfilBidIntent, fulfilBidIntentBatch, cancelBidIntent, browseBidIntents,
   registerWatchtowerBid, listWatchtowerBids, cancelWatchtowerBid, reclaimWatchtowerBid, watchtowerBidAddress,
+  deriveWatchtowerBidWalletKey, watchtowerBidWalletIndexOf, nextWatchtowerBidWalletIndex, sweepWatchtowerBidWallet, recoverWatchtowerBidWallets,
   deriveWatchtowerBidKey, encryptWatchtowerBidKey, watchtowerRegisterMsg, watchtowerCancelMsg,
   // Test-only seams (see definitions for rationale). Not used by production.
   _testInjectHoldingsCache, _testSetScanHoldingsOverride,

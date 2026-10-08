@@ -53,8 +53,22 @@ function xor32(a, b) {
   return o;
 }
 
-// Deterministic dedicated bid key from the buyer's main key. Re-derivable by
-// the buyer (same inputs) so reclaim never depends on stored state.
+// Numbered dedicated bid wallets: wallet i is H(tag ‖ main key ‖ i). A key and
+// the chain are enough to find every bid wallet that ever held funds.
+const WALLET_TAG = te.encode('tacit-watchtower-bid-wallet-v2');
+export function deriveBidWalletPrivkey(mainPriv, index) {
+  const m = asBytes32(mainPriv, 'mainPriv');
+  if (!Number.isInteger(index) || index < 0 || index > 0xffffffff) throw new Error('index must be a uint32');
+  const i = new Uint8Array(4);
+  new DataView(i.buffer).setUint32(0, index, true);
+  let s = bytesToBig(sha256(concatBytes(WALLET_TAG, m, i))) % SECP_N;
+  if (s === 0n) s = 1n;
+  return bigTo32(s);
+}
+
+// Deterministic dedicated bid key from the buyer's main key, one per bid. This
+// is how bid wallets were keyed before they were numbered; reclaiming those
+// bids still uses it.
 export function deriveBidPrivkey(mainPriv, assetIdHex, bidIdHex) {
   const m = asBytes32(mainPriv, 'mainPriv');
   const a = asBytes32(assetIdHex, 'asset_id');

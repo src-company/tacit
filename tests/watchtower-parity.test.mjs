@@ -64,6 +64,13 @@ await test('derive: dapp bid key == fulfiller bid key', () => {
   return bytesToHex(a) === bytesToHex(b);
 });
 
+await test('derive: dapp numbered bid wallet key == fulfiller bid wallet key, for several indices', () => {
+  for (const i of [0, 1, 7, 255, 65536]) {
+    if (bytesToHex(dapp.deriveWatchtowerBidWalletKey(MAIN_SK, i)) !== bytesToHex(wtc.deriveBidWalletPrivkey(MAIN_SK, i))) return false;
+  }
+  return true;
+});
+
 await test('encrypt: dapp ciphertext == fulfiller ciphertext', () => {
   const bk = wtc.deriveBidPrivkey(MAIN_SK, ASSET, BID);
   const a = dapp.encryptWatchtowerBidKey(bk, MAIN_SK, SERVICE_PUB, ASSET, BID);
