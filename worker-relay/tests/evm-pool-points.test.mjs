@@ -284,6 +284,54 @@ await test('explorer down keeps the box pending and credits nobody, then resolve
   w.cleanup();
 });
 
+await test('a sweep the explorer never indexed is read from the chain, and ETH bridged from Ethereum credits its Ethereum sender', async () => {
+  const w = world();
+  const BRIDGE = '0x4200000000000000000000000000000000000010', MESSENGER_ALIAS = '0x977f82a600a1414e583f7f13623f1ac5d58b1c0b';
+  const word = (a) => '0x' + '0'.repeat(24) + a.replace(/^0x/, '');
+  // ALICE bridged 1 ETH from Ethereum to the box: a system deposit tx whose sender is the messenger alias, the ETH arriving
+  // from L2StandardBridge, the bridge's own event naming ALICE.
+  internal(w.explorer, { hash: h(50), block: 150n, index: 6, from: BRIDGE, to: BOX, value: ETH });
+  w.chain.txs.set(h(50), { from: MESSENGER_ALIAS, to: '0x4200000000000000000000000000000000000007', typeHex: '0x7e' });
+  w.chain.receipts = new Map([[h(50), { logs: [{ address: BRIDGE, topics: ['0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d', word(ALICE), word(BOX)], data: '0x' }] }]]);
+  // The sweep at block 400, which the explorer never indexes: its transfer out of the box is missing from the history.
+  transact(w.chain, { hash: h(51), block: 400n, logIndex: 3, extAmount: ETH - 10n ** 15n });
+  w.chain.logs.push({ address: ROUTER, event: 'Received', transactionHash: h(51), blockNumber: 400n, logIndex: 4, args: { box: BOX, n: 0n } });
+  w.chain.txs.set(h(51), { from: KEEPER, to: ROUTER, typeHex: '0x2' });
+  w.chain.balances = (block) => (block < 150n ? 0n : block < 400n ? ETH : 0n);
+  w.ctx.client.getBalance = async ({ blockNumber }) => w.chain.balances(blockNumber);
+  w.ctx.client.getTransactionReceipt = async ({ hash }) => w.chain.receipts.get(hash);
+  await scanEvmPoolChain(w.ctx);
+  w.ctx.nowSec = () => 1_700_000_000 + 400 + 3600;            // an hour after the sweep: the explorer still has its chance
+  await resolvePendingBoxes(w.ctx);
+  assert.equal(w.state.countPending(8453), 1, 'a recent sweep waits for the explorer');
+  w.ctx.nowSec = () => 1_700_000_000 + 400 + 7 * 3600;
+  await resolvePendingBoxes(w.ctx);
+  assert.equal(w.state.countPending(8453), 0, 'an old one is read from the chain');
+  assert.equal(creditedWei(w.store, ALICE), ETH - 10n ** 15n, 'the Ethereum sender is credited the deposit');
+  assert.equal(rows(w.store, MESSENGER_ALIAS).length, 0, 'never the messenger alias');
+  assert.equal(rows(w.store, KEEPER).length, 0, 'never the sweeper');
+  w.cleanup();
+});
+
+await test('a sweep read from the chain waits while the indexed inflows do not account for the box balance', async () => {
+  const w = world();
+  topFunding(w.explorer, { hash: h(60), block: 150n, from: ALICE, value: ETH });
+  w.chain.txs.set(h(60), { from: ALICE, to: BOX, typeHex: '0x2' });
+  transact(w.chain, { hash: h(61), block: 400n, logIndex: 3, extAmount: 2n * ETH });
+  w.chain.logs.push({ address: ROUTER, event: 'Received', transactionHash: h(61), blockNumber: 400n, logIndex: 4, args: { box: BOX, n: 0n } });
+  w.chain.txs.set(h(61), { from: KEEPER, to: ROUTER, typeHex: '0x2' });
+  w.ctx.client.getBalance = async ({ blockNumber }) => (blockNumber < 150n ? 0n : blockNumber < 400n ? 2n * ETH : 0n);   // 1 ETH of it never indexed
+  await scanEvmPoolChain(w.ctx);
+  w.ctx.nowSec = () => 1_700_000_000 + 400 + 86400;
+  await resolvePendingBoxes(w.ctx);
+  assert.equal(w.state.countPending(8453), 1, 'within a few days it waits for the missing inflow');
+  w.ctx.nowSec = () => 1_700_000_000 + 400 + 4 * 86400;
+  await resolvePendingBoxes(w.ctx);
+  assert.equal(w.state.countPending(8453), 0);
+  assert.equal(creditedWei(w.store, ALICE), ETH, 'after that only what the indexed inflows account for is credited');
+  w.cleanup();
+});
+
 await test('FIFO: a reused box credits each completion from its own funding, a reclaim consumes nothing credited', () => {
   const ev = (txHash, block, from, to, value, index = -1) => ({ txHash, block, txIndex: 0, index, from, to, value });
   const outs = allocateBoxFunding([

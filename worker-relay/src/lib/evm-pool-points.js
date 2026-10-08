@@ -356,6 +356,60 @@ export async function scanEvmPoolChain(ctx) {
   }
 }
 
+// ETH bridged from Ethereum through an OP Stack chain's native bridge (Base) reaches a box from L2StandardBridge, inside a
+// system deposit transaction whose own sender is the messenger's alias, not a person. The bridge's ETHBridgeFinalized event
+// names the Ethereum address that sent it, which is who deposited.
+const L2_STANDARD_BRIDGE = '0x4200000000000000000000000000000000000010';
+const ETH_BRIDGE_FINALIZED = '0x31b2166ff604fc5672ea5df08a78081d2bc6d746cadce880747f3643d819e83d'; // ETHBridgeFinalized(address,address,uint256,bytes)
+async function bridgedSender(ctx, txHash, box, hops) {
+  const r = await ctx.client.getTransactionReceipt({ hash: txHash });
+  for (const l of r?.logs || []) {
+    if (lc(l.address) !== L2_STANDARD_BRIDGE || lc(l.topics?.[0]) !== ETH_BRIDGE_FINALIZED || !l.topics[2]) continue;
+    if (lc('0x' + l.topics[2].slice(26)) !== lc(box)) continue;
+    const from = lc('0x' + l.topics[1].slice(26));
+    return ctx.excluded.has(from) || hops.funding.has(from) ? null : from;
+  }
+  return null;
+}
+
+// An explorer can leave a sweep's own transfer out of a box unindexed (Base's Blockscout has left whole block ranges of
+// internal transfers unprocessed), and the release then never shows in the box's history. Once the sweep is old enough that
+// the explorer has had its chance, the release is read from the chain instead: what left the box is the drop in its balance
+// at the sweep's block, and since a box spends its inflows oldest first, what it held just before was its latest inflows,
+// which that drop consumed oldest first. While the inflows the explorer shows do not account for that balance, it waits a
+// few days longer for them before crediting only what they do account for.
+const CHAIN_RELEASE_AFTER_SECS = 6 * 3600, INFLOWS_WAIT_SECS = 3 * 86400;
+async function releaseFromChain(ctx, p, history) {
+  const age = Math.floor((ctx.nowSec ? ctx.nowSec() : Date.now() / 1000)) - Number(p.block_time);
+  if (age < CHAIN_RELEASE_AFTER_SECS || typeof ctx.client.getBalance !== 'function') return null;
+  const block = BigInt(p.block_number), b = lc(p.box);
+  const [before, after] = await Promise.all([
+    ctx.client.getBalance({ address: p.box, blockNumber: block - 1n }),
+    ctx.client.getBalance({ address: p.box, blockNumber: block }),
+  ]);
+  const out = BigInt(before) - BigInt(after);
+  if (out <= 0n) return null;
+  const ins = history.filter((e) => e.to === b && e.from !== b && e.block < block)
+    .sort((x, y) => cmpBig(x.block, y.block) || x.txIndex - y.txIndex || x.index - y.index);
+  const held = [];
+  let unaccounted = BigInt(before);
+  for (let i = ins.length - 1; i >= 0 && unaccounted > 0n; i--) {
+    const take = ins[i].value < unaccounted ? ins[i].value : unaccounted;
+    held.unshift({ txHash: ins[i].txHash, index: ins[i].index, from: ins[i].from, amount: take });
+    unaccounted -= take;
+  }
+  if (unaccounted > 0n && age < INFLOWS_WAIT_SECS) return null;
+  const consumed = [];
+  let need = out;
+  for (const h of held) {
+    if (need === 0n) break;
+    const take = h.amount < need ? h.amount : need;
+    consumed.push({ ...h, amount: take });
+    need -= take;
+  }
+  return { txHash: p.tx_hash, index: -1, to: lc(ctx.router), value: out, consumed, shortfall: need };
+}
+
 // Resolves pending box completions. A row stays pending (and is retried next cycle) while the explorer is
 // unreachable or has not indexed the completion's release from the box yet; rows that keep failing sort last so
 // they cannot starve newer ones.
@@ -375,7 +429,7 @@ export async function resolvePendingBoxes(ctx) {
       const history = await fetchBoxHistory(ctx.explorerGet, ctx.apiBase, p.box);
       const releases = allocateBoxFunding(history, p.box)
         .filter((o) => lc(o.txHash) === lc(p.tx_hash) && o.to === lc(ctx.router));
-      const release = releases[p.ordinal];
+      const release = releases[p.ordinal] ?? (p.ordinal === 0 ? await releaseFromChain(ctx, p, history) : null);
       if (!release) { state.bumpAttempt(p); continue; }
 
       let budget = BigInt(p.amount_wei);
@@ -384,7 +438,9 @@ export async function resolvePendingBoxes(ctx) {
         if (budget === 0n) break;
         const take = c.amount < budget ? c.amount : budget;
         budget -= take;
-        const funder = creditFor(await getTx(c.txHash), { hops: hops.funding, excluded: ctx.excluded, immediateFrom: c.from });
+        const funder = lc(c.from) === L2_STANDARD_BRIDGE
+          ? await bridgedSender(ctx, c.txHash, p.box, hops)
+          : creditFor(await getTx(c.txHash), { hops: hops.funding, excluded: ctx.excluded, immediateFrom: c.from });
         if (funder) credited.set(funder, (credited.get(funder) ?? 0n) + take);
       }
       let n = 0;
