@@ -196,10 +196,13 @@ function wireExit(wallet, ux, notes) {
 // uses: every note is listed, ineligible ones disabled with a reason. The in-flight list below it survives
 // reloads (crossoutUx journals to storage before each step, same as the forward bridge).
 const CROSSOUT_STAGE_LABEL = {
+  settling: 'Sent to Ethereum — waiting for the settle to land',
   settled: 'Settled on Ethereum — waiting for the reflection worker to see it',
   covered: 'Visible to the reflection worker — ready to sign the Bitcoin-side mint',
   'mint-signed': 'Signed — ready to broadcast on Bitcoin',
   'mint-submitted': 'Broadcast on Bitcoin — waiting for a confirmation',
+  'mint-confirmed': 'Confirmed on Bitcoin — waiting for the note to be credited',
+  'mint-rejected': 'Confirmed on Bitcoin, but the note was not credited — keep this record and ask for help',
   minted: 'Minted on Bitcoin — the usual forward reflection pass will pick it up from here',
 };
 
@@ -214,7 +217,7 @@ function crossoutRecordsHtml(records, network) {
     const showContinue = r.stage !== 'minted';
     return `<div class="list-row" style="flex-direction:column;align-items:flex-start;gap:2px;">`
       + `<div style="display:flex;justify-content:space-between;width:100%;align-items:center;gap:6px;">`
-      + `<span style="font-size:11px;">${esc(label)}${revealLink}</span>`
+      + `<span style="font-size:11px;">${r.source && r.source.ticker && r.source.ticker !== 'TAC' ? `${esc(r.source.ticker)} · ` : ''}${esc(label)}${revealLink}</span>`
       + `<span style="display:flex;gap:4px;flex:0 0 auto;">`
       + (showContinue ? `<button data-id="${esc(r.id)}" class="cpool-crossout-continue" style="padding:2px 8px;font-size:10px;">Continue</button>` : '')
       + `<button data-id="${esc(r.id)}" data-txhash="${esc(r.settle && r.settle.txHash || '')}" class="cpool-crossout-abandon muted" title="Remove from this list only — does not undo anything on chain" style="padding:2px 8px;font-size:10px;">✕</button>`

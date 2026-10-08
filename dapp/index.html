@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-6bG/161AbZpcvF/BanRgH1t5cOOPIHQNE4dg9Tqpc3c=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-J4S6btIRfkbR+pjY92TF4YiRR0Li40+a17ISr2FjHyk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://cloudflare-eth.com https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://tacit-pin.rosscampbell9.workers.dev; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <script src="/front-route.js?cb=c240ced2"></script>
 <title>tacit</title>
@@ -2097,6 +2097,7 @@ function setKey(k) {
   S.pay = store.get(PAY)?.[pubHex] || null;
   syncAccount(); resetPrivate(); paintWallet(); refreshAll();
   setTimeout(() => brTick(true), 4000);                            // a bridge waiting on this key moves on as soon as it opens
+  setTimeout(() => xoTick(true), 6000);
   const opened = () => { if (S.key === key) toast(`Opened ${short(key.tacit, 8)}`); };
   if (UNI) return opened();
   loadUnified().catch(() => {}).then(() => {
@@ -2112,7 +2113,7 @@ function setKey(k) {
 // tacit.js opens the passphrase-locked and Bitcoin-signed keys exactly as tacit.finance does. It loads only for
 // those paths, as a library: it reads the shared network once at import, so this page pins mainnet for its visit,
 // and any call that rewrites the app's linked-wallet records is run with them put back afterwards.
-const TACIT_URL = '/tacit.js?cb=7456232f';
+const TACIT_URL = '/tacit.js?cb=cb5dc20b';
 const SHARED_NET = 'tacit-network-v1', PREV_NET = 'tacit-lite-prev-net-v1';
 const SHARED_WALLET_KEYS = ['tacit-eth-identity', 'tacit-btc-identity', 'tacit-active-mode-v1', 'tacit-ext-mode-v1', 'tacit-ext-state-v1',
   ...['mainnet', 'signet'].flatMap((n) => [`tacit-eth-identity:${n}`, `tacit-btc-identity:${n}`])];
@@ -2624,7 +2625,7 @@ const linkName = (sheet) => Object.keys(ALIAS).find((k) => ALIAS[k][0] === sheet
 // #lock opens Borrow on Bitcoin at its first step, the BTC to lock for cBTC; #leaderboard opens Points at the leaderboard.
 // A view a sheet opens on by default adds nothing (#private, #farm), and the older single names (#eth, #pts) still work.
 const VIEW = {
-  v1: { wrap: '', send: 'send', out: 'withdraw' },
+  v1: { wrap: '', send: 'send', out: 'withdraw', btc: 'bitcoin' },
   dev: { deposit: '', send: 'send', out: 'withdraw', receive: 'receive' },
   btc: { send: '', receive: 'receive' },
   pts: { all: '', day: 'today' },
@@ -2769,7 +2770,7 @@ function wireSub(el, name, set) { $$(`[data-${name}]`, el).forEach((b) => b.oncl
 
 // ── Tacit V1 pool: shared module, loaded on first use ────────────────────────────────────────────────────
 const getUx = lazy(async () => {
-  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=b4b7a2fd'), import('/confidential-deployments.js')]);
+  const [{ makeConfidentialPoolUx, setExternalTacHolders }, dep] = await Promise.all([import('/confidential-pool-ux.js?cb=c6f52584'), import('/confidential-deployments.js')]);
   dep.setActiveNetwork('mainnet');
   setExternalTacHolders(() => (S.wallet ? [S.wallet] : []));      // public TAC in the connected wallet counts toward the exit-fee tier, as on tacit.finance
   return makeConfidentialPoolUx({ secp, keccak256: keccak_256, sha256, network: 'mainnet' });
@@ -2987,6 +2988,7 @@ async function settleLocks(run, kind, status) {
 
 function renderV1(el) {
   if (!needKey(el, 'Make your ETH private as tETH, then send it to anyone without the world seeing how much or to whom. Open your Tacit wallet to start.')) return;
+  if (V1.mode === 'btc' && !xoShown(S.key.pubHex)) V1.mode = 'wrap';       // #private/bitcoin is only a view while the tab is shown
   const s = P.scan, last = s || P.err ? null : lastSeen('teth');
   const bal = s ? html`${fmt(s.eth.value, 8, 6)}` : P.err ? html`<span class="err">—</span>` : last != null ? html`<span class="stale">${fmt(last, 8, 6)}</span>` : html`<span class="sk" style="--w:8ch"></span>`;
   mount(el, html`
@@ -2998,7 +3000,7 @@ function renderV1(el) {
     ${depositCallout('eth', 'v1-finish')}
     ${LK.pub === S.key.pubHex && lockList('claim').length ? html`<div class="callout"><span>${lockList('claim').length === 1 ? 'A private payment was' : `${lockList('claim').length} private payments were`} sent to you.</span><button class="btn ghost" type="button" id="v1-claim">Claim</button></div>` : ''}
     ${LK.pub === S.key.pubHex && lockList('refund').length ? html`<div class="callout"><span>${lockList('refund').length === 1 ? 'A private send was' : `${lockList('refund').length} private sends were`} never claimed. ${lockList('refund').length === 1 ? 'It' : 'They'} can come back to you.</span><button class="btn ghost" type="button" id="v1-back">Take back</button></div>` : ''}
-    ${segSub('v1', V1.mode, [['wrap', 'Make private'], ['send', 'Send'], ['out', 'Withdraw']])}
+    ${segSub('v1', V1.mode, [['wrap', 'Make private'], ['send', 'Send'], ['out', 'Withdraw'], ...(xoShown(S.key.pubHex) ? [['btc', 'To Bitcoin']] : [])])}
     <div id="v1-form"></div>
     <div class="status" role="status" id="v1-status"></div>`);
   wireSub(el, 'v1', (m) => { V1.mode = m; keep($('#sheet-eth'), render.eth); });
@@ -3011,7 +3013,7 @@ function renderV1(el) {
   if (!s && !P.scanning && !P.err) scanPrivate().then(() => rerender('eth')).catch((e) => { sayErr($('#v1-status'), e); rerender('eth'); });
   // A scan that failed is tried again a minute later, not on every redraw of the sheet.
   if (LK.pub !== S.key.pubHex && !LK.scanning && !(LK.failed?.pub === S.key.pubHex && Date.now() - LK.failed.at < 60e3)) loadLocks().then(() => rerender('eth')).catch(() => {});
-  ({ wrap: v1Wrap, send: v1Send, out: v1Out })[V1.mode]($('#v1-form'), $('#v1-status'));
+  ({ wrap: v1Wrap, send: v1Send, out: v1Out, btc: v1Btc })[V1.mode]($('#v1-form'), $('#v1-status'));
 }
 
 // ── what a deposit joins and earns ────────────────────────────────────────────────────────────────────────
@@ -3390,6 +3392,277 @@ function v1Out(el, status) {
       await scanPrivate(true).catch(() => {});
       rerender('eth');
     } catch (e) { run.fail(status, e); }
+  });
+}
+
+// ── private tETH to tETH on Bitcoin ──────────────────────────────────────────────────────────────────────────
+// A private tETH note is burned on Ethereum and the same value arrives as a tETH note on this key's own Bitcoin address.
+// tacit.js's cross-out bridge does it (the one the classic app's Bitcoin-side steps use), its journal shared the way the
+// TAC bridge's is. The burn cannot be undone, and Bitcoin takes the note only after its proof on Ethereum has seen the burn,
+// so everything that can be checked first is, before the note is touched: sats free for the Bitcoin fee, and the proof
+// keeping up. The Bitcoin step then waits for that proof, never goes earlier, and is sent by this page while it is open
+// with the key. The journal is only a cache: a burn this page lost track of is found again on Ethereum, or rebuilt from
+// its transaction and the key. The tab is shown when localStorage 'tacit-teth-btc' is true or the key has a bridge under
+// way; the flag gates only starting one, and a bridge under way is followed to its end either way.
+const xoOn = () => store.get('tacit-teth-btc') === true;
+const XO = { pf: null, auto: false, autoAt: 0 };
+const XO_STEPS = ['Burned on Ethereum', 'Seen by the proof', 'Sent to Bitcoin', 'Arrived'];
+const XO_AT = { settling: 0, settled: 1, covered: 2, 'mint-signed': 2, 'mint-submitted': 3, 'mint-confirmed': 3, 'mint-rejected': 3 };
+const xoUx = async () => (await loadTacit()).crossoutUx();
+const xoIsTeth = (r) => String(r.source?.assetId || '').toLowerCase() === CETH_ID;
+const xoAmt = (r) => `${fmt(BigInt(r.source.amount ?? r.source.value), 8, 6)} tETH`;
+const xoHash = (h) => '0x' + String(h || '').replace(/^0x/, '');
+// This key's tETH bridges that are not finished, oldest first.
+const xoRecords = (pub) => {
+  try { return T && pub ? T.crossoutUx().list(pub).filter((r) => r.stage !== 'minted' && xoIsTeth(r)).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)) : []; }
+  catch { return []; }
+};
+// Whether this key has a bridge under way, read from the journal itself so tacit.js loads only for a key that has one.
+const xoJournaled = (pub) => {
+  try {
+    const list = JSON.parse(localStorage.getItem(`tacit-crossout-bridge-v1:mainnet:${pub}`) || '[]');
+    return Array.isArray(list) && list.some((r) => r?.stage !== 'minted' && String(r?.source?.assetId || '').toLowerCase() === CETH_ID);
+  } catch { return false; }
+};
+// What stopped a bridge from starting, in words (the receipt, and again as the money goes).
+const xoProblemText = (p, pf) => p.name === 'funding' ? html`This key’s Bitcoin address has ${fmt(BigInt(pf.haveSats), 8, 8)} BTC free, short of the ${pf.needSats.toLocaleString('en-US')} sats the Bitcoin step needs. Keep them on it until the bridge arrives. <a href="#bitcoin/receive" data-link="bitcoin/receive">Add bitcoin to it</a> <button class="link" type="button" id="xo-recheck">Check again</button>`
+  : p.name === 'funding-unconfirmed' ? 'The sats on this key’s Bitcoin address are waiting for a confirmation. Once they confirm, this can start.'
+  : p.name === 'funding-unreadable' ? 'This key’s Bitcoin address could not be read, so nothing was started. Try again in a minute.'
+  : 'Bitcoin’s proof on Ethereum could not be read just now, so nothing was started. Try again in a minute.';
+// The sats check reads this key's holdings in tacit.js, so it runs in a turn that holds the key like every other use of it.
+const xoPreflight = (ux, pub) => withKey(() => ux.preflight({ walletPriv: walletPriv() }), pub);
+const xoShown = (pub) => xoOn() || xoJournaled(pub);
+function xoErr(e) {
+  const m = String(e?.message || e || '').replace(/^crossout-ux:\s*/, '');
+  if (/another tab/i.test(m)) return 'This bridge is being moved on in another tab. Wait for it there, or close that tab and try again.';
+  return errText(m === String(e?.message || e || '') ? e : new Error(m));
+}
+const xoFail = (e) => Object.assign(new Error(xoErr(e)), { said: true });
+const xoNoteText = (r) => ({
+  settling: 'Sent to Ethereum. Waiting for the burn to land: this page looks for it again by itself, also after a reload.',
+  settled: 'Burned on Ethereum. Waiting for Bitcoin’s proof on Ethereum to see the burn, usually within an hour or two. The Bitcoin step is sent by this page once it has, while it is open with your key.',
+  covered: 'The proof has seen the burn. Sending the Bitcoin step needs your key: it goes on by itself while this page is open with it.',
+  'mint-signed': 'Signed. Sending it to Bitcoin…',
+  'mint-submitted': 'With Bitcoin. It needs a confirmation first.',
+  'mint-confirmed': 'Confirmed on Bitcoin. Waiting for the tETH to be credited to your Bitcoin address, usually within the hour.',
+  'mint-rejected': 'Confirmed on Bitcoin, but the tETH was not credited. Nothing else is spent. Keep this row and its transaction ids, and ask for help with them.',
+})[r.stage] || '';
+function xoRow(r) {
+  const at = XO_AT[r.stage] ?? 1, failing = !!r.lastError, rejected = r.stage === 'mint-rejected';
+  const eth = r.settle?.txHash ? `${SCAN}/tx/${xoHash(r.settle.txHash)}` : null, btc = r.mint?.revealTxid;
+  const btn = (kind, label, ghost = true) => html`<button class="btn${ghost ? ' ghost' : ''}" type="button" data-xoact="${kind}" data-xoid="${r.id}">${label}</button>`;
+  const high = failing && /fees are high/i.test(r.lastError.message), unsure = !!r.settle && r.settle.claimIdVerified === false;
+  const act = unsure ? btn('recheck', 'Check it again', false)
+    : r.stage === 'settling' ? btn('poll', 'Look again')
+    : r.stage === 'covered' && high ? btn('force', 'Send it anyway', false)
+    : failing && !rejected ? btn('poll', 'Try again') : '';
+  // A signed pair Bitcoin never took, after repeated tries, is signed again from a coin that is free now.
+  const resign = r.stage === 'mint-signed' && failing && (r.errorCount || 0) >= 3;
+  const cancel = r.stage === 'settling' && Date.now() - (r.createdAt || 0) > 2 * 3600e3;
+  return html`<li class="actr brr">
+    <div class="actr-h"><b class="num">${xoAmt(r)}</b>${btc ? html`<a href="${MEMPOOL}/tx/${btc}" target="_blank" rel="noopener">${short(btc, 6)} ↗</a>` : eth ? html`<a href="${eth}" target="_blank" rel="noopener">${short(xoHash(r.settle.txHash), 6)} ↗</a>` : ''}</div>
+    <ol class="stp">${XO_STEPS.map((l, i) => stepLi(l, i < at ? 'done' : i === at ? (failing || rejected ? 'bad' : 'now') : ''))}</ol>
+    <div class="actr-f">${xoNoteText(r)}</div>
+    ${unsure ? html`<div class="actr-f err">The burn’s claim was not matched to its record on Ethereum, so the Bitcoin step is held back. Checking it again rebuilds it from the burn itself.</div>` : ''}
+    ${failing ? html`<div class="actr-f err">${xoErr(r.lastError.message)}${r.errorCount > 1 ? ` (${r.errorCount} tries)` : ''}</div>` : ''}
+    ${act || resign || cancel ? html`<div class="brr-a">${act}${resign ? btn('resign', 'Sign it again') : ''}${cancel ? btn('cancel', 'Cancel') : ''}</div>` : ''}
+    ${resign ? html`<div class="actr-f">Bitcoin has not taken the signed transaction. Signing again uses a coin that is free now; it is only offered while the first one is not on Bitcoin.</div>` : ''}
+    ${cancel ? html`<div class="actr-f">Cancelling looks for the burn on Ethereum once more first. If it shows up later, “A bridge you started isn’t listed” finds it from its transaction.</div>` : ''}
+  </li>`;
+}
+// Whichever step a bridge is at is taken, and the next while it can be: the Bitcoin step needs the key (its coin choice
+// reads this key's holdings); everything else is a read or a send of what is already signed.
+async function xoAdvance(ux, pub, rec, allowHighFee = false) {
+  let cur = rec;
+  for (let i = 0; i < 4; i++) {
+    const next = cur.stage === 'covered' ? await withKey(() => ux.advance(pub, cur.id, { walletPriv: walletPriv(), allowHighFee }), pub) : await ux.advance(pub, cur.id);
+    if (next.stage === cur.stage) return next;
+    cur = next;
+    if (cur.stage === 'mint-submitted' || cur.stage === 'minted') return cur;
+  }
+  return cur;
+}
+function xoArrived(rec) {
+  toast(`${xoAmt(rec)} is on your Bitcoin address`);
+  loadBtc(true).then(() => rerender('btc')).catch(() => {});
+}
+// One press on a row.
+async function xoAct(run, kind, id) {
+  const pub = S.key.pubHex, status = () => $('#xo-rstatus') || $('#v1-status'), ux = await xoUx(), rec = ux.list(pub).find((r) => r.id === id);
+  if (!rec) return;
+  const amt = xoAmt(rec);
+  try {
+    if (kind === 'cancel') {
+      const found = await ux.cancelIntent(pub, id);
+      if (found) run.say(status(), html`<span class="ok">That burn had landed on Ethereum: it is under On the way.</span>`);
+      else run.say(status(), 'Cancelled: no burn for it was found on Ethereum.');
+      return;
+    }
+    let cur = rec;
+    if (kind === 'recheck') cur = await ux.recoverFromEthTx(xoHash(rec.settle.txHash), walletPriv(), { amount: BigInt(rec.source.amount) });
+    if (kind === 'resign') cur = await ux.resign(pub, id);
+    run.say(status(), kind === 'force' ? `Sending ${amt} to Bitcoin at today’s fee…` : 'Checking…');
+    const after = await xoAdvance(ux, pub, cur, kind === 'force');
+    if (after.stage === 'minted') xoArrived(after);
+    else if (after.stage !== rec.stage) run.say(status(), xoNoteText(after));
+    else run.say(status(), xoNoteText(after) || 'Nothing has changed yet.');
+  } catch (e) { run.fail(status(), xoFail(e)); } finally { rerender('eth'); }
+}
+// While this page is open with the key, bridges go on by themselves: a burn that has not been seen to land is looked for, the
+// proof's view is read, the Bitcoin step is signed and sent, and a confirmation is waited for until the tETH is credited.
+// A step that failed is tried again after ten minutes, a few times, and then waits for its button. Only tETH bridges here:
+// the classic app follows TAC's own.
+async function xoTick(first = false) {
+  const pub = S.key?.pubHex;
+  if (!pub || XO.auto || (!first && Date.now() - XO.autoAt < 75e3) || !xoJournaled(pub)) return;
+  XO.auto = true; XO.autoAt = Date.now();
+  let moved = false;
+  try {
+    const ux = await xoUx();
+    for (const rec of xoRecords(pub)) {
+      if (S.key?.pubHex !== pub) break;
+      const sends = rec.stage === 'covered' || rec.stage === 'mint-signed';
+      if (rec.lastError && sends && ((Number(rec.errorCount) || 0) >= 6 || Date.now() - Number(rec.lastError.at || 0) < 10 * 60e3)) continue;
+      try {
+        const after = await xoAdvance(ux, pub, rec);
+        if (after?.stage !== rec.stage) moved = true;
+        if (after?.stage === 'minted') xoArrived(after);
+      } catch { moved = true; }                                    // its row shows the error the record now carries
+    }
+  } catch {} finally { XO.auto = false; }
+  if (moved) rerender('eth');
+}
+// What a bridge costs on Bitcoin, in words for the receipt.
+const xoWarn = (w, lag) => w.name === 'reflection-behind' ? `Bitcoin’s proof on Ethereum is ${w.detail} behind (about ${Math.max(1, Math.round(lag / 6))} hours), so this will take longer than usual. Nothing is lost by waiting.`
+  : w.name === 'coverage-behind' ? 'The proof’s view of Ethereum is further behind than usual, so this will take longer than usual. Nothing is lost by waiting.' : '';
+function v1Btc(el, status) {
+  const pub = S.key.pubHex, held = spendable('eth'), recs = xoRecords(pub);
+  // A bridge under way is read from the journal, which tacit.js owns: load it for a key that has one.
+  if (!T && xoJournaled(pub)) loadTacit().then(() => rerender('eth')).catch(() => {});
+  mount(el, html`
+    <p class="lede-s">Burn private tETH here and the same value arrives as tETH on your own Bitcoin address. It takes a few hours: Bitcoin takes the note only after its proof on Ethereum has seen the burn. There it can be traded for bitcoin in the classic app. Bringing tETH from Bitcoin back to Ethereum is not in this app yet.</p>
+    ${recs.length ? html`<div class="lbl"><span>On the way</span></div><ul class="acts brs">${recs.map(xoRow)}</ul><div class="status" role="status" id="xo-rstatus"></div>` : ''}
+    <div class="lbl"><span>Amount</span><button type="button" id="xo-max">${heldLabel('eth', 8, 6, 'tETH')}</button></div>
+    <div class="amt"><input id="xo-amt" inputmode="decimal" placeholder="0.00" autocomplete="off" aria-label="tETH to bridge to Bitcoin"><span class="u"><svg class="tk sm" aria-hidden="true"><use href="#tk-teth"/></svg>tETH</span></div>
+    <div class="rcpt" id="xo-rcpt" hidden></div>
+    <label class="pick" id="xo-ackrow" hidden><input type="checkbox" id="xo-ack"><span>I understand a bridge can’t be undone once it is burned on Ethereum, and that tETH can’t be brought back from Bitcoin in this app yet.</span></label>
+    <button class="btn" type="button" id="xo-go" disabled>Bridge to Bitcoin</button>
+    <details class="lockmore"><summary>A bridge you started isn’t listed</summary>
+      <p class="note">One started on another device, or whose page closed before the burn showed, is rebuilt from the burn’s Ethereum transaction and this key.</p>
+      <div class="amt text"><input id="xo-txh" placeholder="Ethereum transaction hash of the burn" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Ethereum transaction hash of the burn"></div>
+      <div class="amt"><input id="xo-ramt" inputmode="decimal" placeholder="tETH that arrives on Bitcoin" autocomplete="off" aria-label="tETH that arrives on Bitcoin"><span class="u">tETH</span></div>
+      <button class="btn ghost" type="button" id="xo-find">Find it</button>
+      <div class="status" role="status" id="xo-fstatus"></div>
+    </details>`);
+  $$('[data-xoact]', el).forEach((x) => x.onclick = () => busy(x, (run) => xoAct(run, x.dataset.xoact, x.dataset.xoid)));
+  const amt = $('#xo-amt'), go = $('#xo-go'), rc = $('#xo-rcpt'), ackRow = $('#xo-ackrow'), ack = $('#xo-ack');
+  let q = null, seq = 0;
+  const gateOk = () => { go.disabled = !q?.ok || !ack.checked; };
+  ack.onchange = gateOk;
+  $('#xo-max').onclick = async () => {
+    const cap = (await xoUx().catch(() => null))?.assetOf(CETH_ID)?.capRaw;
+    const v = cap != null && cap < held ? cap : held;
+    amt.value = v ? plain(v, 8) : ''; amt.dispatchEvent(new Event('input'));
+  };
+  const check = async (e) => {
+    const my = ++seq, units = parseUnits(amt.value, 8);
+    q = null; go.disabled = true; ackRow.hidden = true; ack.checked = false;
+    if (e?.isTrusted) say(status, '');
+    if (tooFine(rc, amt.value, units, 8)) return;
+    if (!units) { rc.hidden = true; return; }
+    mount(rc, html`<p class="note">Checking the fees and the proof…</p>`); rc.hidden = false;
+    try {
+      const [t, ux] = await Promise.all([getUx(), xoUx()]);
+      const lim = ux.assetOf(CETH_ID);
+      if (!lim) throw new Error('tETH cannot be bridged to Bitcoin from this deployment.');
+      const fee = BigInt(await t.quoteOpFee('cETH', 'bridgeburn'));
+      const exact = freeNotes(P.scan?.eth.notes).some((n) => BigInt(n.value) === units);
+      const size = exact ? 0n : BigInt(await t.quoteOpFee('cETH', 'transfer'));
+      // The check reads Bitcoin and the proof, so it is made once and kept for two minutes; it is made again as the money goes.
+      const kept = XO.pf && XO.pf.pub === pub && Date.now() - XO.pf.at < 120e3 ? XO.pf.v : null;
+      const pf = kept || await xoPreflight(ux, pub);
+      if (!kept) XO.pf = { pub, at: Date.now(), v: pf };
+      if (my !== seq || !amt.isConnected) return;
+      mount(rc, html`
+        <div class="kv"><span>You get</span><b>${units > fee ? fmt(units - fee, 8, 8) : '0'} tETH on your Bitcoin address</b></div>
+        <div class="kv"><span>Relay fee</span><b>${fmt(fee, 8, 8)} tETH</b></div>
+        ${size && units + size <= held ? html`<div class="kv"><span>Relay fee to ${freeNotes(P.scan?.eth.notes).some((n) => BigInt(n.value) >= units + size) ? 'split a note' : 'combine notes'}</span><b>${fmt(size, 8, 8)} tETH</b></div>` : ''}
+        <div class="kv"><span>Bitcoin fee, when it is sent</span><b>about ${pf.estSats.toLocaleString('en-US')} sats from ${short(pf.address, 6)}</b></div>
+        <div class="kv"><span>Arrives</span><b>usually 4 to 6 hours</b></div>`);
+      const problem = pf.problems[0];
+      let ok = true;
+      if (units < lim.minRaw) { warn(rc, `Bridge at least ${fmt(lim.minRaw, 8, 8)} tETH: below that the fees are most of what moves.`); ok = false; }
+      else if (units > lim.capRaw) { warn(rc, `One bridge takes at most ${fmt(lim.capRaw, 8, 8)} tETH while this is new. Bridge less, then again.`); ok = false; }
+      else if (units <= fee) { warn(rc, `Bridge more than ${fmt(fee, 8, 6)} tETH: the relay fee comes out of it.`); ok = false; }
+      else if (units + size > held) { warn(rc, feeRoom(units, size, held, P.scan?.eth.notes, (v) => `${fmt(v, 8, 6)} tETH`) || overBalance()); ok = false; }
+      if (problem) {
+        ok = false;
+        warn(rc, xoProblemText(problem, pf));
+      }
+      const rk = $('#xo-recheck', rc);
+      if (rk) rk.onclick = () => { XO.pf = null; check(); };
+      for (const w of pf.warnings) { const text = xoWarn(w, pf.reflection?.lagBlocks || 0); if (text) rc.insertAdjacentHTML('beforeend', html`<p class="note">${text}</p>`.s); }
+      if (ok) rc.insertAdjacentHTML('beforeend', html`<p class="note">The Bitcoin step is paid from that address when it is sent, hours from now. Keep about ${pf.needSats.toLocaleString('en-US')} sats on it until then.</p>`.s);
+      q = { ok, units, fee, size, pf };
+      ackRow.hidden = !ok; gateOk();
+    } catch (x) { if (my === seq && rc.isConnected) quoteErr(rc, xoFail(x)); }
+  };
+  onEdit([amt], go, check);
+  go.onclick = () => busy(go, async (run) => {
+    const x = q;
+    if (!x?.ok) return;
+    const amtText = `${fmt(x.units, 8, 6)} tETH`;
+    run.go({ label: `Bridge ${amtText} to Bitcoin`, status: () => $('#v1-status'), clear: () => { clearField(amt); } });
+    try {
+      const [t, ux] = await Promise.all([getUx(), xoUx()]), priv = walletPriv();
+      // Asked again as the money goes: sats can have been spent, and the proof's state can have changed, since the receipt.
+      run.say(status, 'Checking Bitcoin and the proof once more…');
+      const pf = await xoPreflight(ux, pub);
+      if (!pf.ok) throw Object.assign(new Error(pf.problems[0].name === 'funding' ? 'This key’s Bitcoin address no longer has enough free sats for the Bitcoin step. Nothing was burned.'
+        : pf.problems[0].name === 'funding-unconfirmed' ? 'The sats on this key’s Bitcoin address are waiting for a confirmation, so nothing was burned. Try again once they confirm.'
+        : 'Bitcoin or its proof could not be read, so nothing was burned. Try again in a minute.'), { said: true });
+      const note = await noteFor(run, t, priv, x.units, (n) => BigInt(n.value) === x.units, status);
+      run.say(status, 'The relay is proving the burn…');
+      const startWith = (o) => ux.start({ note, walletPriv: priv, fee: o.fee, selfSettle: o.selfSettle, waitOpts: o.waitOpts });
+      let rec;
+      try {
+        try { rec = await startWith({ fee: x.fee, waitOpts: run.wait(null, 15 * 60e3) }); }
+        // The relay's floor moved between the quote and the submit: nothing was proved, so ask once more at twice the fee.
+        catch (e0) { if (/fee below the current floor/i.test(e0?.message || '') && x.fee * 2n * 2n < x.units) rec = await startWith({ fee: x.fee * 2n, waitOpts: run.wait(null, 15 * 60e3) }); else throw e0; }
+      } catch (e) {
+        // A wait that ran out is not a refusal: the job may still be proving, so its intent stays and is looked for on Ethereum.
+        if (!relayRefused(e) || waitRanOut(e) || run.away) throw e;
+        // Refused at submit: nothing was queued, so the intent is let go and the same burn goes out from the paying account.
+        await ux.cancelIntent(pub, note.nullifier).catch(() => {});
+        offerSelf({ label: `Bridge ${amtText} to Bitcoin`, sheet: 'eth', status: () => $('#v1-status'), then: 'Burned. The Bitcoin step goes on by itself from here.', after: () => xoTick(true),
+          // Sent long after the receipt, so the sats are asked about again before anything is burned.
+          go: async (y) => {
+            const again = await xoPreflight(ux, pub);
+            if (!again.ok) throw Object.assign(new Error('Bitcoin no longer has what the Bitcoin step needs (free sats, or the proof’s state), so nothing was burned. Check the bridge again.'), { said: true });
+            return startWith({ fee: 0n, selfSettle: y.selfSettle, waitOpts: y.waitOpts });
+          } }, e);
+        return;
+      }
+      try { rec = await xoAdvance(ux, pub, rec); } catch {}                   // the proof rarely has the burn yet
+      toast(`Bridging ${amtText} to Bitcoin`);
+      say(status, html`<span class="ok">✓ Burned on Ethereum</span> ${rec.settle?.txHash ? txLink(xoHash(rec.settle.txHash)) : ''}. It shows under On the way. The Bitcoin step goes on by itself while this page is open with your key.`);
+      await scanPrivate(true).catch(() => {});
+      rerender('eth');
+    } catch (e) { run.fail(status, xoFail(e)); }
+  });
+  const find = $('#xo-find'), txh = $('#xo-txh'), ramt = $('#xo-ramt'), fst = $('#xo-fstatus');
+  find.onclick = () => busy(find, async (run) => {
+    const h = txh.value.trim().toLowerCase(), v = parseUnits(ramt.value, 8);
+    if (!/^(0x)?[0-9a-f]{64}$/.test(h)) { say(fst, html`<span class="err">A transaction hash is 64 characters, 0-9 and a-f.</span>`); return; }
+    if (!v) { say(fst, html`<span class="err">Add the tETH that arrives on Bitcoin: the amount you bridged, less the relay fee.</span>`); return; }
+    try {
+      run.say(fst, 'Checking the burn and rebuilding the bridge…');
+      await (await xoUx()).recoverFromEthTx(xoHash(h), walletPriv(), { amount: v });
+      clearField(txh); clearField(ramt);
+      say(fst, html`<span class="ok">✓ Found it. It shows under On the way.</span>`);
+      xoTick(true);
+      rerender('eth');
+    } catch (e) { run.fail(fst, xoFail(e)); }
   });
 }
 
@@ -7105,7 +7378,7 @@ paintEarn();
 refreshAll();
 resumeActivity();
 let lastTick = Date.now();
-const tick = () => { lastTick = Date.now(); paintEarn(); brTick(); if (lastTick - numsAt > NUMS_MS) refreshNums(); for (const n of SHEETS) if ($(`#sheet-${n}`).open && !running(n)) load[n]?.().then(() => rerender(n)).catch(() => {}); };
+const tick = () => { lastTick = Date.now(); paintEarn(); brTick(); xoTick(); if (lastTick - numsAt > NUMS_MS) refreshNums(); for (const n of SHEETS) if ($(`#sheet-${n}`).open && !running(n)) load[n]?.().then(() => rerender(n)).catch(() => {}); };
 setInterval(() => { if (!document.hidden) tick(); }, 60e3);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - lastTick > 60e3) tick(); });
 const route = () => {

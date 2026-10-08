@@ -75,7 +75,7 @@ import { bppRangeProve, bppRangeVerify } from './bulletproofs-plus.js';
 import { makeConfidentialPool } from './confidential-pool.js';
 import { makeConfidentialPoolUx, setExternalTacHolders } from './confidential-pool-ux.js';
 import { makeBurnDepositUx } from './burndep-ux.js';
-import { makeCrossoutUx } from './crossout-ux.js';
+import { makeCrossoutUx, CROSSOUT_BETA_CAP_RAW as CROSSOUT_TAC_CAP_RAW, CROSSOUT_TETH_CAP_RAW, CROSSOUT_TETH_MIN_RAW } from './crossout-ux.js';
 import { renderConfidentialPoolTab } from './confidential-pool-tab.js';
 import { renderLanePanel } from './cross-chain-lane.js';
 import { renderCdpTab, announceCbtcBonds } from './confidential-defi-tab.js';
@@ -19938,18 +19938,24 @@ function _burndepUxSingleton() {
 function _burndepReserved(txid, vout) {
   try { return _burndepUxSingleton().isReserved(txid, vout); } catch { return false; }
 }
-// TAC-to-Bitcoin cross-out bridge (beta, capped at CROSSOUT_BETA_CAP_RAW) — the reverse leg of the burn-deposit
-// bridge above. Same per-network caching rationale as _burndepUxSingleton.
+// TAC- and tETH-to-Bitcoin cross-out bridge (beta, each asset capped on its own) — the reverse leg of the burn-deposit
+// bridge above. Same per-network caching rationale as _burndepUxSingleton. tETH is the pool's native ETH note, taken
+// only where the deployment ties its note asset to the Bitcoin-lane tETH asset (the same id on both sides): any other
+// id would mint a note on Bitcoin that no one there recognises.
 let _crossoutUx = null, _crossoutUxNet = null;
 function _crossoutUxSingleton() {
   const net = NET.name;
   if (_crossoutUx && _crossoutUxNet === net) return _crossoutUx;
   const poolUx = _poolUxSingleton();
   _crossoutUxNet = net;
+  const cEth = poolUx.assetByTicker && poolUx.assetByTicker.cETH;
+  const tethId = cEth && cEth.assetId && cEth.bitcoinLink && String(cEth.assetId).toLowerCase() === String(cEth.bitcoinLink).toLowerCase() ? cEth.assetId : null;
   return (_crossoutUx = makeCrossoutUx({
     network: net, hrp: NET.hrp, workerBase: WORKER_BASE, secp, hmac, sha256,
-    crossOut: poolUx.crossOut, pool: poolUx.pool, rpc: poolUx.rpc, evmLog: poolUx.evmLog,
+    crossOut: poolUx.crossOut, pool: poolUx.pool, rpc: poolUx.rpc, evmLog: poolUx.evmLog, poolAddress: poolUx.cfg && poolUx.cfg.pool,
     tacAssetId: '0x' + CANONICAL_TAC_ASSET_ID_HEX,
+    assets: [{ assetId: '0x' + CANONICAL_TAC_ASSET_ID_HEX, ticker: 'TAC', capRaw: CROSSOUT_TAC_CAP_RAW },
+      ...(tethId ? [{ assetId: tethId, ticker: 'tETH', capRaw: CROSSOUT_TETH_CAP_RAW, minRaw: CROSSOUT_TETH_MIN_RAW }] : [])],
     chain: { getUtxos, pickSafeCommitSats, broadcastWithRetry, getFeeRate },
     postHint,
   }));
@@ -78568,7 +78574,7 @@ export {
   scanHoldings, invalidateHoldingsCache,
   // The TAC bridge to Ethereum, for pages that load this file as a library: the same instance, journal and coin
   // reservations the Holdings tab uses, so a bridge started on one page is followed on the other.
-  _burndepUxSingleton as bridgeUx, pickSafeCommitSats,
+  _burndepUxSingleton as bridgeUx, _crossoutUxSingleton as crossoutUx, pickSafeCommitSats,
   discoverStealthFromTxid, scanAssetForStealthReceipts,
   recordStealthCredit, getStealthCredit, loadStealthCredits, removeStealthCredit,
   markStealthTxidSeen, isStealthTxidSeen,

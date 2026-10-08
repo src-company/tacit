@@ -71,5 +71,12 @@ export function makeCrossoutMintReveal({ secp } = {}) {
     return { commitHex, commitTxid, revealHex, revealTxid, feeRate: rate, commitFee, revealFee, commitValue };
   }
 
-  return { buildCrossoutMintTxs };
+  // What one mint costs the wallet that pays for it: both transactions' fees at `feeRate`, plus the dust the note's own
+  // output holds. The same arithmetic as buildCrossoutMintTxs, for a caller that needs the figure before it signs.
+  function estimateSats({ feeRate, dust }) {
+    const rate = Number(feeRate) || 3;
+    return Math.ceil(REVEAL_VB * rate) + dust + Math.ceil(COMMIT_VB * rate);
+  }
+
+  return { buildCrossoutMintTxs, estimateSats };
 }

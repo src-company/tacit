@@ -2812,7 +2812,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
   // guest folds it into btc_note_leaf and reflection binds it to the mint tx's vout-0 P2TR program
   // (main.rs OP_BRIDGE_BURN rejects a zero key outright). Passing an nk-hash owner here mints a note nobody
   // can ever spend, so it is required explicitly for every destination chain and never defaulted.
-  async function crossOut({ walletPriv, notes, amount, destOwner, destBlinding, destChain = 1, fee = 0n, selfRelay = false, waitOpts } = {}) {
+  async function crossOut({ walletPriv, notes, amount, destOwner, destBlinding, destChain = 1, fee = 0n, selfRelay = false, selfSettle = null, waitOpts } = {}) {
     if (!notes || !notes.length) throw new Error('crossOut: no input notes');
     const id = identity(walletPriv);
     const asset = notes[0].asset;
@@ -2874,7 +2874,7 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       rangeProof: '0x' + _hex(t.rangeProof), kernel: { R: ptHex(t.kernel.R), z: beHex(t.kernel.z) },
       fee: fee.toString(),
     };
-    const r = await _dispatch({ type: 'bridgeburn', spec: { op, leaves: [], outputs: null, ephRand: null }, sealedMemos: [], selfRelay, walletPriv, waitOpts });
+    const r = await _dispatch({ type: 'bridgeburn', spec: { op, leaves: [], outputs: null, ephRand: null }, sealedMemos: [], selfRelay, selfSettle, walletPriv, waitOpts });
     // `t.crossOuts[].claimId` above is a CLIENT-SIDE PREDICTION (keccak of the caller's own `bindNullifier`
     // input) -- if that nullifier is ever wrong (e.g. a bearer-vs-owner-bound nullifier-domain mixup), the
     // prediction silently diverges from the claimId the contract actually emits, and a T_CROSSOUT_MINT
@@ -2900,7 +2900,9 @@ export function makeConfidentialPoolUx({ secp, keccak256, sha256, fetchImpl, net
       try {
         const receipt = await rpc('eth_getTransactionReceipt', [r.txHash]);
         const blockNumber = receipt?.blockNumber ? Number(BigInt(receipt.blockNumber)) : null;
+        // Only the pool's own events are read.
         const real = (receipt?.logs || [])
+          .filter((l) => !cfg.pool || String(l.address || '').toLowerCase() === String(cfg.pool).toLowerCase())
           .map((l) => evmLog.decodeLog(l))
           .filter((e) => e && e.type === 'CrossOutRecorded');
         let matchedAll = t.crossOuts.length > 0;
