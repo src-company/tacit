@@ -126,7 +126,10 @@ function makeFetchTx(esplora, rawTx, height) {
       status: st,
     };
   }
-  const fetchTx = (txid) => {
+  // Every call first lets pending I/O run: a long ancestry is validated tx by tx, mostly from the cache, and the
+  // proof checks between those reads would otherwise hold the event loop (and the service's /health) for minutes.
+  const fetchTx = async (txid) => {
+    await new Promise((r) => setImmediate(r));
     if (!memo.has(txid)) memo.set(txid, load(txid));
     return memo.get(txid);
   };
