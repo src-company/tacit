@@ -252,6 +252,12 @@ async function credit(ctx, { key, blockNumber, blockTime, depositor, amountWei }
   });
 }
 
+// The narrowest getLogs span the scan will fall back to before it gives up on a failing call.
+const MIN_LOG_SPAN = 50n;
+// A refusal for load, not for the query: retried later at the same span.
+export const rateLimited = (err) => /rate limit|too many requests|\b429\b|-32016|exceeded.*(?:quota|limit)/i.test(
+  [err?.shortMessage, err?.message, err?.details, err?.cause?.message, err?.code, err?.cause?.code, err?.status].filter((x) => x != null).join(' '));
+
 export async function scanEvmPoolChain(ctx) {
   const { state, chainId, client } = ctx;
   if (ctx.startBlock == null || ctx.startBlock === '') return;
@@ -268,14 +274,30 @@ export async function scanEvmPoolChain(ctx) {
     return blockTimes.get(n);
   };
 
+  // The block span of one getLogs call. A node can cap it below the configured chunk (a public RPC that limits a query to a few
+  // hundred blocks answers a wider one with a bare error), so a failing call is retried at half the span, down to a floor, and the
+  // span that worked is kept for the next cycle: the cursor then moves in smaller steps instead of never moving at all.
+  let span = BigInt(ctx.spans?.get(chainId) ?? ctx.chunk);
   for (let chunks = 0; cursor < tip && chunks < ctx.maxChunks; chunks++) {
     const from = cursor + 1n;
-    const to = from + BigInt(ctx.chunk) - 1n < tip ? from + BigInt(ctx.chunk) - 1n : tip;
-    const [txLogs, completedLogs, receivedLogs] = await Promise.all([
-      client.getLogs({ address: ctx.pool, event: TRANSACT_EVENT, fromBlock: from, toBlock: to }),
-      client.getLogs({ address: ctx.router, event: DEPOSIT_BOX_COMPLETED_EVENT, fromBlock: from, toBlock: to }),
-      client.getLogs({ address: ctx.router, event: RECEIVED_EVENT, fromBlock: from, toBlock: to }),
-    ]);
+    const to = from + span - 1n < tip ? from + span - 1n : tip;
+    let txLogs, completedLogs, receivedLogs;
+    try {
+      [txLogs, completedLogs, receivedLogs] = await Promise.all([
+        client.getLogs({ address: ctx.pool, event: TRANSACT_EVENT, fromBlock: from, toBlock: to }),
+        client.getLogs({ address: ctx.router, event: DEPOSIT_BOX_COMPLETED_EVENT, fromBlock: from, toBlock: to }),
+        client.getLogs({ address: ctx.router, event: RECEIVED_EVENT, fromBlock: from, toBlock: to }),
+      ]);
+    } catch (err) {
+      // A node that is only busy keeps its span: the cursor stays where it is, and the next cycle resumes from it.
+      if (rateLimited(err)) { (ctx.log || (() => {}))(`EVM pool getLogs on chain ${chainId} was rate limited at block ${from}; resuming next cycle`); return; }
+      if (to - from + 1n <= MIN_LOG_SPAN) throw err;
+      span = (to - from + 1n) / 2n < MIN_LOG_SPAN ? MIN_LOG_SPAN : (to - from + 1n) / 2n;
+      ctx.spans?.set(chainId, Number(span));
+      (ctx.log || (() => {}))(`EVM pool getLogs failed on chain ${chainId} over ${to - from + 1n} blocks (${(err && (err.shortMessage || err.message)) || err}); trying ${span} per call`);
+      chunks--;
+      continue;
+    }
     const boxLogs = [...completedLogs, ...receivedLogs];
     const deposits = txLogs
       .filter((l) => l.args.extAmount > 0n)
@@ -330,6 +352,7 @@ export async function scanEvmPoolChain(ctx) {
 
     cursor = to;
     state.saveCursor(chainId, to);
+    if (ctx.pauseMs && cursor < tip) await new Promise((r) => setTimeout(r, ctx.pauseMs));   // spaced, so a catch-up stays under a public node's rate
   }
 }
 

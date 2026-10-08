@@ -14,6 +14,7 @@ import { withNonceRetry } from './lib/nonce-retry.js';
 import { parseRateCapSchedule, rateCapForDay } from './lib/points-rate-cap.js';
 import { settleThroughDay as gateThroughDay } from './lib/points-settle-gate.js';
 import { parseAdjustments } from './lib/points-adjustments.js';
+import { creditLateDays } from './lib/points-late-credit.js';
 import { fundingStatus, fundingVerdict } from './lib/points-funding.js';
 import { tvlSeries } from './lib/points-tvl.js';
 import { programTerms } from './lib/points-program.js';
@@ -26,7 +27,7 @@ import { openStore } from './lib/points-store.js';
 import { parseBoostTiers, openTacBoost, scanTacTransfers } from './lib/tac-holder-boost.js';
 import { build as buildMerkleTree, formatTac } from './lib/points-merkle.js';
 import {
-  openEvmPoolPointsState, scanEvmPoolChain, resolvePendingBoxes, explorerGet, isV1WrapViaEvmRouter, WRAP_BOX_COMPLETED_EVENT,
+  openEvmPoolPointsState, scanEvmPoolChain, resolvePendingBoxes, explorerGet, isV1WrapViaEvmRouter, WRAP_BOX_COMPLETED_EVENT, rateLimited,
 } from './lib/evm-pool-points.js';
 
 const log = (...a) => console.log(`[points ${new Date().toISOString()}]`, ...a);
@@ -170,7 +171,7 @@ const ledgerAdjustments = parseAdjustments(CFG.pointsLedgerAdjustments, log);
 const categoryWeights = parseCategoryWeights(CFG.pointsCategoryWeights, log);
 const engagementSchedule = parseEngagementSchedule(CFG.pointsEngagement, log);
 // The rows each UTC day is split by: settlement and every read of a day go through this one.
-const countedFor = (store) => makeCounted({ store, weightSchedule: categoryWeights, engagementSchedule, bondHoldFromDay: CFG.pointsBondHoldFromDay });
+const countedFor = (store, onTime = false) => makeCounted({ store, weightSchedule: categoryWeights, engagementSchedule, bondHoldFromDay: CFG.pointsBondHoldFromDay, onTime });
 
 const WRAP_EVENT = {
   type: 'event',
@@ -981,6 +982,8 @@ async function zRouterRefundTo(txHash, sender) {
   if (!indexed) throw new Error(`internal-transactions not yet indexed for ${txHash}`);
   return sum;
 }
+// The getLogs span each L2's zRouter scan last managed, kept across cycles.
+const ZROUTER_SPANS = new Map();
 async function scanZRouterCycle(store, { chainId, client, wethAddr, signal1 = true }) {
   const cursorBlock = store.loadZrouterCursor(chainId);
   const latest = await client.getBlockNumber();
@@ -1002,7 +1005,7 @@ async function scanZRouterCycle(store, { chainId, client, wethAddr, signal1 = tr
   // same regardless of how many blocks it spans, only how many matches it returns, so there's no equivalent
   // risk to cap tightly for. Either way, saving the cursor after each chunk means an interrupted catch-up
   // resumes from where it left off instead of restarting the backlog from scratch.
-  const chunkSize = signal1 ? CFG.zrouterBlockScanChunk : CFG.pointsScanChunk;
+  const chunkSize = signal1 ? CFG.zrouterBlockScanChunk : Math.min(CFG.pointsScanChunk, ZROUTER_SPANS.get(chainId) ?? Infinity);
   const chunkTip = from + BigInt(chunkSize) - 1n;
   if (chunkTip < confirmedTip) confirmedTip = chunkTip;
 
@@ -1048,9 +1051,19 @@ async function scanZRouterCycle(store, { chainId, client, wethAddr, signal1 = tr
   // tx.value is 0 or unrelated — the value moved on an INNER call). `.set` here never overwrites an
   // already-found signal-1 entry for the same tx, so a direct wrap-based swap (caught by both signals)
   // keeps its signal-1 entry rather than being re-fetched.
-  const logs = await client.getLogs({
-    address: wethAddr, event: WETH_DEPOSIT_EVENT, args: { dst: ADDR.zRouter }, fromBlock: from, toBlock: confirmedTip,
-  });
+  let logs;
+  try {
+    logs = await client.getLogs({
+      address: wethAddr, event: WETH_DEPOSIT_EVENT, args: { dst: ADDR.zRouter }, fromBlock: from, toBlock: confirmedTip,
+    });
+  } catch (err) {
+    // A node that caps a query's block span answers a wider one with a bare error: halve the span (to a floor) and retry next cycle.
+    const wide = Number(confirmedTip - from + 1n);
+    if (signal1 || wide <= 50 || rateLimited(err)) throw err;
+    ZROUTER_SPANS.set(chainId, Math.max(50, Math.floor(wide / 2)));
+    log(`zRouter getLogs failed on chain ${chainId} over ${wide} blocks (${err?.shortMessage || err?.message || err}); trying ${ZROUTER_SPANS.get(chainId)} per call`);
+    return;
+  }
   for (const evt of logs) {
     if (byTxHash.has(evt.transactionHash)) continue;
     const block = await getBlock(evt.blockNumber);
@@ -1167,11 +1180,13 @@ function pointsForEvmPoolDeposit(amountWei, priorCount) {
 // Public ETH deposited into the EVM pool, per chain (see lib/evm-pool-points.js for attribution). Boosts are
 // judged at the deposit's own mainnet block, or for an L2 at the last mainnet block at or before its
 // timestamp, the same rule scanZRouterCycle uses.
+// The getLogs span each chain's scan last managed, kept across cycles (see scanEvmPoolChain).
+const EVM_POOL_SPANS = new Map();
 function evmPoolCtx(store, evmState, { chainId, client }) {
   const evalCache = new Map();
   let mainnetTip = null;
   return {
-    store, state: evmState, chainId, client,
+    store, state: evmState, chainId, client, spans: EVM_POOL_SPANS, pauseMs: chainId === 1 ? 0 : 250,
     apiBase: CFG.evmPoolExplorerApis[chainId],
     startBlock: CFG.evmPoolPointsStartBlocks[chainId],
     pool: CFG.evmPoolAddr, router: CFG.evmPoolRouterAddr, v1Pool: ADDR.pool, v1Router: ADDR.router,
@@ -1468,6 +1483,19 @@ export async function settleCycle(store, coverage = null) {
 
   for (const adj of ledgerAdjustments) {
     if (store.applyAdjustment(adj)) log(`ledger adjustment ${adj.id}: credited ${formatTac(adj.wei)} TAC to ${adj.address}`);
+  }
+
+  // A day settled without a scanner that was behind is made whole once that scanner has read past it (lib/points-late-credit.js).
+  const pendingLate = store.lateDays().some(({ day, n }) => day >= startDay && day <= state.lastSettledDay && Number(store.getMeta(`late-rows:${day}`)) !== Number(n));
+  if (coverage && pendingLate) {
+    let covered = null;
+    try { covered = await coverage(); } catch (err) { log('late credit: scanner coverage unreadable, trying again next cycle:', err?.message || err); }
+    creditLateDays({
+      store, lastSettledDay: state.lastSettledDay, firstDay: startDay, coveredThroughSec: covered, log,
+      rowsFor: (d, { onTime }) => countedFor(store, onTime).rows(d),
+      budgetFor: (d) => dayBudgetWei(d - startDay),
+      capFor: (d) => rateCapForDay(rateCapSchedule, d),
+    });
   }
 
   if (!ADDR.pointsDistributor || !rootSetterWallet) return; // publishing not configured yet

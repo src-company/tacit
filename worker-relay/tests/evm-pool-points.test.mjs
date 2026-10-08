@@ -47,6 +47,7 @@ function world() {
     },
     getLogs: async ({ address, event, fromBlock, toBlock }) => {
       chain.calls++;
+      if (chain.maxRange && toBlock - fromBlock + 1n > chain.maxRange) throw Object.assign(new Error('RPC Request failed.'), { shortMessage: 'RPC Request failed.' });
       return chain.logs.filter((l) => l.address === address.toLowerCase() && l.event === event.name
         && l.blockNumber >= fromBlock && l.blockNumber <= toBlock);
     },
@@ -102,6 +103,34 @@ await test('direct deposit is credited to tx.from', async () => {
   assert.equal(r[0].chain_id, 8453);
   assert.ok(r[0].points > 0);
   assert.equal(w.state.loadCursor(8453), 1000n);
+  w.cleanup();
+});
+
+await test('a node that caps getLogs below the chunk: the scan narrows its span, keeps it, and credits the deposit', async () => {
+  const w = world();
+  w.chain.maxRange = 500n;
+  w.chain.head = 9000n;
+  w.ctx.chunk = 2000;
+  w.ctx.spans = new Map();
+  w.ctx.maxChunks = 40;
+  transact(w.chain, { hash: h(31), block: 4200n, extAmount: 3n * ETH });
+  w.chain.txs.set(h(31), { from: ALICE, to: POOL, typeHex: '0x2' });
+  await scanEvmPoolChain(w.ctx);
+  assert.equal(w.state.loadCursor(8453), 9000n, 'the cursor reaches the tip instead of sticking at the first wide call');
+  assert.equal(creditedWei(w.store, ALICE), 3n * ETH);
+  assert.equal(w.ctx.spans.get(8453), 500, 'the span that worked is kept for the next cycle');
+  const calls = w.chain.calls;
+  await scanEvmPoolChain(w.ctx);
+  assert.equal(w.chain.calls, calls, 'and a scan already at the tip makes no more calls');
+  w.cleanup();
+});
+
+await test('a call that fails at every span is reported, not retried for ever', async () => {
+  const w = world();
+  w.chain.maxRange = 1n;
+  w.chain.head = 9000n;
+  w.ctx.spans = new Map();
+  await assert.rejects(scanEvmPoolChain(w.ctx), /RPC Request failed/);
   w.cleanup();
 });
 

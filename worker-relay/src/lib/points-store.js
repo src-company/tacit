@@ -252,14 +252,17 @@ export function openStore(dbPath, { excluded = [] } = {}) {
     // Which chain this deposit happened on (1 = mainnet, 8453 = Base, 4663 = Robinhood — see
     // scanZRouterCycle). Every activity before this column existed was mainnet-only.
     'chain_id INTEGER NOT NULL DEFAULT 1',
+    // 1 when the row was recorded after its UTC day had already settled (a scanner that was behind past the settle
+    // gate's maximum wait). Such a row earned nothing at settlement; lib/points-late-credit.js makes it whole.
+    'late INTEGER NOT NULL DEFAULT 0',
   ]) {
     try { db.exec(`ALTER TABLE deposits ADD COLUMN ${col}`); } catch {}
   }
 
   const insertDeposit = db.prepare(`
     INSERT OR IGNORE INTO deposits
-      (tx_hash, block_number, block_time, depositor, amount_wei, prior_deposit_count, points, tip_wei, tip_recipient, pp_boosted, activity, tac_boost, z_share_boost, chain_id)
-    VALUES (@txHash, @blockNumber, @blockTime, @depositor, @amountWei, @priorDepositCount, @points, @tipWei, @tipRecipient, @ppBoosted, @activity, @tacBoost, @zShareBoost, @chainId)
+      (tx_hash, block_number, block_time, depositor, amount_wei, prior_deposit_count, points, tip_wei, tip_recipient, pp_boosted, activity, tac_boost, z_share_boost, chain_id, late)
+    VALUES (@txHash, @blockNumber, @blockTime, @depositor, @amountWei, @priorDepositCount, @points, @tipWei, @tipRecipient, @ppBoosted, @activity, @tacBoost, @zShareBoost, @chainId, @late)
   `);
   // `amountWei` here is the address's NEW cumulative total, summed as a BigInt by the caller: SQLite's INTEGER
   // is 64-bit (about 9.2 ETH in wei), which one busy address's running total can pass.
@@ -308,6 +311,26 @@ export function openStore(dbPath, { excluded = [] } = {}) {
     WHERE d.block_time >= ? AND d.block_time < ? AND COALESCE(b.held, 1) = 1
     GROUP BY d.depositor, d.block_time / 86400, d.activity
   `);
+  // The same three reads over only the rows a settlement could have seen (not marked late): what a settled day paid.
+  const onTimeDayPointsStmt = db.prepare(`
+    SELECT depositor AS address, SUM(points) AS dayPoints
+    FROM deposits WHERE block_time >= ? AND block_time < ? AND late = 0
+    GROUP BY depositor
+  `);
+  const onTimeDayActivityStmt = db.prepare(`
+    SELECT d.depositor AS address, d.activity AS activity, SUM(d.points) AS points
+    FROM deposits d LEFT JOIN bond_checks b ON b.tx_hash = d.tx_hash
+    WHERE d.block_time >= ? AND d.block_time < ? AND COALESCE(b.held, 1) = 1 AND d.late = 0
+    GROUP BY d.depositor, d.activity
+  `);
+  const onTimeWeekActivityStmt = db.prepare(`
+    SELECT d.depositor AS address, d.block_time / 86400 AS day, d.activity AS activity, SUM(d.points) AS points
+    FROM deposits d LEFT JOIN bond_checks b ON b.tx_hash = d.tx_hash
+    WHERE d.block_time >= ? AND d.block_time < ? AND COALESCE(b.held, 1) = 1 AND d.late = 0
+    GROUP BY d.depositor, d.block_time / 86400, d.activity
+  `);
+  const lateDaysStmt = db.prepare(`SELECT block_time / 86400 AS day, COUNT(*) AS n FROM deposits WHERE late = 1 GROUP BY block_time / 86400 ORDER BY day`);
+  const creditedWithPrefixStmt = db.prepare(`SELECT wei FROM reward_adjustments WHERE id LIKE ? ESCAPE '\\'`);
   const saveBondRefStmt = db.prepare(`INSERT OR IGNORE INTO bond_refs (tx_hash, outpoint, funder) VALUES (?, ?, ?)`);
   const bondsToCheckStmt = db.prepare(`
     SELECT r.tx_hash AS txHash, r.outpoint AS outpoint, r.funder AS funder, d.depositor AS depositor, d.amount_wei AS amountWei
@@ -399,7 +422,10 @@ export function openStore(dbPath, { excluded = [] } = {}) {
   // changes who that is.
   const recordDeposit = db.transaction((dep) => {
     if (never.has(String(dep.depositor).toLowerCase())) return false;
-    const wrote = insertDeposit.run({ tipWei: null, tipRecipient: null, ppBoosted: 0, activity: 'wrap', tacBoost: 1, zShareBoost: 1, chainId: 1, ...dep });
+    // A row for a day that has already settled is marked late: the settlement never saw it.
+    const settled = loadSettleStateStmt.get()?.last_settled_day;
+    const late = settled != null && Math.floor(Number(dep.blockTime) / 86400) <= settled ? 1 : 0;
+    const wrote = insertDeposit.run({ tipWei: null, tipRecipient: null, ppBoosted: 0, activity: 'wrap', tacBoost: 1, zShareBoost: 1, chainId: 1, ...dep, late });
     if (wrote.changes === 0) return false; // already recorded (safe to re-scan a chunk after a crash)
     const prior = BigInt(totalAmountStmt.get(dep.depositor)?.amount_wei ?? '0');
     bumpTotals.run({ address: dep.depositor, points: dep.points, amountWei: (prior + BigInt(dep.amountWei)).toString() });
@@ -459,9 +485,13 @@ export function openStore(dbPath, { excluded = [] } = {}) {
     return depositsForStmt.all(address.toLowerCase(), limit).map((r) => ({ ...r, pp_boosted: !!r.pp_boosted }));
   }
 
-  function dayPointsByAddress(dayStartSec, dayEndSec) {
-    return dayPointsStmt.all(dayStartSec, dayEndSec);
+  function dayPointsByAddress(dayStartSec, dayEndSec, { onTime = false } = {}) {
+    return (onTime ? onTimeDayPointsStmt : dayPointsStmt).all(dayStartSec, dayEndSec);
   }
+  // Each day that has rows recorded after it settled, with how many: [{ day, n }].
+  const lateDays = () => lateDaysStmt.all();
+  // What the adjustments whose id starts with `prefix` have credited so far, summed as a BigInt.
+  const creditedWithPrefix = (prefix) => creditedWithPrefixStmt.all(prefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%').reduce((s, r) => s + BigInt(r.wei), 0n);
   const commitDayTx = db.transaction((deltas, state) => {
     if (deltas && deltas.size) applyDayRewards(deltas);
     saveSettleState(state);
@@ -472,11 +502,11 @@ export function openStore(dbPath, { excluded = [] } = {}) {
   const setMetaStmt = db.prepare(`INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v`);
   const getMeta = (k) => getMetaStmt.get(k)?.v ?? null;
   const setMeta = (k, v) => { setMetaStmt.run(k, String(v)); };
-  function dayActivityPoints(dayStartSec, dayEndSec) {
-    return dayActivityStmt.all(dayStartSec, dayEndSec);
+  function dayActivityPoints(dayStartSec, dayEndSec, { onTime = false } = {}) {
+    return (onTime ? onTimeDayActivityStmt : dayActivityStmt).all(dayStartSec, dayEndSec);
   }
-  function weekActivityPoints(fromSec, toSec) {
-    return weekActivityStmt.all(fromSec, toSec);
+  function weekActivityPoints(fromSec, toSec, { onTime = false } = {}) {
+    return (onTime ? onTimeWeekActivityStmt : weekActivityStmt).all(fromSec, toSec);
   }
   // A reference that is not a 32-byte outpoint and an address is not kept, so a bond whose event came back half decoded
   // is left as it was and never becomes something the settle step cannot read.
@@ -665,7 +695,7 @@ export function openStore(dbPath, { excluded = [] } = {}) {
 
   return {
     db, recordDeposit, loadCursor, saveCursor, leaderboard, totalFor, depositsFor, countByActivity,
-    dayPointsByAddress, dayActivityPoints, weekActivityPoints, commitDay, depositorOfTx, getMeta, setMeta, saveBondRef, bondPairsBefore, bondsToCheck, saveBondCheck, applyDayRewards, applyAdjustment, listAdjustments: () => listAdjustmentsStmt.all(), allRewards, rewardFor,
+    dayPointsByAddress, dayActivityPoints, weekActivityPoints, lateDays, creditedWithPrefix, commitDay, depositorOfTx, getMeta, setMeta, saveBondRef, bondPairsBefore, bondsToCheck, saveBondCheck, applyDayRewards, applyAdjustment, listAdjustments: () => listAdjustmentsStmt.all(), allRewards, rewardFor,
     savePoolSnapshot, poolSnapshots: (fromDay) => poolSnapshotsStmt.all(fromDay), poolDepositWeiByDay,
     loadSettleState, saveSettleState, savePublishedClaims, claimFor,
     recordPpWithdrawal, hasEarlierPpWithdrawal, loadPpCursor, savePpCursor,
