@@ -15,6 +15,7 @@ import { parseRateCapSchedule, rateCapForDay } from './lib/points-rate-cap.js';
 import { settleThroughDay as gateThroughDay } from './lib/points-settle-gate.js';
 import { parseAdjustments } from './lib/points-adjustments.js';
 import { creditLateDays } from './lib/points-late-credit.js';
+import { makeBlockAtOrBefore } from './lib/block-at-time.js';
 import { fundingStatus, fundingVerdict } from './lib/points-funding.js';
 import { tvlSeries } from './lib/points-tvl.js';
 import { programTerms } from './lib/points-program.js';
@@ -57,20 +58,7 @@ function capToBoostCoverage(tip) {
 // reproduce the exact same multiplier for the exact same swap, the same property settle_state.knobs guards
 // for every other activity. Binary search over mainnet block timestamps (monotonic) for the last block at or
 // before `targetTime`, up to `tip` (a real, uncapped mainnet block number).
-async function mainnetBlockAtOrBefore(targetTime, tip) {
-  let lo = 0n;
-  let hi = tip;
-  if (hi <= lo) return hi;
-  const target = BigInt(targetTime);
-  const tipBlock = await publicClient.getBlock({ blockNumber: hi });
-  if (tipBlock.timestamp <= target) return hi;
-  while (lo < hi) {
-    const mid = lo + (hi - lo + 1n) / 2n;
-    const block = await publicClient.getBlock({ blockNumber: mid });
-    if (block.timestamp <= target) lo = mid; else hi = mid - 1n;
-  }
-  return lo;
-}
+const mainnetBlockAtOrBefore = makeBlockAtOrBefore(async (n) => (await publicClient.getBlock({ blockNumber: n })).timestamp);
 
 // One-time fast catch-up for a freshly (re-)enabled boost, run once at startup before scanTacTransfers's
 // eth_getLogs-based incremental scan takes over. That scan chunks by block range, and this RPC caps
