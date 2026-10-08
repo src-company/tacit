@@ -18,6 +18,7 @@
 //          recipient to their address and into another key's private balance, or taken back; the links found again
 //          from the key alone
 //   PLAYWRIGHT=<path to playwright-core> KEY=<64-hex Tacit key with history> [PAGE=<url>] node tools/pay-check.mjs [live,fork]   (SHOTS=<dir>)
+//   LOCAL=1 [POOL_STUB=1]: a page served from this machine, with the Tacit services' answers made readable to it (see localRoutes)
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, statSync, mkdirSync } from 'node:fs';
@@ -46,8 +47,33 @@ const server = createServer((req, res) => {
 }).listen(WEB);
 const URL_ = process.env.PAGE || `http://127.0.0.1:${WEB}/pay/eth/`;   // PAGE=https://tacit.finance/pay/ checks the deployed page
 
+// The Tacit services answer the origin tacit.finance, not one served from this machine: LOCAL=1 gives their answers
+// CORS headers, and POOL_STUB=1 (with LOCAL) answers the BTC pool services as an empty pool with no relay, for a day
+// they are down. A run against a deployed page needs neither.
+async function localRoutes(ctx) {
+  const H = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,OPTIONS' };
+  const json = (r, status, body) => r.fulfill({ status, contentType: 'application/json', headers: H, body: JSON.stringify(body) });
+  await ctx.route(/^https:\/\/(tacit-[a-z0-9-]+\.onrender\.com|api\.tacit\.finance|tacit-pin\.[a-z0-9.-]+\.workers\.dev)\//, async (r) => {
+    if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: H });
+    try { const resp = await r.fetch(); await r.fulfill({ response: resp, headers: { ...resp.headers(), ...H } }); } catch { await r.abort().catch(() => {}); }
+  });
+  // the later route is asked first
+  if (process.env.POOL_STUB) {
+    await ctx.route(/^https:\/\/tacit-btc-pool(-relay)?-mainnet\.onrender\.com\//, (r) => {
+      const u = new URL(r.request().url());
+      if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: H });
+      if (u.pathname === '/btc-pool/notes') return json(r, 200, { notes: [], next: 0 });
+      if (u.pathname === '/btc-pool/nullifiers') return json(r, 200, { nullifiers: [], next: null });
+      if (u.pathname === '/btc-pool/status') return json(r, 200, { height: 970487, halted: false });
+      if (u.pathname === '/sp/hints') return json(r, 200, { hints: [], next: null });
+      return json(r, 404, { error: 'not found' });
+    });
+  }
+}
+
 async function page(browser, { viewport = { width: 1280, height: 900 }, colorScheme = 'light', init = null, route = null } = {}) {
   const ctx = await browser.newContext({ viewport, colorScheme, permissions: ['clipboard-read', 'clipboard-write'] });
+  if (process.env.LOCAL && !/^https:/.test(URL_)) await localRoutes(ctx);
   if (init) await ctx.addInitScript(init);
   if (route) await route(ctx);
   const p = await ctx.newPage();
@@ -230,6 +256,15 @@ try {
     await p.waitForURL(/\/pay\/eth\//, { timeout: 30e3 }).catch(() => {});
     await p.waitForSelector('#gift:not([hidden])', { timeout: 30e3 }).catch(() => {});
     ok(/\/pay\/eth\//.test(p.url()) && !!(await p.$('#gift:not([hidden])')), `an ETH link made for /pay/ opens on /pay/eth/: ${p.url()}`);
+    for (const old of ['#send&chain=base', '#withdraw', '#link', '#robinhood']) {
+      await p.goto(origin + '/pay/' + old);
+      await p.waitForURL(/\/pay\/eth\//, { timeout: 30e3 }).catch(() => {});
+      ok(p.url() === origin + '/pay/eth/' + old, `an old ETH tab link ${old} opens on /pay/eth/: ${p.url()}`);
+    }
+    for (const mine of ['#btc', '#tac', '#sp=' + 'ab'.repeat(32)]) {
+      await p.goto(origin + '/pay/' + mine); await p.waitForSelector('#g-in');
+      ok(/\/pay\/(#|$)/.test(p.url()) && !/\/pay\/eth/.test(p.url()), `the hub's own ${mine.slice(0, 6)} link stays on the hub`);
+    }
     if (/^https:/.test(URL_)) {                                                   // a route on the host, not a file
       await p.goto(origin + '/pay/wei/');
       await p.waitForSelector('#chains', { timeout: 30e3 }).catch(() => {});
@@ -255,6 +290,11 @@ try {
     await p.waitForFunction(() => [...document.querySelectorAll('.addr code')].every((c) => c.textContent !== '…'), null, { timeout: 120e3 }).catch(() => {});
     const addrs = await p.$$eval('.addr code', (x) => x.map((c) => c.textContent));
     ok(/^tacit1qzz/.test(addrs[0]) && addrs[0].length === 276 && /^sp1/.test(addrs[1]) && /^bc1/.test(addrs[2]), `receive shows the unified Tacit, silent-payment and Bitcoin addresses: ${addrs.map((a) => a.slice(0, 10)).join(' ')}`);
+    ok(await p.evaluate(() => document.body.classList.contains('in') && getComputedStyle(document.querySelector('.hero p')).display === 'none'), 'signed in, the pitch gives way to the form');
+    ok(await p.evaluate(() => {
+      const tabs = [...document.querySelectorAll('#tabs [role="tab"]')], sel = tabs.filter((t) => t.getAttribute('aria-selected') === 'true'), f = document.getElementById('form');
+      return sel.length === 1 && tabs.every((t) => ['true', 'false'].includes(t.getAttribute('aria-selected')) && (t === sel[0] ? t.tabIndex === 0 : t.tabIndex === -1)) && f.getAttribute('role') === 'tabpanel' && f.getAttribute('aria-labelledby') === sel[0].id;
+    }), 'the tabs say which is selected, take one tab stop, and the form is their panel');
     await p.click('#modes [data-mode="tac"]');
     await p.waitForFunction(() => /TAC, shielded/.test(document.querySelector('#bal').textContent) && !document.querySelector('#bal .sk'), null, { timeout: 180e3 });
     ok(/TAC, shielded/.test(await text('#bal')) && !/—/.test(await text('#bal .v')), `shielded TAC read: ${await text('#bal')}`);
@@ -268,6 +308,8 @@ try {
     const tacAddrs = await p.$$eval('.addr code', (x) => x.map((c) => c.textContent));
     ok(/^tacit1qzz/.test(tacAddrs[0]) && /^bp1/.test(tacAddrs[1]) && /inside the shielded pool/.test(await p.textContent('#form')), 'TAC receive shows the unified address, which the pool pays, and the pool address alone');
     // Ask to be paid: a link that names this key's Tacit address and the amount; opened, it fills in Send.
+    ok(await p.evaluate(() => ['d-ask', 'd-more'].every((id) => document.getElementById(id) && !document.getElementById(id).open)), 'Receive keeps the rest behind two closed sections');
+    await p.click('#d-ask > summary');
     await p.fill('#f-qamt', '1.5'); await p.fill('#f-qfor', 'hub test'); await p.click('#f-qcopy');
     const ask = await p.evaluate(() => navigator.clipboard.readText());
     ok(new RegExp(`/pay/#tac&pay=${tacAddrs[0]}&amount=1\\.5&for=hub\\+test$`).test(ask), `a TAC payment link from Receive: ${ask.slice(0, 40)}…${ask.slice(-30)}`);
@@ -459,6 +501,9 @@ try {
       for (let i = 0; i < 40 && HINTS.length === hints0; i++) await sleep(250);
       const tx = sent.at(-1);
       ok(/Sent 0\.0005 BTC/.test(await p.textContent('#status')) && tx?.vout.some((y) => y.value === 50000 && /^5120/.test(y.scriptpubkey)), `${form}: the page signed it, to a fresh taproot output (captured, not broadcast)`);
+      await p.waitForFunction(() => document.querySelector('#f-go')?.getAttribute('aria-busy') !== 'true', null, { timeout: 30e3 }).catch(() => {});
+      await sleep(400);
+      ok((await p.inputValue('#f-amt')) === '' && await p.$eval('#f-go', (b) => b.disabled), `${form}: once sent, the amount is cleared and Send BTC waits for a new one`);
       current = tx;
       const found = await p.evaluate(async ({ B, txid }) => {
         const t = await import('/tacit.js'), d = await import('/vendor/tacit-deps.min.js');
@@ -596,7 +641,8 @@ try {
     ok(/^0\.004$/.test((await p.textContent('#bal .v')).trim()), 'the depositor’s own private balance is untouched');
     await p.evaluate(() => { const d = document.querySelector('details.adv'); d.open = true; d.dispatchEvent(new Event('toggle')); });
     await p.click('#rc-go');
-    await p.waitForFunction(() => document.querySelectorAll('.rows li').length >= 3 && !/rebuilding/.test(document.querySelector('#recover-at').textContent), null, { timeout: 900e3 })
+    // The forked chain's own summary: the other two chains are read from the real nodes, which take their own time.
+    await p.waitForFunction((n) => document.querySelectorAll('.rows li').length >= 3 && /\d+ payments? ·/.test(document.querySelector(`.chainsum li:nth-child(${n})`)?.textContent || ''), F.row, { timeout: 900e3 })
       .catch(async (e) => { console.log('    ' + (await p.textContent('#recover-body')).replace(/\s+/g, ' ')); throw e; });
     const rows = await p.$$eval('.rows li', (x) => x.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
     console.log('    ' + rows.join('\n    '));

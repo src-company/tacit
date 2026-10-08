@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-CdpKtwZOjRzffMr8/7aENM+Vvhnr29MmGR0IHVSHupE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-hSF8IuoW+aF5HkInCOESg5CtmkNclKv1T7fHbB/4QsE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.tacit.finance https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.gateway.tenderly.co https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keeper.onrender.com https://tacit-evm-pool-keeper-base.onrender.com https://tacit-evm-pool-keeper-robinhood.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://tacit-pin.rosscampbell9.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain. Deposit, pay privately, withdraw any part. Proved on your device, recovered from your key.">
@@ -138,6 +138,11 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .facts { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 22px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--mute); }
 .facts li { display: inline-flex; align-items: center; gap: 8px; }
 .facts li::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--eth); }
+/* Signed in, the page is the form: the pitch gives way to it. */
+body.in .hero { padding: 26px 0 20px; }
+body.in .hero h1 { font-size: clamp(32px, 6vw, 44px); margin: 0; }
+body.in .hero h1 br { display: none; }
+body.in .hero p, body.in .facts { display: none; }
 
 /* ── cards ── */
 .card { background: var(--card); border: 1px solid var(--hair); padding: 22px; margin: 0 0 14px; }
@@ -174,7 +179,9 @@ button { font: inherit; color: inherit; letter-spacing: inherit; }
 .bal .v.t { font: 400 28px/1.05 var(--serif); letter-spacing: -.01em; }
 .bal .side { margin-left: auto; text-align: right; font-size: 12px; color: var(--mute); }
 
-.lbl { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--mute); margin: 14px 0 6px; }
+.lbl { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 12px; font-size: 12px; color: var(--mute); margin: 14px 0 6px; }
+.lbl > :first-child { flex: none; max-width: 100%; }
+.lbl > :last-child:not(:first-child) { margin-left: auto; text-align: right; }
 .lbl button { background: none; border: 0; padding: 7px 0; margin: -7px 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; }
 @media (hover: hover) { .lbl button:hover { color: var(--ink); } }
 .amt { display: flex; align-items: center; background: var(--field); border: 1px solid var(--hair); border-bottom-color: var(--ink); }
@@ -210,7 +217,7 @@ input::placeholder { color: var(--mute); opacity: 1; }
 .link::after { content: ''; position: absolute; inset: -12px -6px; }
 
 .status { font-size: 12.5px; min-height: 20px; margin-top: 12px; overflow-wrap: anywhere; }
-.status:empty { display: none; }
+.status:empty { min-height: 0; height: 0; margin: 0; overflow: hidden; }   /* stays in the page, so a screen reader hears what is put in it */
 .status a { color: var(--ink); }
 .note { font-size: 12.5px; color: var(--mute); margin: 12px 0 0; }
 .note.err { color: var(--err); }
@@ -323,6 +330,7 @@ input::placeholder { color: var(--mute); opacity: 1; }
 footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; margin-top: 36px; padding-top: 18px;
   border-top: 1px solid var(--hair-2); color: var(--mute); font-size: 12px; }
 footer nav { display: flex; flex-wrap: wrap; gap: 0 18px; }
+footer nav > span { padding: 12px 0; }
 footer a { display: inline-block; padding: 12px 0; color: var(--mute); }
 @media (hover: hover) { footer a:hover { color: var(--ink); } }
 
@@ -391,7 +399,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
   </header>
 
   <section class="hero" aria-labelledby="hero-h">
-    <h1 id="hero-h">Simple, private<br>payments in <em>ETH</em>.</h1>
+    <h1 id="hero-h">Simple, private <br>payments in <em>ETH</em>.</h1>
     <p>Shield ETH on Ethereum, Base and Robinhood Chain, pay anyone privately, and take out any part. Who you pay and how much stay hidden; deposits and withdrawals show on chain.</p>
     <ul class="facts">
       <li>Proved on your device</li>
@@ -492,7 +500,7 @@ const ZERO = '0x0000000000000000000000000000000000000000';
 const CHAINS = [
   { chainId: 1, key: 'ethereum', name: 'Ethereum', full: 'Ethereum', rpc: ['https://ethereum-rpc.publicnode.com', 'https://mainnet.gateway.tenderly.co', 'https://eth.drpc.org', 'https://rpc.flashbots.net', 'https://1rpc.io/eth'],
     explorer: 'https://etherscan.io', keeper: 'https://tacit-evm-pool-keeper.onrender.com/evm-pool/keeper', deployBlock: 26069245, confirmations: 3, gasReserve: 3n * 10n ** 15n },
-  { chainId: 8453, key: 'base', name: 'Base', full: 'Base', rpc: ['https://mainnet.base.org', 'https://base.drpc.org'],
+  { chainId: 8453, key: 'base', name: 'Base', full: 'Base', rpc: ['https://mainnet.base.org', 'https://base.gateway.tenderly.co', 'https://base.drpc.org'],
     explorer: 'https://basescan.org', keeper: 'https://tacit-evm-pool-keeper-base.onrender.com/evm-pool/keeper', deployBlock: 51864014, confirmations: 10, gasReserve: 10n ** 14n },
   { chainId: 4663, key: 'robinhood', name: 'Robinhood', full: 'Robinhood Chain', rpc: ['https://rpc.mainnet.chain.robinhood.com'],
     explorer: 'https://robinhoodchain.blockscout.com', keeper: 'https://tacit-evm-pool-keeper-robinhood.onrender.com/evm-pool/keeper', deployBlock: 73991661, confirmations: 10, gasReserve: 10n ** 14n },
@@ -1364,12 +1372,16 @@ async function scanHistory(c, onStep) {
   // A read cut short keeps what it got for the next one.
   const deep = (b) => b + c.confirmations <= tip;
   // A read that fails for another wallet's transaction leaves it out; one of this key's own must succeed.
-  await eachLimit(ts.filter((t) => t.ext === undefined || (t.ext > 0n && !t.from)), 3, async (t) => {
+  const unread = ts.filter((t) => t.ext === undefined || (t.ext > 0n && !t.from));
+  let nread = 0;
+  onStep?.(1, { read: 0, of: unread.length });
+  await eachLimit(unread, 6, async (t) => {
     const need = t.ext === undefined && byTx.has(t.tx);
     const rc = await settled(c, rpc, tip, t.block, 'eth_getTransactionReceipt', [t.tx]).catch((e) => { if (need) throw e; return null; });
     const lg = rc?.logs?.find((l) => lc(l.address) === lc(POOL) && l.topics[0] === T_TRANSACT && BigInt(l.topics[1]) === t.nf[0] && BigInt(l.topics[2]) === t.nf[1]);
     if (lg) { const d = decodeTransact(lg); Object.assign(t, { recipient: d.recipient, ext: d.ext, fee: d.fee }); }
     if (rc?.from) t.from = lc(rc.from);
+    onStep?.(1, { read: ++nread, of: unread.length });
   }).catch((e) => { savePubTx(P, ts, new Map(), deep); throw e; });
   // A withdrawal that ran calls (a bridge move, a swap) names its refund box in its calldata, public from then on, so
   // that box is never handed out as a payment link's address; a canonical bridge in it makes the row a move.
@@ -1536,9 +1548,14 @@ function historyOf(c, fresh = false, since = Date.now()) {
   if (st.histing) return fresh && st.histStart < since ? (st.histNext ||= st.histing.then(() => { st.histNext = null; return historyOf(c); })) : st.histing;
   if (fresh && st.hist && !st.histErr && st.histStart >= since) return Promise.resolve();
   const pub = S.key.pubHex;
-  st.histProg = null; st.histStart = Date.now();
+  st.histProg = null; st.histWork = null; st.histStart = Date.now();
   clearTimeout(st.histTimer);
-  const p = st.histing = scanHistory(c, (f) => { st.histProg = f; paintRecover(); })
+  let lastPaint = 0;
+  const p = st.histing = scanHistory(c, (f, work) => {
+    st.histProg = f; st.histWork = work || null;
+    if (work && work.read < work.of && performance.now() - lastPaint < 400) return;       // repainted at most every 400 ms
+    lastPaint = performance.now(); paintRecover();
+  })
     .then((h) => { if (S.key?.pubHex === pub) { st.hist = h; st.histErr = null; st.histFails = 0; } })
     .catch((e) => {
       if (S.key?.pubHex !== pub) return;
@@ -1579,6 +1596,7 @@ const cur = () => CH[S.chain.chainId];
 const ethIcon = html`<svg class="tk sm" aria-hidden="true"><use href="#tk-eth"/></svg>`;
 
 function paintWallet() {
+  document.body.classList.toggle('in', !!S.key);
   $('#wallet-dot').className = 'dot' + (S.key ? ' on' : S.wallet ? ' live' : '');
   mount($('#wallet-label'), S.key ? chipView(UNIFIED_LIVE ? unifiedAddress() : S.key.bp) : html`${S.wallet ? short(S.wallet) : knownWallet() ? 'Open wallet' : 'Connect'}`);
   if ($('#sheet-wallet').open) renderWalletSheet();
@@ -1609,7 +1627,7 @@ function paintChains() {
   mount($('#chains'), html`${CHAINS.map((c) => {
     const st = CH[c.chainId], q = PUB[c.chainId];
     const v = !S.key ? (q?.locked != null ? `${fmt(q.locked, 18, 3)} in pool` : '') : st.bal != null ? `${eth(st.bal)} ETH` : st.last != null ? html`<span class="stale">${eth(st.last)} ETH</span>` : st.err ? '—' : html`<span class="sk" style="--w:7ch"></span>`;
-    return html`<button type="button" role="tab" data-chain="${c.chainId}" aria-selected="${c === S.chain}" ${S.busy ? 'disabled' : ''} ${!S.key && q?.locked != null ? html`aria-label="${c.name}, ${fmt(q.locked, 18, 3)} ETH in the pool"` : ''}>${c.name}${v ? html`<small>${v}</small>` : ''}</button>`;
+    return html`<button type="button" role="tab" data-chain="${c.chainId}" aria-selected="${c === S.chain ? 'true' : 'false'}" tabindex="${c === S.chain ? '0' : '-1'}" ${S.busy ? 'disabled' : ''} ${!S.key && q?.locked != null ? html`aria-label="${c.name}, ${fmt(q.locked, 18, 3)} ETH in the pool"` : ''}>${c.name}${v ? html`<small>${v}</small>` : ''}</button>`;
   })}`);
   $$('#chains [data-chain]').forEach((b) => b.onclick = () => { if (!S.busy) switchChain(chainOf(b.dataset.chain)); });
 }
@@ -1663,9 +1681,11 @@ function paintBal() {
 const TABS = [['deposit', 'Deposit'], ['send', 'Send'], ['withdraw', 'Withdraw'], ['receive', 'Receive']];
 function renderApp() { paintProof(); paintGift(); paintReq(); paintDue(); paintChains(); paintBal(); renderTabs(); renderForm(); }
 function renderTabs() {
-  mount($('#tabs'), html`${TABS.map(([k, l]) => html`<button type="button" role="tab" data-tab="${k}" aria-selected="${k === S.tab}" ${S.busy ? 'disabled' : ''}>${l}</button>`)}`);
+  mount($('#tabs'), html`${TABS.map(([k, l]) => html`<button type="button" role="tab" id="tab-${k}" data-tab="${k}" aria-controls="form" aria-selected="${k === S.tab ? 'true' : 'false'}" tabindex="${k === S.tab ? '0' : '-1'}" ${S.busy ? 'disabled' : ''}>${l}</button>`)}`);
   $$('#tabs [data-tab]').forEach((b) => b.onclick = () => { if (S.busy) return; S.tab = b.dataset.tab; say($('#status'), ''); renderTabs(); renderForm(); });
   $('#tabs').hidden = !S.key;
+  const f = $('#form');
+  if (S.key) { f.setAttribute('role', 'tabpanel'); f.setAttribute('aria-labelledby', `tab-${S.tab}`); } else { f.removeAttribute('role'); f.removeAttribute('aria-labelledby'); }
 }
 function renderForm() {
   if (S.busy) return;
@@ -1877,8 +1897,8 @@ function formDeposit(f) {
   const c = S.chain, st = cur(), W = st.W;
   FORM.needsW = !W && S.depMode === 'addr';
   const seg = html`<div class="seg sub" role="tablist" aria-label="Deposit how">
-    <button type="button" role="tab" data-dep="wallet" aria-selected="${S.depMode === 'wallet'}">From my wallet<small>no fee</small></button>
-    <button type="button" role="tab" data-dep="addr" aria-selected="${S.depMode === 'addr'}">From an exchange<small>up to 0.25%</small></button>
+    <button type="button" role="tab" data-dep="wallet" aria-selected="${S.depMode === 'wallet' ? 'true' : 'false'}">From my wallet<small>no fee</small></button>
+    <button type="button" role="tab" data-dep="addr" aria-selected="${S.depMode === 'addr' ? 'true' : 'false'}">From an exchange<small>up to 0.25%</small></button>
   </div>`;
   if (S.depMode === 'addr') {
     FORM.waitShown = st.waiting;
@@ -1911,7 +1931,7 @@ function formDeposit(f) {
     mount(f, html`${seg}
       ${amountField('f-damt', 'Amount', S.wallet ? html`<button type="button" id="f-max">Wallet <span id="f-wb" class="num"><span class="sk" style="--w:5ch"></span></span> ETH</button>` : html`<button type="button" id="f-conn">Connect a wallet</button>`)}
       <div class="lbl"><span>To</span><span>yourself, unless you name someone</span></div>
-      <div class="amt text"><input id="f-dto" placeholder="Yourself · or bp1…, tacit1… or name.wei" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Deposit to"></div>
+      <div class="amt text"><input id="f-dto" placeholder="Yourself, or an address" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Deposit to"></div>
       <div class="rcpt" id="f-rcpt" hidden></div>
       <button class="btn" type="button" id="f-go" disabled>${S.wallet ? 'Deposit privately' : 'Connect a wallet'}</button>
       <p class="note">Proved on this device, then sent from your wallet on ${c.full}: you pay the gas, and there is no fee. The deposit, from your wallet, shows on chain; where the ETH goes after it, including whose balance it lands in, does not.</p>`);
@@ -2069,7 +2089,7 @@ function formSend(f) {
   mount(f, html`
     ${ppl.length ? html`<div class="people">${ppl.map((p) => html`<span class="pchip"><button type="button" data-person="${p.to}">${p.name}</button><button type="button" data-unperson="${p.to}" aria-label="Forget ${p.name}">×</button></span>`)}</div>` : ''}
     <div class="lbl"><span>To</span><button type="button" id="f-bylink">No address? Pay by link</button></div>
-    <div class="amt text"><input id="f-to" placeholder="0x…, bp1…, tacit1… or name.wei" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Recipient"><button class="link" type="button" id="f-paste">paste</button></div>
+    <div class="amt text"><input id="f-to" placeholder="Address or name" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Recipient"><button class="link" type="button" id="f-paste">paste</button></div>
     <div class="save" id="f-save" hidden><input id="f-pname" maxlength="24" placeholder="Save as… a name only you see" autocomplete="off" aria-label="A name for this recipient"><button class="link" type="button" id="f-psave">save</button></div>
     ${amountField('f-amt', 'Amount', html`<button type="button" id="f-max">Max</button>`)}
     ${routeSeg(tab, cur().quote?.fee ? BigInt(cur().quote.fee) : null)}
@@ -2367,12 +2387,12 @@ function formWithdraw(f) {
   const bridgeFee = BRIDGE_Q.fee?.[S.dest];
   mount(f, html`
     ${c.chainId === 1 ? html`<div class="seg sub" role="tablist" aria-label="Withdraw to">
-      <button type="button" role="tab" data-dest="addr" aria-selected="${!l2}">An address</button>
-      <button type="button" role="tab" data-dest="8453" aria-selected="${l2?.chainId === 8453}">Your Base balance</button>
-      <button type="button" role="tab" data-dest="4663" aria-selected="${l2?.chainId === 4663}">Your Robinhood balance</button>
+      <button type="button" role="tab" data-dest="addr" aria-selected="${!l2 ? 'true' : 'false'}">An address</button>
+      <button type="button" role="tab" data-dest="8453" aria-selected="${l2?.chainId === 8453 ? 'true' : 'false'}">Your Base balance</button>
+      <button type="button" role="tab" data-dest="4663" aria-selected="${l2?.chainId === 4663 ? 'true' : 'false'}">Your Robinhood balance</button>
     </div>` : ''}
     ${l2 ? '' : html`<div class="lbl"><span>To</span>${S.wallet ? html`<button type="button" id="f-me">My wallet</button>` : ''}</div>
-      <div class="amt text"><input id="f-wto" placeholder="0x… (a fresh address keeps it unlinked)" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Recipient address"></div>`}
+      <div class="amt text"><input id="f-wto" placeholder="0x… a fresh address" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Recipient address"></div>`}
     ${amountField('f-wamt', 'Amount', html`<button type="button" id="f-max">Max</button>`)}
     ${l2 ? '' : routeSeg(tab, cur().quote?.fee ? BigInt(cur().quote.fee) : null)}
     <div class="rcpt" id="f-rcpt" hidden></div>
@@ -2985,7 +3005,7 @@ function paintRecover() {
   $('#recover-at').textContent = scanning ? 'rebuilding…' : '';
   const line = (c) => {
     const st = CH[c.chainId], h = st.hist;
-    if (st.histing && !h) return html`<li><span class="n">${c.name}</span><span class="s">${st.histProg != null ? `reading the chain, ${Math.floor(st.histProg * 100)}%` : 'reading…'}</span></li>`;
+    if (st.histing && !h) return html`<li><span class="n">${c.name}</span><span class="s">${st.histWork?.of ? `reading its payments, ${st.histWork.read} of ${st.histWork.of}` : st.histProg != null ? `reading the chain, ${Math.floor(st.histProg * 100)}%` : 'reading…'}</span></li>`;
     const again = html`<button class="link" type="button" data-hre="${c.chainId}">Try again</button>`;
     if (st.histErr && !h) return html`<li><span class="n">${c.name}</span><span class="s err">${errText(st.histErr)} ${again}</span></li>`;
     if (!h) return html`<li><span class="n">${c.name}</span><span class="s">—</span></li>`;
@@ -3161,7 +3181,7 @@ function drawProof() {
   mount(el, html`
     <div class="lbl"><span>Payment proof</span><button class="link" type="button" id="pf-x">dismiss</button></div>
     <div class="req-m">A private payment on ${p.chain.full} in ${txLink(p.chain, p.tx)}. Enter who it was for to check it; the link alone shows nothing more.</div>
-    <div class="amt text act"><input id="pf-to" placeholder="bp1…, tacit1… or name.wei" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Recipient"><button class="link" type="button" id="pf-go">check</button></div>
+    <div class="amt text act"><input id="pf-to" placeholder="Address or name" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Recipient"><button class="link" type="button" id="pf-go">check</button></div>
     <div class="status" role="status" id="pf-status">${PROOF.busy ? html`<span class="spin" aria-hidden="true"></span>Checking on chain…` : PROOF.res || ''}</div>`);
   if (typed) $('#pf-to').value = typed;
   $('#pf-x').onclick = () => { leaveBar(p.src); PROOF.v = null; PROOF.res = null; paintProof(); };
