@@ -3,7 +3,7 @@
 // Nothing here is loaded until the holder asks: this module, the key, the pool and Bitcoin's history all come in on that press.
 import { sha256 } from '/vendor/tacit-deps.min.js';
 import { makeKeySession, signInSheet } from '/trade/key.js?cb=149c5b79';
-import { getUx, forgetUx } from '/trade/poolux.js?cb=9cba98b8';
+import { getUx, forgetUx } from '/trade/poolux.js?cb=e792b253';
 import { readLocks, readLoans, readHeld, lockStep } from '/cbtc/read.js?cb=97e55024';
 import { esc, short, grp } from '/trade/util.js?cb=509d6618';
 
