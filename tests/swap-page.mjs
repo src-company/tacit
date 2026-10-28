@@ -228,12 +228,23 @@ if (!process.env.SKIP_GASRELAY) {
     if (label === 'USDC') { await page.click('#get-coin'); await page.click('.pk-r:has(b:text-is("USDC"))'); } else await pick(page, 'get', 'ETH');
     await typeAmt(page, '100'); await quoted(page);
     ok(/^Sell TAC$/.test((await page.textContent('#go')).trim()), `a wallet with 500 TAC and no ETH: the button sells TAC for ${label}`);
+    { const rc = (await page.textContent('#rcpt')).replace(/\s+/g, ' ');
+      ok(/Network fee\s*about \$[\d.,]+, paid in TAC/.test(rc), `the receipt says the network fee is paid in TAC before anything is pressed (${(rc.match(/Network fee[^$]*\$[\d.,]+, paid in \w+/) || [''])[0]})`); }
+    // a swap too small for its fee is refused in words, and nothing is signed
+    if (label === 'USDC') {
+      await typeAmt(page, '2'); await quoted(page);
+      const s0 = walletLog.signs; await page.click('#go');
+      await until(page, () => /quarter|Nothing was/.test(document.querySelector('#q').textContent), null, 120000);
+      ok(/more than a quarter of this swap/.test(await page.textContent('#q')) && walletLog.signs === s0 && !seen.orders.length, 'a swap whose network fee is over a quarter of it is refused before anything is signed');
+      await typeAmt(page, '100'); await quoted(page);
+    }
     const t0 = await bal(TAC, w.account), d0 = label === 'USDC' ? await bal(USDC, w.account) : BigInt(await rpcA('eth_getBalance', [w.account, 'latest']));
     await page.click('#go');
     await until(page, () => /Done|relay did not|Not enough|cannot|Nothing was/.test(document.querySelector('#q').textContent), null, 240000);
     const q = (await page.textContent('#q')).replace(/\s+/g, ' ');
     ok(/^Done/.test(q.trim()), `the swap went through the relay (${q.slice(0, 140)})`);
     const t1 = await bal(TAC, w.account), d1 = label === 'USDC' ? await bal(USDC, w.account) : BigInt(await rpcA('eth_getBalance', [w.account, 'latest']));
+    ok(!!(await page.$('#q a[href*="etherscan.io/tx/"]')), 'the receipt links the relay\'s transaction');
     ok(seen.orders.length === 1 && walletLog.sends.length === 0, `one order was signed and posted, and the wallet sent no transaction (${seen.orders.length} orders, ${walletLog.sends.length} sends)`);
     ok(t0 - t1 > 0n, 'TAC left the wallet');
     ok(d1 > d0, `the ${label} arrived: ${label === 'USDC' ? Number(d1 - d0) / 1e6 : Number(d1 - d0) / 1e18}`);

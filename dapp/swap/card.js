@@ -439,6 +439,7 @@ async function readBalances() {
   // a token of the long list read earlier for this account keeps its figure until it is read again
   if (S.balFor === who) for (const [k, v] of Object.entries(S.bal)) if (!(k in bal) && listedAt(k)?.uni) bal[k] = v;
   S.bal = bal; S.balFor = who;
+  relayLiveCheck();
 }
 
 const live = (t) => { $('#sw-live').textContent = t; };
@@ -873,6 +874,10 @@ function paintQuote() {
       const text = fee == null ? (LATER.err && !r.hop ? 'could not be read' : '…') : `${r.hop ? `${tidy(amtFmt(fee, pay.dec))} ${pay.sym}` : `${eth2(fee)} ETH`}${fu != null ? ` · about ${fu < 1 ? `$${fu.toFixed(2)}` : usd(fu)}` : ''}`;
       lines.push(['Relay fee', text, '', 'What the relay charges to send the swap out of the pool, paid from the deposit (set aside twice, for a fee that rises while it waits). The deposit itself pays the wallet’s network fee.']);
     }
+    else if (!r.priv && S.gasPrice && S.px.ethUsd && relayNoEth(kind)) {
+      const f = Number(GR.GAS_UNITS * S.gasPrice) / 1e18 * S.px.ethUsd * 1.5, sym = lc(S.pay) === lc(R.TAC) ? 'TAC' : tokenOf(S.pay)?.sym;
+      lines.push(['Network fee', `about ${f < 1 ? `$${f.toFixed(2)}` : usd(f)}, paid in ${esc(sym)}`, 'ok', 'You hold no ETH for gas, so the relay sends this swap and takes its cost from your balance. TAC pays it when you hold enough, otherwise the token you swap. You sign once and nothing leaves your wallet unless the swap lands.']);
+    }
     else if (!r.priv && r.gas && S.gasPrice && S.px.ethUsd) { const f = Number(r.gas * S.gasPrice) / 1e18 * S.px.ethUsd; lines.push(['Network fee', `about ${f < 1 ? `$${f.toFixed(2)}` : usd(f)}`]); }
     // with a list of routes each row says what it earns; with one route the receipt says it
     { const p = !rows.hidden ? null : laterOn(kind) ? laterPts(q, r) : rowPts(r, q); if (p) lines.push(['TAC points', ptsSaid(p, false), 'ok', p.why ? `${p.why}. An estimate: the program counts it from its own records.` : 'An estimate: the program counts it from its own records.']); }
@@ -1035,6 +1040,10 @@ async function go() {
 // the swap and pays the output to the wallet; the settle relay sends it and keeps the fee. Only the aggregator (snwap) routes go this way: they
 // pull the token from whoever calls, which is the relay contract.
 let GR_LIVE = null;
+// Whether the card would send this public swap through the relay: the relay is on the chain, the token paid is not ETH and the wallet holds too little ETH for the gas
+const RELAY_KINDS = ['tac', 'any', 'in', 'out', 'agg'];
+const relayNoEth = (kind) => !!(GR_LIVE && W.account && RELAY_KINDS.includes(kind) && !isEth(S.pay) && S.bal[lc(R.ZERO)] != null && S.gasPrice && GR.needsRelay({ ethWei: S.bal[lc(R.ZERO)], gasPriceWei: S.gasPrice }));
+const relayLiveCheck = () => { if (GR_LIVE == null) rpc('eth_getCode', [GR.GAS_RELAY[1], 'latest']).then((c) => { GR_LIVE = String(c).length > 2; if (GR_LIVE) paintQuote(); }, () => {}); };
 async function relayPlan(from) {
   const relay = GR.GAS_RELAY[1];
   if (GR_LIVE == null) GR_LIVE = String(await rpc('eth_getCode', [relay, 'latest']).catch(() => '0x')).length > 2;
@@ -1065,6 +1074,7 @@ async function relayGo(P, from, plan) {
     let feeToken = P.pay, fee = await GR.feeFor({ gasPriceWei: plan.gasPrice, ethToToken: (w) => kyberEthTo(P.pay, w) });
     if (permitTok && lc(P.pay) !== tac) { const ft = await GR.feeFor({ gasPriceWei: plan.gasPrice, ethToToken: (w) => kyberEthTo(R.TAC, w) }); if (ft != null && bal(tac) >= ft) { feeToken = R.TAC; fee = ft; } }
     if (fee == null) throw new Error('Could not price the network fee. Nothing was sent.');
+    if (lc(feeToken) === lc(P.pay) && fee * 4n > amt) throw new Error(`The network fee (${tidy(amtFmt(fee, pt.dec))} ${esc(pt.sym)}) is more than a quarter of this swap. Swap more, or add a little ETH. Nothing was sent.`);
     const total = lc(feeToken) === lc(P.pay) ? amt + fee : amt;
     if (bal(lc(P.pay)) < total) throw new Error(`Not enough ${esc(pt.sym)}: the swap and the network fee need ${tidy(amtFmt(total, pt.dec))}.`);
     const { order, data } = GR.buildOrder({ payer: from, tokenIn: P.pay, amountIn: amt, feeToken, fee, tokenOut: isEth(P.get) ? R.ZERO : P.get, minOut: min, recipient: dest, target: call.to, data: call.data });
@@ -1095,11 +1105,17 @@ async function relayGo(P, from, plan) {
     const end = Date.now() + 5 * 60e3;
     say('Waiting for the relay to send it. Nothing leaves your wallet unless the swap lands.');
     let done = false;
-    while (Date.now() < end && !done) { await new Promise((q) => setTimeout(q, 3000)); done = wordAt(await ethCall(relay, usedSel).catch(() => '0x'), 0) === 1n; }
+    const t0 = Date.now();
+    while (Date.now() < end && !done) {
+      await new Promise((q) => setTimeout(q, 3000)); done = wordAt(await ethCall(relay, usedSel).catch(() => '0x'), 0) === 1n;
+      if (!done) say(`Waiting for the relay to send it (${Math.round((Date.now() - t0) / 1000)} s). Nothing leaves your wallet unless the swap lands.`);
+    }
+    // the relay's transaction, from the contract's Executed event for this payer and order
+    const ran = done ? await rpc('eth_getLogs', [{ address: relay, topics: ['0x533053a5fad9470861fb5df750d47e5f011faa03daba05299fe4bdc65f52d519', '0x' + addrWord(from), null, '0x' + BigInt(order.nonce).toString(16).padStart(64, '0')], fromBlock: '0x' + (BigInt(await rpc('eth_blockNumber', [])) - 200n).toString(16), toBlock: 'latest' }]).then((l) => l?.[0]?.transactionHash || null, () => null) : null;
     if (!done) throw new Error('The relay has not sent it yet. Nothing was spent; the order lapses by itself in a few minutes. Try again.');
     const after = P.to ? null : await balanceNow(P.get, from).catch(() => null), got = before != null && after != null ? after - before : null;
     S.amt = ''; S.q = null; S.busy = false; changed(); paint();
-    say(`Done: ${got != null && got > 0n ? `${tidy(amtFmt(got, gt.dec))} ${esc(gt.sym)} in your wallet` : `about ${tidy(amtFmt(P.r.out, gt.dec))} ${esc(gt.sym)} to ${esc(who(dest))}`}. The network fee was ${feeTxt}.`);
+    say(`Done: ${got != null && got > 0n ? `${tidy(amtFmt(got, gt.dec))} ${esc(gt.sym)} in your wallet` : `about ${tidy(amtFmt(P.r.out, gt.dec))} ${esc(gt.sym)} to ${esc(who(dest))}`}. The network fee was ${feeTxt}.${ran ? ` ${txLink(ran)}` : ''}`);
     live('Swap done'); H.onDone?.();
     readBalances().then(() => paintSides());
   } catch (e) {
