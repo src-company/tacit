@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-5TPre5tn6K9lKOSHIkY5rE3YyTde2mQJrEzoYMDaaZU=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-h6BGJJ2wU8MV0u7mrbzA0HkTllIaxgV9gl6LvOUVk6k=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <link rel="preconnect" href="https://api.tacit.finance" crossorigin>
 <link rel="preconnect" href="https://ethereum-rpc.publicnode.com" crossorigin>
@@ -12463,9 +12463,11 @@ function dashItems() {
       const farmed = (FARM.positions ?? s?.farmPositions ?? []).filter((y) => Number(y.pid) === Number(p.pid)).reduce((a, y) => a + (big(y.shares) || 0n), 0n);
       const icons = ['tk-teth', LOGO[String(p.pair).split('/').find((t) => t !== 'cETH')] || 'tk-tac'];
       if (farmed) out.push({ key: `lpf-${p.pid}`, icons, ring: true, label: pairName(p.pair), unit: 'ETH', dec: 18, max: 4, v: sharesEth(p, farmed) ?? null, noDelta: true, show: true, open: `farm/private-${p.pid}`, meta: 'private, farming' });
-      if (loose) out.push({ key: `lp-${p.pid}`, icons, label: pairName(p.pair), unit: 'ETH', dec: 18, max: 4, v: sharesEth(p, loose) ?? null, noDelta: true, show: true, open: `farm/private-${p.pid}`, meta: 'private, not farmed', send: `lp${p.pid}` });
+      if (loose) out.push({ key: `lp-${p.pid}`, icons, label: pairName(p.pair), unit: 'ETH', dec: 18, max: 4, v: sharesEth(p, loose) ?? null, noDelta: true, show: true, open: `farm/private-${p.pid}`, meta: 'private, LP only', send: `lp${p.pid}` });
     }
   }
+  // the public pool's stake (the wallet's, not the key's): worth about twice its ETH side, counted in the total but not as private
+  { const x = FARM.precision; if (x && S.address && x.who === S.address && x.staked > 0n) out.push({ key: 'pubf', icons: ['tk-tac', 'tk-eth'], ring: true, label: 'TAC / ETH', unit: 'ETH', dec: 18, max: 4, v: x.mine.eth * 2n, noDelta: true, show: true, open: 'farm/public', meta: 'public, farming' }); }
   // wTAC held privately (harvested farm rewards) and in the wallet, one row at TAC's 18 decimals: sent on from the card's Send, turned into TAC in the farm sheet
   { const rw = s ? spendable('rtac') : 0n, ww = wtacHere();
     if (rw > 0n || ww > 0n) out.push({ key: 'rtac', icon: 'tk-tac', label: 'wTAC', unit: 'wTAC', dec: 18, max: 2, v: rw * (big(FARM.program?.unitScale) || E10) + ww, show: true, open: 'farm',
@@ -12510,7 +12512,7 @@ function dashWorth(items) {
   const usd = { eth: v.usdBtc / v.ethBtc, btc: v.usdBtc, usd: 1, tac: v.mid ? v.mid * v.usdBtc / v.ethBtc : null };
   let all = 0, priv = 0;
   for (const it of items) {
-    const kind = it.key.startsWith('sats-') ? (it.label === 'TAC' ? 'tac' : 'btc') : /^lpf?-/.test(it.key) ? 'eth' : DASH_PX[it.key];
+    const kind = it.key.startsWith('sats-') ? (it.label === 'TAC' ? 'tac' : 'btc') : /^lpf?-/.test(it.key) || it.key === 'pubf' ? 'eth' : DASH_PX[it.key];
     if (!kind || it.v == null) continue;
     if (usd[kind] == null) { if (it.v > 0n || it.priv > 0n) return null; continue; }
     const n = Number(it.v) / 10 ** it.dec * usd[kind];
@@ -14688,7 +14690,7 @@ function hxPosPaint() {
         <a class="link" href="#farm/public" data-link="farm/public">Withdraw</a></span></div>`;
     }
     const worth = sharesEth(r.p, r.pos ? big(r.pos.shares) : r.loose), name = pairName(r.p.pair), off = HX.posBusy ? ' disabled' : '';
-    if (!r.pos) return html`<div class="hx-pr">${pair(r)}<span class="rt"><b>${name}</b><small>${worth != null ? `${aboutEth(worth)} · ` : ''}not farming</small></span><span class="hx-pa"><a class="link" href="#farm/private-${r.p.pid}" data-link="farm/private-${r.p.pid}">Farm it</a></span></div>`;
+    if (!r.pos) return html`<div class="hx-pr">${pair(r)}<span class="rt"><b>${name}</b><small>${worth != null ? `${aboutEth(worth)} · ` : ''}LP only</small></span><span class="hx-pa"><a class="link" href="#farm/private-${r.p.pid}" data-link="farm/private-${r.p.pid}">Farm it</a><a class="link" href="#farm/private-${r.p.pid}" data-link="farm/private-${r.p.pid}">Take out</a></span></div>`;
     const locked = Number(r.pos.unlockAt || 0) > chainNow(), earned = BigInt(r.pos.pendingUnits || 0) > 0n;
     return html`<div class="hx-pr">${pair(r)}<span class="rt"><b>${name}</b><small>${worth != null ? `${aboutEth(worth)} · ` : ''}${earned ? `+${r.pos.pendingTac} TAC` : 'farming'}</small></span><span class="hx-pa">
       <button class="link" type="button" data-pharv="${i}"${earned && !HX.posBusy ? '' : ' disabled'}>Harvest</button>
