@@ -22,7 +22,8 @@ export const ended = (it) => ENDS[it.kind]?.includes(it.status) ?? true;
 export function readActivity() {
   let v = null;
   try { v = JSON.parse(localStorage.getItem(ACT_KEY)); } catch {}
-  return { items: [].concat(v?.items || []).filter((x) => x?.id && ENDS[x.kind]), cleared: Number(v?.cleared) || 0 };
+  // an entry the page cannot show is dropped, and an op without its steps gets none, so one odd entry never stops the list opening
+  return { items: [].concat(Array.isArray(v?.items) ? v.items : []).filter((x) => x && typeof x === 'object' && x.id && ENDS[x.kind]).map((x) => (x.kind === 'op' && !Array.isArray(x.steps) ? { ...x, steps: [] } : x)), cleared: Number(v?.cleared) || 0 };
 }
 // the entries shown (a step nested in another is shown inside it)
 export const listed = (items) => items.filter((x) => !x.in);

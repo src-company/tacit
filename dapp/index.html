@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-z7F7j2ccpi7+zwPT6s5AhXFtTkan7IP+mCKvpBCP/4o=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-JNCacY4760gDBb+A2UHIuUdsD8S1x2QQ1Ni4WssjkVs=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <link rel="preconnect" href="https://api.tacit.finance" crossorigin>
 <link rel="preconnect" href="https://ethereum-rpc.publicnode.com" crossorigin>
@@ -1758,7 +1758,7 @@ import { SERVED as SERVED_POOLS, keeperIdOf, makeTokenPools, KEEPERS as POOL_KEE
 import { bridgeError, checkText, listNotes as listBridgeNotes, begin as beginBridge, toSelf as noteToSelf, through as brThrough, transfers as brTransfers, longCount as brLongCount, longReason as brLongReason, needsSend as brNeedsSend, firstStep as brFirst, overCap as brOver, haltText as bridgeHaltText, halts as brHalts, mergeSend, startNote, tryAgain, bulkFee, prepsAfterPass, runMerge as bridgeRunMerge, runAll as bridgeRunAll } from '/bridge-in.js?cb=1b8357ef';
 import { stepIn, stepOut, advanceOut, outPubs, discoverIn, unsearched, discoverEvery, IN_DONE, IN_HELD, IN_BURN_SENT, waitRanOut } from '/bridge-tick.js?cb=db96a3a9';
 import { makeTacitSession } from '/tacit-session.js?cb=a2d34bb2';
-import { ACT_KEY, ACT_MAX, JOB_LABEL, ENDS, ended, listed as listedOf, actBridge, actOpen, actDone, makeJournal, makeFollow, makeRelayState, makePace, WAIT_WHY, OPENISH, ahead } from '/activity.js?cb=994f4169';
+import { ACT_KEY, ACT_MAX, JOB_LABEL, ENDS, ended, listed as listedOf, actBridge, actOpen, actDone, makeJournal, makeFollow, makeRelayState, makePace, WAIT_WHY, OPENISH, ahead } from '/activity.js?cb=5bc9627f';
 if (window.__tacitAway) await new Promise(() => {});
 
 if (!secp.etc.hmacSha256Sync) secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, concatBytes(...m));
@@ -9176,7 +9176,7 @@ async function readPoints(current) {
   if (day?.program) takeProgram(day.program);
   rankRows(rows, lb, day);
   const tod = day || rows.find((r) => r.tod)?.tod || (await get(`points/0x${'0'.repeat(40)}`))?.today || null;
-  const pulse = tod ? { total: Number(tod.totalPoints) || 0, pot: big(tod.dayBudgetWei) || 0n, n: day?.taking ?? null,
+  const pulse = tod ? { total: Number(tod.totalPoints) || 0, pot: big(tod.dayBudgetWei) || 0n, n: day?.taking ?? null, groups: Array.isArray(day?.groups) ? day.groups : null,
     day: Math.min(ptsDays(), day?.programDay ?? Math.floor((now() - PGM.startDay * 86400) / 86400) + 1) } : null;
   if (key !== pointsWho().map(([a]) => a).join() || !current()) return;
   noteSeen(rows);
@@ -9295,10 +9295,14 @@ function pulse() {
   const p = PTS.pulse;
   if (!p) return '';
   const per = p.total > 0 ? Number(p.pot / 10n ** 12n) / 1e6 / p.total * 1000 : null;
+  // with reserved budgets a day's pot is split between groups of activities, so a point earns different amounts: say the range, not a blend nobody earns
+  const rates = (p.groups || []).filter((g) => Number(g.points) > 0 && /^\d+$/.test(String(g.paidWei))).map((g) => Number(BigInt(g.paidWei) / 10n ** 12n) / 1e6 / Number(g.points) * 1000);
+  const tacN = (x) => x.toLocaleString('en-US', { maximumFractionDigits: x < 10 ? 2 : 1 });
+  const range = rates.length > 1 && Math.max(...rates) / Math.min(...rates) > 1.2 ? `${tacN(Math.min(...rates))} to ${tacN(Math.max(...rates))} TAC` : null;
   return html`<div class="pulse">
     <div class="kv"><span>Today’s pot</span><b>${fmt(p.pot, 18, p.pot >= 100n * 10n ** 18n ? 0 : 2)} TAC · day ${p.day} of ${ptsDays()}${p.pot < PGM.dayWei ? html` <small class="mute">at the limit per point</small>` : ''}</b></div>
     <div class="kv"><span>Points so far today</span><b>${ptsFmt(p.total)}${p.n ? ` · ${p.n.toLocaleString('en-US')} taking part` : ''}</b></div>
-    <div class="kv"><span>So far, each 1,000 points earn</span><b>${per == null ? 'nothing yet' : `${per.toLocaleString('en-US', { maximumFractionDigits: per < 10 ? 2 : 1 })} TAC`}</b></div></div>`;
+    <div class="kv"><span>So far, each 1,000 points earn</span><b${range ? ' title="A day’s pot is split between kinds of activity, so a point earns more or less by what earned it"' : ''}>${range || (per == null ? 'nothing yet' : `${tacN(per)} TAC`)}</b></div></div>`;
 }
 function leaderboard(connected) {
   if (PTS.rows == null) return '';
@@ -14445,7 +14449,7 @@ function swcPace(id) {
   if (b) b.dataset.pace = id;
   else q.insertAdjacentHTML('afterend', html`<div class="pace" data-card="1" data-pace="${id}"><div class="actr-bar" role="progressbar" aria-label="How far along" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i style="width:0%"></i></div><span></span></div>`.s);
 }
-const swcLoad = () => (SWC.p ||= import('/swap/card.js?cb=a13938b0').catch((e) => { SWC.p = null; throw e; }));
+const swcLoad = () => (SWC.p ||= import('/swap/card.js?cb=3eddf31b').catch((e) => { SWC.p = null; throw e; }));
 function swcAsk() { if (SWC.ask && SWC.card?.load(SWC.ask)) SWC.ask = null; }
 function hxSwap() {
   const put = () => { const s = $('#hx-swap'); if (s && s !== SWC.el) { s.replaceWith(SWC.el); SWC.card?.requote?.(); } swcAsk(); };
