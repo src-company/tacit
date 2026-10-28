@@ -199,6 +199,51 @@ const pick = async (page, side, sym) => {
   }
 };
 
+// ── the gas relay: a wallet with TAC and no ETH sells TAC on the card by signing one order; the API board is stood in for by the test, which sends it as the settle relay would ──
+if (!process.env.SKIP_GASRELAY) {
+  const RELAY = '0x000000197E8f0B64463B2010e568fF42090Af88d', SENDER = '0x000000000000000000000000000000000007a0f0';
+  const { encodeExecute } = await import('../worker-relay/src/lib/gas-calls.js'), { checkGasOrder } = await import('../worker/src/gas-relay-queue.js');
+  ok((await rpcA('eth_getCode', [RELAY, 'latest'])) !== '0x', 'the gas relay is on the fork');
+  await rpcA('anvil_impersonateAccount', [SENDER]); await rpcA('anvil_setBalance', [SENDER, '0x' + (5n * 10n ** 18n).toString(16)]);
+  for (const [dest, label] of [[USDC, 'USDC'], ['0x0000000000000000000000000000000000000000', 'ETH']]) {
+    const w = await fundedWallet();
+    await rpcA('anvil_setBalance', [w.account, '0x0']);
+    await rpcA('anvil_dealERC20', [w.account, TAC, '0x' + (500n * 10n ** 18n).toString(16)]);
+    const { browser, page, errors, blocked, walletLog } = await openPage({ width: 1280, height: 900 }, { wallet: w });
+    const seen = { orders: [], gas: null };
+    await page.context().route('https://api.tacit.finance/gas/order', async (route) => {
+      const h = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS' };
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: h });
+      const x = JSON.parse(route.request().postData()).order; seen.orders.push(x);
+      const why = checkGasOrder(x);
+      if (why) return route.fulfill({ status: 400, headers: { ...h, 'content-type': 'application/json' }, body: JSON.stringify({ ok: false, error: why }) });
+      try { const hash = await rpcA('eth_sendTransaction', [{ from: SENDER, to: RELAY, data: encodeExecute(x), gas: '0x7a1200' }]); seen.gas = hash; }
+      catch (e) { return route.fulfill({ status: 400, headers: { ...h, 'content-type': 'application/json' }, body: JSON.stringify({ ok: false, error: e.message.slice(0, 160) }) }); }
+      await route.fulfill({ status: 200, headers: { ...h, 'content-type': 'application/json' }, body: JSON.stringify({ ok: true }) });
+    });
+    await page.click('#wallet-chip');
+    await until(page, () => /0x/.test(document.querySelector('#wallet-label').textContent));
+    await until(page, () => /Balance/.test(document.querySelector('#pay-side').textContent));
+    await pick(page, 'pay', 'TAC');
+    if (label === 'USDC') { await page.click('#get-coin'); await page.click('.pk-r:has(b:text-is("USDC"))'); } else await pick(page, 'get', 'ETH');
+    await typeAmt(page, '100'); await quoted(page);
+    ok(/^Sell TAC$/.test((await page.textContent('#go')).trim()), `a wallet with 500 TAC and no ETH: the button sells TAC for ${label}`);
+    const t0 = await bal(TAC, w.account), d0 = label === 'USDC' ? await bal(USDC, w.account) : BigInt(await rpcA('eth_getBalance', [w.account, 'latest']));
+    await page.click('#go');
+    await until(page, () => /Done|relay did not|Not enough|cannot|Nothing was/.test(document.querySelector('#q').textContent), null, 240000);
+    const q = (await page.textContent('#q')).replace(/\s+/g, ' ');
+    ok(/^Done/.test(q.trim()), `the swap went through the relay (${q.slice(0, 140)})`);
+    const t1 = await bal(TAC, w.account), d1 = label === 'USDC' ? await bal(USDC, w.account) : BigInt(await rpcA('eth_getBalance', [w.account, 'latest']));
+    ok(seen.orders.length === 1 && walletLog.sends.length === 0, `one order was signed and posted, and the wallet sent no transaction (${seen.orders.length} orders, ${walletLog.sends.length} sends)`);
+    ok(t0 - t1 > 0n, 'TAC left the wallet');
+    ok(d1 > d0, `the ${label} arrived: ${label === 'USDC' ? Number(d1 - d0) / 1e6 : Number(d1 - d0) / 1e18}`);
+    ok(seen.orders[0] && (seen.orders[0].order.feeToken.toLowerCase() === TAC.toLowerCase()), 'the network fee was paid in TAC');
+    ok(!errors.length, `no page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
+    await browser.close();
+  }
+  if (process.env.ONLY_GASRELAY) { server.close(); console.log(`\n${n} passed, ${fails} failed`); process.exit(fails ? 1 : 0); }
+}
+
 // ── the privacy hop by default: wallet ETH buying a public token opens on Swap privately; To: Wallet makes it a public swap, kept for the browser ──
 {
   const { browser, page, errors } = await openPage({ width: 1280, height: 900 }, { hop: null });

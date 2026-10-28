@@ -1001,7 +1001,7 @@ async function go() {
   const from = W.account, P = { kind, r, q: S.q, wei: S.q.wei, floor: (r.out * BigInt(10000 - S.slip)) / 10000n, pay: S.pay, get: S.get, to: recipient() };
   if (S.toBad) return;
   // a wallet with no ETH for the gas: the swap goes through the gas relay, paid for in TAC or the token spent (dapp/gas-relay.js)
-  if (P.kind === 'agg' && P.r.sv && !isEth(P.pay)) { const plan = await relayPlan(from).catch(() => null); if (plan) { await relayGo(P, from, plan); return; } }
+  if (['tac', 'any', 'in', 'out', 'agg'].includes(P.kind) && !isEth(P.pay)) { const plan = await relayPlan(from).catch(() => null); if (plan) { await relayGo(P, from, plan); return; } }
   S.busy = true; paintQuote();
   const before = P.to ? null : await balanceNow(P.get, from).catch(() => null);
   try {
@@ -1047,26 +1047,27 @@ const kyberEthTo = async (token, wei) => {
   const o = r?.data?.routeSummary?.amountOut;
   return /^\d+$/.test(String(o ?? '')) ? BigInt(o) : null;
 };
+let RELAY_MODE = null;
 async function relayGo(P, from, plan) {
   S.busy = true; paintQuote();
   try {
-    const relay = GR.GAS_RELAY[1], v = SV.solverOf(P.r.sv.id), pt = tokenOf(P.pay), gt = tokenOf(P.get), dest = P.to || from, tac = lc(R.TAC);
+    const relay = GR.GAS_RELAY[1], pt = tokenOf(P.pay), gt = tokenOf(P.get), dest = P.to || from, tac = lc(R.TAC);
     say('No ETH needed: reading the price and the fee…');
-    const f = await SV.firm(v.id, { tokenIn: P.pay, tokenOut: P.get, amountIn: P.wei, decIn: pt.dec, decOut: gt.dec, slippageBps: S.slip }, P.r.sv.ctx);
-    if (!f) { say(`${esc(v.name)} has no route for this right now. Nothing was sent.`, '', true); requote(true); return; }
-    if (f.out != null && f.out < P.floor) { say('The price moved. Nothing was sent; the quote above is the new one.', '', true); requote(true); return; }
-    const min = f.out != null && (f.out * BigInt(10000 - S.slip)) / 10000n > P.floor ? (f.out * BigInt(10000 - S.slip)) / 10000n : P.floor;
-    const call = SV.snwapCall({ tokenIn: P.pay, tokenOut: P.get, amountIn: P.wei, to: dest, minOut: min, fwd: v.fwd, router: f.router, data: f.data });
-    const why = checkSnwapCall(call.data, { to: dest, tokenIn: P.pay, tokenOut: P.get, amount: P.wei, minOut: min, executor: v.fwd });
-    if (why) throw new Error(`${v.name}’s route was refused (${why}). Nothing was sent.`);
+    // the same route the card would send, built for the relay contract as the caller (it holds the token and approves the target), paying `dest`
+    RELAY_MODE = { amountIn: P.wei };
+    let tx, amt;
+    try { tx = await prepare({ ...P, to: dest }, relay); amt = RELAY_MODE.amountIn; } finally { RELAY_MODE = null; }
+    if (!tx) return;
+    if (tx.value && BigInt(tx.value) !== 0n) throw new Error('This route sends ETH, so it cannot be paid for in TAC. Nothing was sent.');
+    const call = { to: tx.to, data: tx.data }, min = P.floor;
     // the fee: in TAC when the wallet holds enough and the token spent takes a permit, else in the token spent
     const permitTok = !!GR.PERMIT_TOKENS[lc(P.pay)], bal = (k) => S.bal[k] ?? 0n;
     let feeToken = P.pay, fee = await GR.feeFor({ gasPriceWei: plan.gasPrice, ethToToken: (w) => kyberEthTo(P.pay, w) });
     if (permitTok && lc(P.pay) !== tac) { const ft = await GR.feeFor({ gasPriceWei: plan.gasPrice, ethToToken: (w) => kyberEthTo(R.TAC, w) }); if (ft != null && bal(tac) >= ft) { feeToken = R.TAC; fee = ft; } }
     if (fee == null) throw new Error('Could not price the network fee. Nothing was sent.');
-    const total = lc(feeToken) === lc(P.pay) ? P.wei + fee : P.wei;
+    const total = lc(feeToken) === lc(P.pay) ? amt + fee : amt;
     if (bal(lc(P.pay)) < total) throw new Error(`Not enough ${esc(pt.sym)}: the swap and the network fee need ${tidy(amtFmt(total, pt.dec))}.`);
-    const { order, data } = GR.buildOrder({ payer: from, tokenIn: P.pay, amountIn: P.wei, feeToken, fee, tokenOut: isEth(P.get) ? R.ZERO : P.get, minOut: min, recipient: dest, target: call.to, data: call.data });
+    const { order, data } = GR.buildOrder({ payer: from, tokenIn: P.pay, amountIn: amt, feeToken, fee, tokenOut: isEth(P.get) ? R.ZERO : P.get, minOut: min, recipient: dest, target: call.to, data: call.data });
     const feeTxt = `${tidy(amtFmt(fee, lc(feeToken) === tac ? 18 : pt.dec))} ${lc(feeToken) === tac ? 'TAC' : esc(pt.sym)}`;
     // the wallet's permits: one per token the relay pulls (ERC-2612), or one Permit2 signature for a token with none that Permit2 can already spend
     let inPermit = GR.NO_PERMIT, feePermit = GR.NO_PERMIT, p2 = GR.NO_P2;
@@ -1122,7 +1123,8 @@ async function prepare(P, from) {
     const floor = floorFor(BigInt(pick.amountOut)), isSplit = !!P.r.split;
     const make = (permit) => (isSplit ? venues.buildSplit({ split: pick, account: from, to: dest, minOut: floor, deadline: dl, permit }) : venues.build({ quote: pick, dir, account: from, to: dest, minOut: floor, deadline: dl, permit }));
     tx = make();
-    if (tx.approval) tx = await withAccess({ tx, make, from, dl, permit: pick.venue === 'precision' || isSplit });
+    if (tx.approval && RELAY_MODE) { if (lc(tx.approval.spender) !== lc(tx.to)) throw new Error('This route needs a different spender, so it cannot be paid for in TAC. Pick another route or add a little ETH.'); RELAY_MODE.amountIn = P.wei; }
+    else if (tx.approval) tx = await withAccess({ tx, make, from, dl, permit: pick.venue === 'precision' || isSplit });
   } else if (P.kind === 'amm') {
     const q = await R.quoteAmm({ ethCall, tokenIn: isEth(P.pay) ? R.ZERO : P.pay, tokenOut: isEth(P.get) ? R.ZERO : P.get, amountIn: P.wei });
     if (!q || q.amountOut < P.floor) return moved();
@@ -1170,6 +1172,7 @@ async function prepare(P, from) {
     if (!q || q.out < P.floor || q.min < (P.r.min ?? P.floor)) return moved();
     tx = await aggTx(q, from);
   } else throw new Error('Nothing to do for this pair.');
+  if (RELAY_MODE) return tx;                                                 // the relay simulates the whole order before it sends
   say('Checking it first…');
   const sim = await venues.simulate({ tx, from });
   if (!sim.ok) throw new Error('This swap would fail, so nothing was sent. Try a smaller amount or try again.');
@@ -1188,6 +1191,7 @@ async function withAccess({ tx, make, from, dl, permit }) {
 }
 // How a Tacit asset reaches zRouter: the allowance it already has, else a permit signed for free.
 async function tacitAccess(token, amount, from, dl) {
+  if (RELAY_MODE) { RELAY_MODE.amountIn = amount; return { kind: 'approved' }; }          // the gas relay holds the token and approves the target itself
   const t = tokenOf(lc(token)), acc = await R.readAccess({ ethCall, token, owner: from });
   if (acc.balance < amount) throw new Error(`Not enough ${t.sym}.`);
   if (acc.allowed >= amount) return { kind: 'approved' };
@@ -1208,6 +1212,7 @@ function snwapTx(call, P, access) {
   return { to: call.to, data: legs.length ? R.encMulticall([...legs, call.data]) : call.data, value: 0n };
 }
 async function anyAccess(q, from, { permit2 = true } = {}) {
+  if (RELAY_MODE) { RELAY_MODE.amountIn = q.maxIn ?? q.amountIn; return { kind: 'approved' }; }
   const t = tokenOf(lc(q.token)), acc = await R.readAccess({ ethCall, token: q.token, owner: from });
   if (acc.balance < q.maxIn) throw new Error(`Not enough ${t.sym}: the swap may spend up to ${tidy(amtFmt(q.maxIn, t.dec))}.`);
   if (acc.allowed >= q.maxIn) return { kind: 'approved' };
