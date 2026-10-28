@@ -893,6 +893,7 @@ let openReadAt = 0;
 // from the holder's permit in the fulfil, to this settle wallet. The relay is first in line for what it takes; a holder who wants
 // another prover to win raises what they sign, and a prover that claims first has the order.
 let marketReadAt = 0;
+let lastWorkedAt = 0;
 // A claim and a fulfil cost this much gas (measured on mainnet: 128k and 676k). The least price in TAC wei the relay takes an order at is that gas at
 // the current price, plus its proving share, plus a margin, valued in TAC at what ETH buys now (read from the chain at most every minute).
 const MARKET_GAS = 128_000n + 700_000n;
@@ -918,6 +919,8 @@ async function marketMinPrice() {
 }
 const marketSolver = makeMarketSolver({
   me: settleWallet.account.address, minPrice: marketMinPrice,
+  // The relay's own queue (users' ops, the pool's settles) comes first: no new market proof is begun within 15 s of a job it worked on, so a market order never queues the board ahead of one.
+  canStart: () => Date.now() - lastWorkedAt > 15_000,
   listOrders: () => marketOrders(),
   depositStatus: async (id) => BigInt((await publicClient.call({ to: POOL, data: `0x7da9874f${id.slice(2)}` })).data || 0),
   done: (id) => publicClient.readContract({ address: CFG.marketAddr, abi: MARKET_ABI, functionName: 'done', args: [id] }),
@@ -932,9 +935,8 @@ const marketSolver = makeMarketSolver({
 async function marketCycle() {
   if (!CFG.marketSolve || Date.now() - marketReadAt < CFG.marketPollSecs * 1000) return false;
   marketReadAt = Date.now();
-  await beat('market orders');
   const worked = await marketSolver.pass();
-  if (worked) marketReadAt = 0;
+  if (worked) { marketReadAt = 0; await beat('market order'); }
   return worked;
 }
 
@@ -1274,7 +1276,7 @@ async function main() {
     try {
       // a market order is paid in TAC by a holder who asked to jump the queue, so it is taken before the free queue (one job each pass)
       let worked = await marketCycle();
-      if (!worked) worked = await cycle();
+      if (!worked) { worked = await cycle(); if (worked) lastWorkedAt = Date.now(); }
       if (!worked) worked = await gasCycle();
       // An empty queue is the common case, not an error — but it must still beat, or /prover-health
       // goes stale (and "down") after 10 quiet minutes on a perfectly healthy relay. heartbeat() itself

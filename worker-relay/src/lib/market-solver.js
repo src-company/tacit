@@ -20,7 +20,7 @@ function priceAt(intent, at) {
 // The deposit a wrap's public values consume (word 36 of the fixed 55-word layout, dapp/proof-market.js wrapPublicValues).
 export const depositOf = (publicValues) => '0x' + String(publicValues).replace(/^0x/, '').slice(36 * 64, 37 * 64);
 
-export function makeMarketSolver({ listOrders, done, claim, prove, fulfil, clear, claimOf, depositStatus, deliver = null, me, minPrice = 0n, retryMs = 120_000, maxClaims = 2, perPayerHour = 6, perHour = 60, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {} }) {
+export function makeMarketSolver({ listOrders, done, claim, prove, fulfil, clear, claimOf, depositStatus, deliver = null, me, minPrice = 0n, retryMs = 120_000, maxClaims = 2, perPayerHour = 6, perHour = 60, canStart = () => true, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {} }) {
   const tried = new Map();   // opId -> when it last failed here, so one bad order is not tried every pass
   const proofs = new Map();  // opId -> the proof being made (or made) for it: proving starts when an order is seen, the claim waits for its deposit
   let busy = false;          // one prover: one proof at a time
@@ -58,7 +58,7 @@ export function makeMarketSolver({ listOrders, done, claim, prove, fulfil, clear
           // The proof is made in the background (the relay's loop goes on serving its other work); each pass looks at where it has got to.
           let st = proofs.get(id);
           if (!st) {
-            if (busy) continue;
+            if (busy || !canStart()) continue;   // one proof at a time, and none begun while the relay is busy with its own queue
             const hourAgo = now() - 3_600_000;
             while (started.length && started[0].at < hourAgo) started.shift();
             if (started.length >= perHour || started.filter((x) => x.payer === o.intent.payer.toLowerCase()).length >= perPayerHour) { tried.set(id, now()); continue; }

@@ -139,3 +139,14 @@ test('an order whose deposit has landed is worked before older ones that have no
   await s2.pass();
   assert.equal(started2[0], '0xdep');
 });
+
+test('no new proof is begun while the relay is busy with its own queue, and one is begun once it is not', async () => {
+  let busyNow = true, proves = 0;
+  const s = makeMarketSolver({ me: ME, now: () => 2_000_000, canStart: () => !busyNow, depositStatus: async () => 0, listOrders: async () => [mk('0xq')], done: async () => false, claimOf: async () => null,
+    claim: async () => '0x', prove: async () => { proves++; return { proof: '0x' }; }, fulfil: async () => '0x', clear: async () => {} });
+  await s.pass(); await s.pass();
+  assert.equal(proves, 0, 'held back while the relay works its own jobs');
+  busyNow = false;
+  await s.pass();
+  assert.equal(proves, 1);
+});
