@@ -331,3 +331,4 @@
 
 .swc .act .cp, .act #hx-copy.cp { display: flex; margin: 2px auto 0; }
 .swc .act .cp[hidden], .act #hx-copy.cp[hidden] { display: none; }
+.swc .rows-h .chg { text-decoration: underline; text-underline-offset: 3px; }

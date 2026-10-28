@@ -312,6 +312,7 @@ function chainMarks(cs) {
   return `<span class="cm" role="img" aria-label="${names}" title="${names}">${cs.map((c) => `<svg class="tk" aria-hidden="true"><use href="#${CHAIN_MARK[c.id]}"/></svg>`).join('')}</span>`;
 }
 // Private on the To side, when the coin can rest in either home: the two of them, side by side
+let HOMES_OPEN = false;
 function homesHtml() {
   if (!moving() || !isPrivAt(atOf('get'))) return '';
   const pa = atOf('pay'), eth = isEth(S.get) || S.get === 'teth', tac = S.get === lc(R.TAC);
@@ -325,7 +326,10 @@ function homesHtml() {
   const wei = isEth(S.pay) && pa === 'wallet' ? parseUnits(S.amt, 18) || 0n : null;
   const cue = (act) => { const p = wei == null ? null : ptsFor(act, wei > 0n ? wei : 10n ** 18n); return `<span class="ra">${p ? `<span>${ptsSaid(p, false)}</span><small>${wei > 0n ? 'points' : 'points/ETH'}</small>` : ''}</span>`; };
   const row = (home, t, sub, icon, act) => `<button type="button" role="radio" class="c" data-home="${home}" aria-checked="${String(at === home)}" tabindex="${at === home ? 0 : -1}"><svg class="tk" aria-hidden="true"><use href="#tk-${icon}"/></svg><span class="rt"><b>${t}</b><small>${sub}</small></span>${cue(act)}<span class="rd" aria-hidden="true"></span></button>`;
-  return `<div class="rows-h"><span>Private in</span></div>${row('defi', 'DeFi pool', 'swap, farm, borrow', eth ? 'teth' : 'tac', 'wrap')}${row('pay', 'Pay pool', `pay on ${where}`, eth ? 'peth' : 'tac', 'dev')}`;
+  // the chosen home alone, with a way to change it, until the choice is opened
+  const defi = row('defi', 'DeFi pool', 'swap, farm, borrow', eth ? 'teth' : 'tac', 'wrap'), pay = row('pay', 'Pay pool', `pay on ${where}`, eth ? 'peth' : 'tac', 'dev');
+  if (!HOMES_OPEN) return `<div class="rows-h"><span>Private in</span><span class="chg">Change</span></div>${at === 'pay' ? pay : defi}`;
+  return `<div class="rows-h"><span>Private in</span></div>${defi}${pay}`;
 }
 // the Pay pool's chain, while ETH is in it on either side
 function chainHtml() {
@@ -2341,7 +2345,7 @@ function wire() {
   });
   $('#to-in').addEventListener('keydown', (e) => { if (e.key === 'Escape') { S.toOpen = false; paintSides(); $('#get-where').focus(); } });
   $('#go').addEventListener('click', go);
-  $('#homes')?.addEventListener('click', (e) => { const b = e.target.closest('[data-home]'); if (b) setHome(b.dataset.home); });
+  $('#homes')?.addEventListener('click', (e) => { const b = e.target.closest('[data-home]'); if (!b) return; if (!HOMES_OPEN) { HOMES_OPEN = true; paint(); return; } HOMES_OPEN = false; if (b.dataset.home === atOf('get')) paint(); else setHome(b.dataset.home); });
   if ($('#homes')) arrows($('#homes'), 'data-home');
   $('#chain')?.addEventListener('change', (e) => {
     if (e.target.id !== 'chain-sel') return;
