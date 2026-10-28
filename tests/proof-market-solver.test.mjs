@@ -160,3 +160,18 @@ test('a proof is kept when its order briefly drops off the board, and not made a
   listed = true; await s.pass();
   assert.equal(proves, 1, 'proved once');
 });
+
+test('a claim send that errors but landed on chain is not called failed: the fulfil goes ahead; one that did not land is', async () => {
+  let landed = true, fulfils = 0, t = 2_000_000;
+  const mkS = () => makeMarketSolver({ me: ME, now: () => t, sleep: async () => {}, depositStatus: async () => 1, listOrders: async () => [mk('0xs')], done: async () => false,
+    claimOf: async () => (landed && fulfils === 0 && claimedOnce ? { solver: ME, until: 2000 + 60 } : null),
+    claim: async () => { claimedOnce = true; throw new Error('HTTP request failed'); }, prove: async () => ({ proof: '0x' }), fulfil: async () => { fulfils++; return '0xf'; }, clear: async () => {} });
+  let claimedOnce = false;
+  const s = mkS();
+  assert.equal(await run(s), true);
+  assert.equal(fulfils, 1, 'the claim was on chain, so it was fulfilled');
+  landed = false; claimedOnce = false; fulfils = 0;
+  const s2 = mkS();
+  assert.equal(await run(s2), true);
+  assert.equal(fulfils, 0, 'a claim that is not on chain stops there');
+});

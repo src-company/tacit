@@ -24,6 +24,7 @@ export function makeMarketSolver({ listOrders, done, claim, prove, fulfil, clear
   const tried = new Map();   // opId -> when it last failed here, so one bad order is not tried every pass
   const proofs = new Map();  // opId -> the proof being made (or made) for it: proving starts when an order is seen, the claim waits for its deposit
   let busy = false;          // one prover: one proof at a time
+  const claiming = new Set();   // orders with a claim being sent: never a second claim for one while the first may still land
   const claimsMade = new Map(); // opId -> claims sent for it: an order that two claims did not settle is left (a claim costs gas)
   const started = [];        // [{ at, payer }] proofs started in the last hour: a payer, and the board as a whole, can only make so much work for the prover
   return {
@@ -81,8 +82,19 @@ export function makeMarketSolver({ listOrders, done, claim, prove, fulfil, clear
           if (!st.done) continue;
           const proof = st.value;
           log(`market: order ${id.slice(0, 10)}: deposit pending and proof ready, claiming`);
+          if (claiming.has(id)) continue;
           claimsMade.set(id, (claimsMade.get(id) || 0) + 1);
-          const claimTx = await claim(o);
+          claiming.add(id);
+          let claimTx;
+          try { claimTx = await claim(o); }
+          catch (e) {
+            // The send can fail on one endpoint while another carries the transaction: read the chain before calling the claim failed.
+            await sleep(3000);
+            const mine = await claimOf(id).catch(() => null);
+            if (!mine || mine.solver.toLowerCase() !== me.toLowerCase() || mine.until <= Math.floor(now() / 1000)) throw e;
+            log(`market: order ${id.slice(0, 10)}: the claim send reported an error but the claim is on chain; going on`);
+            claimTx = 'on chain';
+          } finally { claiming.delete(id); }
           // The claim is in a block: its window runs from there. It is not read back (a node a block behind says there is no claim); the fulfil is simulated
           // before it is sent and says NoClaim if there is none.
           const live = { until: Math.floor(now() / 1000) + 52 };
