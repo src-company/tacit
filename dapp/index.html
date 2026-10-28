@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-h6BGJJ2wU8MV0u7mrbzA0HkTllIaxgV9gl6LvOUVk6k=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-6ysCFrJ04z7aHVz80UuGrPxnaUMJE2deegN6k38LFW8=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <link rel="preconnect" href="https://api.tacit.finance" crossorigin>
 <link rel="preconnect" href="https://ethereum-rpc.publicnode.com" crossorigin>
 <script type="module" src="/px-strip.js" async fetchpriority="high"></script>
-<link rel="preload" href="/swap/card.css?cb=e753aeee" as="style">
+<link rel="preload" href="/swap/card.css?cb=ed5719c5" as="style">
 <link rel="preload" href="/fonts/instrument-serif-400-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/instrument-serif-400i-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/ibm-plex-mono-400-latin.woff2" as="font" type="font/woff2" crossorigin>
@@ -1102,7 +1102,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
 }
 </style>
 <!-- the hero tile is drawn with the swap card's parts (swap/card.js, which the Swap tab mounts): its styles, after the page's own -->
-<link rel="stylesheet" href="/swap/card.css?cb=e753aeee">
+<link rel="stylesheet" href="/swap/card.css?cb=ed5719c5">
 <!-- chrome:head:begin inline -->
 <style>
 /* The header's page links and the footer, as every page that wears them draws them. The markup is made by build/chrome.mjs and stamped
@@ -10589,7 +10589,7 @@ async function marketOffer() {
     // that and rises to three times it over the minute, never under the dollar floors. A price under the relay's own floor would not be taken.
     const gp = Number(await rpc('eth_gasPrice', []).then(BigInt).catch(() => 0n)) / 1e18, costUsd = ((830000 * gp * 1.3) + 0.00003) * (fpx().ethUsd || 0);
     const tac = (usd) => BigInt(Math.round((usd / px) * 1e6)) * 10n ** 12n;
-    const q = { floor: tac(Math.max(MARKET.usd.floor, costUsd * 1.3)), max: tac(Math.max(MARKET.usd.max, costUsd * 3)), owner, tank: !!tankRec(owner) };
+    const q = { floor: tac(Math.max(MARKET.usd.floor, costUsd * 1.3)), max: tac(Math.max(MARKET.usd.max, costUsd * 3)), owner, tank: (() => { const r = tankRec(owner); return !!r && BigInt(r.tank.perOpMax) >= tac(Math.max(MARKET.usd.max, costUsd * 3)); })() };
     return have >= q.max ? q : null;
   } catch { return null; }
 }
@@ -10598,7 +10598,7 @@ async function marketOffer() {
 // passes the total; the holder's TAC moves only when the pool accepts a proof. Turning it off here forgets the key, so nothing more can be signed.
 const tankKey = (owner) => 'tacit-market-tank-v1:' + String(owner).toLowerCase();
 function tankRec(owner) {
-  try { const r = JSON.parse(localStorage.getItem(tankKey(owner)) || 'null'); return r && Number(r.tank.expiry) > Math.floor(Date.now() / 1000) + 600 ? r : null; } catch { return null; }
+  try { const r = JSON.parse(localStorage.getItem(tankKey(owner)) || 'null'); return r && Number(r.tank.expiry) > Math.floor(Date.now() / 1000) + 1800 ? r : null; } catch { return null; }   // an order lives 25 minutes: the tank must outlive it
 }
 const tankSave = (owner, r) => { try { localStorage.setItem(tankKey(owner), JSON.stringify(r)); } catch { /* a convenience: the next proof asks again */ } };
 function marketTankOff(owner) { try { localStorage.removeItem(tankKey(owner)); } catch { /* */ } }
@@ -10675,13 +10675,13 @@ function zapWay({ tell, inflight = null, down = false, then = null, market = nul
   return new Promise((resolve) => {
     const fin = (v) => { if (ZAPWAY.cb === fin) ZAPWAY.cb = null; resolve(v); };
     ZAPWAY.cb = fin; ZAPWAY.then = then;
-    tell(html`<span class="err">${down ? 'Tacit’s prover is not available right now.' : 'Tacit’s prover is taking longer than usual.'}</span> Nothing has left your wallet.<div class="actr-f"><button class="link" type="button" data-zapway="own">Prove it yourself</button>, on this computer or with your credit · ${market ? html`<button class="link" type="button" data-zapway="market">Pay about ${fmt(market.floor, 18, 2)} TAC for a fast proof${market.tank ? '' : ' (two signatures, then none for a week)'}</button> · ${market.tank ? html`<button class="link" type="button" data-tankoff="${market.owner}">Turn fast proofs off</button> · ` : ''}` : ''}<button class="link" type="button" data-zapway="relay">Send the zap and let the relay finish it</button></div>`);
+    tell(html`<span class="err">${down ? 'Tacit’s prover is not available right now.' : 'Tacit’s prover is taking longer than usual.'}</span> Nothing has left your wallet.<div class="actr-f"><button class="link" type="button" data-zapway="own">Prove it yourself</button>, on this computer or with your credit · ${market ? html`<button class="link" type="button" data-zapway="market">Pay up to ${fmt(market.max, 18, 1)} TAC for a fast proof${market.tank ? '' : ' (two signatures, then none for a week)'}</button> · ${market.tank ? html`<button class="link" type="button" data-tankoff="${market.owner}">Turn fast proofs off here</button> · ` : ''}` : ''}<button class="link" type="button" data-zapway="relay">Send the zap and let the relay finish it</button></div>`);
     if (inflight) inflight.then(() => fin('ready'), () => fin('ready'));
   });
 }
 document.addEventListener('click', (e) => {
   const off = e.target.closest?.('[data-tankoff]');
-  if (off) { marketTankOff(off.dataset.tankoff); off.replaceWith(document.createTextNode('Fast proofs are off. ')); return; }
+  if (off) { marketTankOff(off.dataset.tankoff); document.querySelector('[data-zapway="market"]')?.remove(); off.replaceWith(document.createTextNode('Fast proofs are off on this device. ')); return; }
   const b = e.target.closest?.('[data-zapway]');
   if (!b || !ZAPWAY.cb) return;
   b.closest('.actr-f')?.remove();                                    // a choice is made once: its buttons go
@@ -10767,7 +10767,11 @@ async function zapNow({ run, p, z, status, bond = true, clear = () => {}, moved 
     built = t.buildShareWrap({ walletPriv: priv, poolId: p.poolId, shares: plan.shares, index });
     if (marketQ) {
       try { const posted = await postMarketOrder({ built, q: marketQ, status }); marketPendingAdd({ opId: posted.intent.opId, pub, poolId: p.poolId, shares: String(plan.shares), index: built.index, memos: posted.memos, at: Date.now() }); tell('Posted to the proving market. Sending the zap; a prover settles your share as soon as it is made…'); }
-      catch (e) { tell(`The proving market was not used (${errText(e)}). Sending the zap; the relay finishes it.`); }
+      catch (e) {
+        // a signature declined is the holder saying no, not a market that failed: nothing is sent (a network or board failure carries on with the relay)
+        if (walletDeclined(e)) { t.releaseShareIndex({ walletPriv: priv, poolId: p.poolId, index: built.index }); throw Object.assign(new Error('Cancelled in your wallet. Nothing was sent.'), { said: true }); }
+        tell(`The proving market was not used (${errText(e)}). Sending the zap; the relay finishes it.`);
+      }
     }
     // Proved here or with your own credit (a single-pool zap): the share note first, then the zap and its settle together.
     if (!sp && ownNow(['wrap']) && (await proveOwn(['wrap']))) {
@@ -14438,7 +14442,7 @@ function swcPace(id) {
   if (b) b.dataset.pace = id;
   else q.insertAdjacentHTML('afterend', html`<div class="pace" data-card="1" data-pace="${id}"><div class="actr-bar" role="progressbar" aria-label="How far along" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i style="width:0%"></i></div><span></span></div>`.s);
 }
-const swcLoad = () => (SWC.p ||= import('/swap/card.js?cb=0e526183').catch((e) => { SWC.p = null; throw e; }));
+const swcLoad = () => (SWC.p ||= import('/swap/card.js?cb=33ee89af').catch((e) => { SWC.p = null; throw e; }));
 function swcAsk() { if (SWC.ask && SWC.card?.load(SWC.ask)) SWC.ask = null; }
 function hxSwap() {
   const put = () => { const s = $('#hx-swap'); if (s && s !== SWC.el) { s.replaceWith(SWC.el); SWC.card?.requote?.(); } swcAsk(); };

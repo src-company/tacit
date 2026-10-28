@@ -332,3 +332,8 @@
 .swc .act .cp, .act #hx-copy.cp { display: flex; margin: 2px auto 0; }
 .swc .act .cp[hidden], .act #hx-copy.cp[hidden] { display: none; }
 .swc .rows-h .chg { text-decoration: underline; text-underline-offset: 3px; }
+
+/* the TAC mark beside a points figure (a route's note, a home's cue, a receipt line) */
+.swc .pt { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.swc .pt .tk, .swc dt .tk.xs { flex: none; }
+.swc dt .tk.xs { margin-right: 5px; vertical-align: -2px; }

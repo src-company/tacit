@@ -32,7 +32,7 @@ export const batch = async (calls) => V.decAggregate3(await ethCall(MULTICALL3, 
 const venues = makeEvmTradeVenues({ ethCall, keccak256: keccak_256 });
 const within = (p, ms, why) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(why)), ms))]);
 const PN = makePointsNote({ read: () => fetch('https://api.tacit.finance/leaderboard?day=today&limit=1', { signal: AbortSignal.timeout(8000) }).then((r) => (r.ok ? r.json() : null)) });
-const noteOf = (x, q) => [x.note, ptsSaid(rowPts(x, q))].filter(Boolean).join(' · ');
+const noteOf = (x, q) => [x.note, ptsTag(rowPts(x, q))].filter(Boolean).join(' · ');
 // ── TAC points: what a route earns, said beside it and in its receipt, and popped from the button once it is sent ──
 // The program counts, each for the wallet that sent it: ETH that zRouter puts into a pool it can check (Uniswap v2, v3 and v4, Sushi, the
 // Precision pool) as a swap of ETH; a wallet's ETH deposited into the private pool as a wrap; its ETH deposited into the private ETH pool (Swap
@@ -58,6 +58,9 @@ function rowPts(x, q) {
 // Swap privately: its deposit into the private ETH pool (a token's own pool is not one the program counts)
 const laterPts = (q, r) => (!q || r?.hop ? null : ptsFor('dev', laterDeposit(q)));
 const ptsSaid = (p, word = true) => (p ? `${p.floor ? '' : '≈ '}${Math.round(p.pts).toLocaleString('en-US')}${p.floor ? '+' : ''}${word ? ' points' : ''}` : '');
+// the TAC mark beside a points figure, wherever one is said (a route's note, a home's cue, a receipt line)
+const TAC_MARK = '<svg class="tk xs" aria-hidden="true"><use href="#tk-tac"/></svg>';
+const ptsTag = (p, word = true) => (p ? `<span class="pt">${TAC_MARK}${ptsSaid(p, word)}</span>` : '');
 const reward = (p) => { if (p?.pts >= 1) rewardPop($('#go'), { pts: p.pts }); return true; };
 const txLink = (h) => `<a href="https://etherscan.io/tx/${esc(h)}" target="_blank" rel="noopener noreferrer">${esc(h.slice(0, 10))}…↗</a>`;
 
@@ -324,7 +327,7 @@ function homesHtml() {
   // what each home earns in TAC points for ETH from the wallet (a wrap into the DeFi pool, a deposit into the Pay pool): for the amount typed,
   // or for one ETH before one is
   const wei = isEth(S.pay) && pa === 'wallet' ? parseUnits(S.amt, 18) || 0n : null;
-  const cue = (act) => { const p = wei == null ? null : ptsFor(act, wei > 0n ? wei : 10n ** 18n); return `<span class="ra">${p ? `<span>${ptsSaid(p, false)}</span><small>${wei > 0n ? 'points' : 'points/ETH'}</small>` : ''}</span>`; };
+  const cue = (act) => { const p = wei == null ? null : ptsFor(act, wei > 0n ? wei : 10n ** 18n); return `<span class="ra">${p ? `<span>${ptsTag(p, false)}</span><small>${wei > 0n ? 'points' : 'points/ETH'}</small>` : ''}</span>`; };
   const row = (home, t, sub, icon, act) => `<button type="button" role="radio" class="c" data-home="${home}" aria-checked="${String(at === home)}" tabindex="${at === home ? 0 : -1}"><svg class="tk" aria-hidden="true"><use href="#tk-${icon}"/></svg><span class="rt"><b>${t}</b><small>${sub}</small></span>${cue(act)}<span class="rd" aria-hidden="true"></span></button>`;
   // the chosen home alone, with a way to change it, until the choice is opened
   const defi = row('defi', 'DeFi pool', 'swap, farm, borrow', eth ? 'teth' : 'tac', 'wrap'), pay = row('pay', 'Pay pool', `pay on ${where}`, eth ? 'peth' : 'tac', 'dev');
@@ -350,7 +353,7 @@ function paintMove() {
   $('#rows').hidden = true; $('#later').hidden = true; $('#ackbox').innerHTML = ''; $('#ackbox').dataset.k = '';
   const lines = (q.rc || []).filter(Boolean);
   rc.hidden = !lines.length || (!S.amt && !q.fixed); rc.classList.toggle('stale', !!q.busy);   // the receipt waits for an amount
-  rc.innerHTML = lines.map(([k, v, c, t]) => `<div${t ? ` title="${esc(t)}"` : ''}><dt>${esc(k)}</dt><dd class="${c || ''}">${esc(v)}</dd></div>`).join('');
+  rc.innerHTML = lines.map(([k, v, c, t]) => `<div${t ? ` title="${esc(t)}"` : ''}><dt>${k === 'TAC points' ? TAC_MARK : ''}${esc(k)}</dt><dd class="${c || ''}">${esc(v)}</dd></div>`).join('');
   const need = !q.free && !parseUnits(S.amt, 8);
   go.textContent = S.busy ? 'Working…' : need ? 'Enter an amount' : q.busy && !q.go ? 'Reading…' : q.go || 'Continue';
   go.disabled = S.busy || need || !!q.busy || !!q.failed;
@@ -899,7 +902,7 @@ function paintQuote() {
     { const p = !rows.hidden ? null : laterOn(kind) ? laterPts(q, r) : rowPts(r, q); if (p) lines.push(['TAC points', ptsSaid(p, false), 'ok', p.why ? `${p.why}. An estimate: the program counts it from its own records.` : 'An estimate: the program counts it from its own records.']); }
   }
   rc.hidden = !lines.length;
-  rc.innerHTML = lines.map(([k, v, c, t, href, act]) => `<div${t ? ` title="${esc(t)}"` : ''}><dt>${esc(k)}</dt><dd class="${c || ''}">${href ? `<a href="${esc(href)}">${esc(v)}</a>` : act ? `<button type="button" class="flip-px" data-${act} aria-label="${esc(v)}. Turn it around">${esc(v)}</button>` : esc(v)}</dd></div>`).join('');
+  rc.innerHTML = lines.map(([k, v, c, t, href, act]) => `<div${t ? ` title="${esc(t)}"` : ''}><dt>${k === 'TAC points' ? TAC_MARK : ''}${esc(k)}</dt><dd class="${c || ''}">${href ? `<a href="${esc(href)}">${esc(v)}</a>` : act ? `<button type="button" class="flip-px" data-${act} aria-label="${esc(v)}. Turn it around">${esc(v)}</button>` : esc(v)}</dd></div>`).join('');
   paintLater(q, r, kind);
   const gate = r && !q.busy && m != null && m <= GATE;
   if (busy) { } else if (gate) {
@@ -1691,7 +1694,7 @@ function paintExit() {
     if (q.fee != null) lines.push(['Relay fee', `${tidy(amtFmt(q.fee, pay.dec))} ${pay.sym}${fu != null ? ` · about ${fu < 1 ? `$${fu.toFixed(2)}` : usd(fu)}` : ''}`, '', 'What the relay charges to send it out of the pool, from your private balance (kept back twice, for a fee that rises before it goes).']);
   }
   rc.hidden = !lines.length;
-  rc.innerHTML = lines.map(([k, v, c, t, href, act]) => `<div${t ? ` title="${esc(t)}"` : ''}><dt>${esc(k)}</dt><dd class="${c || ''}">${act ? `<button type="button" class="flip-px" data-${act} aria-label="${esc(v)}. Turn it around">${esc(v)}</button>` : esc(v)}</dd></div>`).join('');
+  rc.innerHTML = lines.map(([k, v, c, t, href, act]) => `<div${t ? ` title="${esc(t)}"` : ''}><dt>${k === 'TAC points' ? TAC_MARK : ''}${esc(k)}</dt><dd class="${c || ''}">${act ? `<button type="button" class="flip-px" data-${act} aria-label="${esc(v)}. Turn it around">${esc(v)}</button>` : esc(v)}</dd></div>`).join('');
   const [label, can, cls] = exitButton(q, r);
   go.textContent = label; go.disabled = !can; go.className = `go${cls ? ` ${cls}` : ''}`;
   if (!S.busy) {
