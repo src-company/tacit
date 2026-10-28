@@ -897,6 +897,7 @@ let marketReadAt = 0;
 // the current price, plus its proving share, plus a margin, valued in TAC at what ETH buys now (read from the chain at most every minute).
 const MARKET_GAS = 128_000n + 700_000n;
 let tacRate = { at: 0, out: 0n };
+let marketLowAt = 0;
 async function marketMinPrice() {
   const gasPrice = await publicClient.getGasPrice();
   if (Date.now() - tacRate.at > 60_000) {
@@ -905,6 +906,12 @@ async function marketMinPrice() {
     tacRate = { at: Date.now(), out: q.amountOut };
   }
   const costWei = (MARKET_GAS * gasPrice * 13n) / 10n + CFG.marketProveCostWei;           // gas at the price plus 30% for the base fee moving, plus proving
+  // No order is taken (and no proof spent on one) that this wallet could not pay the gas to claim and fulfil: it would only sit.
+  const held = await publicClient.getBalance({ address: settleWallet.account.address });
+  if (held < (MARKET_GAS * gasPrice * 15n) / 10n) {
+    if (Date.now() - marketLowAt > 10 * 60_000) { marketLowAt = Date.now(); log(`market: the settle wallet holds ${(Number(held) / 1e18).toFixed(5)} ETH, too little to claim and fulfil an order at ${(Number(gasPrice) / 1e9).toFixed(2)} gwei: market orders are left until it is topped up`); }
+    return 2n ** 255n;
+  }
   const tac = (costWei * tacRate.out) / 10n ** 16n;
   const withMargin = (tac * (10_000n + CFG.marketMarginBps)) / 10_000n;
   return withMargin > CFG.marketMinTacWei ? withMargin : CFG.marketMinTacWei;
