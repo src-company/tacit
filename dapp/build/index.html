@@ -310,7 +310,7 @@ footer.sf svg.fill { width: 16px; height: 16px; }
   <main>
     <section class="hero" aria-labelledby="h">
       <h1 id="h"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><span>tacit <em>build</em></span></h1>
-      <p class="sub">Build on Tacit V1: the Tacit pool on Ethereum, its bridge to Bitcoin, cBTC and cUSD, the TAC vaults, farms and the TAC ERC-20. Plain ES modules with no build step, and a public API with no keys. Each path lists the rules that matter and the mainnet transactions behind it.</p>
+      <p class="sub">Build on Tacit V1: the Tacit pool on Ethereum, its bridge to Bitcoin, cBTC and cUSD, the TAC vaults, TAC for gas and proofs, farms and the TAC ERC-20. Plain ES modules with no build step, and a public API with no keys. Each path lists the rules that matter and the mainnet transactions behind it.</p>
       <div class="facts">
         <div><span>Confidential pool</span><b>0x000000000Ed1eabD231Be41d93b719056F7febFC</b></div>
         <div><span>Relay and reflection API</span><b>https://api.tacit.finance</b></div>
@@ -343,6 +343,7 @@ footer.sf svg.fill { width: 16px; height: 16px; }
           <li><a href="#trust">Trust and verify</a></li>
           <li><a href="#addresses">Addresses and ids</a></li>
           <li><a href="#vaults">TAC vaults</a></li>
+          <li><a href="#tacpay">TAC for gas and proofs</a></li>
           <li><a href="#tokens">Token discovery</a></li>
           <li><a href="#errors">When something breaks</a></li>
           <li><a href="#gotchas">Gotchas</a></li>
@@ -718,7 +719,7 @@ const out = await client.readContract({ address: AMM, abi, functionName: 'quoteS
     <tr><td>Trading and liquidity</td><td><code>swap</code>, <code>route</code>, <code>lp</code>, <code>lpremove</code>, <code>lpbond</code>, <code>otc</code>, <code>bid</code>, <code>wrapswap</code>, <code>wraplp</code></td></tr>
     <tr><td>Bridge</td><td><code>bridgemint</code>, <code>bridgestealthmint</code>, <code>bridgeburn</code>, <code>fastlane</code></td></tr>
     <tr><td>Credit</td><td><code>cdpmint</code>, <code>cdpclose</code>, <code>cdpliquidate</code>, <code>cdptopup</code>, <code>wrapcdpmint</code>, <code>cbtcmint</code></td></tr>
-    <tr><td>Payments, farms, adaptor</td><td><code>stealthlock</code>, <code>stealthclaim</code>, <code>stealthrefund</code>, <code>farmbond</code>, <code>farmharvest</code>, <code>farmunbond</code>, <code>adaptorlock</code>, <code>adaptorclaim</code>, <code>adaptorrefund</code></td></tr>
+    <tr><td>Payments, farms, adaptor</td><td><code>stealthlock</code>, <code>stealthlockbatch</code>, <code>stealthclaim</code>, <code>stealthrefund</code>, <code>farmbond</code>, <code>farmharvest</code>, <code>farmunbond</code>, <code>adaptorlock</code>, <code>adaptorclaim</code>, <code>adaptorrefund</code></td></tr>
   </table></div>
 </section>
 
@@ -805,6 +806,23 @@ const out = await client.readContract({ address: AMM, abi, functionName: 'quoteS
     <tr><td>TACD (the dollar vault’s token)</td><td class="h"><a href="https://etherscan.io/token/0xA0f6B02561C8ef08335B69aD25e022C0B342147C" target="_blank" rel="noopener noreferrer">0xA0f6B02561C8ef08335B69aD25e022C0B342147C</a></td></tr>
     <tr><td>TACE (the ether vault’s token)</td><td class="h"><a href="https://etherscan.io/token/0x9DE27883C5Dc9Db47BE12E595D59b8f1aBEC8570" target="_blank" rel="noopener noreferrer">0x9DE27883C5Dc9Db47BE12E595D59b8f1aBEC8570</a></td></tr>
   </table></div>
+</section>
+
+<!-- ─────────────── TAC for gas and proofs ─────────────── -->
+<section class="part" id="tacpay">
+  <p class="kick">Reference</p>
+  <h2>TAC for <em>gas and proofs</em></h2>
+  <p class="lead">sign one order · a solver or prover is paid in TAC · both contracts are immutable</p>
+  <p><b>Gas in TAC.</b> A wallet with no ETH swaps a token or enters a pool by signing one EIP-712 order (<code>dapp/gas-relay.js</code>: <code>buildOrder</code>, <code>orderTypedData</code>). The order authorizes exactly one call, bound by hash, once. <a href="https://etherscan.io/address/0x000000197E8f0B64463B2010e568fF42090Af88d" target="_blank" rel="noopener noreferrer">TacitGasRelay</a> pulls the input and the fee with the wallet’s permit (ERC-2612 for TAC and USDC, Permit2 for other tokens), makes the call, pays the output to <code>recipient</code> and pays the sender its fee in TAC or the token spent; if any step fails the whole order reverts and the wallet pays nothing. Post it with <code>submitOrder(post, order)</code>, which calls <code>POST /gas/order</code>. <code>feeFor</code> sizes the fee and <code>needsRelay</code> says when the wallet’s ETH is short. The contract can call only the targets it was deployed with: zRouter, the ETH, TAC, TACD, TACE, USDC and USDT pool routers and ConfidentialRouter.</p>
+  <p><b>Proofs in TAC.</b> A holder who wants a private wrap proved fast signs an Intent in TAC: a floor, a maximum and a ramp between them (<code>dapp/proof-market.js</code>: <code>buildIntent</code>, <code>signIntent</code>, <code>signTacPermit</code>, <code>priceAt</code>). A Tank (<code>buildTank</code>, <code>signTank</code>) is a session key with a cap and a per-order maximum, so later orders sign silently. Post an order with <code>buildOrder</code> to <code>POST /market/order</code>. A prover claims it on <a href="https://etherscan.io/address/0x0000000033Dd45B1686Ba37e5F6e4ABDdaC17609" target="_blank" rel="noopener noreferrer">ProofMarket</a> and fulfils it with the proof: the pool settles and the TAC is pulled in the same transaction, so a prover is paid only for a proof the pool accepts. Today the orders are wraps (<code>wrapPublicValues</code>).</p>
+  <div class="box">
+    <b>Running one</b>
+    <ul>
+    <li>Run a prover with <code>node tools/community-runner.mjs prove</code> or <code>tools/proof-market-solver.mjs</code>, and see <a href="/weld/keeper/">community ops</a>.</li>
+    <li><code>pool.settle</code> is permissionless, so a prover should submit privately: a copier in the mempool can settle the same proof first.</li>
+    <li>Both boards list orders at <code>/gas/orders</code> and <code>/market/orders</code> on the public API.</li>
+    </ul>
+  </div>
 </section>
 
 <!-- ─────────────── Tokens ─────────────── -->
