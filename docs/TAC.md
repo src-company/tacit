@@ -1,10 +1,35 @@
 # TAC
 
-TAC is Tacit's native token. It was issued once on Bitcoin with a fixed supply of 21,000,000 and no mint
-authority. On Ethereum it is an ERC-20 that only the confidential pool can mint, from TAC proven to have left
-Bitcoin ([SPEC §7.3](../SPEC.md#73-tac), [deployment details](./DEPLOYMENTS.md#tac)). Verify the fixed supply
-and the ERC-20 yourself at [tacit.finance/verify.html](https://tacit.finance/verify.html): the page reads
-Bitcoin, IPFS and Ethereum in your browser and recomputes every check, with no Tacit server or indexer asked.
+TAC is Tacit's native token, born on Bitcoin. It was issued once with a fixed supply of 21,000,000 and no
+mint authority. Balances are confidential and receives are stealth by default, and a shielded pool gives full
+privacy. On Ethereum, which adds its markets and programmability, TAC is an ERC-20 that only the confidential
+pool can mint, from TAC proven to have left Bitcoin ([SPEC §7.3](../SPEC.md#73-tac),
+[deployment details](./DEPLOYMENTS.md#tac)). Verify the fixed supply and the ERC-20 yourself at
+[tacit.finance/verify.html](https://tacit.finance/verify.html): the page reads Bitcoin, IPFS and Ethereum in
+your browser and recomputes every check, with no Tacit server or indexer asked.
+
+## What TAC does
+
+- **Pays for gas.** A public swap or pool entry can be paid in TAC (or the token being spent) instead of ETH.
+  The holder signs one order and a solver submits it through
+  [TacitGasRelay](https://etherscan.io/address/0x000000197E8f0B64463B2010e568fF42090Af88d), which takes its fee
+  in TAC. The contract is immutable and calls only the routers it was deployed with.
+- **Pays for proofs.** A holder who wants a private wrap proved fast signs an order with a TAC permit. Any
+  prover can claim it through [ProofMarket](https://etherscan.io/address/0x0000000033Dd45B1686Ba37e5F6e4ABDdaC17609)
+  and is paid in TAC the moment the pool accepts the proof, so anyone with a prover can earn TAC
+  ([community ops](https://tacit.finance/weld/keeper/)).
+- **Collateral.** [Borrow TACD (a dollar) or TACE (ether) against TAC](https://tacit.finance/vault/) and keep
+  the TAC: no interest, one fee when you borrow, and prices that move slowly. The fee goes to the reserve.
+- **Cheaper exits.** The dapp lowers the relayed exit fee for holders from 0.30% to 0.25% / 0.20% / 0.15% at
+  100 / 1,000 / 10,000 TAC, counting private TAC notes, the public TAC on the wallet's own Ethereum account and
+  TAC in a connected wallet. The relay's cost floor still applies, so small exits pay the floor either way.
+- **Boosted points.** Hold 100 / 1,000 / 10,000 public TAC at the address that sends a points activity and its
+  points are multiplied by 1.25× / 1.5× / 2×. The tier is the lowest balance the address held over the previous
+  24 hours (7,200 blocks), so buying just before an activity and selling after earns nothing. Only the public
+  ERC-20 counts. It applies to every points activity (ETH wraps, EVM pool deposits, zRouter and zSwap ETH swaps,
+  zSwap bets and markets, .wei names, wstETH bond posts and cUSD mints, on Ethereum, Base and Robinhood Chain)
+  from block 26061220 on.
+- **A vote.** Holders vote on how the protocol's governed parts are run (see [Governance](#governance)).
 
 ## Trading TAC
 
@@ -32,23 +57,10 @@ each pool its exact share, and one minimum bounds the total received. The page s
 gas, tests the transaction once without sending it, and falls back to one pool if that fails. `dapp/evm-trade-venues.js` has the
 quoting and the calldata, and `tests/tac-split-fork.mjs` runs both directions on a mainnet fork.
 
-## Holding TAC
-
-- **Boosted points.** Hold 100 / 1,000 / 10,000 public TAC at the address that sends a points activity and
-  its points are multiplied by 1.25× / 1.5× / 2×. The tier is the lowest balance the address held over the
-  previous 24 hours (7,200 blocks), so buying just before an activity and selling after earns nothing. Only
-  the public ERC-20 counts; TAC held privately or on Bitcoin does not. It applies to every points activity
-  (ETH wraps, EVM pool deposits, zRouter and zSwap ETH swaps, zSwap bets and markets, .wei names, wstETH bond
-  posts and cUSD mints, on Ethereum, Base and Robinhood Chain) from block 26061220 on.
-- **Cheaper private exits.** The dapp lowers the relayed exit fee for TAC holders from 0.30% to 0.25% /
-  0.20% / 0.15% at the same tiers, counting private TAC notes, the public TAC on the wallet's own Ethereum
-  account and TAC in a connected Ethereum wallet. The relay's cost floor still applies, so small exits pay the floor either way.
-- **Governance.** Holders vote on how the protocol's governed parts are run (see [Governance](#governance)).
-
 ## Where usage flows
 
-- **Relay fees paid in TAC are never sold.** The relay moves any TAC it collects to the protocol reserve,
-  the ops multisig, once it reaches 100 TAC.
+- **Fees paid in TAC are never sold.** The relay moves any TAC it collects to the protocol reserve, the ops
+  multisig, once it reaches 100 TAC. The one-time fee on TACD and TACE loans goes to the reserve too.
 - **10% of the relay's fee income goes to buybacks.** Every pass the relay sends a tenth of the ETH-value
   of the fees it earned (ETH and the tokens it converts) to TacBuyback, before gas and proving are paid
   from the rest. It keeps a small float for its next settles, so a share it cannot spare yet is carried
@@ -119,6 +131,8 @@ A checklist for listing it (quoting, routing, prices, metadata) is in the
 | --- | --- |
 | TAC ERC-20 | [`0xA1313eb9f3A445606D9583bcAc3ebeB56a858279`](https://etherscan.io/address/0xA1313eb9f3A445606D9583bcAc3ebeB56a858279) |
 | wTAC | [`0x2018139a8FDd3666855BE3315C7683b4D6aB7AEf`](https://etherscan.io/address/0x2018139a8FDd3666855BE3315C7683b4D6aB7AEf) |
+| TacitGasRelay | [`0x000000197E8f0B64463B2010e568fF42090Af88d`](https://etherscan.io/address/0x000000197E8f0B64463B2010e568fF42090Af88d) |
+| ProofMarket | [`0x0000000033Dd45B1686Ba37e5F6e4ABDdaC17609`](https://etherscan.io/address/0x0000000033Dd45B1686Ba37e5F6e4ABDdaC17609) |
 | TacBuyback | [`0x6919cbEf0e70AFFA02Ae02c86c532A137154f250`](https://etherscan.io/address/0x6919cbEf0e70AFFA02Ae02c86c532A137154f250) |
 | TacBuyback keeper | [`0x1eeb713E6EAfbcFADb217664d53CF8DBDEc45fda`](https://etherscan.io/address/0x1eeb713E6EAfbcFADb217664d53CF8DBDEc45fda) |
 | Reserve (ops multisig) | [`0x006CD14F36F65eCbB29b2519cCBe63A0DC8549F2`](https://etherscan.io/address/0x006CD14F36F65eCbB29b2519cCBe63A0DC8549F2) |

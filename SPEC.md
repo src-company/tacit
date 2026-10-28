@@ -848,6 +848,10 @@ that the ops multisig executes. A vote is weighed at the snapshot taken when its
 TAC counts only if it was confirmed by then and not yet spent, so TAC moved afterwards cannot vote again.
 Bitcoin governance opcodes are not assigned.
 
+Beyond governance, TAC pays for gas and for proofs on Ethereum (`TacitGasRelay`, `ProofMarket`) and is the collateral for
+the TACD and TACE vaults; these are periphery contracts outside the pool's immutable surface. See
+[`docs/TAC.md`](./docs/TAC.md).
+
 ---
 
 ## 8. Deployment lineage
