@@ -123,6 +123,7 @@ import { makeBurndepAdmission, HEADER_CHUNK as BURNDEP_HEADER_CHUNK } from './bu
 import { handleProverUpload, handleProverDownload, PROVER_PROXY_PATHS } from './prover-proxy.js';
 import { buildProverBoard, workerOf } from './prover-board.js';
 import { buildProofPool, verifyCalldata, clientOf, PROOF_POOL } from './proof-pool.js';
+import { makeMarketBoard, MARKET_BOARD } from './proof-market-queue.js';
 import { SWAP_BATCH_VK } from '../../dapp/confidential-swapbatch-vk.js';
 import { bpRangeVerify, bpClassicProofLen } from '../../dapp/bulletproofs.js';
 import { makeBridgeRecover } from '../../dapp/bridge-recover.js';
@@ -647,7 +648,7 @@ const reverseBytes = b => { const r = new Uint8Array(b); r.reverse(); return r; 
 // caller (curl, another server) could already do. This is what lets a third-party page with no fixed
 // origin (an IPFS/web3-gateway-hosted frontend, e.g.) use the relay directly from a browser instead of
 // needing its own backend proxy or a per-deploy entry in ALLOWED_ORIGINS.
-const OPEN_ORIGIN_PATHS = new Set(['/stats', '/flow', '/relay/economics', '/bridge/recover', '/reflection/proof', '/confidential/submit', '/confidential/status', '/confidential/open', '/confidential/landed', '/confidential/quote', '/confidential/index', '/confidential/relay', '/reflection/dump', '/reflection/live', '/reflection/status', '/reflection/note-witness', '/reflection/burndep', '/reflection/eth-state/covers', '/reflection/eth-state/proof', '/reflection/open', '/reflection/open/job', '/reflection/landed', '/reflection/burndep-list', '/crossout/minted', '/farm/program', '/farm/health', '/prover/upload', '/prover/download', '/prover/board', '/prover/pool', '/prover/pool/request', '/prover/pool/lease', '/prover/pool/submit', '/prover/pool/result', '/prover/pool/credits']);
+const OPEN_ORIGIN_PATHS = new Set(['/stats', '/flow', '/relay/economics', '/bridge/recover', '/reflection/proof', '/confidential/submit', '/confidential/status', '/confidential/open', '/confidential/landed', '/confidential/quote', '/confidential/index', '/confidential/relay', '/reflection/dump', '/reflection/live', '/reflection/status', '/reflection/note-witness', '/reflection/burndep', '/reflection/eth-state/covers', '/reflection/eth-state/proof', '/reflection/open', '/reflection/open/job', '/reflection/landed', '/reflection/burndep-list', '/crossout/minted', '/farm/program', '/farm/health', '/prover/upload', '/prover/download', '/prover/board', '/prover/pool', '/prover/pool/request', '/prover/pool/lease', '/prover/pool/submit', '/prover/pool/result', '/prover/pool/credits', '/market/order', '/market/orders', '/market/done']);
 function corsHeaders(env, reqOrigin, openOrigin) {
   const list = (env.ALLOWED_ORIGINS || '*').split(',').map(s => s.trim());
   const allow = openOrigin || list.includes('*') ? '*' : (list.includes(reqOrigin) ? reqOrigin : list[0]);
@@ -3755,6 +3756,57 @@ async function handleProofPool(req, env, url, cors) {
   const rl = await proveRateLimit(env, ip, 'pool-submit', 6, 20000);
   if (!rl.ok) return jsonResponse({ ok: false, code: 'rate', error: `too many submits — retry in ~${rl.retryAfter}s`, retryAfter: rl.retryAfter }, 429, { ...nostore, 'Retry-After': String(rl.retryAfter) });
   return send(await pool.submit({ id: b.id, lease: b.lease, publicValues: b.publicValues, proof: b.proof, error: b.error ?? null }));
+}
+// The proof market's order board (worker/src/proof-market-queue.js): holders post signed orders, provers list and take them. Off until
+// PROOF_MARKET_ADDR names the market (it defaults to the deployed one; 'off' turns the board off). Orders are public and hold no secret; a settled order leaves the board only when the
+// market itself says its op is done, so nobody can clear another's order.
+const PROOF_MARKET_DEFAULT = '0x0000000033Dd45B1686Ba37e5F6e4ABDdaC17609';
+const marketAddr = (env) => (env.PROOF_MARKET_ADDR === 'off' ? null : env.PROOF_MARKET_ADDR || PROOF_MARKET_DEFAULT);
+const marketBoard = (env) => {
+  const market = marketAddr(env), kv = env.CONFIDENTIAL_KV || env.REGISTRY_KV;
+  return /^0x[0-9a-fA-F]{40}$/.test(market || '') && kv ? makeMarketBoard({ kv, market, chainId: 1 }) : null;
+};
+async function marketOpDone(env, opId) {
+  const data = '0x388a3cf5' + opId.slice(2);   // done(bytes32)
+  for (const rpc of [env.CONFIDENTIAL_SIM_RPC, 'https://mainnet.gateway.tenderly.co', ..._TETH_ETH_RPCS.mainnet].filter(Boolean)) {
+    try {
+      const r = await fetch(rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(10000),
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: marketAddr(env), data }, 'latest'] }) });
+      const j = r.ok ? await r.json() : null;
+      if (j && typeof j.result === 'string' && j.result.length === 66) return BigInt(j.result) === 1n;
+    } catch { /* next node */ }
+  }
+  return null;
+}
+async function handleProofMarket(req, env, url, cors) {
+  const nostore = { ...cors, 'Cache-Control': 'no-store' };
+  const board = marketBoard(env);
+  if (!board) return jsonResponse({ error: 'the proof market is not configured' }, 404, nostore);
+  const ip = req.headers.get('CF-Connecting-IP') || 'anon';
+  if (url.pathname === '/market/orders') {
+    if (req.method !== 'GET') return jsonResponse({ error: 'method' }, 405, nostore);
+    const rl = await proveRateLimit(env, ip, 'market-list', 30, 2000);
+    if (!rl.ok) return jsonResponse({ ok: false, error: `too many requests, retry in ~${rl.retryAfter}s`, retryAfter: rl.retryAfter }, 429, { ...nostore, 'Retry-After': String(rl.retryAfter) });
+    const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit')) || 20));
+    return jsonResponse({ market: marketAddr(env), orders: await board.list(limit) }, 200, nostore);
+  }
+  if (req.method !== 'POST') return jsonResponse({ error: 'method' }, 405, nostore);
+  let b;
+  try { b = await req.json(); } catch { b = null; }
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return jsonResponse({ ok: false, error: 'bad json' }, 400, nostore);
+  if (url.pathname === '/market/order') {
+    const rl = await proveRateLimit(env, ip, 'market-post', MARKET_BOARD.perClientPerHour, Math.floor(3600000 / MARKET_BOARD.perClientPerHour));
+    if (!rl.ok) return jsonResponse({ ok: false, error: `too many orders, retry in ~${rl.retryAfter}s`, retryAfter: rl.retryAfter }, 429, { ...nostore, 'Retry-After': String(rl.retryAfter) });
+    const r = await board.post(b.order);
+    return jsonResponse(r, r.ok ? 200 : 400, nostore);
+  }
+  // /market/done { opId }: clears an order the market reports settled.
+  const id = String(b.opId || '').toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(id)) return jsonResponse({ ok: false, error: 'opId must be 32-byte hex' }, 400, nostore);
+  const done = await marketOpDone(env, id);
+  if (done === null) return jsonResponse({ ok: false, error: 'could not read the market, try again' }, 502, nostore);
+  if (!done) return jsonResponse({ ok: false, error: 'the market does not report this op settled' }, 409, nostore);
+  return jsonResponse(await board.remove(id), 200, nostore);
 }
 async function handleConfidentialRelay(env, cors) {
   const st = await relayState(env);
@@ -27781,6 +27833,7 @@ async function _routeFetch(req, env, ctx) {
     const cors = corsHeaders(env, req.headers.get('Origin') || '', openOrigin);
     // The proof pool (worker/src/proof-pool.js) is open to anyone: pages post wraps, miners lease and prove them.
     if (url.pathname === '/prover/pool' || url.pathname.startsWith('/prover/pool/')) return handleProofPool(req, env, url, cors);
+    if (url.pathname === '/market/order' || url.pathname === '/market/orders' || url.pathname === '/market/done') return handleProofMarket(req, env, url, cors);
     // A page proving with its holder's own prover account passes its program input and the finished proof through here
     // (the network's artifact store sends no CORS headers). These answer their own preflight, which names X-Artifact-Url.
     // The prover board (worker/src/prover-board.js): the relay posts, reads and cancels jobs with the box token; workers claim and
