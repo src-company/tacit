@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-pBy/Imf9TYtz640BshPIjJVju8EqawTfwsI/Dadf14w=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-mcJ29/CWdnCNZb3aRDTeJIMv8uD7pNmOr3VlfkHEryA=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <link rel="preconnect" href="https://api.tacit.finance" crossorigin>
 <link rel="preconnect" href="https://ethereum-rpc.publicnode.com" crossorigin>
@@ -178,6 +178,17 @@ main:focus { outline: none; }
    scrolls sideways on a phone, and its height is kept while empty, so nothing moves when the farms are read. */
 .fms { display: flex; gap: 6px; height: 26px; margin: 0 0 8px; padding: 1px 0; overflow-x: auto; scrollbar-width: none; opacity: 0; transition: opacity .35s; }
 .fms::-webkit-scrollbar { display: none; }
+/* Quick starts above the card: one line, quiet, each a pair of marks and what it does; pressing one fills the card with that action at 0.01 ETH, a size kept proved ahead. */
+.hints { display: flex; gap: 8px; justify-content: center; margin: 2px 0 12px; padding: 1px 0; overflow-x: auto; scrollbar-width: none; min-height: 32px; }
+.hints::-webkit-scrollbar { display: none; }
+.hint { flex: none; display: inline-flex; align-items: center; gap: 9px; height: 32px; padding: 0 13px 0 5px; font: inherit; font-size: 12.5px; color: var(--mute); background: none; border: 1px solid var(--hair); border-radius: 16px; cursor: pointer; white-space: nowrap; transition: border-color .15s, color .15s, transform .1s; }
+.hint .pair { display: inline-flex; } .hint .pair .tk { width: 22px; height: 22px; } .hint .pair .tk + .tk { margin-left: -7px; box-shadow: 0 0 0 1.5px var(--paper); }
+.hint b { font-weight: 400; color: var(--ink); }
+.hint small { font: 500 10px var(--mono); letter-spacing: .08em; color: var(--mute); }
+@media (hover: hover) { .hint:hover { border-color: var(--hair-2); color: var(--ink); } }
+.hint:active { transform: scale(.98); }
+.hint:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+@media (max-width: 640px) { .hints { justify-content: flex-start; margin: 2px -16px 12px; padding: 1px 16px; scroll-padding: 0 16px; } }
 .fms.on { opacity: 1; }
 .fms a { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px 0 3px; color: var(--mute); text-decoration: none; white-space: nowrap; font-size: 12px; line-height: 22px; border: 1px solid var(--hair); border-radius: 12px; transition: border-color .15s; }
 .fms .pair .tk { width: 16px; height: 16px; }
@@ -1311,6 +1322,7 @@ footer.sf svg.fill { width: 16px; height: 16px; }
       <h1 id="hero-h">Swap, send and earn <em>privately</em>.</h1>
       <p class="sub">One <b>tacit1</b>&nbsp;ID on Bitcoin and Ethereum. Private inside the pool.</p>
     </div>
+    <div class="hints" id="hints" role="group" aria-label="Quick starts: each fills the card below"></div>
     <section class="hx" id="hx" aria-label="Swap, bridge, send, earn or borrow"><div id="hx-body"></div></section>
     <div class="proof-row">
       <a class="proof" href="/weld/stats/" title="All stats">
@@ -9218,13 +9230,56 @@ function paintEarn() {
 }
 // The farms under the header's prices, best APR first: the public pool and each private pool the Earn tab offers, a press on one opening
 // that tab on its ETH zap (the same pools hxFarms lists, so the pool pressed is a row there). The link stays for a new tab.
+// ── Quick starts above the card ──
+// Three one-press starts at 0.01 ETH (a size kept proved ahead for a signed-in key, so by the press the proof is ready): swap it to USDC privately (the ETH goes into the private
+// ETH pool with the card's buffer, and the relay swaps and sends it out), zap it into the best private LP (the farm chips' leader, LP only), or just make it private (a wrap,
+// which earns points). Each fills the card; nothing is sent until the card's own button.
+let HINT_POOL = null, HINT_WARM = '';
+const HINT_ETH = '0.01';
+function hintsWarm() {
+  // register the pool whose zap is offered, and start the keeper: kept sizes (wraps, shares) are proved ahead from the moment a key is open, here or on the relay's board
+  if (!S.key || !HINT_POOL) return;
+  const k = `${S.key.pubHex}:${HINT_POOL.poolId}`;
+  if (HINT_WARM === k) return;
+  HINT_WARM = k;
+  lpKeep(HINT_POOL.poolId);
+  keepReady().catch(() => {});
+}
+function paintHints() {
+  const el = $('#hints');
+  if (!el) return;
+  const pair = (ic) => html`<span class="pair">${ic.map((i) => html`<svg class="tk" aria-hidden="true"><use href="#${i}"/></svg>`)}</span>`;
+  const hs = [
+    { id: 'pswap', ic: ['tk-eth', 'tk-usdc'], text: `Swap ${HINT_ETH} ETH to USDC privately`, tip: 'ETH goes into the private pool and the relay swaps and sends USDC out: nothing on chain links them' },
+    HINT_POOL && { id: 'zap', ic: ['tk-teth', ...HINT_POOL.icons.slice(1)], text: `Zap ${HINT_ETH} ETH into private LP`, tag: `${Math.round(HINT_POOL.apr)}% APR`, tip: `${HINT_POOL.name}, the best private farm now: one transaction, your share kept private` },
+    { id: 'shield', ic: ['tk-eth', 'tk-teth'], text: `Make ${HINT_ETH} ETH private`, tip: 'Put ETH in the private pool: swap, farm and send from there. Earns points' },
+  ].filter(Boolean);
+  const view = html`${hs.map((h) => html`<button type="button" class="hint" data-hint="${h.id}" title="${h.tip}">${pair(h.ic)}<b>${h.text}</b>${h.tag ? html`<small>${h.tag}</small>` : ''}</button>`)}`;
+  if (el.__h !== view.s) { el.__h = view.s; mount(el, view); }
+  hintsWarm();
+}
+function hintGo(id) {
+  if (id === 'zap' && HINT_POOL) return hxPreset(`earn:ether:${HINT_POOL.spec}`, HINT_ETH, false, null, true);
+  if (id === 'shield') return hxPreset('shield:ether:defi', HINT_ETH);
+  if (id !== 'pswap') return;
+  // ETH to USDC with the private way on: the Swap card's own link grammar (the card turns it into a deposit, a buffer and the relay's exit)
+  for (const o of $$('dialog.sheet[open]')) o.close();
+  hxKeepAmt(() => { HX.q = null; HX.tab = 'swap'; SWC.ask = new URLSearchParams({ from: 'ETH', to: 'USDC', private: 'to', amt: HINT_ETH }); });
+  paintHx();
+  const card = $('#hx'), calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  card.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'center' });
+  if (!calm) card.animate([{ outline: '2px solid var(--orange)', outlineOffset: '2px' }, { outline: '2px solid transparent', outlineOffset: '12px' }], { duration: 1100, easing: 'ease-out' });
+}
 function paintFarmChips(pools) {
   const el = $('#fms'), chips = pools.filter(({ p }) => !p.idle && String(p.reserves?.assetA).toLowerCase() === CETH_ID && Number(p.reserves?.lpTotalShares)).map(({ p, apr }) => ({
-    spec: `p${p.pid}`, href: `#farm/private-${p.pid}`, name: pairName(p.pair), apr, kind: 'private farm',
+    spec: `p${p.pid}`, poolId: p.poolId, href: `#farm/private-${p.pid}`, name: pairName(p.pair), apr, kind: 'private farm',
     icons: ['tk-teth', LOGO[String(p.pair).split('/').find((t) => t !== 'cETH')] || 'tk-tac'] }));
   const pub = FARM.top?.apr;
   if (pub != null) chips.push({ spec: 'public', href: '#farm/public', name: 'TAC / ETH', apr: pub, kind: 'public farm', icons: ['tk-tac', 'tk-eth'] });
   chips.sort((a, b) => b.apr - a.apr);
+  const best = chips.find((c) => c.poolId);
+  HINT_POOL = best ? { spec: best.spec, poolId: best.poolId, apr: best.apr, icons: best.icons, name: best.name } : null;
+  paintHints();
   const view = html`${chips.map((c) => html`<a href="${c.href}" data-hx="earn:ether:${c.spec}" title="${c.name}, ${c.kind}: put ETH in with one transaction"><span class="pair">${c.icons.map((i) => html`<svg class="tk" aria-hidden="true"><use href="#${i}"/></svg>`)}</span><b class="num">${c.apr >= 10000 ? '10,000+' : Math.round(c.apr).toLocaleString('en-US')}%</b><small>APR</small></a>`)}`;
   if (el.__h !== view.s) { el.__h = view.s; mount(el, view); }        // written only when it changed, so a pressed chip is never replaced under a pointer
   el.classList.toggle('on', chips.length > 0);
@@ -14929,12 +14984,15 @@ function hxSync() {
 hxRecall();
 hxAskFromUrl();
 paintHx();
+paintHints();
 refreshTape();
 loadTacPrice().catch(() => {});
 if ('IntersectionObserver' in window) { const io = new IntersectionObserver((es) => { for (const e of es) e.target.classList.toggle('rest', !e.isIntersecting); }); for (const el of $$('.tape, .wd, .tc-stage')) io.observe(el); }
 document.addEventListener('click', (e) => {
   const h = e.target.closest?.('[data-hx]');
   if (h) { e.preventDefault(); hxPreset(h.dataset.hx); return; }
+  const ht = e.target.closest?.('[data-hint]');
+  if (ht) { e.preventDefault(); hintGo(ht.dataset.hint); return; }
   const sc = e.target.closest?.('[data-scroll]');
   if (sc) { e.preventDefault(); document.getElementById(sc.dataset.scroll)?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); return; }
   if (e.target.closest?.('[data-signin]')) openSheet('wallet');

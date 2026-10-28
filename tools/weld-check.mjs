@@ -195,7 +195,7 @@ const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_module
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
 // Borrow reports under each step's own line (#bw-s1…#bw-s4) as well as the sheet's: read them all.
 const bwText = (page) => page.evaluate((s) => [...document.querySelectorAll(s)].map((e) => e.textContent).join(' '), '#bw-status, #bw-s1, #bw-s2, #bw-s3, #bw-s4');
-const ONLY = new Set((process.argv[2] || 'airdrop,links,swapurl,hxbridge,hxbridgec,flowpanel,ux,apr,farmgate,pair,farm,reinvest,buy,tacfarm,sell,v1,v1refuse,wrapform,devsend,device,devtac,devtacdraft,devtacacct,borrow,bonds,bondadd,mainbond,locks,redeem,repay,csend,tacsend,selfexit,selfmore,selflocks,selfsplit,makepub,farmjoin,lpsend,rsend,swapahead,zapfirst,swapown,routeahead,connectkey,copylink,zapway,zapcredit,zapresume,zapresume2,lponly,hxsendname,pace,farmpos,hxpos,farmsteps,farmzap,farmzapeth,lpvoucher,fastzap,farmzapdrop,farmzapsplit,farmbondnote,farmqueue,farmheld,farmreuse,hxtip,farmexit,farmclaim,farmself,farmworth,swap,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,bridge,clearedfind,bridgedeep,bridgemerge,bridgeall,bridgeto,bridgepub,xobridge,xbring,xtbridge,xtring,xtfind,hxout,hxlink,hxpanel,hxweek,hxsell,hxlater,hxsats,devtokpool,hxsendpool,hxexit,hxsendpp,hxdry,hxnudge,hxfold,hxteth,hxsend,hxsendcheck,hxplace,hxsendtac,hxsendwallet,hxsendways,hxborrow,hxvault,hxvaultkey,hxborrowback,tradelinks,pxs,pxsback,fmchips,pts,ptsview,retention,activity,receipts,stats,dash,tacdeposit,openact,openfarm,heldoff,provecap,heldborrow,vaultborrow,rewardspriv,rewardsout,rewardsjoin,bridgemove,bridgepresses,bridgefindhere,holdborrow,hxheld,holdpublic,selffund,selfeth,selfprove,exitahead,selfdevice,wrapfirst,poolkeep,tacvoucher,relaystate,relayfail,selfwallet,slowline').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,swapurl,hints,hxbridge,hxbridgec,flowpanel,ux,apr,farmgate,pair,farm,reinvest,buy,tacfarm,sell,v1,v1refuse,wrapform,devsend,device,devtac,devtacdraft,devtacacct,borrow,bonds,bondadd,mainbond,locks,redeem,repay,csend,tacsend,selfexit,selfmore,selflocks,selfsplit,makepub,farmjoin,lpsend,rsend,swapahead,zapfirst,swapown,routeahead,connectkey,copylink,zapway,zapcredit,zapresume,zapresume2,lponly,hxsendname,pace,farmpos,hxpos,farmsteps,farmzap,farmzapeth,lpvoucher,fastzap,farmzapdrop,farmzapsplit,farmbondnote,farmqueue,farmheld,farmreuse,hxtip,farmexit,farmclaim,farmself,farmworth,swap,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,bridge,clearedfind,bridgedeep,bridgemerge,bridgeall,bridgeto,bridgepub,xobridge,xbring,xtbridge,xtring,xtfind,hxout,hxlink,hxpanel,hxweek,hxsell,hxlater,hxsats,devtokpool,hxsendpool,hxexit,hxsendpp,hxdry,hxnudge,hxfold,hxteth,hxsend,hxsendcheck,hxplace,hxsendtac,hxsendwallet,hxsendways,hxborrow,hxvault,hxvaultkey,hxborrowback,tradelinks,pxs,pxsback,fmchips,pts,ptsview,retention,activity,receipts,stats,dash,tacdeposit,openact,openfarm,heldoff,provecap,heldborrow,vaultborrow,rewardspriv,rewardsout,rewardsjoin,bridgemove,bridgepresses,bridgefindhere,holdborrow,hxheld,holdpublic,selffund,selfeth,selfprove,exitahead,selfdevice,wrapfirst,poolkeep,tacvoucher,relaystate,relayfail,selfwallet,slowline').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -684,6 +684,26 @@ await step('swapurl', async () => {
     ok(await f.page.waitForFunction(() => document.querySelector('[data-hxm="bridge"]')?.getAttribute('aria-selected') === 'true' && !/card=/.test(location.hash), null, { timeout: 30000 }).then(() => true, () => false), 'swapurl: #card=bridge opens the Bridge tab, and the link leaves the address');
     ok(!(await f.page.$('.sn > a[href*="card="], .sn > a[href="/swap/"], .sn > a[href="/bridge/"]')), 'swapurl: the header has no Swap or Bridge link: both are the tile\'s');
   } finally { await f.browser.close(); }
+});
+
+// The quick starts above the tile: three chips at 0.01 ETH; the private swap one fills the card with ETH for USDC, Swap privately on and 0.01 in; the shield one opens the
+// Shield way with 0.01. Each only fills the card: nothing is sent.
+await step('hints', async () => {
+  const r = await openPage({ account: A0, key: K0 }), p = r.page;
+  try {
+    await p.goto(r.url);
+    await p.waitForSelector('#hints .hint', { timeout: 60000 });
+    const names = await p.$$eval('#hints .hint', (bs) => bs.map((b) => b.dataset.hint));
+    ok(names.includes('pswap') && names.includes('shield'), `hints: quick starts show above the card (${names.join(' ')})`);
+    ok(await p.$$eval('#hints .hint', (bs) => bs.every((b) => b.querySelectorAll('svg.tk').length >= 2 && b.textContent.trim().length > 10)), 'hints: each carries its token marks and says what it does');
+    await p.click('#hints [data-hint="pswap"]');
+    ok(await p.waitForFunction(() => document.querySelector('#hx-swap #amt')?.value === '0.01', null, { timeout: 30000 }).then(() => true, () => false), 'hints: the private swap start puts 0.01 in the card');
+    ok(await cardIs(p, 'ETH>USDC'), 'hints: on ETH for USDC');
+    // the card takes the private way from the link (Swap privately itself needs quotes, which this fork does not give)
+    ok(await p.waitForFunction(() => /private=to/.test(location.search) && /to=USDC/.test(location.search), null, { timeout: 30000 }).then(() => true, () => false), 'hints: asking for the private way (the card\'s own link grammar)');
+    await p.click('#hints [data-hint="shield"]');
+    ok(await p.waitForFunction(() => document.querySelector('#hx-swap #amt')?.value === '0.01' && /Private|private|DeFi/.test(document.querySelector('#hx-swap')?.textContent || ''), null, { timeout: 30000 }).then(() => true, () => false), 'hints: the shield start opens the way to the private pool with 0.01');
+  } finally { await r.browser.close(); }
 });
 
 // The tile's Bridge tab: five tabs with Bridge beside Swap; a #card=bridge:<source> link, and the page's own bridge buttons, open it on that way;
