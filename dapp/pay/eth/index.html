@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-2d41Dt/iEj642DDNcmPOrTST5R4B8tRvygHbx95ACYc=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.0xbow.io https://api.routescan.io https://fastrelay.xyz https://v1.privacypools.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://api.tacit.finance https://tacit-points.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.gateway.tenderly.co https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-rWQg1XxIbGI8lzPwxXhem9T6IYAvM5l+DKibCk+WRqk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://api.0xbow.io https://api.routescan.io https://fastrelay.xyz https://v1.privacypools.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://api.tacit.finance https://aggregator-api.kyberswap.com https://tacit-points.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://ethereum-rpc.publicnode.com https://mainnet.gateway.tenderly.co https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://mainnet.base.org https://base.gateway.tenderly.co https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <title>tacit pay · ETH</title>
 <meta name="description" content="Private ETH payments on Ethereum, Base and Robinhood Chain, proved on your device and recovered from your key.">
@@ -702,6 +702,7 @@ import { secp, keccak_256, sha256, hmac, bytesToHex, hexToBytes, concatBytes } f
 import { prfBytesToScalar, prfLogin, prfRegister, loadPrfMap, savePrfMap, isPasskeyAvailable } from '/prf-wallet.js';
 import { knownWallets } from '/tacit-wallet-known.js?cb=ed4c75b7';
 import { makeEvmWallet } from '/evm-wallet.js?cb=c3c99d5c';
+import * as GR from '/gas-relay.js?cb=893b2c02';
 import { announceWalletConnect, wcSheets, dialogHost, WC_PROJECT_ID } from '/walletconnect.js?cb=e0b29a34';
 import { makeTacitAddress, poolKeysOf } from '/tacit-address.js';
 import { bip352TaggedHash } from '/bip352.js';
@@ -4232,11 +4233,24 @@ const tokSpendRows = (t, amount) => {
 };
 const tokMax = (t) => { const st = TK[t.id], fee = tokFee(t); return st.bal == null || fee == null ? null : maxSpend(capOf(fee) ?? 0n, 0n, st); };
 
+// ── the gas relay (dapp/gas-relay.js): with no ETH for the deposit's gas, the relay sends it and the token pays for it ──
+// Only a deposit on Ethereum in a token that takes an ERC-2612 permit (TAC): the wallet signs one order and one permit, nothing else, and sends no transaction.
+const relayRpc = (t) => async (m, p) => (await rpcOn(t.chain))(m, p);
+const relayDepositFor = (t) => (S.wallet && t.chainId === 1 ? GR.relayDepositPlan({ rpc: relayRpc(t), ethOf: async () => BigInt(await relayRpc(t)('eth_getBalance', [S.wallet, 'latest'])), token: t.token }).catch(() => null) : Promise.resolve(null));
+function relayWalletSigner(t, amount, plan, step) {
+  const from = S.wallet;
+  return GR.relaySigner({ address: from, token: t.token, router: t.router, symbol: t.sym, amount, plan, rpc: relayRpc(t), step, decimals: t.dec,
+    guard: () => { if (S.wallet !== from) throw new Error('Another wallet was connected, so this was not sent. Connect the first one again to send it.'); },
+    sign: {
+      permit: async (p) => { await ensureChain(1); return evm.signErc2612({ ...p, provider: S.provider }); },
+      order: async (o) => { await ensureChain(1); return S.provider.request({ method: 'eth_signTypedData_v4', params: [from, JSON.stringify(GR.orderTypedData(o))] }); },
+    } });
+}
 function tokDeposit(f, t) {
   mount(f, html`${tokAmountField('f-amt', 'Amount', t, html`<button type="button" id="f-max">${S.wallet ? html`Wallet <span id="f-wb"><span class="sk" style="--w:5ch"></span></span> ${t.sym}` : 'Connect a wallet'}</button>`)}
     <div class="rcpt" id="f-rcpt" hidden></div>
     <button class="btn" type="button" id="f-go" disabled>Deposit privately</button>
-    <p class="note">Proved on this device and sent from your wallet, which pays the network fee. A signature approves the ${t.sym} where the token takes one, so no separate approval is sent.</p>`);
+    <p class="note" id="f-note">Proved on this device and sent from your wallet, which pays the network fee. A signature approves the ${t.sym} where the token takes one, so no separate approval is sent.</p>`);
   const amt = $('#f-amt'), go = $('#f-go'), rc = $('#f-rcpt'), wbEl = $('#f-wb');
   let wb = null;
   FORM.check = () => {
@@ -4245,9 +4259,11 @@ function tokDeposit(f, t) {
     rc.hidden = !over; if (over) mount(rc, html`<p class="note err">More than your wallet holds.</p>`);
   };
   if (S.wallet) tokenBalanceOf(t, S.wallet).then((b) => { wb = b; if (wbEl?.isConnected) wbEl.textContent = fmt(b, t.dec, 4, true); FORM.check?.(); }, () => { if (wbEl?.isConnected) wbEl.textContent = '—'; });
+  let rplan = null;                                                    // with no ETH for gas, the relay sends the deposit and the token pays for it
+  relayDepositFor(t).then((pl) => { rplan = pl; const n = $('#f-note'); if (pl && n?.isConnected) n.textContent = `No ETH in your wallet: the relay sends this deposit and takes about ${fmt(pl.fee, t.dec, 3)} ${t.sym} for the gas. Proved on this device; you sign once, and nothing leaves unless the deposit lands.`; });
   $('#f-max').onclick = () => {
     if (!S.wallet) { connectWallet().catch((e) => sayErr($('#status'), e)); return; }
-    if (wb != null) { amt.value = wb ? plainOf(wb, t.dec) : ''; amt.dispatchEvent(new Event('input')); }
+    if (wb != null) { const m = rplan && wb > rplan.fee ? wb - rplan.fee : wb; amt.value = m ? plainOf(m, t.dec) : ''; amt.dispatchEvent(new Event('input')); }
   };
   go.onclick = () => tokAct(go, async (step) => {
     const amount = parseUnits(amt.value, t.dec);
@@ -4255,9 +4271,11 @@ function tokDeposit(f, t) {
     if (!S.wallet || !S.provider) await connectWallet();
     await ensureChain(t.chainId);
     const m = await mods(), W = await tokWallet(t);
-    let pull = await tokPull(t, amount, step), h;
+    const rp = rplan || await relayDepositFor(t);
+    if (rp && amount + rp.fee > await tokenBalanceOf(t, S.wallet)) throw Object.assign(new Error(`Leave about ${fmt(rp.fee, t.dec, 3)} ${t.sym} for the network fee: with no ETH, the deposit's gas is paid in ${t.sym}.`), { said: true });
+    let pull = rp ? { kind: 'allowance' } : await tokPull(t, amount, step), h;
     for (;;) {
-      W.connect(tokSigner(t));
+      W.connect(rp ? relayWalletSigner(t, amount, rp, step) : tokSigner(t));
       try { h = await W.deposit({ amount, selfCall: (tx) => m.routerDeposit(t.router, tx, pull), onStep: step }); break; }
       catch (e) { if (pull.kind !== 'batch' || !(e?.noBatch || /does not send calls together/.test(e?.message || ''))) throw e; pull = await tokApprove(t, amount, step); }
     }
@@ -4410,9 +4428,11 @@ async function tokPayFromWallet(r) {
     await ensureChain(t.chainId);
     const m = await mods();
     const W = m.makeEvmPoolWallet({ zk: m.zk, keys: m.evmPoolKeys(m.zk, crypto.getRandomValues(new Uint8Array(32))), keeper: t.keeper, store: null, prove, fetchImpl: timedFetch, chain: await tokChain(t) });
-    let pull = await tokPull(t, a, step), h;
+    const rp = await relayDepositFor(t);
+    if (rp && a + rp.fee > await tokenBalanceOf(t, S.wallet)) throw new Error(`Leave about ${fmt(rp.fee, t.dec, 3)} ${t.sym} for the network fee: with no ETH, the deposit's gas is paid in ${t.sym}.`);
+    let pull = rp ? { kind: 'allowance' } : await tokPull(t, a, step), h;
     for (;;) {
-      W.connect(tokSigner(t));
+      W.connect(rp ? relayWalletSigner(t, a, rp, step) : tokSigner(t));
       try { h = await W.depositTo({ to: res.bp, amount: a, selfCall: (tx) => m.routerDeposit(t.router, tx, pull), onStep: step }); break; }
       catch (e) { if (pull.kind !== 'batch' || !(e?.noBatch || /does not send calls together/.test(e?.message || ''))) throw e; pull = await tokApprove(t, a, step); }
     }

@@ -1093,6 +1093,39 @@ try {
     ok((await read(USDT, '0x70a08231' + word(POOLT))) - heldT === 40n * 10n ** 6n && (await read(USDT, '0xdd62ed3e' + word(ACCT) + word(ROUTERT))) === 0n, 'the USDT pool took exactly 40 and no allowance is left');
     await p.waitForFunction(() => /^40$/.test(document.querySelector('#bal .v')?.textContent.trim() || ''), null, { timeout: 120e3 }).catch(() => {});
     ok(/^40$/.test((await p.textContent('#bal .v')).trim()), `private USDT: ${await p.textContent('#bal .v')}`);
+    // The gas relay: the wallet holds USDC and no ETH. The deposit is proved here as always, signed as one order and one permit (the fee in USDC), and sent by the relay,
+    // stood in for by this check (the posted order goes through the same encoding the settle relay uses): the wallet sends nothing.
+    {
+      const RELAY = '0x000000197E8f0B64463B2010e568fF42090Af88d', SENDER = '0x000000000000000000000000000000000007a0f0';
+      const { encodeExecute } = await import(new URL('../worker-relay/src/lib/gas-calls.js', import.meta.url)), { checkGasOrder } = await import(new URL('../worker/src/gas-relay-queue.js', import.meta.url));
+      await rpc('anvil_setBalance', [SENDER, '0x' + (5n * 10n ** 18n).toString(16)]);
+      const posted = [];
+      await ctx.route('https://api.tacit.finance/gas/order', async (r) => {
+        const h = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'content-type': 'application/json' };
+        if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: h });
+        const x = JSON.parse(r.request().postData()).order; posted.push(x);
+        const why = checkGasOrder(x);
+        if (why) return r.fulfill({ status: 400, headers: h, body: JSON.stringify({ ok: false, error: why }) });
+        try { await rpc('eth_sendTransaction', [{ from: SENDER, to: RELAY, data: encodeExecute(x), gas: '0x7a1200' }]); } catch (e) { return r.fulfill({ status: 400, headers: h, body: JSON.stringify({ ok: false, error: String(e.message).slice(0, 160) }) }); }
+        await r.fulfill({ status: 200, headers: h, body: JSON.stringify({ ok: true }) });
+      });
+      const eth0 = await rpc('eth_getBalance', [ACCT, 'latest']);
+      await p.click('#assets [data-tok="usdc"]');
+      await p.click('#tabs [data-tab="deposit"]');
+      await rpc('anvil_setBalance', [ACCT, '0x0']);
+      await p.click('#assets [data-tok="usdt"]'); await p.click('#assets [data-tok="usdc"]'); await p.click('#tabs [data-tab="deposit"]');   // the form is drawn again with no ETH
+      await p.waitForFunction(() => /No ETH in your wallet/.test(document.querySelector('#f-note')?.textContent || ''), null, { timeout: 60e3 }).catch(() => {});
+      ok(/the relay sends this deposit and takes about [\d.]+ USDC/.test(await p.textContent('#f-note')), `relay: with no ETH the form says the relay sends the deposit and USDC pays for it (${(await p.textContent('#f-note')).trim().slice(0, 90)})`);
+      const n0 = await rpc('eth_getTransactionCount', [ACCT, 'latest']), u1 = await usdcOf(ACCT);
+      await p.fill('#f-amt', '100');
+      await p.click('#f-go');
+      await p.waitForFunction(() => /Deposited/.test(document.querySelector('#status').textContent) || document.querySelector('#status .err'), null, { timeout: 600e3 });
+      ok(/Deposited 100 USDC/.test(await p.textContent('#status')), `relay: the deposit landed with no ETH: ${(await p.textContent('#status')).trim().slice(0, 80)}`);
+      const spent = u1 - (await usdcOf(ACCT));
+      ok(posted.length === 1 && posted[0].order.feeToken.toLowerCase() === USDC.toLowerCase() && spent > 100n * 10n ** 6n && (await rpc('eth_getTransactionCount', [ACCT, 'latest'])) === n0 && (await rpc('eth_getBalance', [ACCT, 'latest'])) === '0x0', `relay: one order, the fee in USDC (${Number(spent - 100n * 10n ** 6n) / 1e6}), the wallet sent no transaction and still has no ETH`);
+      await ctx.unroute('https://api.tacit.finance/gas/order');
+      await rpc('anvil_setBalance', [ACCT, eth0]);
+    }
     // a request for 25 USDC, from the other key, paid from a wallet by someone with no Tacit key
     await p.click('#wallet'); await p.click('#w-lock'); await p.click('#sheet-wallet [data-close]');
     await openKey(p, other);

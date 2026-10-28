@@ -101,3 +101,62 @@ export function encodeExecute(x) {
   return '0x' + SEL_EXECUTE + head.join('') + W32(offSig) + W32(offData) + permit(x.inPermit) + permit(x.feePermit) + W32(offP2) + sig + data + p2enc;
 }
 const SEL_EXECUTE = '7e75f5be';
+
+// ── a token deposit into a Tacit device pool, sent by the relay and paid for in the token ──
+const RACED_SELECTORS = ['607447de', 'a151b2a2', '26747c9d', 'efe99026'];   // StaleRoot, WrongInsertionIndex, UnknownMembershipRoot, BadIntent: the pool moved, prove again
+const PROBE_FROM = '0x000000000000000000000000000000000007a0f0';
+export const DEPOSIT_GAS = 600000n;
+export const kyberEthTo = async (token, wei) => {
+  const r = await fetch(`https://aggregator-api.kyberswap.com/ethereum/api/v1/routes?${new URLSearchParams({ tokenIn: '0xEeeeeEeeeEeEeeEeEeeEeEEEeeeeEeeeeeeeEEeE', tokenOut: token, amountIn: String(wei) })}`, { signal: AbortSignal.timeout(8000) }).then((q) => (q.ok ? q.json() : null)).catch(() => null);
+  const o = r?.data?.routeSummary?.amountOut;
+  return /^\d+$/.test(String(o ?? '')) ? BigInt(o) : null;
+};
+/// { fee, gasPrice } when the account holds too little ETH to send a deposit and the relay can pay for it in `token` (one that takes an ERC-2612 permit), else null.
+/// `rpc(method, params)` reads Ethereum; `ethOf()` is the paying account's ETH balance (null when unknown).
+export async function relayDepositPlan({ rpc, ethOf, token, chainId = 1 }) {
+  if (chainId !== 1 || !PERMIT_TOKENS[lc(token)]) return null;
+  if (String(await rpc('eth_getCode', [GAS_RELAY[1], 'latest']).catch(() => '0x')).length <= 2) return null;
+  const [eth, gasPrice] = await Promise.all([ethOf(), rpc('eth_gasPrice', []).then(BigInt)]);
+  if (eth == null || !needsRelay({ ethWei: eth, gasPriceWei: gasPrice, units: DEPOSIT_GAS })) return null;
+  const fee = await feeFor({ gasPriceWei: gasPrice, units: DEPOSIT_GAS, ethToToken: (w) => kyberEthTo(token, w) });
+  return fee == null ? null : { fee, gasPrice };
+}
+/// The signer a pool wallet (dapp/evm-pool-wallet.js) deposits through instead of the account's own transaction: `send` turns the router call into a relay
+/// order and returns the relay's transaction hash once it has run (null when the pool moved since the proof: the wallet proves again).
+/// sign.permit({ token, name, version, owner, spender, value, nonce, deadline }) → { v, r, s }; sign.order(order) → a 65-byte signature; guard() throws when the page moved on.
+export function relaySigner({ address, token, router, symbol, amount, plan, rpc, step, sign, guard = () => {}, api = 'https://api.tacit.finance', decimals = 18 }) {
+  const relay = GAS_RELAY[1], meta = PERMIT_TOKENS[lc(token)];
+  const fmt = (v) => { const d = 10n ** BigInt(decimals), w = BigInt(v) / d, f = (BigInt(v) % d).toString().padStart(decimals, '0').slice(0, 4).replace(/0+$/, ''); return f ? `${w}.${f}` : String(w); };
+  return { address, relayed: true, send: async ({ to, data }) => {
+    guard();
+    if (lc(to) !== lc(router)) throw new Error('The relay only sends the deposit to the pool’s router.');
+    const total = BigInt(amount) + plan.fee, dl = Math.floor(Date.now() / 1000) + 900;
+    const { order } = buildOrder({ payer: address, tokenIn: token, amountIn: amount, feeToken: token, fee: plan.fee, tokenOut: ZERO, minOut: 0n, recipient: address, target: router, data });
+    step(`Sign the ${symbol} deposit and its ${fmt(plan.fee)} ${symbol} network fee. No ETH is needed`);
+    const nonce = BigInt(await rpc('eth_call', [{ to: token, data: '0x7ecebe00' + A32(address) }, 'latest']));
+    const p = await sign.permit({ token, name: meta.name, version: meta.version, owner: address, spender: relay, value: total, nonce, deadline: dl });
+    const signature = await sign.order(order);
+    const posted = { order, data, signature, inPermit: { value: String(total), deadline: String(dl), v: p.v, r: p.r, s: p.s }, feePermit: NO_PERMIT, p2: NO_P2 };
+    // the order is run here first, as the relay would run it: a pool that moved since the proof is proved again, nothing else is posted
+    try { await rpc('eth_call', [{ from: PROBE_FROM, to: relay, data: encodeExecute(posted) }, 'latest']); }
+    catch (e) {
+      const d = String(e?.data?.data ?? e?.data ?? e?.message ?? '');
+      if (RACED_SELECTORS.some((x) => d.includes(x))) return null;
+      throw new Error(`This deposit would not go through, so nothing was sent${d ? ` (${d.slice(0, 40)})` : ''}. Try again.`);
+    }
+    step('Sending it to the relay');
+    const r = await fetch(`${api}/gas/order`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ order: posted }), signal: AbortSignal.timeout(15e3) }).then((q) => q.json()).catch(() => null);
+    if (!r?.ok) throw new Error(`The relay did not take the order${r?.error ? `: ${r.error}` : ''}. Nothing was spent.`);
+    const usedSel = '0xad04dc3f' + A32(address) + W32(order.nonce), end = Date.now() + 5 * 60e3, t0 = Date.now();
+    let done = false;
+    while (Date.now() < end && !done) {
+      await new Promise((q) => setTimeout(q, 3000));
+      done = BigInt(await rpc('eth_call', [{ to: relay, data: usedSel }, 'latest']).catch(() => '0x0')) === 1n;
+      if (!done) step(`Waiting for the relay to send it (${Math.round((Date.now() - t0) / 1000)} s). Nothing leaves your account unless the deposit lands`);
+    }
+    if (!done) throw new Error('The relay has not sent it yet. Nothing was spent; the order lapses by itself in a few minutes. Try again.');
+    const hash = await rpc('eth_getLogs', [{ address: relay, topics: ['0x533053a5fad9470861fb5df750d47e5f011faa03daba05299fe4bdc65f52d519', '0x' + A32(address), null, '0x' + W32(order.nonce)], fromBlock: '0x' + (BigInt(await rpc('eth_blockNumber', [])) - 200n).toString(16), toBlock: 'latest' }]).then((l) => l?.[0]?.transactionHash || null, () => null);
+    if (!hash) throw new Error('The relay sent it, but its transaction could not be found. Check your balance in a moment.');
+    return hash;
+  } };
+}
