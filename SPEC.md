@@ -855,6 +855,11 @@ all four owners executes immediately. It governs:
 - `FarmManager`: reward weights. A reweight is queued publicly for 7 days, must execute within 14 days,
   changes a weight by at most ±25%, and can happen at most once every 30 days, adding a pool included.
   While a program runs, its total reward rate cannot be lowered and its end cannot move earlier.
+- `TacVault` (TACD and TACE): the owner can at once set the debt ceiling and the fees (up to 5% to borrow and
+  2.5% to redeem) and pause liquidations, outside bids, absorbs and redemptions for up to 12 hours at a time. A named
+  pauser can start a pause and nothing else. The ratios, the liquidation bonus, the auction timing and the minimum
+  debt change only after a 2-day announcement and within fixed limits, and a new oracle after 3 days. `lockParams`
+  and `lockOracle` end those powers for good. The borrow fee goes to the reserve.
 - `TacAirdrop`: a guardian that can pause and sweep. It cannot change the root, token or deadline.
 - The protocol reserve: TAC collected as relay fees and bought by `TacBuyback`, an immutable contract with
   no owner whose ETH can only become TAC for the reserve or return to it.
@@ -982,7 +987,7 @@ its batcher sees them. Proving locally keeps a witness on one device end to end.
   the circuits in §2.8;
 - the sp1-helios sync committee;
 - the ops multisig, within the bounds of §7.2;
-- the oracle that prices cUSD.
+- the oracles that price cUSD, TACD and TACE.
 
 **Not trusted:**
 - relayers, the hosted API, IPFS gateways and block explorers. None of them can change validity, and the
