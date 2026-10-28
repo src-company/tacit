@@ -60,6 +60,7 @@ for (const a of [SETTLER, FROM]) { await rpcA('anvil_impersonateAccount', [a]); 
 
 await rpcA('anvil_setCode', [SP1_VERIFIER, '0x00']);                      // only the pool's SP1 verifier is replaced
 const { stdinFor } = await import('../dapp/sp1-stdin.js');
+const hex2 = (b) => '0x' + Buffer.from(b).toString('hex');
 const { takeOrder, encodeClaim, encodeFulfill } = await import('../tools/proof-market-solver.mjs');
 const client = await import('../dapp/proof-market.js');
 const TAC = '0xA1313eb9f3A445606D9583bcAc3ebeB56a858279', DIST = '0x000000C918e44A3a443937fA7594eA4f7C95D6b9';
@@ -154,6 +155,7 @@ const fulfill = (from, i, sig, publicValues, p) => send(from, market, encodeFunc
 const bal0 = await tacOf(payer.address);
 
 // ── a copied proof cannot take the fee while another prover holds the claim ──
+ok(client.wrapOrderInputs(built).publicValues === pv && client.wrapOrderInputs(built).stdin === hex2(readFileSync(f)), 'the client computes the wrap\'s public values and program input before any proving, byte for byte what the real guest produced');
 const order = client.buildOrder({ intent: Object.fromEntries(Object.entries(I).map(([k, v]) => [k, typeof v === 'bigint' ? String(v) : v])), signature: sigI, permit: pm, publicValues: pv, memos });   // what a prover is handed
 await send(SOLVER_A, market, encodeClaim(order));
 ok(!!(await refuses(() => fulfill(SOLVER_B, I, sigI, pv, pm))) && (await depositStatus(built.depositId)) === 1n && (await tacOf(SOLVER_B)) === 0n, 'a second prover who copies the proof is refused while the claim stands: nothing settles, nothing is paid');

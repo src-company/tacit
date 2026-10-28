@@ -6,6 +6,7 @@
 // A direct order covers one op: { payer, intent, signature, permit, publicValues, memos }. A tank order covers many under one signed
 // package: { payer, tank, tankSignature, intent, signature (by the tank's delegate key), permit (for the tank cap), ... }.
 import { keccak_256 } from './vendor/tacit-deps.min.js';
+import { stdinFor } from './sp1-stdin.js';
 
 export const MARKET = { 1: '0x0000000033Dd45B1686Ba37e5F6e4ABDdaC17609' };
 export const TAC = '0xA1313eb9f3A445606D9583bcAc3ebeB56a858279';
@@ -82,4 +83,43 @@ export function priceAt(intent, at = Math.floor(Date.now() / 1000)) {
   if (ramp === 0n || t >= ramp) return max;
   if (t <= 0n) return floor;
   return floor + ((max - floor) * t) / ramp;
+}
+
+// A wrap's public values (abi.encode of the pool's PublicValues): a fixed layout of 55 words in which only four depend on the wrap: the
+// chain binding (word 2), the memo root (28), the leaf it inserts (34) and the deposit it consumes (36). Read from a live wrap's proof and
+// checked against the real guest's output by tests/proofmarket-fork.mjs, so the client knows the op's public values, and so its id, before
+// anything is proved.
+const WRAP_PV = ["20", "1", null, "0", "3e0", "400", "440", "480", "4a0", "4c0", "4e0", "500", "0", "0", "520", "540", "0", "0", "560", "580", "5a0", "0", "0", "5c0", "5e0", "600", "620", "640", null, "660", "680", "6a0", "0", "1", null, "1", null, "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0"];
+const VARY = { chainBinding: 2, memoRoot: 28, leaf: 34, depositId: 36 };
+export function wrapPublicValues({ chainBinding, memoRoot, leaf, depositId }) {
+  const given = { chainBinding, memoRoot, leaf, depositId };
+  return '0x' + WRAP_PV.map((w, i) => {
+    const k = Object.keys(VARY).find((n) => VARY[n] === i);
+    if (k) { const v = String(given[k]).replace(/^0x/, '').toLowerCase(); if (v.length !== 64) throw new Error(`${k} must be 32 bytes`); return v; }
+    return w.padStart(64, '0');
+  }).join('');
+}
+
+/// What an order for a wrap (confidential-pool-ux.js buildWrap) carries: the program input a prover proves, and the public values that
+/// proof will have. `built.memos` are the wrap's memo hex strings; the guest commits to the root of their hashes.
+export function wrapOrderInputs(built) {
+  const memoHashes = built.memos.map((m) => hex(keccak_256(bytesOf(m))));
+  const stdin = hex(stdinFor('wrap', { ...built.wrapOp, memoHashes }));
+  const zero = new Uint8Array(32);
+  const memoRoot = hex(keccak_256(new Uint8Array([...zero, ...bytesOf(memoHashes[0])])));
+  const publicValues = wrapPublicValues({ chainBinding: built.wrapOp.chainBinding, memoRoot, leaf: built.leaf, depositId: built.depositId });
+  return { stdin, publicValues, memos: built.memos };
+}
+
+// The EIP-712 digest of an intent, for a key held here (the Tacit wallet signs without a wallet popup). Same bytes as the market's own
+// intentHash (tests/proof-market-client.test.mjs).
+const k256 = (...p) => keccak_256(Uint8Array.from(p.flatMap((x) => Array.from(x))));
+const enc = (s) => new TextEncoder().encode(s);
+const word = (n) => { const b = new Uint8Array(32); let x = BigInt(n); for (let i = 31; i >= 0; i--) { b[i] = Number(x & 0xffn); x >>= 8n; } return b; };
+const addrWord = (a) => { const b = new Uint8Array(32); b.set(bytesOf(a), 12); return b; };
+export function intentDigest(intent, chainId = 1, market = MARKET[chainId]) {
+  const domain = k256(k256(enc('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)')), k256(enc('TacitProofMarket')), k256(enc('1')), word(chainId), addrWord(market));
+  const typehash = k256(enc('Intent(address payer,bytes32 opId,uint256 floorFee,uint256 maxFee,uint64 start,uint64 rampSecs,uint64 deadline,bytes32 tank)'));
+  const struct = k256(typehash, addrWord(intent.payer), bytesOf(intent.opId), word(intent.floorFee), word(intent.maxFee), word(intent.start), word(intent.rampSecs), word(intent.deadline), bytesOf(intent.tank));
+  return hex(k256(new Uint8Array([0x19, 0x01]), domain, struct));
 }

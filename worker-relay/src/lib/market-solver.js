@@ -7,11 +7,12 @@
 // claim is still live. A claim that lapses before the proof comes back costs only the bond (none to start). Nothing here is paid for until
 // the market's pool accepts the proof, so a failed order costs gas for the claim and the proving it took, no more.
 //
+// A proof that is ready before the holder's deposit has landed waits for it, up to the end of the claim.
 // Dependencies are injected so the loop is tested without a chain: listOrders(), done(opId), claim(order) -> tx, prove(order) ->
 // { publicValues, proof }, fulfil(order, proof) -> tx, clear(opId), claimOf(opId) -> { solver, until }.
 import { priceAt } from './market-calls.js';
 
-export function makeMarketSolver({ listOrders, done, claim, prove, fulfil, clear, claimOf, me, minPrice = 0n, retryMs = 120_000, now = () => Date.now(), log = () => {} }) {
+export function makeMarketSolver({ listOrders, done, claim, prove, fulfil, clear, claimOf, me, minPrice = 0n, retryMs = 120_000, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {} }) {
   const tried = new Map(); // opId -> when it last failed here, so one bad order is not tried every pass
   return {
     // One order at most per pass (one prover, one key). → true when an order was worked on.
@@ -36,7 +37,13 @@ export function makeMarketSolver({ listOrders, done, claim, prove, fulfil, clear
             tried.set(id, now());
             return true;
           }
-          const tx = await fulfil(o, proof);
+          // The holder's own transaction (the deposit this proof settles) may not have landed yet: the fulfil is tried again while the claim lasts.
+          let tx, last;
+          for (;;) {
+            try { tx = await fulfil(o, proof); break; } catch (e) { last = e; }
+            if (Math.floor(now() / 1000) + 6 >= live.until) throw last;
+            await sleep(4000);
+          }
           log(`market: order ${id.slice(0, 10)} settled: claim ${claimTx} fulfil ${tx}`);
           await clear(id).catch(() => {});
           return true;

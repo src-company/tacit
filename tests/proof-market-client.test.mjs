@@ -27,6 +27,7 @@ const live = await rpc(M, encodeFunctionData({ abi, functionName: 'intentHash', 
 const mine = hashTypedData({ ...pm.intentTypedData(intent), types: { Intent: pm.intentTypedData(intent).types.Intent }, message: asBig(intent) });
 ok(!!live && live === mine, 'an intent hashes as the deployed market hashes it');
 
+ok(pm.intentDigest(intent) === mine, 'the digest a held key signs is the typed-data hash');
 const sig = await pm.signIntent(provider(acct), acct.address, intent);
 const rec = await recoverTypedDataAddress({ domain: pm.intentTypedData(intent).domain, types: { Intent: pm.intentTypedData(intent).types.Intent }, primaryType: 'Intent', message: asBig(intent), signature: sig });
 ok(rec === acct.address, 'the wallet signature recovers to the payer');

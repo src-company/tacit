@@ -59,3 +59,15 @@ test('a failure in claim, prove or fulfil is logged and the order waits out the 
   const down = makeMarketSolver({ me: ME, listOrders: async () => { throw new Error('502'); }, done: async () => false, claimOf: async () => null, claim: async () => {}, prove: async () => {}, fulfil: async () => {}, clear: async () => {} });
   assert.equal(await down.pass(), false);
 });
+
+test('a fulfil that fails because the deposit has not landed is tried again while the claim lasts, then given up', async () => {
+  let t = 2_000_000, tries = 0;
+  const mkS = (okAt) => makeMarketSolver({ me: ME, now: () => t, sleep: async (ms) => { t += ms; }, listOrders: async () => [mk('0xi')], done: async () => false,
+    claimOf: async () => ({ solver: ME, until: 2040 }), claim: async () => '0x1', prove: async () => ({ proof: '0x' }), clear: async () => {},
+    fulfil: async () => { tries++; if (tries < okAt) throw new Error('deposit missing'); return '0xf'; } });
+  assert.equal(await mkS(3).pass(), true);
+  assert.equal(tries, 3, 'landed on the third try');
+  tries = 0; t = 2_000_000;
+  assert.equal(await mkS(99).pass(), true);
+  assert.ok(tries >= 3 && tries < 12, 'stopped before the claim ended');
+});

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-SFXOl2uFuqWln7C8X57u6pnUVYXp7ZEIuSywL9kIV2M=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-4DNCuO1rUtwFNKRlMSsxMy4MXFV6QLCkco4/S5AAO6c=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <link rel="preconnect" href="https://api.tacit.finance" crossorigin>
 <link rel="preconnect" href="https://ethereum-rpc.publicnode.com" crossorigin>
@@ -10530,12 +10530,44 @@ async function proveWithCredit({ run, t, p, plan, prover, tell, pub, priv }) {
 // The share could not be proved by Tacit's prover in time (or it cannot prove now): which way on is the holder's. Their own prover (a Succinct credit, or this
 // computer's) proves it and the zap goes in one transaction from the wallet; or the zap goes first and the relay finishes its share after (its settle and
 // gas, which is what was being avoided). The proof Tacit's prover is still making goes at once if it lands while this waits. → 'ready' | 'own' | 'relay'
+// The proof market (contracts/src/ProofMarket.sol, deployed): the holder signs a fee in TAC for a proof, up to a most, and a permit that only
+// that most can be pulled under; provers (Tacit's relay first, then anyone) race to prove the share and settle it, and are paid in the same
+// transaction the pool accepts it, so no TAC moves unless the share goes in. Offered where Tacit's prover is slow, when the wallet holds the TAC.
+const MARKET = { mod: null, usd: { floor: 0.4, max: 1.5 } };
+const marketMod = async () => (MARKET.mod ||= await import('/proof-market.js?cb=f7851fed'));
+async function marketOffer() {
+  try {
+    const px = (fpx().ethUsd || 0) * (FARM.precision?.tacEth || 0);
+    if (!(px > 0) || !S.key) return null;
+    const owner = await payingAccount(), have = wordAt(await ethCall(ADDR.tac, '70a08231' + addrWord(owner)), 0);
+    const tac = (usd) => BigInt(Math.round((usd / px) * 1e6)) * 10n ** 12n;
+    const q = { floor: tac(MARKET.usd.floor), max: tac(MARKET.usd.max), owner };
+    return have >= q.max ? q : null;
+  } catch { return null; }
+}
+// Signs the fee and the permit, and posts the order for the wrap `built` (its proof is the share's) to the board; the zap is then sent without a
+// proof and whoever proves first settles it. Nothing is sent from the wallet here: two signatures.
+async function postMarketOrder({ built, q, status }) {
+  const pm = await marketMod(), inputs = pm.wrapOrderInputs(built);
+  const intent = pm.buildIntent({ payer: q.owner, publicValues: inputs.publicValues, floor: q.floor, max: q.max, rampSecs: 60, ttlSecs: 1500 });
+  let signature;
+  if (payer() === 'tacit') {
+    const sig = secp.sign(hexToBytes(strip(pm.intentDigest(intent))), hexToBytes(strip(S.acct.priv)));
+    signature = '0x' + sig.r.toString(16).padStart(64, '0') + sig.s.toString(16).padStart(64, '0') + (27 + sig.recovery).toString(16);
+  } else { say(status, 'Sign the proving fee in your wallet. It is only taken if the share goes in…'); await ensureChain(1); signature = await pm.signIntent(S.provider, q.owner, intent); }
+  const permit = await permitSig({ token: ADDR.tac, name: 'Tacit Token', spender: pm.MARKET[1], value: q.max, deadline: BigInt(intent.deadline), status, what: 'TAC proving fee' });
+  const order = { ...pm.buildOrder({ intent, signature, permit, publicValues: inputs.publicValues, memos: inputs.memos }), stdin: inputs.stdin };
+  const r = await fetch(`${API}/market/order`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ order }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) throw new Error(j.error || `the proof market answered ${r.status}`);
+  return order;
+}
 const ZAPWAY = { cb: null, then: null };
-function zapWay({ tell, inflight = null, down = false, then = null }) {
+function zapWay({ tell, inflight = null, down = false, then = null, market = null }) {
   return new Promise((resolve) => {
     const fin = (v) => { if (ZAPWAY.cb === fin) ZAPWAY.cb = null; resolve(v); };
     ZAPWAY.cb = fin; ZAPWAY.then = then;
-    tell(html`<span class="err">${down ? 'Tacit’s prover is not available right now.' : 'Tacit’s prover is taking longer than usual.'}</span> Nothing has left your wallet.<div class="actr-f"><button class="link" type="button" data-zapway="own">Prove it yourself</button>, on this computer or with your credit · <button class="link" type="button" data-zapway="relay">Send the zap and let the relay finish it</button></div>`);
+    tell(html`<span class="err">${down ? 'Tacit’s prover is not available right now.' : 'Tacit’s prover is taking longer than usual.'}</span> Nothing has left your wallet.<div class="actr-f"><button class="link" type="button" data-zapway="own">Prove it yourself</button>, on this computer or with your credit · ${market ? html`<button class="link" type="button" data-zapway="market">Pay about ${fmt(market.floor, 18, 2)} TAC for a fast proof</button> · ` : ''}<button class="link" type="button" data-zapway="relay">Send the zap and let the relay finish it</button></div>`);
     if (inflight) inflight.then(() => fin('ready'), () => fin('ready'));
   });
 }
@@ -10553,7 +10585,7 @@ document.addEventListener('click', (e) => {
 async function zapNow({ run, p, z, status, bond = true, clear = () => {}, moved = () => {}, again = null }) {
   const pid = p.pid, tkB = zapTkB(p), tokenB = ZAP_TOKEN[tkB], label = pairName(p.pair);
   const tell = (m) => say(status, m);
-  let t = null, priv = null, built = null, hash = null, landed = false, guarded = false, rec = null;
+  let t = null, priv = null, built = null, hash = null, landed = false, guarded = false, rec = null, marketQ = null;
   const pub = S.key?.pubHex;
   try {
     t = await getUx(); priv = walletPriv();
@@ -10595,10 +10627,12 @@ async function zapNow({ run, p, z, status, bond = true, clear = () => {}, moved 
       }
       // not made in time, or the relay cannot prove it now, and no prover of their own set: the way on is the holder's, and a proof that lands meanwhile goes at once
       let flying = VOUCH.ahead?.poolId === p.poolId ? VOUCH.ahead.p : null;
+      const offer = await marketOffer();
       for (let asked = 0; !ownUsable && !(await lpReady(p.poolId, z.wei, res)) && asked < 2; asked++) {
-        const way = await zapWay({ tell, inflight: flying, down: !(await relayProving()), then: again && { label: `Zap ${fmt(z.wei, 18, 6)} ETH into ${label}`, resume: again } });
+        const way = await zapWay({ tell, inflight: flying, market: offer, down: !(await relayProving()), then: again && { label: `Zap ${fmt(z.wei, 18, 6)} ETH into ${label}`, resume: again } });
         flying = null;
         if (way === 'own') throw Object.assign(new Error('Choose how to prove it and press Go on in the Prove sheet, or press the zap again. Nothing was sent.'), { said: true });
+        if (way === 'market') { marketQ = offer; break; }
         if (way === 'relay') break;
       }
       const ready = await lpReady(p.poolId, z.wei, res), v = await vouchers();
@@ -10621,6 +10655,10 @@ async function zapNow({ run, p, z, status, bond = true, clear = () => {}, moved 
     const index = t.nextShareIndex({ walletPriv: priv, poolId: p.poolId, owned: await scanOwned(),
       used: [...zapsKept().filter((x) => x.pub === pub && x.poolId === p.poolId), ...(await vouchers()).list(pub, lpTicker(p.poolId))].map((x) => x.index) });
     built = t.buildShareWrap({ walletPriv: priv, poolId: p.poolId, shares: plan.shares, index });
+    if (marketQ) {
+      try { await postMarketOrder({ built, q: marketQ, status }); tell('Posted to the proving market. Sending the zap; a prover settles your share as soon as it is made…'); }
+      catch (e) { tell(`The proving market was not used (${errText(e)}). Sending the zap; the relay finishes it.`); }
+    }
     // Proved here or with your own credit (a single-pool zap): the share note first, then the zap and its settle together.
     if (!sp && ownNow(['wrap']) && (await proveOwn(['wrap']))) {
       await ownReady('wrap');
