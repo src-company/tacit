@@ -342,3 +342,9 @@
 .swc .splitbar { display: flex; gap: 2px; height: 18px; margin-top: 3px; min-width: 150px; font: 10.5px var(--mono); letter-spacing: .02em; }
 .swc .splitbar span { display: flex; align-items: center; min-width: 0; padding: 0 6px; overflow: hidden; white-space: nowrap; color: #fff; }
 .swc .splitbar .pp { background: #4a63d6; border-radius: 3px 0 0 3px; } .swc .splitbar .tp { background: #15803d; border-radius: 0 3px 3px 0; }
+
+/* a token row's place: Private (dashed, like the ring on its mark) for the pools; Public for the wallet's, shown while searching when the group headings are gone */
+.swc .pk-r b .pw { display: inline-block; margin-left: 8px; padding: 1px 7px; font: 500 10px var(--mono); letter-spacing: .06em; text-transform: uppercase; border-radius: 999px; vertical-align: 2px; color: var(--mute); border: 1px solid currentColor; }
+.swc .pk-r b .pw-defi, .swc .pk-r b .pw-pay { border-style: dashed; color: var(--ink); }
+.swc .pk-r b .pw-wallet { display: none; }
+.swc #pk-l.srch .pk-r b .pw-wallet { display: inline-block; }

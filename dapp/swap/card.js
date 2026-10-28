@@ -867,7 +867,7 @@ function paintQuote() {
     let shown = list;
     if (list.length > 4 && S.routesAll !== `${S.pay}>${S.get}`) { shown = list.slice(0, 3); if (r && !shown.includes(r)) shown = [...shown.slice(0, 2), r]; }
     const more = list.length - shown.length;
-    rows.innerHTML = `<div class="rows-h"><span>Route</span><span>${q.more > 0 ? '<i class="more-q" aria-label="more quotes coming"></i>' : ''}${esc(get.sym)} out</span></div>${shown.map((x) => `<button type="button" role="radio" aria-checked="${x.k === r?.k}" data-route="${esc(x.k)}"><span class="rt"><b>${esc(x.name)}</b>${noteOf(x, q) ? `<small>${noteOf(x, q)}</small>` : ''}</span><span class="ra"><span>${esc(tidy(amtFmt(x.out, get.dec)))}</span>${x === top && list.length > 1 ? '<em>best</em>' : x.out < top.out ? `<small>${(Number(top.out - x.out) * 100 / Number(top.out)).toFixed(2)}% less</small>` : ''}</span><span class="rd" aria-hidden="true"></span></button>`).join('')}${more ? `<button type="button" class="more" data-routes-all>${more} more quote${more > 1 ? 's' : ''}</button>` : ''}`;
+    rows.innerHTML = `<div class="rows-h"><span>Route</span><span>${q.more > 0 ? '<i class="more-q" aria-label="more quotes coming"></i>' : ''}${esc(get.sym)} out</span></div>${shown.map((x) => `<button type="button" role="radio" aria-checked="${x.k === r?.k}" data-route="${esc(x.k)}"><span class="rt"><b>${esc(x.name)}</b>${noteOf(x, q) ? `<small>${noteOf(x, q)}</small>` : ''}</span><span class="ra"><span>${esc(tidy(amtFmt(x.out, get.dec)))}</span>${x === top && list.length > 1 ? '<em>best</em>' : x.out < top.out ? `<small>${(Number(top.out - x.out) * 100 / Number(top.out)).toFixed(2)}% less</small>` : x.out > top.out ? `<small title="The marked route is preferred when it pays within 1% of the best">${(Number(x.out - top.out) * 100 / Number(top.out)).toFixed(2)}% more</small>` : ''}</span><span class="rd" aria-hidden="true"></span></button>`).join('')}${more ? `<button type="button" class="more" data-routes-all>${more} more quote${more > 1 ? 's' : ''}</button>` : ''}`;
   }
   const lines = first ? (kind === 'private' || kind === 'pout' ? ['Price', 'Price impact', 'Relay fee'] : ['Price', 'At least', 'Price impact', 'Network fee']).map((k) => [k, '…']) : [];
   if (r) {
@@ -1773,6 +1773,7 @@ async function exitGo() {
   const q = S.q, r = q?.kind === 'exit' ? q.rows?.[0] : null, into = intoPool(), dest = into ? 'pool' : exitDest();
   if (exitOf()?.wallet) return walletIntoGo(q, r);
   if (!r || !dest || S.busy || S.toBad) return;
+  if (now() - (q.at || 0) > 60) { say('The price was read again. Check it and press once more.', '', true); requote(true); return; }      // as the other private paths do
   const pay = tokenOf(S.pay), get = tokenOf(S.get), wei = q.wei;
   S.busy = true; paintQuote(); say('Opening your private balance…');
   let plan = null;
@@ -2052,13 +2053,15 @@ function openPicker(side) {
   const JUMP = { wallet: 'Wallet', defi: 'DeFi pool', pay: 'Pay pool', btc: 'Bitcoin' }, jumps = groups.filter(([, , , id]) => JUMP[id]);
   const keys = groups.flatMap(([, ks]) => ks), cs = H.moves?.chains?.() || [], chains = cs.length;
   const SUB = { teth: 'ETH, made private', [lc(R.TAC)]: 'Tacit’s token', [lc(R.CUSD)]: 'a dollar borrowed against cBTC', [lc(R.CBTC)]: 'bitcoin, 1:1 with BTC' };
+  const PLACE_TAG = { wallet: 'Public', defi: 'Private', pay: 'Private', btc: 'Bitcoin' };
   const row = (key) => {
     const m = ATK.exec(key), a = m ? m[1] : 'wallet', k = m ? m[2] : key, t = shownAt(k, a);
     if (!t) return '';
     // dimmed where it goes nowhere: a From coin with no To for it, a To coin the From side cannot reach (picked, the From side is mended)
     const ok = !moving() || (side === 'pay' ? goes('pay', k, a) : pairOk(S.pay, atOf('pay'), k, a));
-    const sub = a === 'defi' ? esc(SUB[k] || '') : a === 'pay' ? (isEth(k) && chains > 1 ? `pays on ${chainMarks(cs)}` : k === USDC_K || k === USDT_K ? 'a dollar, pays on Ethereum' : 'pays on Ethereum') : a === 'btc' ? 'at your Bitcoin address' : esc((t.custom ? `${t.addr.slice(0, 8)}…${t.addr.slice(-6)}` : t.name) || '');
-    return `<button type="button" class="pk-r${ok ? '' : ' off'}"${ok ? '' : ' aria-disabled="true"'} data-k="${esc(key)}" aria-current="${a === at && k === cur}">${coin(t, '', a === 'wallet')}<span><b>${esc(t.sym)}</b><small>${sub}</small></span><em>${rowBal(side, key)}</em></button>`;
+    // each row says where its coin is held, so two rows for one coin (a wallet's USDC, the Pay pool's USDC) read apart even with the group headings gone (while searching)
+    const sub = a === 'defi' ? `DeFi pool${SUB[k] ? ` · ${esc(SUB[k])}` : ''}` : a === 'pay' ? `Pay pool · ${isEth(k) && chains > 1 ? `pays on ${chainMarks(cs)}` : k === USDC_K || k === USDT_K ? 'a dollar, pays on Ethereum' : 'pays on Ethereum'}` : a === 'btc' ? 'at your Bitcoin address' : esc((t.custom ? `${t.addr.slice(0, 8)}…${t.addr.slice(-6)}` : t.name) || '');
+    return `<button type="button" class="pk-r${ok ? '' : ' off'}"${ok ? '' : ' aria-disabled="true"'} data-k="${esc(key)}" aria-current="${a === at && k === cur}">${coin(t, '', a === 'wallet')}<span><b>${esc(t.sym)}${PLACE_TAG[a] ? `<i class="pw pw-${a}">${PLACE_TAG[a]}</i>` : ''}</b><small>${sub}</small></span><em>${rowBal(side, key)}</em></button>`;
   };
   warmPrivate(); H.moves?.warm?.();
   pkSide = side;
@@ -2104,6 +2107,7 @@ function openPicker(side) {
         b.hidden = on && !rank; b.style.order = on ? rank : '';
       }
       l.querySelectorAll('.pk-g, .pk-d').forEach((g) => { g.hidden = on; });
+      l.classList.toggle('srch', on);                 // with the headings gone, every row names its place (CSS: .pw)
       const jp = $('#pk .pk-jump'); if (jp) jp.hidden = on;
       l.querySelector('[data-add]')?.remove();
       $('#pk-n').textContent = '';
@@ -2396,13 +2400,13 @@ function wire() {
     if (mk && H.moves.most) { H.moves.most(mk).then((v) => { if (v == null || moveOf() !== mk) return; S.amt = v; S.note = ''; changed(); paintSides(); requote(true); }, () => {}); return; }
     if (e.target.closest('#copy')) { const u = shareLink(); if (u) H.copy(u, 'Link copied'); return; }
     if (e.target.closest('#max') && S.inP && PV) {
-      const was = S.pay, k = PK[S.pay];
-      PV.most(IDS[k], POOL_TK[k]).then((v) => { if (v == null || S.pay !== was) return; S.amt = tidy(plain(v, 8)); S.note = ''; changed(); paintSides(); requote(true); }, () => {});
+      const was = S.pay, k = PK[S.pay], same = `${S.get}${S.inP}${S.outP}${LATER.on}`;       // a read that returns after the card was turned around is not applied
+      PV.most(IDS[k], POOL_TK[k]).then((v) => { if (v == null || S.pay !== was || `${S.get}${S.inP}${S.outP}${LATER.on}` !== same) return; S.amt = tidy(plain(v, 8)); S.note = ''; changed(); paintSides(); requote(true); }, () => {});
       return;
     }
     if (e.target.closest('#max') && exiting() && !exitOf().wallet) {
-      const was = S.pay, bal = H.moves?.held?.(S.pay, 'pay');
-      if (bal != null) exitPool(was).then(async (p) => { if (S.pay !== was || p.fee == null) return; const v = (await ltLoad()).mod.heldSwapMax(bal, p.fee); S.amt = tidy(plain(v, tokenOf(was).dec)); S.note = ''; changed(); paintSides(); requote(true); }, () => {});
+      const was = S.pay, bal = H.moves?.held?.(S.pay, 'pay'), same = `${S.get}${S.inP}${S.outP}${LATER.on}`;
+      if (bal != null) exitPool(was).then(async (p) => { if (S.pay !== was || `${S.get}${S.inP}${S.outP}${LATER.on}` !== same || !exiting() || p.fee == null) return; const v = (await ltLoad()).mod.heldSwapMax(bal, p.fee); S.amt = tidy(plain(v, tokenOf(was).dec)); S.note = ''; changed(); paintSides(); requote(true); }, () => {});
       return;
     }
     if (e.target.closest('#max')) {
