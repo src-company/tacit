@@ -123,3 +123,45 @@ export function intentDigest(intent, chainId = 1, market = MARKET[chainId]) {
   const struct = k256(typehash, addrWord(intent.payer), bytesOf(intent.opId), word(intent.floorFee), word(intent.maxFee), word(intent.start), word(intent.rampSecs), word(intent.deadline), bytesOf(intent.tank));
   return hex(k256(new Uint8Array([0x19, 0x01]), domain, struct));
 }
+
+// The market's calls encoded with no library (the community runner installs only the root dependencies): claim / claimFromTank / fulfill /
+// fulfillFromTank for an order. Checked byte for byte against viem in tests/proof-market-client.test.mjs.
+const u256 = (x) => { const b = word(BigInt(x)); return b; };
+const intentWords = (i) => [addrWord(i.payer), bytesOf(i.opId), u256(i.floorFee), u256(i.maxFee), u256(i.start), u256(i.rampSecs), u256(i.deadline), bytesOf(i.tank)];
+const tankWords = (t) => [addrWord(t.payer), addrWord(t.delegate), u256(t.cap), u256(t.perOpMax), u256(t.expiry), u256(t.salt)];
+const padTo32 = (b) => { const n = Math.ceil(b.length / 32) * 32, o = new Uint8Array(n); o.set(b); return o; };
+const cat = (arr) => { const o = new Uint8Array(arr.reduce((n, x) => n + x.length, 0)); let p = 0; for (const x of arr) { o.set(x, p); p += x.length; } return o; };
+// params: { s: [words] } a static tuple inline, { v: word } one static word, { b: bytes } dynamic bytes, { ba: [bytes] } dynamic bytes[]
+function abiCall(signature, params) {
+  const sel = keccak_256(enc(signature)).slice(0, 4);
+  const headLen = params.reduce((n, p) => n + (p.s ? p.s.length * 32 : 32), 0), head = [], tail = [];
+  let off = headLen;
+  for (const p of params) {
+    if (p.s) head.push(...p.s);
+    else if (p.v) head.push(p.v);
+    else {
+      const body = p.b ? cat([word(p.b.length), padTo32(p.b)]) : cat([word(p.ba.length), ...(() => {
+        const heads = [], tails = []; let o = p.ba.length * 32;
+        for (const x of p.ba) { heads.push(word(o)); const t = cat([word(x.length), padTo32(x)]); tails.push(t); o += t.length; }
+        return [...heads, ...tails];
+      })()]);
+      head.push(word(off)); tail.push(body); off += body.length;
+    }
+  }
+  return hex(cat([sel, ...head, ...tail]));
+}
+const INTENT_T = '(address,bytes32,uint256,uint256,uint64,uint64,uint64,bytes32)', TANK_T = '(address,address,uint256,uint256,uint64,uint256)';
+const memoBytes = (m) => bytesOf(String(m).startsWith('0x') ? m : `0x${m}`);
+export function encodeClaim(order) {
+  const i = { s: intentWords(order.intent) }, sig = { b: bytesOf(order.signature) };
+  return order.tank
+    ? abiCall(`claimFromTank(${TANK_T},bytes,${INTENT_T},bytes)`, [{ s: tankWords(order.tank) }, { b: bytesOf(order.tankSignature) }, i, sig])
+    : abiCall(`claim(${INTENT_T},bytes)`, [i, sig]);
+}
+export function encodeFulfill(order, proof) {
+  const tail = [{ b: bytesOf(order.publicValues) }, { b: bytesOf(proof) }, { ba: (order.memos || []).map(memoBytes) }, { v: word(order.permit.v) }, { v: bytesOf(order.permit.r) }, { v: bytesOf(order.permit.s) }];
+  const i = { s: intentWords(order.intent) }, sig = { b: bytesOf(order.signature) };
+  return order.tank
+    ? abiCall(`fulfillFromTank(${TANK_T},bytes,${INTENT_T},bytes,bytes,bytes,bytes[],uint8,bytes32,bytes32)`, [{ s: tankWords(order.tank) }, { b: bytesOf(order.tankSignature) }, i, sig, ...tail])
+    : abiCall(`fulfill(${INTENT_T},bytes,bytes,bytes,bytes[],uint8,bytes32,bytes32)`, [i, sig, ...tail]);
+}

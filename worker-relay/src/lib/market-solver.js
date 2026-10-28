@@ -10,7 +10,13 @@
 // A proof that is ready before the holder's deposit has landed waits for it, up to the end of the claim.
 // Dependencies are injected so the loop is tested without a chain: listOrders(), done(opId), claim(order) -> tx, prove(order) ->
 // { publicValues, proof }, fulfil(order, proof) -> tx, clear(opId), claimOf(opId) -> { solver, until }.
-import { priceAt } from './market-calls.js';
+// The price the market charges `at` (unix seconds) for an order's intent (mirrors ProofMarket.priceAt).
+function priceAt(intent, at) {
+  const floor = BigInt(intent.floorFee), max = BigInt(intent.maxFee), ramp = BigInt(intent.rampSecs), t = BigInt(at) - BigInt(intent.start);
+  if (ramp === 0n || t >= ramp) return max;
+  if (t <= 0n) return floor;
+  return floor + ((max - floor) * t) / ramp;
+}
 
 export function makeMarketSolver({ listOrders, done, claim, prove, fulfil, clear, claimOf, me, minPrice = 0n, retryMs = 120_000, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {} }) {
   const tried = new Map(); // opId -> when it last failed here, so one bad order is not tried every pass

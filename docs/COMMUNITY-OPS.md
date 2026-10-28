@@ -93,6 +93,17 @@ Sends the open board's settles (`GET /confidential/open`, see [OPEN-RELAYER.md](
   relay sends its own as soon as it can, so the first sender is paid.
 - The board API allows a burst of 30 reads and one every 2 seconds after that, per IP address.
 
+### prove (opt-in, not part of `all`)
+
+Prove wraps for the proof market and be paid in TAC. A holder who wants a proof fast signs a fee in TAC (a price that rises from a floor to a most they chose) and a permit for that most; the order waits on the board (`GET /market/orders`). `prove` takes one order a pass: it claims it on chain (`ProofMarket.claim`, which excludes other provers for 60 seconds), proves the order's program input on this machine with `tacit-prover` (127.0.0.1:47815, `DEVICE_PROVER` to change), and fulfils it. The market contract settles the holder's wrap through the pool and pays this key from the holder's permit in the same transaction, so if the pool does not take the proof nothing moves and only the gas of the failed call is lost.
+
+- **Needs:** `tacit-prover` running, and a key with a little ETH for gas. Set `SEND_RPC_URL` to a private endpoint (the default is Flashbots Protect): the proof is in the fulfil's calldata, and the pool's settle is open to anyone, so a copier in the public mempool could settle first.
+- **Earns:** the order's price at the moment you claim it, in TAC, to the key. `MIN_TAC_WEI` sets the least you will work for.
+- **Competes with Tacit's own relay,** which takes orders first when it is idle. The orders worth your time are the ones it leaves, or ones priced for a faster machine than its board.
+- **Cost of a miss:** a claim that lapses before you fulfil costs the gas of the claim (and the bond, none to start; the owner can set one up to 0.1 ETH). Claim only what your machine proves inside the minute.
+
+`MARKET_ADDR` names the market (default `0x0000000033Dd45B1686Ba37e5F6e4ABDdaC17609`). `PROVE_SECS` is the poll cadence (default 10).
+
 ### Not included: overflow drains
 
 `drainOverflow` and `drainOverflowRoots` apply effects a batch deferred past its per-attest cap. Their inputs are

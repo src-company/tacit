@@ -47,5 +47,14 @@ for (const dt of [-5, 0, 30, 60, 119, 120, 500]) {
 }
 ok(same, 'the client\'s price curve is the market\'s, before, during and after the ramp');
 ok(pm.opIdOf(pv) === intent.opId && (() => { try { pm.buildOrder({ intent, signature: sig, permit: {}, publicValues: '0xdead' }); return false; } catch { return true; } })(), 'an order whose public values are not the intent\'s op is refused');
+{
+  const m = await import('../worker-relay/src/lib/market-calls.js');
+  const rnd = (n) => '0x' + Array.from({ length: n }, (_, i) => ((i * 37 + 11) % 256).toString(16).padStart(2, '0')).join('');
+  const direct = { intent, signature: sig, permit: { v: 28, r: rnd(32), s: rnd(32) }, publicValues: rnd(100), memos: [rnd(33), '0x', rnd(70)], stdin: '0x' };
+  const tk = { ...direct, intent: tIntent, tank, tankSignature: sig };
+  for (const [name, o] of [['a direct order', direct], ['a tank order', tk]]) {
+    ok(pm.encodeClaim(o) === m.encodeClaim(o) && pm.encodeFulfill(o, rnd(260)) === m.encodeFulfill(o, rnd(260)), `${name}: the library-free claim and fulfil calls are viem's bytes`);
+  }
+}
 console.log(fails ? `\n${fails} failed` : '\nall passed');
 process.exit(fails ? 1 : 0);

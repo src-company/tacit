@@ -7,6 +7,8 @@
 //            while the proofs are more than 2,016 blocks behind the relay (dapp/community-ops.js)
 //   settles  the open board's settles whose tETH fee covers their gas with a margin, each reported landed (dapp/community-ops.js)
 //   all      the three, each on its own cadence (the default)
+//   prove    (opt-in, not in `all`) take the proof market's orders: prove each holder's wrap on this machine with tacit-prover and be paid in TAC
+//            from their permit when the pool accepts it. Run `node tools/community-runner.mjs prove` beside tacit-prover (127.0.0.1:47815).
 // Each transaction is simulated against the latest block before it is signed, and work someone else has done meanwhile is passed
 // over. Signed transactions go to SEND_RPC_URL (Flashbots Protect by default, which does not include one that would revert), one at a
 // time, each waited for before the next.
@@ -38,6 +40,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import * as secp from '@noble/secp256k1';
 import { makeEvmTx } from '../dapp/evm-tx.js';
 import { makeHeaderRelayAdvance } from '../dapp/header-relay-advance.js';
+import { makeMarketSolver } from '../worker-relay/src/lib/market-solver.js';
+import { encodeClaim, encodeFulfill } from '../dapp/proof-market.js';
 import {
   POOL, SEL_ANCESTRY, SETTLE_GAS, readProof, attestRefusal, encodeAttest, needsAncestry, ancestryCalls, ethText, ethFeeWei, feeCovers,
   boardSummary, pickSettle, readBoard, reportLanded, settleCalldata,
@@ -57,7 +61,7 @@ export function readConfig(env = process.env, argv = process.argv.slice(2)) {
   const v = (k, d) => (env[k] != null && String(env[k]).trim() !== '' ? String(env[k]).trim() : d);
   const num = (k, d) => { const n = Number(v(k, d)); if (!Number.isFinite(n) || n < 0) throw new Error(`${k} must be a number of 0 or more`); return n; };
   const mode = String(argv.find((a) => !a.startsWith('-')) || v('MODE', 'all')).toLowerCase();
-  if (mode !== 'all' && !MODES.includes(mode)) throw new Error(`unknown mode "${mode}": headers, attest, settles or all`);
+  if (mode !== 'all' && mode !== 'prove' && !MODES.includes(mode)) throw new Error(`unknown mode "${mode}": headers, attest, settles, prove or all`);
   const need = v('HEADERS_NEED', null);
   if (need != null && !/^\d{1,8}$/.test(need)) throw new Error('HEADERS_NEED must be a Bitcoin block height');
   const dryRun = v('DRY_RUN', '0') === '1', key = v('RUNNER_KEY', null);
@@ -66,7 +70,8 @@ export function readConfig(env = process.env, argv = process.argv.slice(2)) {
     modes: mode === 'all' ? MODES.slice() : [mode], dryRun, once: v('ONCE', '0') === '1', key,
     rpcUrl: v('RPC_URL', 'https://ethereum-rpc.publicnode.com'), sendRpcUrl: v('SEND_RPC_URL', 'https://rpc.flashbots.net/fast?hint=hash'),
     api: v('API_BASE', 'https://api.tacit.finance').replace(/\/+$/, ''), esplora: v('ESPLORA_URL', 'https://blockstream.info/api').replace(/\/+$/, ''),
-    secs: { headers: num('HEADERS_SECS', 300), attest: num('ATTEST_SECS', 60), settles: num('SETTLES_SECS', 15) },
+    secs: { headers: num('HEADERS_SECS', 300), attest: num('ATTEST_SECS', 60), settles: num('SETTLES_SECS', 15), prove: num('PROVE_SECS', 10) },
+    marketAddr: v('MARKET_ADDR', '0x0000000033Dd45B1686Ba37e5F6e4ABDdaC17609'), deviceProver: v('DEVICE_PROVER', 'http://127.0.0.1:47815').replace(/\/+$/, ''), minTacWei: BigInt(v('MIN_TAC_WEI', '0')),
     headersMinBehind: num('HEADERS_MIN_BEHIND', 3), headersNeed: need == null ? null : Number(need),
     attestAfterMs: num('ATTEST_AFTER_SECS', 120) * 1000, marginBps: BigInt(Math.round(num('MARGIN_BPS', 2000))),
     maxGasWei: gweiToWei(num('MAX_GAS_GWEI', 5)), priorityWei: gweiToWei(num('PRIORITY_GWEI', 0.1)),
@@ -130,9 +135,10 @@ export function makeRunner(cfg, { log = (...a) => console.log(`[runner ${new Dat
   const latestBlock = () => rpc('eth_getBlockByNumber', ['latest', false]);
   const baseFee = async () => BigInt((await latestBlock()).baseFeePerGas);
   // The call run from this key against the latest block: a revert throws, and nothing is signed.
-  async function simulate(to, data) {
-    await rpc('eth_call', [{ from, to, data }, 'latest']);
-    return BigInt(await rpc('eth_estimateGas', [{ from, to, data }]));
+  async function simulate(to, data, value = 0n) {
+    const v = value ? { value: '0x' + value.toString(16) } : {};
+    await rpc('eth_call', [{ from, to, data, ...v }, 'latest']);
+    return BigInt(await rpc('eth_estimateGas', [{ from, to, data, ...v }]));
   }
   // The unpaid modes' gas ceiling, said once per mode while it holds them back.
   async function gasOk(mode) {
@@ -146,14 +152,14 @@ export function makeRunner(cfg, { log = (...a) => console.log(`[runner ${new Dat
   // One transaction at a time from this key: the nonce is read once the previous one has its receipt (or its wait ran out).
   const receipts = new Map();
   let queue = Promise.resolve();
-  function sendTx({ to, data, gas, label }) {
+  function sendTx({ to, data, gas, label, value = 0n }) {
     if (cfg.dryRun) {
       log(`DRY_RUN would send ${label} to ${to}: ${(data.length - 2) / 2} bytes of data, gas limit ${gas}`);
       return Promise.reject(new DryRun());
     }
     const run = async () => {
       const [nonce, base] = await Promise.all([rpc('eth_getTransactionCount', [from, 'latest']), baseFee()]);
-      const tx = { chainId: 1n, nonce: BigInt(nonce), maxPriorityFeePerGas: cfg.priorityWei, maxFeePerGas: base * 2n + cfg.priorityWei, gasLimit: gas, to, value: 0n, data };
+      const tx = { chainId: 1n, nonce: BigInt(nonce), maxPriorityFeePerGas: cfg.priorityWei, maxFeePerGas: base * 2n + cfg.priorityWei, gasLimit: gas, to, value, data };
       const { raw, hash } = signer.sign(tx);
       const got = await rpcAt(cfg.sendRpcUrl, 'eth_sendRawTransaction', [raw]);
       if (got && String(got).toLowerCase() !== hash) log(`${label}: the send endpoint answered ${got} for ${hash}`);
@@ -244,6 +250,43 @@ export function makeRunner(cfg, { log = (...a) => console.log(`[runner ${new Dat
     return true;
   }
 
+  // Prove: the proof market's open orders (worker/src/proof-market-queue.js, contracts/src/ProofMarket.sol). One order a pass: it is claimed (which
+  // excludes other provers for the claim window) while its input is proved on this machine, then fulfilled, and the market pays this key in TAC from
+  // the holder's permit in the same transaction the pool takes the proof. The proof is in the fulfil's calldata, so SEND_RPC_URL should be private.
+  const DONE = '0x388a3cf5', CLAIMS = '0xeff0f592', BOND = '0xc7cf7484';
+  const jget = async (url, init) => { const r = await fetchImpl(url, init); const b = await r.json().catch(() => ({})); if (!r.ok) throw new Error(b.error || `${url} answered ${r.status}`); return b; };
+  const proveSolver = makeMarketSolver({
+    me: from, minPrice: cfg.minTacWei, retryMs: 120_000, log: (m) => log(`prove: ${m}`),
+    listOrders: async () => (await jget(`${cfg.api}/market/orders?limit=20`)).orders || [],
+    done: async (id) => BigInt(await call(cfg.marketAddr, DONE + id.slice(2))) === 1n,
+    claimOf: async (id) => { const r = String(await call(cfg.marketAddr, CLAIMS + id.slice(2))).slice(2); const solver = '0x' + r.slice(24, 64); return /^0x0+$/.test(solver) ? null : { solver, until: Number(BigInt('0x' + r.slice(64, 128))) }; },
+    claim: async (o) => {
+      const bond = BigInt(await call(cfg.marketAddr, BOND)), data = encodeClaim(o), gas = await simulate(cfg.marketAddr, data, bond);
+      const r = await settled(sendTx({ to: cfg.marketAddr, data, gas: (gas * 12n) / 10n, value: bond, label: `claim ${o.intent.opId.slice(0, 10)}` }));
+      if (!r) return null;                                   // a dry run
+      if (!ok(r.receipt)) throw new Error('the claim did not land');
+      return r.hash;
+    },
+    prove: async (o) => {
+      const { id } = await jget(`${cfg.deviceProver}/prove`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'wrap', stdin: o.stdin }) });
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const s = await jget(`${cfg.deviceProver}/job?id=${encodeURIComponent(id)}`);
+        if (s.status === 'done') return { publicValues: s.publicValues, proof: s.proof };
+        if (s.status === 'failed') throw new Error(s.error || 'tacit-prover could not make the proof');
+      }
+    },
+    fulfil: async (o, p) => {
+      const data = encodeFulfill(o, p.proof), gas = await simulate(cfg.marketAddr, data);
+      const r = await settled(sendTx({ to: cfg.marketAddr, data, gas: (gas * 12n) / 10n, label: `fulfil ${o.intent.opId.slice(0, 10)}` }));
+      if (!r) return null;
+      if (!ok(r.receipt)) throw new Error('the fulfil did not land');
+      return r.hash;
+    },
+    clear: (id) => jget(`${cfg.api}/market/done`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ opId: id }) }),
+  });
+  async function prove() { return proveSolver.pass(); }
+
   // A send's outcome: null for a dry run, else { hash, receipt } (receipt null when it was not included in time).
   async function settled(p) {
     try { const hash = await p; return { hash, receipt: receipts.get(hash) ?? null }; }
@@ -266,7 +309,7 @@ export function makeRunner(cfg, { log = (...a) => console.log(`[runner ${new Dat
     if (code && code !== '0x') log(`${from} has code (${code.slice(0, 10)}…): the board's ETH fees go to that code. Use a fresh key`);
   }
 
-  return { from, start, passes: { headers, attest, settles } };
+  return { from, start, passes: { headers, attest, settles, prove } };
 }
 
 async function main() {

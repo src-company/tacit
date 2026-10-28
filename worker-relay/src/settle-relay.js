@@ -1246,8 +1246,9 @@ async function main() {
   for (;;) {
     if (stopping) { log('stopped cleanly'); process.exit(0); }
     try {
-      let worked = await cycle();
-      if (!worked) worked = await marketCycle();
+      // a market order is paid in TAC by a holder who asked to jump the queue, so it is taken before the free queue (one job each pass)
+      let worked = await marketCycle();
+      if (!worked) worked = await cycle();
       if (!worked) worked = await gasCycle();
       // An empty queue is the common case, not an error — but it must still beat, or /prover-health
       // goes stale (and "down") after 10 quiet minutes on a perfectly healthy relay. heartbeat() itself

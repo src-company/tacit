@@ -7,7 +7,7 @@
      data stats does, plus an injected wallet to sign advanceTip(bytes) — permissionless on chain
      (contracts/src/lib/BitcoinLightRelay.sol:253) — so anyone can push the header relay forward and pay their
      own gas, instead of waiting on Tacit's own cron. No Tacit key touches this page. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-5Db+4zUGyFvuUWSoYnvxdKRJrdkBEqT4aBqm5hlJ9+k=' 'wasm-unsafe-eval'; connect-src wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-vJ5S48L2L35IGCWnN58I/0Rlc1gNLbVeHe+8peKAGk4=' 'wasm-unsafe-eval'; connect-src wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://api.tacit.finance https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#E8E0CC" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#15130E" media="(prefers-color-scheme: dark)">
@@ -440,6 +440,18 @@ RUNNER_KEY=0x… node tools/community-runner.mjs</code></pre>
       <pre class="cmd"><code>tacit-prover mine 0xYourAddress
 TACIT_MINE=0xYourAddress tacit-prover install   # or: mine whenever it is idle, from login</code></pre>
       <p class="plan"><a href="https://github.com/src-company/tacit/tree/main/contracts/sp1/confidential/device-prover" target="_blank" rel="noopener noreferrer">Get tacit-prover</a></p>
+    </div>
+  </section>
+  <section class="grp" id="g-prove" aria-labelledby="h-prove">
+    <h2 id="h-prove"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>Prove for TAC</h2>
+    <div class="panel">
+      <p class="lede">Holders who want a proof fast sign a fee in TAC. Your computer claims the order, proves it, and is paid from their permit the moment the pool accepts it.</p>
+      <div class="plan num" id="prove-box"><p><span class="sk" style="--w:22ch"></span></p></div>
+      <pre class="cmd"><code>tacit-prover                                   # proves on this computer (127.0.0.1)
+git clone https://github.com/src-company/tacit
+cd tacit &amp;&amp; npm ci --omit=dev
+RUNNER_KEY=0x… node tools/community-runner.mjs prove</code></pre>
+      <p class="plan">The key needs a little ETH for gas. Nothing moves unless the pool takes your proof. <a href="https://github.com/src-company/tacit/blob/main/docs/COMMUNITY-OPS.md" target="_blank" rel="noopener noreferrer">What it costs and earns</a> · <a href="https://etherscan.io/address/0x0000000033Dd45B1686Ba37e5F6e4ABDdaC17609" target="_blank" rel="noopener noreferrer">Market contract</a></p>
     </div>
   </section>
   </main>
@@ -887,6 +899,16 @@ async function refreshPool() {
   box.innerHTML = `<p>${esc(plural(p.queued || 0, 'wrap'))} waiting · ${esc(int(p.doneToday || 0))} proved today by ${esc(plural(p.minersToday || 0, 'prover'))}</p>${top ? `<p>Most today: ${top}</p>` : ''}`;
 }
 
+// The proof market's board (GET /market/orders): the orders waiting for a prover, each a holder's wrap and the TAC it pays at most.
+async function refreshMarket() {
+  const box = $('#prove-box');
+  let j = null;
+  try { const r = await fetch(`${API}/market/orders?limit=50`, { cache: 'no-store' }); if (r.ok) j = await r.json(); else if (r.status === 404) { $('#g-prove').hidden = true; return; } } catch {}
+  if (!j) { box.innerHTML = '<p>Could not read the board. The page tries again every minute.</p>'; return; }
+  const os = j.orders || [], most = os.reduce((m, o) => (BigInt(o.intent.maxFee) > m ? BigInt(o.intent.maxFee) : m), 0n);
+  box.innerHTML = os.length ? `<p>${esc(plural(os.length, 'order'))} waiting · the best pays up to ${esc((Number(most / 10n ** 14n) / 1e4).toFixed(2))} TAC</p>` : '<p>No orders waiting. Tacit’s relay takes them first, so orders reach the board when it is busy.</p>';
+}
+
 // The connected wallet is left from here (evm.disconnect): a WalletConnect session ends in the wallet app too, so the next connection can pair another app or
 // account; a browser wallet takes this site's permission back, so the next connection asks which account. Either way no page connects it again on load.
 // Change account: another account of the same wallet (its own chooser), or a new pairing for a wallet app.
@@ -911,11 +933,11 @@ evm.onElsewhere(restoreWallet);                                  // a wallet con
 refreshProof().catch(() => {});
 refresh().catch(readFailed);
 refreshBoard().catch(() => {});
-refreshPool().catch(() => {});
+refreshPool().catch(() => {}); refreshMarket().catch(() => {});
 // Read again every minute while the page is in view, and at once when it comes back after longer.
-setInterval(() => { if (document.hidden) return; refresh().catch(() => {}); refreshProof().catch(() => {}); refreshBoard().catch(() => {}); refreshPool().catch(() => {}); }, 60000);
+setInterval(() => { if (document.hidden) return; refresh().catch(() => {}); refreshProof().catch(() => {}); refreshBoard().catch(() => {}); refreshPool().catch(() => {}); refreshMarket().catch(() => {}); }, 60000);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && Date.now() - lastRead > 60000) { refresh().catch(() => {}); refreshProof().catch(() => {}); refreshBoard().catch(() => {}); refreshPool().catch(() => {}); }
+  if (!document.hidden && Date.now() - lastRead > 60000) { refresh().catch(() => {}); refreshProof().catch(() => {}); refreshBoard().catch(() => {}); refreshPool().catch(() => {}); refreshMarket().catch(() => {}); }
 });
 </script>
 </body>
