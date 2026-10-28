@@ -171,3 +171,14 @@ test('a proof posted back is kept only for the order it is for', async () => {
   assert.equal((await b.postProof('0x' + '12'.repeat(32), { publicValues: o.publicValues, proof: '0xab' })).ok, false, 'no such order');
   assert.equal((await b.postProof(o.intent.opId, { publicValues: o.publicValues, proof: '0x' + 'ab'.repeat(5000) })).ok, false, 'too large');
 });
+
+test('an order whose index entry was lost to a racing post is put back', async () => {
+  const store = kv();
+  // a store whose first index write is overwritten by a stale one, as two posts racing would do
+  let dropped = false;
+  const racy = { ...store, get: store.get, delete: store.delete, async put(k, v, o) { if (k === 'pm:index' && !dropped) { dropped = true; return store.put(k, '[]'); } return store.put(k, v, o); } };
+  const b = makeMarketBoard({ kv: racy, market: MARKET, now: () => NOW });
+  const o = await order({ value: 1975 });
+  assert.equal((await b.post(o)).ok, true);
+  assert.deepEqual((await b.list()).map((x) => x.intent.opId), [o.intent.opId], 'the order is on the board');
+});

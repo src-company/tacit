@@ -38,7 +38,8 @@ export function makeMarketSolver({ listOrders, done, claim, prove, fulfil, clear
       let minP;
       try { minP = typeof minPrice === 'function' ? await minPrice() : minPrice; } catch (e) { log(`market: could not price the work: ${e.message}`); return false; }
       const open = new Set(orders.map((o) => o.intent.opId));
-      for (const id of proofs.keys()) if (!open.has(id)) proofs.delete(id);
+      // A proof is kept for 15 minutes after its order drops off the list (a board that briefly lost it, a read that raced a post): proving it again costs 30 s.
+      for (const [id, st] of proofs) { if (open.has(id)) st.seenAt = now(); else if (now() - (st.seenAt || 0) > 15 * 60_000) proofs.delete(id); }
       // Orders whose deposit has landed come first (their holder is waiting on them), then the newest of the rest: a holder who has just posted is
       // waiting, an old order that never got its deposit is probably abandoned. One prover, so the order it works in matters.
       const status = new Map(await Promise.all(orders.map(async (o) => [o.intent.opId, Number(await depositStatus(depositOf(o.publicValues)).catch(() => 0))])));
@@ -65,7 +66,7 @@ export function makeMarketSolver({ listOrders, done, claim, prove, fulfil, clear
             started.push({ at: now(), payer: o.intent.payer.toLowerCase() });
             busy = true;
             log(`market: proving order ${id.slice(0, 10)}`);
-            st = { done: false, value: null, failed: null };
+            st = { done: false, value: null, failed: null, seenAt: now() };
             proofs.set(id, st);
             // a finished proof is handed back for the holder too (best effort): if the deposit never comes, the page keeps it as a voucher
             prove(o).then(async (p) => { if (deliver) await deliver(o, p).catch(() => {}); st.value = p; st.done = true; })

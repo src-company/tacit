@@ -97,6 +97,12 @@ export function makeMarketBoard({ kv, market, chainId = 1, cfg = MARKET_BOARD, n
       await kv.put(`pm:order:${id}`, JSON.stringify(order), { expirationTtl: Math.max(60, until - now() + 60) });
       idx.push({ id, at: now(), until, max: order.intent.maxFee, tank: !!order.tank, payer: lc(order.intent.payer) });
       await writeIndex(idx);
+      // The index is read, changed and written back with no lock, so two posts at once can lose one: read it back, and add the order again if it is not there.
+      for (let i = 0; i < 3 && !(await readIndex()).some((e) => e.id === id); i++) {
+        const again = (await readIndex()).filter((e) => e.until > now());
+        again.push({ id, at: now(), until, max: order.intent.maxFee, tank: !!order.tank, payer: lc(order.intent.payer) });
+        await writeIndex(again);
+      }
       return { ok: true, id };
     },
     // The open orders, oldest first, each whole (a prover needs the order to take it).

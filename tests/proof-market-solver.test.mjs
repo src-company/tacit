@@ -150,3 +150,13 @@ test('no new proof is begun while the relay is busy with its own queue, and one 
   await s.pass();
   assert.equal(proves, 1);
 });
+
+test('a proof is kept when its order briefly drops off the board, and not made again', async () => {
+  let listed = true, proves = 0, t = 2_000_000;
+  const s = makeMarketSolver({ me: ME, now: () => t, depositStatus: async () => 0, listOrders: async () => (listed ? [mk('0xr')] : []), done: async () => false, claimOf: async () => null,
+    claim: async () => '0x', prove: async () => { proves++; return { proof: '0x' }; }, fulfil: async () => '0x', clear: async () => {} });
+  await s.pass(); await drain(); await drain();
+  listed = false; await s.pass(); t += 60_000;
+  listed = true; await s.pass();
+  assert.equal(proves, 1, 'proved once');
+});
