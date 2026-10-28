@@ -174,6 +174,16 @@ button.act:disabled { opacity: .6; cursor: default; transform: none; }
 .way { display: grid; gap: 3px; width: 100%; padding: 12px 14px; font: inherit; color: var(--ink); text-align: left; cursor: pointer; background: var(--field); border: 1px solid var(--hair-2); border-radius: 12px; }
 @media (hover: hover) { .way:hover { border-color: var(--ink); } }
 .way-t { display: flex; align-items: center; gap: 10px; font-weight: 500; }
+.ways { display: grid; gap: 8px; margin-top: 4px; }
+.way { font-size: 13px; transition: border-color .15s; }
+.way:disabled { opacity: .5; cursor: progress; }
+.way.main { border-color: var(--ink); background: var(--card); }
+.way-m { font-size: 12px; line-height: 1.5; color: var(--mute); }
+.ways-err { margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--err); }
+.ways .note { margin: 6px 0 0; }
+.ways .more { margin: 6px 0 0; }
+.bsheet .linkbtn { padding: 0; font: 12px var(--mono); color: var(--mute); background: none; border: 0; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.bsheet .linkbtn:hover { color: var(--ink); }
 .wc-qr { margin: 0 auto 14px; width: 224px; padding: 10px; background: #fff; border-radius: 8px; } .wc-qr svg { display: block; width: 100%; height: auto; }
 .addr-s { font-size: 11.5px; overflow-wrap: anywhere; }
 @media (max-width: 560px) { .bsheet { padding: 0; place-items: end center; } .bsheet-in { width: 100%; border-radius: 16px 16px 0 0; } }
