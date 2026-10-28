@@ -621,6 +621,7 @@ a.di { color: inherit; text-decoration: none; }
 .tc-facts dd small { margin-right: 6px; font: 400 12px var(--mono); letter-spacing: 0; color: var(--mute); }
 /* Private bitcoin payments: three steps on one line, each a way in. */
 .tc-pay { width: 100%; max-width: 720px; margin: 44px 0 0; }
+.tp-note { margin: 18px 0 0; text-align: center; font-size: 12px; line-height: 1.5; color: var(--mute); text-wrap: balance; }
 .tc-pay h3 { margin: 0; font: 400 26px/1.2 var(--serif); letter-spacing: -.01em; }
 .tp-flow { position: relative; list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 10px 0 0; padding: 0; }
 .tp-flow::before { content: ''; position: absolute; top: 34px; left: calc(100% / 6); right: calc(100% / 6); border-top: 1px solid var(--hair-2); }
@@ -1387,7 +1388,7 @@ footer.sf svg.fill { width: 16px; height: 16px; }
     </div>
     <div class="tc-sets">
     <div class="tc-set on" id="tc-tac" role="tabpanel" aria-labelledby="tc-t-tac">
-      <div class="sx-h"><h2 id="tc-h">TAC is private money, <em>born on Bitcoin</em>.</h2></div>
+      <div class="sx-h"><h2 id="tc-h">TAC is private money, <em>born on Bitcoin</em>.</h2><p>Confidential balances and stealth receives by default, a shielded pool for full privacy. Ethereum adds markets and programmability.</p></div>
       <dl class="tc-facts">
         <div><dt>fixed supply</dt><dd class="num">21,000,000</dd></div>
         <div><dt>wallets airdropped, both chains</dt><dd class="num">14,000+</dd></div>
@@ -1400,6 +1401,7 @@ footer.sf svg.fill { width: 16px; height: 16px; }
           <li><button type="button" data-hx="shield:btc:pool"><svg class="g" aria-hidden="true"><use href="#g-shield"/></svg><span><b>Shielded</b><small>in TAC’s pool</small></span></button></li>
           <li><a href="/tac/#withdraw/sats"><svg class="tk" aria-hidden="true"><use href="#tk-btc"/></svg><span><b>Sats out</b><small>to any address, unlinked</small></span></a></li>
         </ol>
+        <p class="tp-note">Trade on Bitcoin too: a native AMM, its pairs already seeded and swapped.</p>
       </div>
       <ul class="tc-do six" aria-label="What TAC does">
         <li><b>Pays for gas</b><span>swap and use DeFi with TAC, no ETH needed</span></li>
