@@ -349,7 +349,7 @@ function paintMove() {
   $('#get-usd').textContent = v != null ? `≈ ${usd(v)}` : '';
   $('#rows').hidden = true; $('#later').hidden = true; $('#ackbox').innerHTML = ''; $('#ackbox').dataset.k = '';
   const lines = (q.rc || []).filter(Boolean);
-  rc.hidden = !lines.length; rc.classList.toggle('stale', !!q.busy);
+  rc.hidden = !lines.length || (!S.amt && !q.fixed); rc.classList.toggle('stale', !!q.busy);   // the receipt waits for an amount
   rc.innerHTML = lines.map(([k, v, c, t]) => `<div${t ? ` title="${esc(t)}"` : ''}><dt>${esc(k)}</dt><dd class="${c || ''}">${esc(v)}</dd></div>`).join('');
   const need = !q.free && !parseUnits(S.amt, 8);
   go.textContent = S.busy ? 'Working…' : need ? 'Enter an amount' : q.busy && !q.go ? 'Reading…' : q.go || 'Continue';
