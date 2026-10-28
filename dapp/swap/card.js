@@ -7,7 +7,7 @@ import { UserStopped } from '/trade/wallet.js?cb=6778fe25';
 import { rpc, RPCS, API, api, esc, fmtUnits, parseUnits, plain, usd, sig, E10, E18, ago } from '/trade/util.js?cb=dcf3a4f2';
 import * as R from '/swap/route.js?cb=ce610210';
 import * as A from '/swap/aggregate.js?cb=3c73982e';
-import * as SV from '/swap/solvers.js?cb=94e1df0a';
+import * as SV from '/swap/solvers.js?cb=2c70b259';
 import * as GR from '/gas-relay.js?cb=893b2c02';
 import { checkSnwapCall, SNWAP_EXECUTORS, SAFE_EXECUTOR } from '/zrouter-guard.js?cb=f5ae4bcd';
 import { rewardPop } from '/reward-pop.js?cb=1b53f6d4';
@@ -60,6 +60,8 @@ const laterPts = (q, r) => (!q || r?.hop ? null : ptsFor('dev', laterDeposit(q))
 const ptsSaid = (p, word = true) => (p ? `${p.floor ? '' : '≈ '}${Math.round(p.pts).toLocaleString('en-US')}${p.floor ? '+' : ''}${word ? ' points' : ''}` : '');
 // What a swap inside a private pool must pay at least: it settles by a proof some time after the quote, so the slippage setting is honoured when it is looser than 1%,
 // and never goes tighter than that.
+// Solvers whose firm route the guard refused or whose simulation failed, left out of the quotes for five minutes (solver id -> until).
+const AVOID = new Map();
 const poolFloor = (x) => (x * (10000n - BigInt(Math.max(Number(S.slip) || 0, 100)))) / 10000n;
 // How a split divides, as the TAC trading page draws it: Precision's share and Tacit's, side by side, each named (the first leg is Precision's).
 const splitBar = (sh) => `<span class="splitbar" role="img" aria-label="${sh}% Precision pool, ${100 - sh}% Tacit pool"><span class="pp" style="flex:${Math.max(sh, 8)}">Precision ${sh}%</span><span class="tp" style="flex:${Math.max(100 - sh, 8)}">Tacit ${100 - sh}%</span></span>`;
@@ -565,7 +567,8 @@ async function quote(my, wei) {
     // with Swap privately on, the quote names neither the wallet nor the destination, and asks no outside solver: a node or an API that saw
     // both would hold the link the deposit is there to break (the swap out is quoted again, with a stand-in, when it is made)
     const hide = laterOn(kind), who = hide ? PREVIEW : recipient() || account || PREVIEW, rows = [], sq = { tokenIn: S.pay, tokenOut: S.get, amountIn: wei, decIn: pay.dec, decOut: get.dec };
-    let left = hide ? 1 : 1 + SV.SOLVERS.length, zerr = null;
+    const sols = hide ? [] : SV.SOLVERS.filter((v) => !(AVOID.get(v.id) > Date.now()));   // a solver whose route was just refused is left out for a few minutes
+    let left = 1 + sols.length, zerr = null;
     gasPrice();
     // in dollars where the token and the gas can both be priced, else what it pays
     const net = (r) => { const v = usdOf(S.get, r.out), f = S.gasPrice && S.px.ethUsd ? (Number(r.gas * S.gasPrice) / 1e18) * S.px.ethUsd : null; return v != null && f != null ? v - f : Number(r.out); };
@@ -579,7 +582,7 @@ async function quote(my, wei) {
     await Promise.all([
       within(A.bestRoute({ ethCall, to: who, refundTo: hide ? PREVIEW : account || who, tokenIn: S.pay, tokenOut: S.get, amountIn: wei, slippageBps: S.slip, deadline: chainDeadline(1200) }), 20e3, 'zQuoter did not answer in time. Try again.')
         .then((zq) => settle(zq ? { k: 'agg', name: zq.name, note: 'onchain', out: zq.out, min: zq.min, agg: zq, gas: GAS[zq.kind] || GAS.split } : null), (e) => { zerr = e; settle(null); }),
-      ...(hide ? [] : SV.SOLVERS.map((v) => SV.priceOf(v, sq).then((p) => settle(p ? { k: `sv:${p.id}`, name: p.name, note: 'solver', out: p.out, sv: { id: p.id, ctx: p.ctx }, gas: GAS.snwap } : null)))),
+      ...(sols.map((v) => SV.priceOf(v, sq).then((p) => settle(p ? { k: `sv:${p.id}`, name: p.name, note: 'solver', out: p.out, sv: { id: p.id, ctx: p.ctx }, gas: GAS.snwap } : null)))),
     ]);
     if (rows.length) return;
     if (zerr) throw zerr;
@@ -902,7 +905,7 @@ function paintQuote() {
     }
     else if (!r.priv && S.gasPrice && S.px.ethUsd && relayNoEth(kind)) {
       const f = Number(GR.GAS_UNITS * S.gasPrice) / 1e18 * S.px.ethUsd * 1.5, sym = lc(S.pay) === lc(R.TAC) ? 'TAC' : tokenOf(S.pay)?.sym;
-      lines.push(['Network fee', `about ${f < 1 ? `$${f.toFixed(2)}` : usd(f)}, paid in ${esc(sym)}`, 'ok', 'You hold no ETH for gas, so the relay sends this swap and takes its cost from your balance. TAC pays it when you hold enough, otherwise the token you swap. You sign once and nothing leaves your wallet unless the swap lands.']);
+      lines.push(['Network fee', `about ${f < 1 ? `$${f.toFixed(2)}` : usd(f)}, paid in TAC or ${esc(sym)}`, 'ok', 'You hold no ETH for gas, so the relay sends this swap and takes its cost from your balance. TAC pays it when you hold enough, otherwise the token you swap. You sign once and nothing leaves your wallet unless the swap lands.']);
     }
     else if (!r.priv && r.gas && S.gasPrice && S.px.ethUsd) { const f = Number(r.gas * S.gasPrice) / 1e18 * S.px.ethUsd; lines.push(['Network fee', `about ${f < 1 ? `$${f.toFixed(2)}` : usd(f)}`]); }
     // one route shown while others are still being priced: say so, or the first to arrive looks like the only one
@@ -1099,9 +1102,12 @@ async function relayGo(P, from, plan) {
     const call = { to: tx.to, data: tx.data }, min = P.floor;
     // the fee: in TAC when the wallet holds enough and the token spent takes a permit, else in the token spent
     const permitTok = !!GR.PERMIT_TOKENS[lc(P.pay)], bal = (k) => S.bal[k] ?? 0n;
+    // a fee is taken in TAC only if it is no more than a quarter of the swap's value and under $25 (when both can be priced), else in the token spent, under the same limits
+    const feeOk = (k, f) => { const fu = usdOf(lc(k), f), su = usdOf(lc(P.pay), amt); return !(fu != null && fu > 25) && !(fu != null && su != null && fu * 4 > su); };
     let feeToken = P.pay, fee = await GR.feeFor({ gasPriceWei: plan.gasPrice, ethToToken: (w) => kyberEthTo(P.pay, w) });
-    if (permitTok && lc(P.pay) !== tac) { const ft = await GR.feeFor({ gasPriceWei: plan.gasPrice, ethToToken: (w) => kyberEthTo(R.TAC, w) }); if (ft != null && bal(tac) >= ft) { feeToken = R.TAC; fee = ft; } }
+    if (permitTok && lc(P.pay) !== tac) { const ft = await GR.feeFor({ gasPriceWei: plan.gasPrice, ethToToken: (w) => kyberEthTo(R.TAC, w) }); if (ft != null && bal(tac) >= ft && feeOk(tac, ft)) { feeToken = R.TAC; fee = ft; } }
     if (fee == null) throw new Error('Could not price the network fee. Nothing was sent.');
+    if (!feeOk(feeToken, fee)) throw new Error(`The network fee is too high for this swap right now (${tidy(amtFmt(fee, lc(feeToken) === tac ? 18 : pt.dec))} ${lc(feeToken) === tac ? 'TAC' : esc(pt.sym)}). Swap more, add a little ETH, or try when gas is lower. Nothing was sent.`);
     if (lc(feeToken) === lc(P.pay) && fee * 4n > amt) throw new Error(`The network fee (${tidy(amtFmt(fee, pt.dec))} ${esc(pt.sym)}) is more than a quarter of this swap. Swap more, or add a little ETH. Nothing was sent.`);
     const total = lc(feeToken) === lc(P.pay) ? amt + fee : amt;
     if (bal(lc(P.pay)) < total) throw new Error(`Not enough ${esc(pt.sym)}: the swap and the network fee need ${tidy(amtFmt(total, pt.dec))}.`);
@@ -1126,11 +1132,13 @@ async function relayGo(P, from, plan) {
     const signature = await signTyped(GR.orderTypedData(order), from);
     say('Sending it to the relay…');
     const r = await fetch(`${API}/gas/order`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ order: { order, data, signature, inPermit, feePermit, p2 } }), signal: AbortSignal.timeout(15e3) }).then((q) => q.json()).catch(() => null);
-    if (!r?.ok) throw new Error(`The relay did not take the order${r?.error ? `: ${esc(r.error)}` : ''}. Nothing was spent.`);
+    // the relay saying no is final; no answer at all (a timeout, a dropped connection) is not: it may have the order, so this goes on to wait for it until it expires
+    if (r && !r.ok) throw new Error(`The relay did not take the order${r?.error ? `: ${esc(r.error)}` : ''}. Nothing was spent.`);
+    if (!r) say('The relay did not answer. Checking whether it took the order…');
     // wait for the relay to send it: the contract marks the order's nonce used when it runs (or when the wallet cancels it)
     const usedSel = '0xad04dc3f' + addrWord(from) + BigInt(order.nonce).toString(16).padStart(64, '0');
     const before = P.to ? null : await balanceNow(P.get, from).catch(() => null);
-    const end = Date.now() + 5 * 60e3;
+    const end = Number(order.deadline) * 1000 + 15e3;     // as long as the order can still be sent: a retry before then could swap twice
     say('Waiting for the relay to send it. Nothing leaves your wallet unless the swap lands.');
     let done = false;
     const t0 = Date.now();
@@ -1140,7 +1148,7 @@ async function relayGo(P, from, plan) {
     }
     // the relay's transaction, from the contract's Executed event for this payer and order
     const ran = done ? await rpc('eth_getLogs', [{ address: relay, topics: ['0x533053a5fad9470861fb5df750d47e5f011faa03daba05299fe4bdc65f52d519', '0x' + addrWord(from), null, '0x' + BigInt(order.nonce).toString(16).padStart(64, '0')], fromBlock: '0x' + (BigInt(await rpc('eth_blockNumber', [])) - 200n).toString(16), toBlock: 'latest' }]).then((l) => l?.[0]?.transactionHash || null, () => null) : null;
-    if (!done) throw new Error('The relay has not sent it yet. Nothing was spent; the order lapses by itself in a few minutes. Try again.');
+    if (!done) throw new Error('The relay did not send it before the order expired. Nothing was spent. Try again.');
     const after = P.to ? null : await balanceNow(P.get, from).catch(() => null), got = before != null && after != null ? after - before : null;
     S.amt = ''; S.q = null; S.busy = false; changed(); paint();
     say(`Done: ${got != null && got > 0n ? `${tidy(amtFmt(got, gt.dec))} ${esc(gt.sym)} in your wallet` : `about ${tidy(amtFmt(P.r.out, gt.dec))} ${esc(gt.sym)} to ${esc(who(dest))}`}. The network fee was ${feeTxt}.${ran ? ` ${txLink(ran)}` : ''}`);
@@ -1207,7 +1215,7 @@ async function prepare(P, from) {
     const min = floorFor(f.out ?? P.floor);
     const call = SV.snwapCall({ tokenIn: P.pay, tokenOut: P.get, amountIn: P.wei, to: dest, minOut: min, fwd: v.fwd, router: f.router, data: f.data });
     const why = checkSnwapCall(call.data, { to: dest, tokenIn: P.pay, tokenOut: P.get, amount: P.wei, minOut: min, executor: v.fwd });
-    if (why) throw new Error(`${v.name}’s route was refused (${why}). Nothing was sent.`);
+    if (why) { AVOID.set(v.id, Date.now() + 5 * 60e3); say(`${esc(v.name)}’s route was refused (${esc(why)}). Nothing was sent; the next best route is shown.`, '', true); S.busy = false; S.hold = false; requote(true); return null; }
     // the approval or permit is asked for only now, once the route is firm and has passed the guard: a refused or moved quote leaves nothing behind
     const access = isEth(P.pay) ? null : await anyAccess({ token: P.pay, maxIn: P.wei, deadline: dl }, from, { permit2: false });
     tx = snwapTx(call, P, access);
@@ -1220,7 +1228,10 @@ async function prepare(P, from) {
   if (RELAY_MODE) return tx;                                                 // the relay simulates the whole order before it sends
   say('Checking it first…');
   const sim = await venues.simulate({ tx, from });
-  if (!sim.ok) throw new Error('This swap would fail, so nothing was sent. Try a smaller amount or try again.');
+  if (!sim.ok) {
+    if (P.r.sv) { AVOID.set(P.r.sv.id, Date.now() + 5 * 60e3); say(`${esc(tokenOf(P.get).sym)} through ${esc(P.r.name)} would fail, so nothing was sent. The next best route is shown.`, '', true); S.busy = false; S.hold = false; requote(true); return null; }
+    throw new Error('This swap would fail, so nothing was sent. Try a smaller amount or try again.');
+  }
   return tx;
 }
 async function withAccess({ tx, make, from, dl, permit }) {
@@ -2196,6 +2207,8 @@ function applyParams(p) {
   if (S.outP && t && !inPool(S.get)) { const r = outRoute(S.get); if (r) { S.outP = false; if (r === 'later') LATER.on = true; } }
   if (!kindOf(S.pay, S.get)) fit(t ? 'get' : 'pay');
   const a = p.get('amt');
+  // a target token the card does not know: the pair it opened on is not the one the link named, so the amount (meant for that pair) is not filled in
+  if (p.get('to') && !t) { S.note = { h: 'That token is not in the list, so the card opened on its default pair. Paste its address in the Get picker to add it.', cls: '' }; return; }
   if (a && (f ? S.pay === side(f, S.inP) : !p.get('from')) && parseUnits(a, tokenOf(S.pay).dec)) S.amt = fitAmt(a);
 }
 // The card shows what a link names: the page's own address, or a button elsewhere on the page. A token it does not know yet is looked for in the

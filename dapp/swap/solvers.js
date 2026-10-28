@@ -27,8 +27,13 @@ export const SOLVERS = [
   { id: 'paraswap', name: 'ParaSwap', fwd: fwdOf('ParaSwap'),
     price: (q, s) => json(`https://api.paraswap.io/prices?${new URLSearchParams({ srcToken: tok(q.tokenIn), destToken: tok(q.tokenOut), amount: String(q.amountIn), srcDecimals: String(q.decIn), destDecimals: String(q.decOut), side: 'SELL', network: '1', version: '6.2' })}`, s)
       .then((j) => ({ out: big(j?.priceRoute?.destAmount), ctx: j?.priceRoute })),
-    firm: (q, route, s) => post('https://api.paraswap.io/transactions/1?ignoreChecks=true', { srcToken: tok(q.tokenIn), destToken: tok(q.tokenOut), srcAmount: String(q.amountIn), srcDecimals: route.srcDecimals, destDecimals: route.destDecimals, priceRoute: route, userAddress: fwdOf('ParaSwap'), partner: 'tacit', slippage: q.slippageBps }, s)
-      .then((j) => j?.to && { router: j.to, data: j.data, out: big(route.destAmount) }) },
+    // the route is read again as it is built (a route from the quote is seconds or minutes old), so the amount it reports is today's and the page's check of it can fire
+    firm: async (q, route, s) => {
+      const fresh = await json(`https://api.paraswap.io/prices?${new URLSearchParams({ srcToken: tok(q.tokenIn), destToken: tok(q.tokenOut), amount: String(q.amountIn), srcDecimals: String(q.decIn), destDecimals: String(q.decOut), side: 'SELL', network: '1', version: '6.2' })}`, s).then((j) => j?.priceRoute).catch(() => null);
+      const pr = fresh?.destAmount ? fresh : route;
+      return post('https://api.paraswap.io/transactions/1?ignoreChecks=true', { srcToken: tok(q.tokenIn), destToken: tok(q.tokenOut), srcAmount: String(q.amountIn), srcDecimals: pr.srcDecimals, destDecimals: pr.destDecimals, priceRoute: pr, userAddress: fwdOf('ParaSwap'), partner: 'tacit', slippage: q.slippageBps }, s)
+        .then((j) => j?.to && { router: j.to, data: j.data, out: big(pr.destAmount) });
+    } },
   { id: 'kyber', name: 'KyberSwap', fwd: fwdOf('KyberSwap'),
     price: (q, s) => json(`https://aggregator-api.kyberswap.com/ethereum/api/v1/routes?${new URLSearchParams({ tokenIn: tok(q.tokenIn), tokenOut: tok(q.tokenOut), amountIn: String(q.amountIn) })}`, s)
       .then((j) => ({ out: big(j?.data?.routeSummary?.amountOut), ctx: j?.data?.routeSummary })),
