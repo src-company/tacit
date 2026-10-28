@@ -329,4 +329,5 @@
 .swc .ff button.where:not(.priv) { text-decoration: none; }
 @media (hover: hover) { .swc .ff button.where:not(.priv):hover { text-decoration: underline; text-underline-offset: 3px; } }
 
-.swc .act .cp, .act #hx-copy.cp { margin: 2px auto 0; }
+.swc .act .cp, .act #hx-copy.cp { display: flex; margin: 2px auto 0; }
+.swc .act .cp[hidden], .act #hx-copy.cp[hidden] { display: none; }
