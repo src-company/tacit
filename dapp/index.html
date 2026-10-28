@@ -647,7 +647,7 @@ a.di { color: inherit; text-decoration: none; }
 /* The other assets: a switch under the coin. The coin turns to the one picked, leans toward a pointer and turns over when pressed;
    each asset's story sits in the same grid cell, so a switch never moves what is below. */
 .tc-hand { transform-style: preserve-3d; transform: rotateX(var(--tx, 0deg)) rotateY(var(--ty, 0deg)); transition: transform .6s var(--ease); cursor: pointer; }
-.tc-as { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 26px; margin: 0 0 32px; }
+.tc-as { position: relative; z-index: 2; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 26px; margin: 0 0 32px; }
 .tc-as button { display: inline-flex; align-items: center; gap: 8px; padding: 6px 2px 5px; font: italic 400 20px/1 var(--serif); letter-spacing: -.01em; color: var(--mute); background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; cursor: pointer; transition: color .15s, border-color .15s; }
 .tc-as .tk { width: 24px; height: 24px; opacity: .55; transition: opacity .15s, transform .35s var(--spring); }
 .tc-as [aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
