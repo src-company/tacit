@@ -2,7 +2,7 @@ import { DEPLOYMENTS } from '/vault/deployments.js?cb=4af96594';
 import * as M from '/vault/math.js?cb=ac1ed53e';
 import { makeRpc, RPCS, ARCHIVE, HISTORY, makeReader, QUEUE_EXPIRY } from '/vault/chain.js?cb=2846737a';
 import { makeFeed } from '/vault/feed.js?cb=4ca779bc';
-import { makePools } from '/vault/pools.js?cb=ee3f072b';
+import { makePools } from '/vault/pools.js?cb=82f98c5a';
 import { makeVaultEngine, KIND, BATCH_MAX, StopWaiting } from '/vault/engine.js?cb=fbec4c24';
 import { makeConnect, UserStopped } from '/trade/connect.js?cb=de979716';
 

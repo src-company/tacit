@@ -421,6 +421,7 @@ export function makePools({ el, cfg, esc, rpc, ethCall, batch, wallet, W, synthO
       return unopened ? `Not open yet<small>opening earns ${esc(tacText(n.create))} TAC</small>` : 'Not open yet';
     }
     const q = x.m.synthIs1 ? x.r0 : x.r1, now = px(x), depth = `${esc(qFmt(x.m, q, 2))} ${esc(x.m.quote.sym)} in the pool`;
+    if (!inRange(x)) return `<b>Not trading</b><small>price outside the market’s range · ${depth}</small>`;   // a price outside the range is not one anything trades at
     return now && !small(now) ? `<b>${esc(near(now, 18, 4))}</b> ${esc(x.m.quote.sym)}<small>${depth}</small>` : now ? `<b>${esc(pxText(x.m, symOf(key), now))}</b><small>${depth}</small>` : `<b>${esc(qFmt(x.m, q, 2))}</b> ${esc(x.m.quote.sym)}<small>in the pool</small>`;
   }
   return { show, read: () => Promise.all([...keys.map((k) => read(k)), readCampaign()]), draw, cell, promo };
