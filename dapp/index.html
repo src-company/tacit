@@ -635,6 +635,8 @@ a.di { color: inherit; text-decoration: none; }
 .tp-flow small { font-size: 12px; line-height: 1.35; color: var(--mute); }
 /* What holding it does: four short lines under a rule. */
 .tc-do { list-style: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px 36px; width: 100%; max-width: 880px; margin: 40px 0 0; padding: 0; }
+.tc-do.six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tc-idea { margin: 0 0 18px; max-width: 52ch; text-align: center; font-size: 14px; line-height: 1.5; color: var(--mute); text-wrap: balance; }
 .tc-do li { display: grid; align-content: start; gap: 4px; }
 .tc-do b { font: 400 18px/1.15 var(--serif); }
 .tc-do span { font-size: 12px; line-height: 1.5; color: var(--mute); text-wrap: balance; }
@@ -1044,7 +1046,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
   .wd-top, .wd-lane { grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1fr); }
   .wd-top { padding: 20px 16px 18px; }
   .wd-end { padding: 16px; }
-  .tc-do { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 560px; }
+  .tc-do, .tc-do.six { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 560px; }
 }
 @media (max-width: 640px) {
   .proof-f .tl { display: none; }
@@ -1374,6 +1376,7 @@ footer.sf svg.fill { width: 16px; height: 16px; }
       </div></div></div>
       <div class="tc-shadow"></div>
     </div>
+    <p class="tc-idea">Bitcoin-native and bitcoin-backed assets, private on Ethereum. Anyone can build new ones.</p>
     <div class="tc-as" role="tablist" aria-label="Tacit’s assets">
       <button type="button" role="tab" id="tc-t-tac" aria-controls="tc-tac" aria-selected="true" data-tc="tac"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg>TAC</button>
       <button type="button" role="tab" id="tc-t-teth" aria-controls="tc-teth" aria-selected="false" tabindex="-1" data-tc="teth"><svg class="tk" aria-hidden="true"><use href="#tk-teth"/></svg>tETH</button>
@@ -1398,11 +1401,13 @@ footer.sf svg.fill { width: 16px; height: 16px; }
           <li><a href="/tac/#withdraw/sats"><svg class="tk" aria-hidden="true"><use href="#tk-btc"/></svg><span><b>Sats out</b><small>to any address, unlinked</small></span></a></li>
         </ol>
       </div>
-      <ul class="tc-do" aria-label="What holding TAC does">
+      <ul class="tc-do six" aria-label="What TAC does">
         <li><b>Pays for gas</b><span>swap and use DeFi with TAC, no ETH needed</span></li>
         <li><b>Pays for proofs</b><span>fund faster proofs; anyone can earn TAC proving</span></li>
-        <li><b>Holder perks</b><span>exits from 0.15%, up to 2× points, a vote</span></li>
-        <li><b>Never sold</b><span>TAC fees stay in the reserve; a tenth of ETH fees buys more</span></li>
+        <li><b>Collateral</b><span>borrow TACD or TACE and keep your TAC</span></li>
+        <li><b>Cheaper exits</b><span>hold 100 to 10,000 TAC: the fee falls from 0.30% to 0.15%</span></li>
+        <li><b>Points and a vote</b><span>up to 2× points at 10,000 TAC, and a say in the governed parts</span></li>
+        <li><b>Buybacks</b><span>programmed from relay fees; borrow fees go to the reserve</span></li>
       </ul>
       <div class="tc-links"><button class="btn" type="button" data-hx="swap:ether:tac">Buy TAC</button><a class="tl" href="/trade/tac/">Price and chart →</a><a class="tl" href="/verify.html">Verify TAC →</a><a class="tl" href="https://github.com/src-company/tacit/blob/main/docs/TAC.md" rel="noopener">About TAC →</a></div>
     </div>
@@ -1492,7 +1497,7 @@ footer.sf svg.fill { width: 16px; height: 16px; }
       </div>
       <ul class="tc-do" aria-label="What TACD does">
         <li><b>Keeps your TAC</b><span>borrow without selling it</span></li>
-        <li><b>One fee</b><span>paid once, when you borrow</span></li>
+        <li><b>One fee</b><span>paid once when you borrow, to the reserve</span></li>
         <li><b>Slow prices</b><span>a quick dip can’t take your TAC</span></li>
         <li><b>Spends anywhere</b><span>a token any wallet holds</span></li>
       </ul>
@@ -1515,7 +1520,7 @@ footer.sf svg.fill { width: 16px; height: 16px; }
       </div>
       <ul class="tc-do" aria-label="What TACE does">
         <li><b>Keeps your TAC</b><span>borrow without selling it</span></li>
-        <li><b>One fee</b><span>paid once, when you borrow</span></li>
+        <li><b>One fee</b><span>paid once when you borrow, to the reserve</span></li>
         <li><b>Slow prices</b><span>a quick dip can’t take your TAC</span></li>
         <li><b>Spends anywhere</b><span>a token any wallet holds</span></li>
       </ul>
