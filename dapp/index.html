@@ -1732,6 +1732,7 @@ import { addressId } from '/address-id.js?cb=c4fa5a58';
 import { PXS_KEY, PX_CALLS, pxFigures, paintPx, pxState } from '/px-strip.js';
 import { zapPlan, zapPlanFor, zapCalldata, zapSettleCalldata, zapSplitSearch, zapWorth } from '/lp-zap.js?cb=4823580d';
 import { rewardPop } from '/reward-pop.js?cb=1b53f6d4';
+import * as GR from '/gas-relay.js?cb=79bcff9e';
 import { netPicker } from '/net-pick.js?cb=8f57c360';
 import { UNBOND_DUST, HARVEST_WORTH, unharvested, bFor, aFor, farmManager, ladder as xoLadder, feeShort as xoFeeShort } from '/farm-ops.js?cb=0933a4c8';
 import { relayCode, proveCapped, proved, relayRefused, jobSaid } from '/relay-outcome.js?cb=26298b8e';
@@ -6042,7 +6043,7 @@ function xoOut(el, status, a) {
 const DEV = { chain: DEVICE_CHAINS.find((c) => c.chainId === store.get('tacit-lite-device-chain')) || DEVICE_CHAINS[1], tok: null, mode: 'deposit', dest: 'addr', W: null, bal: null, key: null, quote: null, gq: {}, err: null, self: false };
 const getDeviceMods = lazy(async () => {
   const [zkm, wm, pm, pos] = await Promise.all([
-    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=de687011'), import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
+    import('/evm-pool-zk.js?cb=2f062779'), import('/evm-pool-wallet.js?cb=837dfa5a'), import('/evm-pool-zk-prover.js?cb=00ff69c2'), import('/vendor/tacit-poseidon.min.js'),
   ]);
   const PO = { 2: pos.poseidon2, 3: pos.poseidon3, 4: pos.poseidon4, 5: pos.poseidon5, 7: pos.poseidon7 };
   return { zk: zkm.makeEvmPoolZk({ poseidon: (xs) => PO[xs.length](xs) }), ...wm, vkHash: pm.vkHash };
@@ -6110,7 +6111,7 @@ const PSW = { w: null, n: 0, wait: new Map(), q: Promise.resolve() };
 function pswWorker() {
   try {
     if (PSW.w) return PSW.w;
-    const w = PSW.w = new Worker('/evm-pool-sync-worker.js?cb=da659d5a', { type: 'module' });
+    const w = PSW.w = new Worker('/evm-pool-sync-worker.js?cb=e1be2964', { type: 'module' });
     w.onmessage = (e) => { const f = PSW.wait.get(e.data?.id); if (f) { if (!e.data.write && e.data.part == null) PSW.wait.delete(e.data.id); f(e.data); } };
     w.onerror = () => { for (const f of PSW.wait.values()) f({ ok: false }); PSW.wait.clear(); PSW.w = null; };
     return w;
@@ -6820,6 +6821,78 @@ async function sendBatch(calls, label, sent = () => {}) {
   throw unknown('Your wallet has not confirmed it yet. Check its activity before trying again.');
 }
 // The paying account as the pool wallet's signer; a wallet that batches can send an approval and the deposit together.
+// ── the gas relay (dapp/gas-relay.js, contracts/src/TacitGasRelay.sol) ──
+// With no ETH for the deposit's gas, a token deposit into the device pool is sent by the relay, and its cost is paid in the token deposited:
+// the account signs one order (the router call, hash-bound) and one permit for the deposit plus the fee, the relay contract pulls the token,
+// makes the deposit as the router's caller and pays the sender the fee, or reverts it all and costs nothing. The proof is made here as always.
+let GR_LIVE = null;
+const relayLive = async () => (GR_LIVE ??= String(await rpc('eth_getCode', [GR.GAS_RELAY[1], 'latest']).catch(() => '0x')).length > 2);
+const DEPOSIT_GAS = 600000n;
+const kyberEthTo = async (token, wei) => {
+  const r = await fetch(`https://aggregator-api.kyberswap.com/ethereum/api/v1/routes?${new URLSearchParams({ tokenIn: '0xEeeeeEeeeEeEeeEeEeeEeEEEeeeeEeeeeeeeEEeE', tokenOut: token, amountIn: String(wei) })}`, { signal: AbortSignal.timeout(8000) }).then((q) => (q.ok ? q.json() : null)).catch(() => null);
+  const o = r?.data?.routeSummary?.amountOut;
+  return /^\d+$/.test(String(o ?? '')) ? BigInt(o) : null;
+};
+// → { fee, gasPrice } when this account has too little ETH to send the deposit and the relay can pay for it in the token (it takes an ERC-2612 permit), else null
+async function relayDeposit(t) {
+  if (!S.address || !GR.PERMIT_TOKENS[t.token.toLowerCase()] || !(await relayLive())) return null;
+  const [eth, gasPrice] = await Promise.all([ethBalance(), rpc('eth_gasPrice', []).then(BigInt)]);
+  if (eth == null || !GR.needsRelay({ ethWei: eth, gasPriceWei: gasPrice, units: DEPOSIT_GAS })) return null;
+  const fee = await GR.feeFor({ gasPriceWei: gasPrice, units: DEPOSIT_GAS, ethToToken: (w) => kyberEthTo(t.token, w) });
+  return fee == null ? null : { fee, gasPrice };
+}
+function orderFromTacit(o) {
+  const k = (x) => bytesToHex(keccak_256(new TextEncoder().encode(x)));
+  const h = (...w) => bytesToHex(keccak_256(hexToBytes(w.map((x) => (typeof x === 'bigint' ? x.toString(16) : strip(x)).padStart(64, '0')).join(''))));
+  const domain = h(k('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)'), k('TacitGasRelay'), k('1'), 1n, GR.GAS_RELAY[1].toLowerCase());
+  const struct = h(k('Order(address payer,address tokenIn,uint256 amountIn,address feeToken,uint256 fee,address tokenOut,uint256 minOut,address recipient,address target,bytes32 dataHash,uint64 deadline,uint256 nonce)'),
+    o.payer.toLowerCase(), o.tokenIn.toLowerCase(), BigInt(o.amountIn), o.feeToken.toLowerCase(), BigInt(o.fee), o.tokenOut.toLowerCase(), BigInt(o.minOut), o.recipient.toLowerCase(), o.target.toLowerCase(), o.dataHash, BigInt(o.deadline), BigInt(o.nonce));
+  const sig = secp.sign(keccak_256(hexToBytes('1901' + domain + struct)), hexToBytes(strip(S.acct.priv)));
+  return '0x' + sig.r.toString(16).padStart(64, '0') + sig.s.toString(16).padStart(64, '0') + (27 + sig.recovery).toString(16);
+}
+// The signer the device pool's deposit sends through instead of the account's own transaction: `send` turns the router call into a relay order and
+// returns the relay's transaction hash once it has run.
+function payFromRelay(t, amount, plan, step) {
+  const pub = S.key?.pubHex, relay = GR.GAS_RELAY[1], tok = PERMIT_META(t.token);
+  return { address: S.address, relayed: true, send: async ({ to, data }) => {
+    if (S.key?.pubHex !== pub) throw new Error('Another Tacit wallet was opened, so this was not sent. Open the first one again to send it.');
+    if (to.toLowerCase() !== t.router.toLowerCase()) throw new Error('The relay only sends the deposit to the pool’s router.');
+    const owner = await payingAccount(), total = amount + plan.fee, dl = Math.floor(Date.now() / 1000) + 900;
+    const { order } = GR.buildOrder({ payer: owner, tokenIn: t.token, amountIn: amount, feeToken: t.token, fee: plan.fee, tokenOut: '0x0000000000000000000000000000000000000000', minOut: 0n, recipient: owner, target: t.router, data });
+    step(`Sign the ${t.sym} deposit and its ${fmt(plan.fee, 18, 4)} ${t.sym} network fee${payer() === 'tacit' ? '' : ' in your wallet'}. No ETH is needed`);
+    const nonce = wordAt(await ethCall(t.token, '7ecebe00' + addrWord(owner)), 0);
+    let permitSig2, orderSig;
+    if (payer() === 'tacit') { permitSig2 = permitFromTacit({ token: t.token, name: tok.name, version: tok.version, owner, spender: relay, value: total, nonce, deadline: dl }); orderSig = orderFromTacit(order); }
+    else {
+      await ensureChain(1);
+      permitSig2 = await evm.signErc2612({ token: t.token, name: tok.name, version: tok.version, owner, spender: relay, value: total, nonce, deadline: dl, provider: S.provider });
+      orderSig = await S.provider.request({ method: 'eth_signTypedData_v4', params: [owner, JSON.stringify(GR.orderTypedData(order))] });
+    }
+    const inPermit = { value: String(total), deadline: String(dl), v: permitSig2.v, r: permitSig2.r, s: permitSig2.s };
+    // the order is run here first, as the relay would run it: a pool that moved since the proof (another deposit landed) is proved again, nothing else is posted
+    const posted = { order, data, signature: orderSig, inPermit, feePermit: GR.NO_PERMIT, p2: GR.NO_P2 };
+    try { await rpc('eth_call', [{ from: '0x000000000000000000000000000000000007a0f0', to: relay, data: GR.encodeExecute(posted) }, 'latest']); }
+    catch (e) {
+      const d = String(e?.data?.data ?? e?.data ?? e?.message ?? '');
+      if (['607447de', 'a151b2a2', '26747c9d', 'efe99026'].some((x) => d.includes(x))) return null;      // StaleRoot, WrongInsertionIndex, UnknownMembershipRoot, BadIntent: prove again
+      throw new Error(`This deposit would not go through, so nothing was sent${d ? ` (${d.slice(0, 40)})` : ''}. Try again.`);
+    }
+    step('Sending it to the relay');
+    const r = await fetch(`${API}/gas/order`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ order: posted }), signal: AbortSignal.timeout(15e3) }).then((q) => q.json()).catch(() => null);
+    if (!r?.ok) throw new Error(`The relay did not take the order${r?.error ? `: ${r.error}` : ''}. Nothing was spent.`);
+    const usedSel = '0xad04dc3f' + addrWord(owner) + word(order.nonce), end = Date.now() + 5 * 60e3, t0 = Date.now();
+    let done = false;
+    while (Date.now() < end && !done) {
+      await sleep(3000); done = wordAt(await ethCall(relay, usedSel).catch(() => '0x'), 0) === 1n;
+      if (!done) step(`Waiting for the relay to send it (${Math.round((Date.now() - t0) / 1000)} s). Nothing leaves your account unless the deposit lands`);
+    }
+    if (!done) throw new Error('The relay has not sent it yet. Nothing was spent; the order lapses by itself in a few minutes. Try again.');
+    const hash = await rpc('eth_getLogs', [{ address: relay, topics: ['0x533053a5fad9470861fb5df750d47e5f011faa03daba05299fe4bdc65f52d519', '0x' + addrWord(owner), null, '0x' + word(order.nonce)], fromBlock: '0x' + (BigInt(await rpc('eth_blockNumber', [])) - 200n).toString(16), toBlock: 'latest' }]).then((l) => l?.[0]?.transactionHash || null, () => null);
+    if (!hash) throw new Error('The relay sent it, but its transaction could not be found. Check your balance in a moment.');
+    return hash;
+  } };
+}
+const PERMIT_META = (token) => GR.PERMIT_TOKENS[token.toLowerCase()];
 const payFromTok = (label) => {
   const base = payFrom(1, label), pub = S.key?.pubHex, from = S.wallet;
   return payer() === 'wallet' ? { ...base, batch: (calls, sent) => {
@@ -6994,8 +7067,14 @@ function renderTokenPool(el) {
       wb = BigInt(b); wbEl.textContent = fmt(wb, D, 4); $('#d-max')?.setAttribute('aria-label', `Use all: ${fmt(wb, D, 4)} ${t.sym} in ${payName()}`); check();
     }).catch(() => { if (wbEl.isConnected) wbEl.textContent = '—'; });
     else wbEl.textContent = '—';
-    if (payer() === 'tacit') ethBalance().then((b) => { if (b === 0n) noEthYet($('#d-fund'), b, '', 'deposit it'); });
-    $('#d-max').onclick = () => { if (wb != null) { amt.value = wb ? plain(wb, D) : ''; amt.dispatchEvent(new Event('input')); } };
+    let rplan = null;                                                    // with no ETH for gas, the relay sends the deposit and the token pays for it
+    relayDeposit(t).then((pl) => {
+      rplan = pl;
+      const fund = $('#d-fund');
+      if (pl && fund?.isConnected) mount(fund, html`<p class="note">No ETH in ${your()}: the relay sends this deposit and takes about ${fmt(pl.fee, D, 3)} ${t.sym} for the gas. You sign once, and nothing leaves unless the deposit lands.</p>`);
+      else if (payer() === 'tacit') ethBalance().then((b) => { if (b === 0n) noEthYet($('#d-fund'), b, '', 'deposit it'); });
+    }, () => { if (payer() === 'tacit') ethBalance().then((b) => { if (b === 0n) noEthYet($('#d-fund'), b, '', 'deposit it'); }); });
+    $('#d-max').onclick = () => { if (wb != null) { const m = rplan && wb > rplan.fee ? wb - rplan.fee : wb; amt.value = m ? plain(m, D) : ''; amt.dispatchEvent(new Event('input')); } };
     amt.addEventListener('input', check); check();
     const mine = (d) => d.slug === t.slug || (d.tac === true && t.slug === 'tac');
     { const d = hxLive('dep'); if (d && mine(d) && d.to != null) { toEl.value = d.to; delete KEPT['d-dto']; toEl.dispatchEvent(new Event('input')); } }
@@ -7017,9 +7096,11 @@ function renderTokenPool(el) {
         if (amount > BigInt(await ethCall(t.token, SEL.balanceOf + addrWord(owner)))) throw new Error(`More than ${your()} holds.`);
         const [m, W2] = await Promise.all([getDeviceMods(), tokenWallet(t)]);
         const label = `Deposit ${fmt(amount, D, 6)} ${t.sym}${to ? ' to someone else’s private balance' : ''} on this device`;
-        let pull = await tokenPull(t, amount, step, status), h;
+        const rp = rplan || await relayDeposit(t).catch(() => null);
+        if (rp && amount + rp.fee > BigInt(await ethCall(t.token, SEL.balanceOf + addrWord(owner)))) throw new Error(`Leave about ${fmt(rp.fee, D, 3)} ${t.sym} for the network fee: with no ETH, the deposit's gas is paid in ${t.sym}.`);
+        let pull = rp ? { kind: 'allowance' } : await tokenPull(t, amount, step, status), h;
         for (;;) {
-          W2.connect(payFromTok(label));
+          W2.connect(rp ? payFromRelay(t, amount, rp, step) : payFromTok(label));
           const selfCall = (tx) => m.routerDeposit(t.router, tx, pull);
           try { h = await (to ? W2.depositTo({ to, amount, selfCall, onStep: step }) : W2.deposit({ amount, selfCall, onStep: step })); break; }
           catch (e) { if (!e?.noBatch || pull.kind !== 'batch') throw e; pull = await approveFirst(t, amount, step); }
@@ -14355,7 +14436,7 @@ function swcPace(id) {
   if (b) b.dataset.pace = id;
   else q.insertAdjacentHTML('afterend', html`<div class="pace" data-card="1" data-pace="${id}"><div class="actr-bar" role="progressbar" aria-label="How far along" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i style="width:0%"></i></div><span></span></div>`.s);
 }
-const swcLoad = () => (SWC.p ||= import('/swap/card.js?cb=6d242641').catch((e) => { SWC.p = null; throw e; }));
+const swcLoad = () => (SWC.p ||= import('/swap/card.js?cb=943317ff').catch((e) => { SWC.p = null; throw e; }));
 function swcAsk() { if (SWC.ask && SWC.card?.load(SWC.ask)) SWC.ask = null; }
 function hxSwap() {
   const put = () => { const s = $('#hx-swap'); if (s && s !== SWC.el) { s.replaceWith(SWC.el); SWC.card?.requote?.(); } swcAsk(); };

@@ -252,6 +252,39 @@ if (!process.env.SKIP_GASRELAY) {
     ok(!errors.length, `no page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
     await browser.close();
   }
+  // USDT has no ERC-2612 permit: the wallet approved Permit2 once (before it had no ETH), and one Permit2 signature then pays for the swap and the fee
+  {
+    const USDT = '0xdAC17F958D2ee523a2206206994597C13D831ec7', PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3', w = await fundedWallet();
+    await rpcA('anvil_dealERC20', [w.account, USDT, '0x' + (500n * 10n ** 6n).toString(16)]);
+    await rpcA('eth_sendTransaction', [{ from: w.account, to: USDT, data: '0x095ea7b3' + PERMIT2.slice(2).toLowerCase().padStart(64, '0') + 'f'.repeat(64), gas: '0x30d40' }]);
+    await rpcA('anvil_setBalance', [w.account, '0x0']);
+    const { browser, page, errors, walletLog } = await openPage({ width: 1280, height: 900 }, { wallet: w });
+    const seen = { orders: [] };
+    await page.context().route('https://api.tacit.finance/gas/order', async (route) => {
+      const h = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'content-type': 'application/json' };
+      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: h });
+      const x = JSON.parse(route.request().postData()).order; seen.orders.push(x);
+      const why = checkGasOrder(x);
+      if (why) return route.fulfill({ status: 400, headers: h, body: JSON.stringify({ ok: false, error: why }) });
+      try { await rpcA('eth_sendTransaction', [{ from: SENDER, to: RELAY, data: encodeExecute(x), gas: '0x7a1200' }]); } catch (e) { return route.fulfill({ status: 400, headers: h, body: JSON.stringify({ ok: false, error: e.message.slice(0, 160) }) }); }
+      await route.fulfill({ status: 200, headers: h, body: JSON.stringify({ ok: true }) });
+    });
+    await page.click('#wallet-chip');
+    await until(page, () => /0x/.test(document.querySelector('#wallet-label').textContent));
+    await until(page, () => /Balance/.test(document.querySelector('#pay-side').textContent));
+    await pick(page, 'pay', 'USDT'); await pick(page, 'get', 'USDC');
+    await typeAmt(page, '300'); await quoted(page);
+    const u0 = await bal(USDT, w.account), c0 = await bal(USDC, w.account);
+    await page.click('#go');
+    await until(page, () => /Done|relay did not|Not enough|cannot|Nothing was|approved/.test(document.querySelector('#q').textContent), null, 240000);
+    const q = (await page.textContent('#q')).replace(/\s+/g, ' ');
+    ok(/^Done/.test(q.trim()), `USDT (no permit) sold for USDC through Permit2, no ETH (${q.slice(0, 140)})`);
+    ok(walletLog.typed?.some((t) => t.primaryType === 'PermitBatch') && walletLog.typed.some((t) => t.primaryType === 'Order'), `one Permit2 batch and the order were signed (${(walletLog.typed || []).map((t) => t.primaryType).join(', ')})`);
+    ok(walletLog.sends.length === 0, `the wallet sent no transaction (${walletLog.sends.length})`);
+    ok(seen.orders[0]?.order.feeToken.toLowerCase() === USDT.toLowerCase() && (await bal(USDC, w.account)) > c0 && u0 - (await bal(USDT, w.account)) > 300n * 10n ** 6n, 'the fee was paid in USDT, the USDC arrived, and USDT left the wallet');
+    ok(!errors.length, `no page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
+    await browser.close();
+  }
   if (process.env.ONLY_GASRELAY) { server.close(); console.log(`\n${n} passed, ${fails} failed`); process.exit(fails ? 1 : 0); }
 }
 

@@ -761,6 +761,8 @@ export function makeEvmPoolWallet({ zk, keys, chain, keeper = null, prove, store
       onStep('confirm in your wallet');
       return signer.batch(calls, () => onStep('waiting for the block'));
     }
+    // A signer that sends through a relay (signer.relayed) checks the whole order itself, as the relay will run it, and answers null when the pool moved (prove again).
+    if (signer.relayed) { onStep('confirm in your wallet'); return signer.send({ to, data, value: BigInt(value) }); }
     // A signer may bring its own reader (`signer.rpc`), so the node that reads this key's notes and boxes is not also
     // shown the signer's address and its transactions.
     try { await (signer.rpc || chain.rpc)('eth_call', [{ from: signer.address, to, data, value: v }, 'latest']); }

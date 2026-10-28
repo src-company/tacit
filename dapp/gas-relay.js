@@ -83,3 +83,21 @@ export const needsRelay = ({ ethWei, gasPriceWei, units = 300000n }) => BigInt(e
 
 /// The board calls. `post(path, body)` and `get(path)` are the page's own API helpers.
 export const submitOrder = (post, order) => post('/gas/order', { order });
+
+// ── the relay's execute(...) call, encoded here so the page can simulate an order (eth_call) before it is posted ──
+const W32 = (v) => BigInt(v).toString(16).padStart(64, '0');
+const A32 = (a) => String(a).toLowerCase().replace(/^0x/, '').padStart(64, '0');
+const BYTES = (h) => { const x = String(h).replace(/^0x/, ''); return W32(x.length / 2) + x.padEnd(Math.ceil(x.length / 64) * 64, '0'); };
+/// The calldata of TacitGasRelay.execute for a posted order { order, signature, data, inPermit, feePermit, p2 }.
+export function encodeExecute(x) {
+  const o = x.order, permit = (p) => W32(p.value) + W32(p.deadline) + W32(p.v) + String(p.r).replace(/^0x/, '') + String(p.s).replace(/^0x/, '');
+  const head = [A32(o.payer), A32(o.tokenIn), W32(o.amountIn), A32(o.feeToken), W32(o.fee), A32(o.tokenOut), W32(o.minOut), A32(o.recipient), A32(o.target), String(o.dataHash).replace(/^0x/, ''), W32(o.deadline), W32(o.nonce)];
+  const p2 = x.p2 && x.p2.use ? x.p2 : { use: false, batch: { details: [], spender: '0x0000000000000000000000000000000000000000', sigDeadline: '0' }, sig: '0x' };
+  const batch = W32(96) + A32(p2.batch.spender) + W32(p2.batch.sigDeadline) + W32(p2.batch.details.length) + p2.batch.details.map((d) => A32(d.token) + W32(d.amount) + W32(d.expiration) + W32(d.nonce)).join('');
+  const p2enc = W32(p2.use ? 1 : 0) + W32(96) + W32(96 + batch.length / 2) + batch + BYTES(p2.sig);
+  const sig = BYTES(x.signature), data = BYTES(x.data);
+  const base = 25 * 32;                                                   // 12 (order) + 2 offsets + 10 (two permits) + 1 offset
+  const offSig = base, offData = offSig + sig.length / 2, offP2 = offData + data.length / 2;
+  return '0x' + SEL_EXECUTE + head.join('') + W32(offSig) + W32(offData) + permit(x.inPermit) + permit(x.feePermit) + W32(offP2) + sig + data + p2enc;
+}
+const SEL_EXECUTE = '7e75f5be';

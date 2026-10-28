@@ -1305,6 +1305,38 @@ await step('devtac', async () => {
       `devtac: a permit that fails its check on chain falls through to a Permit2 signature, one transaction: ${d.txs.length} sent (${d.said})`);
     if (extra) await rpc('anvil_setCode', [A0, code0]);
 
+    // The gas relay: the wallet holds TAC and no ETH. The deposit is proved here as always, signed as one order and one permit, and sent by the relay (stood in for by this
+    // check: it hands the posted order to the same encoding the settle relay uses); the wallet sends nothing and the deposit's gas is paid in TAC.
+    {
+      const RELAY = '0x000000197E8f0B64463B2010e568fF42090Af88d', SENDER = '0x000000000000000000000000000000000007a0f0';
+      const { encodeExecute } = await import('../worker-relay/src/lib/gas-calls.js'), { checkGasOrder } = await import('../worker/src/gas-relay-queue.js');
+      const code0r = await rpc('eth_getCode', [A0, 'latest']), eth0 = await rpc('eth_getBalance', [A0, 'latest']);
+      if (code0r !== '0x') await rpc('anvil_setCode', [A0, '0x']);
+      await rpc('anvil_impersonateAccount', [SENDER]); await rpc('anvil_setBalance', [SENDER, '0x' + (5n * 10n ** 18n).toString(16)]);
+      const posted = [];
+      await p.context().route('https://api.tacit.finance/gas/order', async (route) => {
+        const h = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'content-type': 'application/json' };
+        if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: h });
+        const x = JSON.parse(route.request().postData()).order; posted.push(x);
+        const why = checkGasOrder(x);
+        if (why) return route.fulfill({ status: 400, headers: h, body: JSON.stringify({ ok: false, error: why }) });
+        try { await rpc('eth_sendTransaction', [{ from: SENDER, to: RELAY, data: encodeExecute(x), gas: '0x7a1200' }]); } catch (e) { return route.fulfill({ status: 400, headers: h, body: JSON.stringify({ ok: false, error: String(e.message).slice(0, 160) }) }); }
+        await route.fulfill({ status: 200, headers: h, body: JSON.stringify({ ok: true }) });
+      });
+      await rpc('anvil_setBalance', [A0, '0x0']);
+      await p.click('[data-dev="send"]'); await p.click('[data-dev="deposit"]'); await p.waitForSelector('#d-go', { timeout: 60000 });   // the form is drawn again with the wallet's ETH at 0
+      await until(p, () => /No ETH in/.test(document.querySelector('#d-fund')?.textContent || ''), null, 60000).catch(() => {});
+      ok(/the relay sends this deposit and takes about [\d.]+ TAC/.test(await text(p, '#d-fund')), `devtac relay: with no ETH the form says the relay sends the deposit and the TAC pays for it (${(await text(p, '#d-fund')).trim().slice(0, 100)})`);
+      const tac0 = await tacOf(A0);
+      d = await dep('2');
+      const tac1 = await tacOf(A0);
+      ok(/Deposited/.test(d.said) && d.txs.length === 0 && d.gained === 2n * unit, `devtac relay: the deposit landed with no transaction from the wallet: pool +${d.gained / 10n ** 15n}e-3 TAC (${d.said})`);
+      ok(posted.length === 1 && posted[0].order.feeToken.toLowerCase() === TAC.toLowerCase() && tac0 - tac1 > 2n * unit && (await rpc('eth_getBalance', [A0, 'latest'])) === '0x0', `devtac relay: one order, the fee paid in TAC (${Number(tac0 - tac1 - 2n * unit) / 1e18} TAC), and the wallet still has no ETH`);
+      await p.context().unroute('https://api.tacit.finance/gas/order');
+      await rpc('anvil_setBalance', [A0, eth0]); if (code0r !== '0x') await rpc('anvil_setCode', [A0, code0r]);
+      await p.click('[data-dev="send"]'); await p.click('[data-dev="deposit"]'); await p.waitForSelector('#d-go', { timeout: 60000 });
+    }
+
     // A signature turned down in the wallet stops there: no other way is tried, nothing is sent, no proof is wasted on it.
     const n1 = walletTxs.length, b1 = batches.length, p1 = await pooled();
     Object.assign(walletWays, { batch: true, noTyped: false, rejectTyped: true, badPermit: false });
@@ -1320,8 +1352,8 @@ await step('devtac', async () => {
     ok(await p.isDisabled('#d-go') && /holds/.test(await text(p, '#d-rcpt')), `devtac: more than the wallet holds is refused (${(await text(p, '#d-rcpt')).trim().slice(0, 50)})`);
     await p.fill('#d-amt', '');
 
-    // The pool now holds the deposits (8 TAC, or 9 where the first account's delegation made the Permit2 way run twice); the balance is their sum, read from the key and the chain.
-    await until(p, (v) => new RegExp('^' + v + '(\\.0+)?$').test(document.querySelector('.bal .v')?.textContent?.trim() || ''), String(8 + extra), 120000);
+    // The pool now holds the deposits (10 TAC with the relay deposit, or 11 where the first account's delegation made the Permit2 way run twice); the balance is their sum, read from the key and the chain.
+    await until(p, (v) => new RegExp('^' + v + '(\\.0+)?$').test(document.querySelector('.bal .v')?.textContent?.trim() || ''), String(10 + extra), 120000);
     ok(true, `devtac: the private balance is the sum of the deposits (${await shown()} TAC)`);
 
     // Receive: the key's tacit1 address and the pool address; no deposit address (a receive box is the ETH pools').
@@ -1360,7 +1392,7 @@ await step('devtac', async () => {
       const viaRelay = relays.slice(r0);
       ok(/Sent\./.test(await st()) && walletTxs.length === n2 && viaRelay.length === 1 && viaRelay[0].pool === 'tac' && lc(viaRelay[0].tx.relayer) === lc(TAC_KEEPER) && (await tacOf(TAC_KEEPER)) - k2 === TAC_RELAY_FEE && p2 - (await pooled()) === TAC_RELAY_FEE,
         `devtac: a private Send is relayed, nothing from the wallet, the relay paid 0.25 TAC out of the pool: ${walletTxs.length - n2} sent by the wallet, ${viaRelay.length} relayed (${(await st()).slice(0, 50)})`);
-      await until(p, (v) => document.querySelector('.bal .v')?.textContent?.trim().startsWith(v), String(6.25 + extra), 120000);
+      await until(p, (v) => document.querySelector('.bal .v')?.textContent?.trim().startsWith(v), String(8.25 + extra), 120000);
       ok(true, `devtac: the sender's balance fell by what was sent and the relay fee (${await shown()} TAC)`);
       // The second key's page finds it by its memo once it reads the pool again.
       await q.click('[data-dev="deposit"]');
@@ -1397,10 +1429,10 @@ await step('devtac', async () => {
     const out = walletTxs.slice(n3);
     ok(/Withdrawn/.test(await st()) && out.length === 1 && lc(out[0].to) === lc(TPOOL) && (await tacOf(BEEF)) - b0 === unit && p3 - (await pooled()) === unit,
       `devtac: from the wallet instead, a Withdraw is one transaction to the pool, no relay fee, and the TAC reaches the address: ${out.length} sent (${(await st()).slice(0, 40)})`);
-    await until(p, (v) => document.querySelector('.bal .v')?.textContent?.trim().startsWith(v), String(5.25 + extra), 120000);
+    await until(p, (v) => document.querySelector('.bal .v')?.textContent?.trim().startsWith(v), String(7.25 + extra), 120000);
     ok(true, `devtac: and the private balance fell by it (${await shown()} TAC)`);
     // The pool's TAC is exactly what its notes say: the deposits less the 1 withdrawn and the relay's 2 (the 1.5 sent on stays within it).
-    ok((await pooled()) === BigInt(7 + extra) * unit - TAC_RELAY_FEE, `devtac: the pool holds the deposits less the withdrawal and the relay fee, ${(await pooled()) / 10n ** 15n}e-3 TAC`);
+    ok((await pooled()) === BigInt(9 + extra) * unit - TAC_RELAY_FEE, `devtac: the pool holds the deposits less the withdrawal and the relay fee, ${(await pooled()) / 10n ** 15n}e-3 TAC`);
     await until(p, () => !!document.querySelector('#dash-g [data-dash-open="device/tac"]'), null, 120000);
     ok(true, 'devtac: Your Tacit lists the TAC held in this pool, and it opens the pool');
     if (r.errors.length) { fails++; console.log('FAIL devtac page errors: ' + r.errors.slice(0, 3).join(' | ')); }

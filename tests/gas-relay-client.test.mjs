@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { makeGasBoard, checkGasOrder, orderDigest, GAS_TARGETS } from '../worker/src/gas-relay-queue.js';
 import * as gr from '../dapp/gas-relay.js';
+import { encodeExecute as encodeViem } from '../worker-relay/src/lib/gas-calls.js';
 const require = createRequire(new URL('../worker-relay/package.json', import.meta.url));
 const { privateKeyToAccount } = require('viem/accounts');
 const acct = privateKeyToAccount('0x' + 'a1b2c3d4'.repeat(8));
@@ -63,4 +64,12 @@ test('the permit typed data names the relay as spender', () => {
   assert.equal(p.message.spender, gr.GAS_RELAY[1]);
   assert.equal(p.domain.name, 'Tacit Token');
   assert.equal(gr.permitTypedData({ token: '0xdAC17F958D2ee523a2206206994597C13D831ec7', owner: acct.address, value: 1n, nonce: 0n, deadline: NOW }), null);
+});
+
+test('the page encodes execute(...) exactly as the relay does (a permit order and a Permit2 order)', async () => {
+  const x = await signed({ feeToken: USDC, tokenIn: USDC, tokenOut: '0x0000000000000000000000000000000000000000' });
+  x.inPermit = { value: '123', deadline: String(NOW + 600), v: 27, r: '0x' + '11'.repeat(32), s: '0x' + '22'.repeat(32) };
+  assert.equal(gr.encodeExecute(x), encodeViem(x));
+  const y = { ...x, p2: { use: true, batch: { details: [{ token: USDC, amount: '500', expiration: String(NOW + 600), nonce: '3' }, { token: gr.TAC, amount: '9', expiration: '5', nonce: '0' }], spender: gr.GAS_RELAY[1], sigDeadline: String(NOW + 600) }, sig: '0x' + 'ab'.repeat(65) } };
+  assert.equal(gr.encodeExecute(y), encodeViem(y));
 });
