@@ -1260,7 +1260,7 @@ async function main() {
       // has to be able to run then (it is awaited here, so it still never overlaps a settle on the same nonce).
       await maybeReplenish();
       await maybeDepositArrived();
-      if (!worked) await idleWait();
+      if (!worked) { if (CFG.marketSolve && marketSolver.hasOpen()) await sleep(2); else await idleWait(); }
     } catch (e) {
       log('cycle error (continuing):', e.message);
       await heartbeat('settle', `error ${safeErr(e)}`);

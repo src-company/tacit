@@ -25,6 +25,8 @@ export function makeMarketSolver({ listOrders, done, claim, prove, fulfil, clear
   const proofs = new Map();  // opId -> the proof being made (or made) for it: proving starts when an order is seen, the claim waits for its deposit
   let busy = false;          // one prover: one proof at a time
   return {
+    // Whether an order is being proved or waits for its deposit: the relay then looks again in seconds, not on its long idle wait.
+    hasOpen: () => proofs.size > 0,
     // One order at most is claimed per pass (one key). → true when an order was claimed and worked on.
     async pass() {
       const t = Math.floor(now() / 1000);

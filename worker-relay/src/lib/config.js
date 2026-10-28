@@ -260,7 +260,7 @@ export const CFG = {
   marketSolve: opt('PROOF_MARKET_SOLVE', '1') === '1',
   marketAddr: opt('PROOF_MARKET_ADDR', '0x0000000033Dd45B1686Ba37e5F6e4ABDdaC17609'),
   marketMinTacWei: BigInt(opt('PROOF_MARKET_MIN_TAC_WEI', '0')),
-  marketPollSecs: num('PROOF_MARKET_POLL_SECS', 10),
+  marketPollSecs: num('PROOF_MARKET_POLL_SECS', 2),
   // TacitGasRelay (contracts/src/TacitGasRelay.sol): the relay sends open orders from holders with no ETH and keeps the fee, when the fee is
   // worth more than the gas by the margin. GAS_RELAY_SOLVE=0 turns it off; GAS_RELAY_ADDR names another relay.
   gasRelaySolve: opt('GAS_RELAY_SOLVE', '1') === '1',

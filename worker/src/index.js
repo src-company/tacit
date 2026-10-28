@@ -3799,6 +3799,7 @@ async function handleProofMarket(req, env, url, cors) {
     const rl = await proveRateLimit(env, ip, 'market-post', MARKET_BOARD.perClientPerHour, Math.floor(3600000 / MARKET_BOARD.perClientPerHour));
     if (!rl.ok) return jsonResponse({ ok: false, error: `too many orders, retry in ~${rl.retryAfter}s`, retryAfter: rl.retryAfter }, 429, { ...nostore, 'Retry-After': String(rl.retryAfter) });
     const r = await board.post(b.order);
+    if (r.ok && !r.existing) wakeRelay();   // the relay waits on its wake: a new order starts proving at once
     return jsonResponse(r, r.ok ? 200 : 400, nostore);
   }
   // /market/done { opId }: clears an order the market reports settled.

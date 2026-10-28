@@ -81,6 +81,7 @@ test('an order whose deposit never lands is proved but never claimed (a claim co
     fulfil: async () => '0xf', clear: async () => {} });
   r.calls.length = 0;
   assert.equal(await s.pass(), false);
+  assert.equal(s.hasOpen(), true, 'an order waiting on its deposit keeps the relay looking every few seconds');
   assert.deepEqual(r.calls, [['prove', '0xj']], 'proving starts at once, for one order only');
   assert.equal(await s.pass(), false, 'no deposit, no claim');
   assert.ok(!r.calls.some((c) => c[0] === 'claim'));
