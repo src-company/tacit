@@ -895,6 +895,7 @@ let marketReadAt = 0;
 const marketSolver = makeMarketSolver({
   me: settleWallet.account.address, minPrice: CFG.marketMinTacWei,
   listOrders: () => marketOrders(),
+  depositStatus: async (id) => BigInt((await publicClient.call({ to: POOL, data: `0x7da9874f${id.slice(2)}` })).data || 0),
   done: (id) => publicClient.readContract({ address: CFG.marketAddr, abi: MARKET_ABI, functionName: 'done', args: [id] }),
   claimOf: async (id) => { const [solver, until] = await publicClient.readContract({ address: CFG.marketAddr, abi: MARKET_ABI, functionName: 'claims', args: [id] }); return solver === '0x0000000000000000000000000000000000000000' ? null : { solver, until: Number(until) }; },
   claim: async (o) => submitCall({ address: CFG.marketAddr, abi: MARKET_ABI, ...claimCall(o), value: await publicClient.readContract({ address: CFG.marketAddr, abi: MARKET_ABI, functionName: 'claimBond' }) }, `market claim ${o.intent.opId.slice(0, 10)}`),

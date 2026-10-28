@@ -126,3 +126,28 @@ test('routes: any origin posts and lists an order; a done route clears it only w
     void t0;
   } finally { globalThis.fetch = realFetch; }
 });
+
+test('a tank order assembled the way the page does it (a held payer key signs the tank, a session key signs each intent) is listed', async () => {
+  const secp = await import('@noble/secp256k1');
+  const { hmac } = await import('@noble/hashes/hmac');
+  const { sha256 } = await import('@noble/hashes/sha256');
+  secp.etc.hmacSha256Sync = (k, ...m) => hmac(sha256, k, secp.etc.concatBytes(...m));
+  const addrOf = (priv) => '0x' + bytesToHex(keccak_256(secp.getPublicKey(priv, false).slice(1)).slice(-20));
+  const fmt = (sig) => '0x' + sig.r.toString(16).padStart(64, '0') + sig.s.toString(16).padStart(64, '0') + (27 + sig.recovery).toString(16);
+  const payerPriv = secp.utils.randomPrivateKey(), sessionPriv = secp.utils.randomPrivateKey(), owner = addrOf(payerPriv), delegateAddr = addrOf(sessionPriv);
+  const base = await order({ value: 1800 });
+  const max = 3n * 10n ** 18n, perOp = (max * 3n) / 2n;
+  const tank = pm.buildTank({ payer: owner, delegate: delegateAddr, cap: perOp * 5n, perOpMax: perOp, ttlSecs: 7 * 86400, now: NOW });
+  const tankSignature = fmt(secp.sign(hexToBytes(pm.tankDigest(tank).slice(2)), payerPriv));
+  const intent = pm.buildIntent({ payer: owner, publicValues: base.publicValues, floor: 10n ** 18n, max, now: NOW, tank: pm.tankDigest(tank) });
+  const signature = fmt(secp.sign(hexToBytes(pm.intentDigest(intent).slice(2)), sessionPriv));
+  const o = { ...pm.buildOrder({ intent, signature, permit: { v: 27, r: '0x' + '11'.repeat(32), s: '0x' + '22'.repeat(32) }, publicValues: base.publicValues, memos: [], tank, tankSignature }), stdin: base.stdin };
+  assert.equal(check(o), null);
+  // a second op under the same tank, signed with no prompt, is listed too; one past the per-op limit is not
+  const j = await order({ value: 1801 });
+  const i2 = pm.buildIntent({ payer: owner, publicValues: j.publicValues, floor: 10n ** 18n, max, now: NOW, tank: pm.tankDigest(tank) });
+  const o2 = { ...pm.buildOrder({ intent: i2, signature: fmt(secp.sign(hexToBytes(pm.intentDigest(i2).slice(2)), sessionPriv)), permit: o.permit, publicValues: j.publicValues, memos: [], tank, tankSignature }), stdin: j.stdin };
+  assert.equal(check(o2), null);
+  const i3 = pm.buildIntent({ payer: owner, publicValues: j.publicValues, floor: 10n ** 18n, max: perOp + 1n, now: NOW, tank: pm.tankDigest(tank) });
+  assert.match(check({ ...o2, intent: i3, signature: fmt(secp.sign(hexToBytes(pm.intentDigest(i3).slice(2)), sessionPriv)) }), /above the tank's limit/);
+});

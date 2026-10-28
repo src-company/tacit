@@ -258,6 +258,7 @@ export function makeRunner(cfg, { log = (...a) => console.log(`[runner ${new Dat
   const proveSolver = makeMarketSolver({
     me: from, minPrice: cfg.minTacWei, retryMs: 120_000, log: (m) => log(`prove: ${m}`),
     listOrders: async () => (await jget(`${cfg.api}/market/orders?limit=20`)).orders || [],
+    depositStatus: async (id) => BigInt(await call(POOL, '0x7da9874f' + id.slice(2))),
     done: async (id) => BigInt(await call(cfg.marketAddr, DONE + id.slice(2))) === 1n,
     claimOf: async (id) => { const r = String(await call(cfg.marketAddr, CLAIMS + id.slice(2))).slice(2); const solver = '0x' + r.slice(24, 64); return /^0x0+$/.test(solver) ? null : { solver, until: Number(BigInt('0x' + r.slice(64, 128))) }; },
     claim: async (o) => {

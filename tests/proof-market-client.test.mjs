@@ -40,6 +40,7 @@ const tIntent = pm.buildIntent({ payer: acct.address, publicValues: pv, floor: 0
 const liveTI = await rpc(M, encodeFunctionData({ abi, functionName: 'intentHash', args: [asBig(tIntent)] }));
 ok(liveTI === hashTypedData({ ...pm.intentTypedData(tIntent), types: { Intent: pm.intentTypedData(tIntent).types.Intent }, message: asBig(tIntent) }), 'a tank order\'s intent (naming its tank) hashes the same');
 
+ok(pm.tankDigest(tank) === liveT, 'the digest a held key signs for a tank is the market\'s tank hash');
 let same = true;
 for (const dt of [-5, 0, 30, 60, 119, 120, 500]) {
   const l = BigInt(await rpc(M, encodeFunctionData({ abi, functionName: 'priceAt', args: [asBig(intent), BigInt(now + dt)] })));

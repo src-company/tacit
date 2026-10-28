@@ -53,6 +53,7 @@ const send = async (call, value = 0n) => {
 const solver = makeMarketSolver({
   me: account.address, minPrice: BigInt(env('MIN_TAC_WEI', '0')), log,
   listOrders: async () => (await j(`${API}/market/orders?limit=20`)).orders || [],
+  depositStatus: async (id) => BigInt((await reader.call({ to: '0x000000000Ed1eabD231Be41d93b719056F7febFC', data: `0x7da9874f${id.slice(2)}` })).data || 0),
   done: (id) => reader.readContract({ address: MARKET, abi, functionName: 'done', args: [id] }),
   claimOf: async (id) => { const [solver_, until] = await reader.readContract({ address: MARKET, abi, functionName: 'claims', args: [id] }); return /^0x0+$/.test(solver_) ? null : { solver: solver_, until: Number(until) }; },
   claim: async (o) => { await reader.simulateContract({ address: MARKET, abi, ...claimCall(o), account }); return send(claimCall(o), await reader.readContract({ address: MARKET, abi, functionName: 'claimBond' })); },

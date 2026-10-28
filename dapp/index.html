@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-LE4bq+qWV0rKa+sWrce1pqnAGb80R/3UK7WGcs12erg=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-k84vnLBt9JmGA3Ys+a9afGggq5XBRRr9U0ukZYCB5LE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <link rel="preconnect" href="https://api.tacit.finance" crossorigin>
 <link rel="preconnect" href="https://ethereum-rpc.publicnode.com" crossorigin>
@@ -10534,29 +10534,62 @@ async function proveWithCredit({ run, t, p, plan, prover, tell, pub, priv }) {
 // that most can be pulled under; provers (Tacit's relay first, then anyone) race to prove the share and settle it, and are paid in the same
 // transaction the pool accepts it, so no TAC moves unless the share goes in. Offered where Tacit's prover is slow, when the wallet holds the TAC.
 const MARKET = { mod: null, usd: { floor: 0.4, max: 1.5 } };
-const marketMod = async () => (MARKET.mod ||= await import('/proof-market.js?cb=59dd658c'));
+const marketMod = async () => (MARKET.mod ||= await import('/proof-market.js?cb=3657bc99'));
 async function marketOffer() {
   try {
     const px = (fpx().ethUsd || 0) * (FARM.precision?.tacEth || 0);
     if (!(px > 0) || !S.key) return null;
     const owner = await payingAccount(), have = wordAt(await ethCall(ADDR.tac, '70a08231' + addrWord(owner)), 0);
     const tac = (usd) => BigInt(Math.round((usd / px) * 1e6)) * 10n ** 12n;
-    const q = { floor: tac(MARKET.usd.floor), max: tac(MARKET.usd.max), owner };
+    const q = { floor: tac(MARKET.usd.floor), max: tac(MARKET.usd.max), owner, tank: !!tankRec(owner) };
     return have >= q.max ? q : null;
   } catch { return null; }
 }
-// Signs the fee and the permit, and posts the order for the wrap `built` (its proof is the share's) to the board; the zap is then sent without a
-// proof and whoever proves first settles it. Nothing is sent from the wallet here: two signatures.
-async function postMarketOrder({ built, q, status }) {
-  const pm = await marketMod(), inputs = pm.wrapOrderInputs(built);
-  const intent = pm.buildIntent({ payer: q.owner, publicValues: inputs.publicValues, floor: q.floor, max: q.max, rampSecs: 60, ttlSecs: 1500 });
-  let signature;
+// A proof tank: the holder signs ONE package (a session key kept in this browser, a most per proof, a total of five, seven days) and one TAC
+// permit for the total, and the session key then signs each proving fee with no prompt. The market counts what the tank has paid and never
+// passes the total; the holder's TAC moves only when the pool accepts a proof. Turning it off here forgets the key, so nothing more can be signed.
+const tankKey = (owner) => 'tacit-market-tank-v1:' + String(owner).toLowerCase();
+function tankRec(owner) {
+  try { const r = JSON.parse(localStorage.getItem(tankKey(owner)) || 'null'); return r && Number(r.tank.expiry) > Math.floor(Date.now() / 1000) + 600 ? r : null; } catch { return null; }
+}
+const tankSave = (owner, r) => { try { localStorage.setItem(tankKey(owner), JSON.stringify(r)); } catch { /* a convenience: the next proof asks again */ } };
+function marketTankOff(owner) { try { localStorage.removeItem(tankKey(owner)); } catch { /* */ } }
+async function marketTank({ q, status }) {
+  const pm = await marketMod(), market = pm.MARKET[1];
+  let rec = tankRec(q.owner);
+  if (rec && BigInt(rec.tank.perOpMax) >= q.max) {
+    const spent = wordAt(await ethCall(market, 'ae20bed3' + strip(pm.tankDigest(rec.tank))), 0);
+    if (BigInt(rec.tank.cap) - spent >= q.max) {
+      // the allowance the market spends is set by the permit on first use; if it has been used up, or another TAC permit moved the nonce first, sign it again
+      const allow = wordAt(await ethCall(ADDR.tac, 'dd62ed3e' + addrWord(q.owner) + addrWord(market)), 0), nonce = wordAt(await ethCall(ADDR.tac, '7ecebe00' + addrWord(q.owner)), 0);
+      if (allow >= q.max || nonce === BigInt(rec.permitNonce)) return rec;
+      rec.permit = await permitSig({ token: ADDR.tac, name: 'Tacit Token', spender: market, value: BigInt(rec.tank.cap), deadline: BigInt(rec.tank.expiry), status, what: 'TAC proving tank' });
+      rec.permitNonce = String(nonce);
+      tankSave(q.owner, rec);
+      return rec;
+    }
+  }
+  const priv = secp.utils.randomPrivateKey(), delegate = '0x' + bytesToHex(keccak_256(secp.getPublicKey(priv, false).slice(1)).slice(-20));
+  const perOp = (q.max * 3n) / 2n, tank = pm.buildTank({ payer: q.owner, delegate, cap: perOp * 5n, perOpMax: perOp, ttlSecs: 7 * 86400 });
+  let tankSignature;
   if (payer() === 'tacit') {
-    const sig = secp.sign(hexToBytes(strip(pm.intentDigest(intent))), hexToBytes(strip(S.acct.priv)));
-    signature = '0x' + sig.r.toString(16).padStart(64, '0') + sig.s.toString(16).padStart(64, '0') + (27 + sig.recovery).toString(16);
-  } else { say(status, 'Sign the proving fee in your wallet. It is only taken if the share goes in…'); await ensureChain(1); signature = await pm.signIntent(S.provider, q.owner, intent); }
-  const permit = await permitSig({ token: ADDR.tac, name: 'Tacit Token', spender: pm.MARKET[1], value: q.max, deadline: BigInt(intent.deadline), status, what: 'TAC proving fee' });
-  const order = { ...pm.buildOrder({ intent, signature, permit, publicValues: inputs.publicValues, memos: inputs.memos }), stdin: inputs.stdin };
+    const sig = secp.sign(hexToBytes(strip(pm.tankDigest(tank))), hexToBytes(strip(S.acct.priv)));
+    tankSignature = '0x' + sig.r.toString(16).padStart(64, '0') + sig.s.toString(16).padStart(64, '0') + (27 + sig.recovery).toString(16);
+  } else { say(status, 'Sign the proving tank in your wallet: up to ' + fmt(BigInt(tank.cap), 18, 2) + ' TAC over a week, only ever taken when a share goes in…'); await ensureChain(1); tankSignature = await pm.signTank(S.provider, q.owner, tank); }
+  const nonce = wordAt(await ethCall(ADDR.tac, '7ecebe00' + addrWord(q.owner)), 0);
+  const permit = await permitSig({ token: ADDR.tac, name: 'Tacit Token', spender: market, value: BigInt(tank.cap), deadline: BigInt(tank.expiry), status, what: 'TAC proving tank' });
+  rec = { tank, tankSignature, permit, permitNonce: String(nonce), delegatePriv: bytesToHex(priv) };
+  tankSave(q.owner, rec);
+  return rec;
+}
+// Posts the order for the wrap `built` (its proof is the share's) to the board; the zap is then sent without a proof and whoever proves first settles
+// it. The first time asks for two signatures (the tank and its permit); after that the session key signs and nothing is asked.
+async function postMarketOrder({ built, q, status }) {
+  const pm = await marketMod(), inputs = pm.wrapOrderInputs(built), rec = await marketTank({ q, status });
+  const intent = pm.buildIntent({ payer: q.owner, publicValues: inputs.publicValues, floor: q.floor, max: q.max > BigInt(rec.tank.perOpMax) ? BigInt(rec.tank.perOpMax) : q.max, rampSecs: 60, ttlSecs: 1500, tank: pm.tankDigest(rec.tank) });
+  const sig = secp.sign(hexToBytes(strip(pm.intentDigest(intent))), hexToBytes(rec.delegatePriv));
+  const signature = '0x' + sig.r.toString(16).padStart(64, '0') + sig.s.toString(16).padStart(64, '0') + (27 + sig.recovery).toString(16);
+  const order = { ...pm.buildOrder({ intent, signature, permit: rec.permit, publicValues: inputs.publicValues, memos: inputs.memos, tank: rec.tank, tankSignature: rec.tankSignature }), stdin: inputs.stdin };
   const r = await fetch(`${API}/market/order`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ order }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.ok) throw new Error(j.error || `the proof market answered ${r.status}`);
@@ -10567,11 +10600,13 @@ function zapWay({ tell, inflight = null, down = false, then = null, market = nul
   return new Promise((resolve) => {
     const fin = (v) => { if (ZAPWAY.cb === fin) ZAPWAY.cb = null; resolve(v); };
     ZAPWAY.cb = fin; ZAPWAY.then = then;
-    tell(html`<span class="err">${down ? 'Tacit’s prover is not available right now.' : 'Tacit’s prover is taking longer than usual.'}</span> Nothing has left your wallet.<div class="actr-f"><button class="link" type="button" data-zapway="own">Prove it yourself</button>, on this computer or with your credit · ${market ? html`<button class="link" type="button" data-zapway="market">Pay about ${fmt(market.floor, 18, 2)} TAC for a fast proof</button> · ` : ''}<button class="link" type="button" data-zapway="relay">Send the zap and let the relay finish it</button></div>`);
+    tell(html`<span class="err">${down ? 'Tacit’s prover is not available right now.' : 'Tacit’s prover is taking longer than usual.'}</span> Nothing has left your wallet.<div class="actr-f"><button class="link" type="button" data-zapway="own">Prove it yourself</button>, on this computer or with your credit · ${market ? html`<button class="link" type="button" data-zapway="market">Pay about ${fmt(market.floor, 18, 2)} TAC for a fast proof${market.tank ? '' : ' (two signatures, then none for a week)'}</button> · ${market.tank ? html`<button class="link" type="button" data-tankoff="${market.owner}">Turn fast proofs off</button> · ` : ''}` : ''}<button class="link" type="button" data-zapway="relay">Send the zap and let the relay finish it</button></div>`);
     if (inflight) inflight.then(() => fin('ready'), () => fin('ready'));
   });
 }
 document.addEventListener('click', (e) => {
+  const off = e.target.closest?.('[data-tankoff]');
+  if (off) { marketTankOff(off.dataset.tankoff); off.replaceWith(document.createTextNode('Fast proofs are off. ')); return; }
   const b = e.target.closest?.('[data-zapway]');
   if (!b || !ZAPWAY.cb) return;
   b.closest('.actr-f')?.remove();                                    // a choice is made once: its buttons go

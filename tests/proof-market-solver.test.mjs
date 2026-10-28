@@ -4,13 +4,14 @@ import assert from 'node:assert/strict';
 import { makeMarketSolver } from '../worker-relay/src/lib/market-solver.js';
 
 const ME = '0x' + '77'.repeat(20), OTHER = '0x' + '88'.repeat(20);
-const mk = (id, extra = {}) => ({ intent: { opId: id, floorFee: '1000', maxFee: '5000', start: '1000', rampSecs: '0', deadline: '9000', ...extra } });
-function rig({ orders, doneSet = new Set(), holder = {}, proveMs = 0, claimLapses = false } = {}) {
+const mk = (id, extra = {}) => ({ publicValues: '0x', intent: { opId: id, floorFee: '1000', maxFee: '5000', start: '1000', rampSecs: '0', deadline: '9000', ...extra } });
+function rig({ orders, doneSet = new Set(), holder = {}, proveMs = 0, claimLapses = false, deposit = 1 } = {}) {
   let t = 2_000_000; // ms
   const calls = [], cleared = [], claims = { ...holder };
   const s = makeMarketSolver({
     me: ME, now: () => t, retryMs: 120_000,
     listOrders: async () => orders,
+    depositStatus: async () => deposit,
     done: async (id) => doneSet.has(id),
     claimOf: async (id) => claims[id] || null,
     claim: async (o) => { calls.push(['claim', o.intent.opId]); claims[o.intent.opId] = { solver: ME, until: claimLapses ? 1 : 3000 }; return '0xc1'; },
@@ -35,7 +36,7 @@ test('leaves an order another prover holds, one already settled (and clears it),
   assert.deepEqual(r.calls.filter((c) => c[0] === 'claim').map((c) => c[1]), ['0xe']);
   assert.deepEqual(r.cleared, ['0xc', '0xe']);
   const low = rig({ orders: [mk('0xf')] });
-  const s2 = makeMarketSolver({ me: ME, now: () => 2_000_000, minPrice: 9000n, listOrders: async () => [mk('0xf')], done: async () => false, claimOf: async () => null, claim: async () => { throw new Error('no'); }, prove: async () => ({}), fulfil: async () => {}, clear: async () => {} });
+  const s2 = makeMarketSolver({ me: ME, depositStatus: async () => 1, now: () => 2_000_000, minPrice: 9000n, listOrders: async () => [mk('0xf')], done: async () => false, claimOf: async () => null, claim: async () => { throw new Error('no'); }, prove: async () => ({}), fulfil: async () => {}, clear: async () => {} });
   assert.equal(await s2.pass(), false, 'below the price the relay will work for');
   void low;
 });
@@ -51,18 +52,18 @@ test('a claim that lapses before the proof is back is not fulfilled, and the ord
 
 test('a failure in claim, prove or fulfil is logged and the order waits out the retry gap; the board being down is not an error', async () => {
   const logs = [];
-  const s = makeMarketSolver({ me: ME, now: () => 2_000_000, log: (m) => logs.push(m), listOrders: async () => [mk('0xh')], done: async () => false, claimOf: async () => null,
+  const s = makeMarketSolver({ me: ME, depositStatus: async () => 1, now: () => 2_000_000, log: (m) => logs.push(m), listOrders: async () => [mk('0xh')], done: async () => false, claimOf: async () => null,
     claim: async () => '0x1', prove: async () => { throw new Error('the prover is out of credit'); }, fulfil: async () => {}, clear: async () => {} });
   assert.equal(await s.pass(), true);
   assert.match(logs.join('\n'), /out of credit/);
   assert.equal(await s.pass(), false);
-  const down = makeMarketSolver({ me: ME, listOrders: async () => { throw new Error('502'); }, done: async () => false, claimOf: async () => null, claim: async () => {}, prove: async () => {}, fulfil: async () => {}, clear: async () => {} });
+  const down = makeMarketSolver({ me: ME, depositStatus: async () => 1, listOrders: async () => { throw new Error('502'); }, done: async () => false, claimOf: async () => null, claim: async () => {}, prove: async () => {}, fulfil: async () => {}, clear: async () => {} });
   assert.equal(await down.pass(), false);
 });
 
 test('a fulfil that fails because the deposit has not landed is tried again while the claim lasts, then given up', async () => {
   let t = 2_000_000, tries = 0;
-  const mkS = (okAt) => makeMarketSolver({ me: ME, now: () => t, sleep: async (ms) => { t += ms; }, listOrders: async () => [mk('0xi')], done: async () => false,
+  const mkS = (okAt) => makeMarketSolver({ me: ME, depositStatus: async () => 1, now: () => t, sleep: async (ms) => { t += ms; }, listOrders: async () => [mk('0xi')], done: async () => false,
     claimOf: async () => ({ solver: ME, until: 2040 }), claim: async () => '0x1', prove: async () => ({ proof: '0x' }), clear: async () => {},
     fulfil: async () => { tries++; if (tries < okAt) throw new Error('deposit missing'); return '0xf'; } });
   assert.equal(await mkS(3).pass(), true);
@@ -70,4 +71,21 @@ test('a fulfil that fails because the deposit has not landed is tried again whil
   tries = 0; t = 2_000_000;
   assert.equal(await mkS(99).pass(), true);
   assert.ok(tries >= 3 && tries < 12, 'stopped before the claim ended');
+});
+
+test('an order whose deposit never lands is proved but never claimed (a claim costs gas); one proof at a time; it is claimed once the deposit is pending', async () => {
+  let deposit = 0;
+  const r = rig({ orders: [mk('0xj'), mk('0xk')], deposit: 0 });
+  const s = makeMarketSolver({ me: ME, now: () => 2_000_000, listOrders: async () => [mk('0xj'), mk('0xk')], done: async () => false, claimOf: async () => null,
+    depositStatus: async () => deposit, claim: async (o) => { r.calls.push(['claim', o.intent.opId]); return '0xc'; }, prove: async (o) => { r.calls.push(['prove', o.intent.opId]); await new Promise((x) => setTimeout(x, 5)); return { proof: '0x' }; },
+    fulfil: async () => '0xf', clear: async () => {} });
+  r.calls.length = 0;
+  assert.equal(await s.pass(), false);
+  assert.deepEqual(r.calls, [['prove', '0xj']], 'proving starts at once, for one order only');
+  assert.equal(await s.pass(), false, 'no deposit, no claim');
+  assert.ok(!r.calls.some((c) => c[0] === 'claim'));
+  deposit = 1;
+  // the claim now checks the live holder; make claimOf report us after the claim
+  assert.equal(await s.pass().catch(() => 'threw'), true);
+  assert.ok(r.calls.some((c) => c[0] === 'claim' && c[1] === '0xj'), 'claimed once the deposit was pending');
 });

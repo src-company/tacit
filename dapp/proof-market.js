@@ -165,3 +165,11 @@ export function encodeFulfill(order, proof) {
     ? abiCall(`fulfillFromTank(${TANK_T},bytes,${INTENT_T},bytes,bytes,bytes,bytes[],uint8,bytes32,bytes32)`, [{ s: tankWords(order.tank) }, { b: bytesOf(order.tankSignature) }, i, sig, ...tail])
     : abiCall(`fulfill(${INTENT_T},bytes,bytes,bytes,bytes[],uint8,bytes32,bytes32)`, [i, sig, ...tail]);
 }
+
+/// The EIP-712 digest of a tank (its hash is the market's `spent` key and what a tank order's intent names).
+export function tankDigest(tank, chainId = 1, market = MARKET[chainId]) {
+  const domain = k256(k256(enc('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)')), k256(enc('TacitProofMarket')), k256(enc('1')), word(chainId), addrWord(market));
+  const typehash = k256(enc('Tank(address payer,address delegate,uint256 cap,uint256 perOpMax,uint64 expiry,uint256 salt)'));
+  const struct = k256(typehash, addrWord(tank.payer), addrWord(tank.delegate), word(tank.cap), word(tank.perOpMax), word(tank.expiry), word(tank.salt));
+  return hex(k256(new Uint8Array([0x19, 0x01]), domain, struct));
+}
