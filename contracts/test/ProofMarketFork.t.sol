@@ -32,7 +32,7 @@ contract ProofMarketForkTest is Test {
         }
         vm.createSelectFork(url);
         PoolStub pool = new PoolStub();
-        ProofMarket mkt = new ProofMarket(address(pool), TAC, 60);
+        ProofMarket mkt = new ProofMarket(address(pool), TAC, 60, 0.01 ether, address(0x7EA5));
 
         uint256 key = 0xB0B;
         address payer = vm.addr(key);
@@ -40,7 +40,7 @@ contract ProofMarketForkTest is Test {
         address solver = address(0x5017);
 
         bytes memory pv = hex"abcdef";
-        ProofMarket.Intent memory i = ProofMarket.Intent(payer, keccak256(pv), 1e18, 5e18, uint64(block.timestamp), 0, uint64(block.timestamp + 1 hours));
+        ProofMarket.Intent memory i = ProofMarket.Intent(payer, keccak256(pv), 1e18, 5e18, uint64(block.timestamp), 0, uint64(block.timestamp + 1 hours), bytes32(0));
         bytes memory sig;
         {
             (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, mkt.intentHash(i));
@@ -59,6 +59,9 @@ contract ProofMarketForkTest is Test {
         (uint8 pv_, bytes32 pr, bytes32 ps) = vm.sign(key, keccak256(abi.encodePacked("\x19\x01", ITac(TAC).DOMAIN_SEPARATOR(), sh)));
         bytes[] memory memos = new bytes[](0);
 
+        vm.deal(solver, 1 ether);
+        vm.prank(solver);
+        mkt.claim{value: 0.01 ether}(i, sig);
         vm.prank(solver);
         mkt.fulfill(i, sig, pv, hex"", memos, pv_, pr, ps);
 

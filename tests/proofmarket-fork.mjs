@@ -62,10 +62,12 @@ await rpcA('anvil_setCode', [SP1_VERIFIER, '0x00']);                      // onl
 const { stdinFor } = await import('../dapp/sp1-stdin.js');
 const TAC = '0xA1313eb9f3A445606D9583bcAc3ebeB56a858279', DIST = '0x000000C918e44A3a443937fA7594eA4f7C95D6b9';
 const SOLVER_A = '0x00000000000000000000000000000000000a0a0a', SOLVER_B = '0x00000000000000000000000000000000000b0b0b';
+const BOND = 10n ** 16n, TREASURY = '0x000000000000000000000000000000000000dEaD';
 const marketJson = JSON.parse(readFileSync(join(ROOT, 'contracts/out/ProofMarket.sol/ProofMarket.json'), 'utf8'));
 const abi = parseAbi([
-  'struct Intent { address payer; bytes32 opId; uint256 floorFee; uint256 maxFee; uint64 start; uint64 rampSecs; uint64 deadline; }',
-  'function claim(Intent i, bytes signature)',
+  'struct Intent { address payer; bytes32 opId; uint256 floorFee; uint256 maxFee; uint64 start; uint64 rampSecs; uint64 deadline; bytes32 tank; }',
+  'function claim(Intent i, bytes signature) payable',
+  'function claimFromTank(Tank t, bytes tankSig, Intent i, bytes intentSig) payable',
   'function fulfill(Intent i, bytes signature, bytes publicValues, bytes proofBytes, bytes[] memos, uint8 v, bytes32 r, bytes32 s)',
   'function intentHash(Intent i) view returns (bytes32)',
   'struct Tank { address payer; address delegate; uint256 cap; uint256 perOpMax; uint64 expiry; uint256 salt; }',
@@ -109,7 +111,7 @@ const tacOf = async (a) => word(await rpcA('eth_call', [{ to: TAC, data: '0x70a0
 for (const a of [SOLVER_A, SOLVER_B, DIST]) { await rpcA('anvil_impersonateAccount', [a]); await rpcA('anvil_setBalance', [a, hex(10n * 10n ** 18n)]); }
 
 // ── the market is deployed; a holder with a key of their own and live TAC, no allowance and no gas ──
-const deploy = encodeDeployData({ abi: [...marketJson.abi], bytecode: marketJson.bytecode.object, args: [POOL, TAC, 60n] });
+const deploy = encodeDeployData({ abi: [...marketJson.abi], bytecode: marketJson.bytecode.object, args: [POOL, TAC, 60n, BOND, TREASURY] });
 const market = (await send(SETTLER, null, deploy)).rc.contractAddress;
 ok(!!market, `ProofMarket is deployed on the fork (${market})`);
 const payer = privateKeyToAccount('0x' + 'b0'.repeat(31) + '0b');
@@ -135,7 +137,7 @@ ok(pv.length > 100, `the real guest proved it (${(g.stdout.split('\n').find((l) 
 
 // ── the holder's intent and permit ──
 const block = await rpcA('eth_getBlockByNumber', ['latest', false]), now = Number(BigInt(block.timestamp));
-const intent = (opId, floor, max) => ({ payer: payer.address, opId, floorFee: floor, maxFee: max, start: BigInt(now), rampSecs: 0n, deadline: BigInt(now + 3600) });
+const intent = (opId, floor, max) => ({ payer: payer.address, opId, floorFee: floor, maxFee: max, start: BigInt(now), rampSecs: 0n, deadline: BigInt(now + 3600), tank: '0x' + '00'.repeat(32) });
 const signIntent = async (i) => payer.sign({ hash: await rpcA('eth_call', [{ to: market, data: encodeFunctionData({ abi, functionName: 'intentHash', args: [i] }) }, 'latest']) });
 const signPermit = async (i) => {
   const nonce = word(await rpcA('eth_call', [{ to: TAC, data: '0x7ecebe00' + payer.address.slice(2).toLowerCase().padStart(64, '0') }, 'latest']), 0);
@@ -150,7 +152,7 @@ const fulfill = (from, i, sig, publicValues, p) => send(from, market, encodeFunc
 const bal0 = await tacOf(payer.address);
 
 // ── a copied proof cannot take the fee while another prover holds the claim ──
-await send(SOLVER_A, market, encodeFunctionData({ abi, functionName: 'claim', args: [I, sigI] }));
+await send(SOLVER_A, market, encodeFunctionData({ abi, functionName: 'claim', args: [I, sigI] }), hex(BOND));
 ok(!!(await refuses(() => fulfill(SOLVER_B, I, sigI, pv, pm))) && (await depositStatus(built.depositId)) === 1n && (await tacOf(SOLVER_B)) === 0n, 'a second prover who copies the proof is refused while the claim stands: nothing settles, nothing is paid');
 
 // ── a proof for another op, and a pool refusal, move no TAC ──
@@ -181,12 +183,13 @@ ok(!!(await refuses(() => fulfill(SOLVER_B, I, sigI, pv, pm2))), 'a second fulfi
   const pv2 = `0x${readFileSync(o2, 'utf8').trim()}`, memos2 = b2.memos.map((m) => (m.startsWith('0x') ? m : `0x${m}`));
   const tank = { payer: payer.address, delegate: delegate.address, cap: 30n * 10n ** 18n, perOpMax: 10n * 10n ** 18n, expiry: BigInt(now + 86400), salt: 7n };
   const tankSig = await payer.sign({ hash: await rpcA('eth_call', [{ to: market, data: encodeFunctionData({ abi, functionName: 'tankHash', args: [tank] }) }, 'latest']) });
-  const T = intent(keccak256(pv2), 0n, 6n * 10n ** 18n), tankIntentSig = await delegate.sign({ hash: await rpcA('eth_call', [{ to: market, data: encodeFunctionData({ abi, functionName: 'intentHash', args: [T] }) }, 'latest']) });
+  const T = { ...intent(keccak256(pv2), 0n, 6n * 10n ** 18n), tank: await rpcA('eth_call', [{ to: market, data: encodeFunctionData({ abi, functionName: 'tankHash', args: [tank] }) }, 'latest']) }, tankIntentSig = await delegate.sign({ hash: await rpcA('eth_call', [{ to: market, data: encodeFunctionData({ abi, functionName: 'intentHash', args: [T] }) }, 'latest']) });
   // the permit is for the tank's whole cap, signed once
   const nonce = word(await rpcA('eth_call', [{ to: TAC, data: '0x7ecebe00' + payer.address.slice(2).toLowerCase().padStart(64, '0') }, 'latest']), 0), ds = await rpcA('eth_call', [{ to: TAC, data: '0x3644e515' }, 'latest']);
   const sh = keccak256(`0x${keccak256('0x' + Buffer.from('Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)').toString('hex')).slice(2)}${payer.address.slice(2).toLowerCase().padStart(64, '0')}${market.slice(2).toLowerCase().padStart(64, '0')}${tank.cap.toString(16).padStart(64, '0')}${nonce.toString(16).padStart(64, '0')}${tank.expiry.toString(16).padStart(64, '0')}`);
   const ps = await payer.sign({ hash: keccak256(concatHex(['0x1901', ds, sh])) });
   const before = await tacOf(payer.address);
+  await send(SOLVER_B, market, encodeFunctionData({ abi, functionName: 'claimFromTank', args: [tank, tankSig, T, tankIntentSig] }), hex(BOND));
   await send(SOLVER_B, market, encodeFunctionData({ abi, functionName: 'fulfillFromTank', args: [tank, tankSig, T, tankIntentSig, pv2, proof, memos2, parseInt(ps.slice(130, 132), 16), ps.slice(0, 66), `0x${ps.slice(66, 130)}`] }));
   const spentNow = word(await rpcA('eth_call', [{ to: market, data: encodeFunctionData({ abi, functionName: 'spent', args: [keccak256(await rpcA('eth_call', [{ to: market, data: encodeFunctionData({ abi, functionName: 'tankHash', args: [tank] }) }, 'latest'])).length ? await rpcA('eth_call', [{ to: market, data: encodeFunctionData({ abi, functionName: 'tankHash', args: [tank] }) }, 'latest']) : '0x'] }) }, 'latest']), 0);
   ok(g2.status === 0 && (await depositStatus(b2.depositId)) === 2n && before - (await tacOf(payer.address)) === 6n * 10n ** 18n && spentNow === 6n * 10n ** 18n,

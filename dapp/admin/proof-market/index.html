@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Z3DC+15+oKQZGXwOTjThQHAH+c9IwLQsGrda6XevgUU='; style-src 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://mainnet.gateway.tenderly.co https://ethereum-rpc.publicnode.com; base-uri 'none'; form-action 'none'">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<title>tacit admin · proof market</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 400; font-display: swap; src: url('/fonts/ibm-plex-mono-400-latin.woff2') format('woff2'); }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 500; font-display: swap; src: url('/fonts/ibm-plex-mono-500-latin.woff2') format('woff2'); }
+@font-face { font-family: 'Instrument Serif'; font-weight: 400; font-style: italic; font-display: swap; src: url('/fonts/instrument-serif-400i-latin.woff2') format('woff2'); }
+:root {
+  --paper: #E8E0CC; --card: #F2EBD4; --field: #FAF6EA;
+  --ink: #1A1A1A; --mute: #625C4F;
+  --hair: rgba(26,26,26,.12); --hair-2: rgba(26,26,26,.28);
+  --ok: #0a7234; --warn: #9a4a00; --err: #b8341d;
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --serif: 'Instrument Serif', Georgia, serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #15130E; --card: #1F1C15; --field: #191711;
+    --ink: #EDE5CF; --mute: #A39B85;
+    --hair: rgba(237,229,207,.12); --hair-2: rgba(237,229,207,.28);
+    --ok: #8fcf9a; --warn: #f7931a; --err: #f08a6c;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--paper); color: var(--ink); }
+body {
+  font: 13px/1.6 var(--mono); letter-spacing: -.01em;
+  background-image: radial-gradient(var(--hair) 1px, transparent 1px); background-size: 24px 24px;
+  padding: 0 max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left));
+}
+a { color: inherit; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+button { font: inherit; color: inherit; letter-spacing: inherit; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.shell { max-width: 880px; margin: 0 auto; }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 22px 0 6px; }
+.brand { display: inline-flex; align-items: baseline; gap: 10px; text-decoration: none; }
+.brand b { font: italic 400 30px/1 var(--serif); letter-spacing: -.01em; }
+.brand i { font-style: normal; font-size: 12px; color: var(--mute); text-transform: uppercase; letter-spacing: .12em; }
+.lead { margin: 0 0 18px; color: var(--mute); max-width: 72ch; }
+.wallet { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn { min-height: 36px; padding: 6px 14px; border: 1px solid var(--hair-2); border-radius: 999px; background: var(--card); cursor: pointer; white-space: nowrap; }
+.btn:hover:not(:disabled) { border-color: var(--ink); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.go { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.chip { padding: 4px 10px; border: 1px solid var(--hair); border-radius: 999px; background: var(--field); }
+.card { background: var(--card); border: 1px solid var(--hair); border-radius: 14px; padding: 18px 18px 16px; display: flex; flex-direction: column; gap: 14px; }
+.addr { font: 400 22px/1.2 var(--mono); word-break: break-all; }
+.addr .z { color: var(--ok); }
+.st { display: inline-flex; align-items: center; gap: 6px; }
+.st::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--hair-2); }
+.st.open::before { background: var(--ok); } .st.open { color: var(--ok); }
+.st.none::before { background: var(--warn); } .st.none { color: var(--warn); }
+dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; }
+dt { color: var(--mute); }
+dd { margin: 0; word-break: break-all; min-width: 0; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.steps li::before { content: '· '; color: var(--mute); }
+.steps li.ok { color: var(--ok); } .steps li.ok::before { content: '✓ '; }
+.steps li.err { color: var(--err); } .steps li.err::before { content: '✗ '; }
+.note { font-size: 11px; color: var(--mute); }
+.note.err { color: var(--err); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <a class="brand" href="/"><b>tacit</b><i>proof market</i></a>
+    <div class="wallet"><span class="chip" id="who" hidden></span><span id="pick"></span><button class="btn" id="connect" type="button">Connect wallet</button></div>
+  </header>
+  <p class="lead">Deploy the ProofMarket from your wallet, through CreateX, at the address mined for it. The transaction is run first from your address: it is sent only if it creates exactly the contract at exactly the address shown.</p>
+  <section class="card" id="card" aria-live="polite"><span class="note">Reading the kit…</span></section>
+</div>
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const strip = (h) => String(h || '').replace(/^0x/, '');
+const lc = (s) => String(s || '').toLowerCase();
+const word = (v) => BigInt(v).toString(16).padStart(64, '0');
+const short = (a) => a.slice(0, 6) + '…' + a.slice(-4);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); for (const k of kids) if (k != null) e.append(k); return e; };
+const reason = (e) => String(e?.data?.message || e?.message || e).replace(/^.*?execution reverted:?\s*/i, 'reverted ').slice(0, 160);
+const SEL = { POOL: '0x7535d246', TAC: '0x19f68523', WINDOW: '0x9f34fc80', BOND: '0xe2927519', TREASURY: '0x2d2c5565', DEPLOY: '0x26307668' };   // POOL(), TAC(), CLAIM_WINDOW(), CLAIM_BOND(), TREASURY(), CreateX deployCreate2(bytes32,bytes)
+const W = { found: new Map(), prov: null, name: '', account: null, chain: null };
+let KIT = null, state = 'none', log = [];
+
+async function rpc(method, params = []) {
+  let last;
+  for (const url of KIT.rpc) {
+    try {
+      const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+      const j = await r.json();
+      if (j.error) throw Object.assign(new Error(j.error.message), { data: j.error, final: /revert/i.test(`${j.error.message} ${JSON.stringify(j.error.data ?? '')}`) });
+      return j.result;
+    } catch (e) { if (e.final) throw e; last = e; }
+  }
+  throw last || new Error('no node answered');
+}
+// CreateX.deployCreate2(bytes32 salt, bytes initCode): the salt, the offset of the bytes (0x40), their length and the init code, padded to a word.
+function deployData(kit) {
+  const code = strip(kit.initCode), len = code.length / 2;
+  return SEL.DEPLOY + strip(kit.salt).padStart(64, '0') + word(0x40) + word(len) + code + '0'.repeat((64 - (code.length % 64)) % 64);
+}
+const addrOf = (ret) => '0x' + strip(ret).slice(24, 64);
+const hasCode = async (a) => strip(await rpc('eth_getCode', [a, 'latest'])).length > 0;
+
+// ── the wallet: any injected one (EIP-6963, else window.ethereum) ──
+const wallets = () => { const l = [...W.found.values()]; if (!l.length && window.ethereum?.request) l.push({ info: { name: 'Browser wallet' }, provider: window.ethereum }); return l; };
+const ask = (method, params) => W.prov.request({ method, params });
+addEventListener('eip6963:announceProvider', (e) => { if (e.detail?.provider?.request) { W.found.set(e.detail.info?.uuid || String(W.found.size), e.detail); drawPick(); } });
+dispatchEvent(new Event('eip6963:requestProvider'));
+function drawPick() {
+  const l = wallets(), pick = $('pick');
+  pick.replaceChildren();
+  if (W.prov || l.length < 2) return;
+  for (const w of l) pick.append(el('button', { className: 'btn', type: 'button', textContent: w.info?.name || 'Wallet', onclick: () => connect(w) }), ' ');
+  $('connect').hidden = true;
+}
+async function connect(w) {
+  try {
+    const [account] = await w.provider.request({ method: 'eth_requestAccounts' });
+    if (!account) return;
+    W.prov = w.provider; W.name = w.info?.name || 'Wallet'; W.account = account; W.chain = Number(await ask('eth_chainId'));
+    W.prov.on?.('accountsChanged', (a) => { W.account = a?.[0] || null; if (!W.account) W.prov = null; drawWho(); draw(); });
+    W.prov.on?.('chainChanged', (c) => { W.chain = Number(c); drawWho(); draw(); });
+    drawWho(); draw();
+  } catch (e) { $('who').hidden = false; $('who').textContent = reason(e); }
+}
+function drawWho() {
+  const who = $('who');
+  $('pick').replaceChildren();
+  $('connect').hidden = !!W.prov;
+  who.hidden = !W.prov;
+  if (W.prov) who.textContent = `${W.name} · ${short(W.account)} · ${W.chain === KIT?.chainId ? 'Ethereum' : 'chain ' + W.chain}`;
+  else drawPick();
+}
+$('connect').onclick = () => { const l = wallets(); if (!l.length) { $('who').hidden = false; $('who').textContent = 'No wallet in this browser'; return; } if (l.length > 1) { drawPick(); return; } connect(l[0]); };
+
+// ── the card ──
+function addrView(a) {
+  const body = strip(a), zeros = body.match(/^0+/)?.[0].length || 0;
+  const s = el('div', { className: 'addr' });
+  s.append('0x', el('span', { className: 'z', textContent: body.slice(0, zeros) }), body.slice(zeros));
+  return s;
+}
+function draw() {
+  const k = KIT, card = $('card');
+  card.replaceChildren();
+  const ready = !!W.prov && W.chain === k.chainId;
+  const dl = el('dl');
+  const row = (t, v) => { dl.append(el('dt', { textContent: t }), el('dd', {}, v)); };
+  row('Factory', `CreateX ${k.factory}`);
+  row('Pool', k.args.pool); row('TAC', k.args.tac); row('Claim window', `${k.args.claimWindow} s`); row('Claim bond', `${Number(k.args.claimBond) / 1e18} ETH`); row('Treasury', k.args.treasury);
+  row('Salt', k.salt); row('Init code hash', k.initHash); row('Init code', `${(strip(k.initCode).length / 2).toLocaleString('en-US')} bytes`);
+  row('Build', `solc ${k.build.solc}, via IR, optimizer runs ${k.build.optimizerRuns}; source sha256 ${k.build.sourceSha256.slice(0, 16)}…`);
+  const go = el('button', { className: 'btn go', type: 'button', textContent: 'Deploy ProofMarket', disabled: !ready || state === 'open', onclick: deploy });
+  const copy = (txt, label) => el('button', { className: 'btn', type: 'button', textContent: label, onclick: (e) => { navigator.clipboard.writeText(txt).then(() => { e.target.textContent = 'Copied'; setTimeout(() => { e.target.textContent = label; }, 1400); }, () => {}); } });
+  card.append(
+    el('div', { className: 'row' }, el('b', { textContent: 'ProofMarket' }), el('span', { className: `st ${state}`, textContent: state === 'open' ? 'deployed' : 'not deployed' })),
+    addrView(k.expected), dl,
+    el('div', { className: 'row' }, go, copy(k.salt, 'Copy salt'), copy(k.initCode, 'Copy init code')),
+    !W.prov ? el('span', { className: 'note', textContent: 'Connect a wallet on Ethereum to deploy.' }) : W.chain !== k.chainId ? el('span', { className: 'note err', textContent: 'Switch your wallet to Ethereum.' }) : '',
+  );
+  const ul = el('ul', { className: 'steps' });
+  for (const [cls, text, href] of log) ul.append(el('li', { className: cls }, href ? el('a', { href, target: '_blank', rel: 'noopener noreferrer', textContent: text }) : text));
+  if (log.length) card.append(ul);
+}
+const say = (cls, text, href) => { log.push([cls, text, href]); draw(); };
+
+async function refresh() {
+  state = (await hasCode(KIT.expected).catch(() => false)) ? 'open' : 'none';
+  draw();
+}
+
+async function deploy() {
+  log = [];
+  const k = KIT, data = deployData(k);
+  try {
+    if (await hasCode(k.expected)) { await refresh(); say('ok', 'It is deployed already.'); return; }
+    if (W.chain !== k.chainId) { say('err', 'Switch your wallet to Ethereum first.'); return; }
+    // run from the wallet's address first: it must create exactly the contract at exactly this address
+    let made;
+    try { made = addrOf(await rpc('eth_call', [{ from: W.account, to: k.factory, data }, 'latest'])); }
+    catch (e) { say('err', `The deployment would revert (${reason(e)}). Nothing was sent.`); return; }
+    if (lc(made) !== lc(k.expected)) { say('err', `It would create ${made}, not ${k.expected}. Nothing was sent.`); return; }
+    say('ok', 'Run from your address, it creates exactly the planned address.');
+    const gas = BigInt(await rpc('eth_estimateGas', [{ from: W.account, to: k.factory, data }]));
+    say('ok', `Gas ${(Number(gas) / 1e6).toFixed(2)}M. Sending from ${short(W.account)}…`);
+    const hash = await ask('eth_sendTransaction', [{ from: W.account, to: k.factory, data, gas: '0x' + (gas * 12n / 10n).toString(16) }]);
+    say('ok', 'Sent. Waiting for it to land…', `https://etherscan.io/tx/${hash}`);
+    let rc = null;
+    for (let i = 0; i < 180 && !rc; i++) { rc = await rpc('eth_getTransactionReceipt', [hash]).catch(() => null); if (!rc) await sleep(2000); }
+    if (!rc) { say('err', 'No receipt yet: check the transaction on Etherscan.', `https://etherscan.io/tx/${hash}`); return; }
+    if (rc.status !== '0x1') { say('err', 'The transaction reverted.', `https://etherscan.io/tx/${hash}`); return; }
+    await verify();
+  } catch (e) { say('err', e?.code === 4001 ? 'Cancelled in your wallet. Nothing was sent.' : reason(e)); }
+}
+
+// what is at the address must be this contract, built with these arguments
+async function verify() {
+  await refresh();
+  const k = KIT, call = (s) => rpc('eth_call', [{ to: k.expected, data: s }, 'latest']);
+  const [pool, tac, win, bond, tre] = await Promise.all([call(SEL.POOL), call(SEL.TAC), call(SEL.WINDOW), call(SEL.BOND), call(SEL.TREASURY)]);
+  const okArgs = lc(addrOf(pool)) === lc(k.args.pool) && lc(addrOf(tac)) === lc(k.args.tac) && BigInt(win) === BigInt(k.args.claimWindow) && BigInt(bond) === BigInt(k.args.claimBond) && lc(addrOf(tre)) === lc(k.args.treasury);
+  say(okArgs && state === 'open' ? 'ok' : 'err', okArgs && state === 'open' ? `Deployed at ${k.expected}: its pool, TAC, claim window, bond and treasury read back as built.` : 'The contract at the address does not read back as built.', `https://etherscan.io/address/${k.expected}#code`);
+}
+
+(async () => {
+  try {
+    KIT = await (await fetch('kit.json', { cache: 'no-store' })).json();
+    await refresh();
+    if (state === 'open') await verify();
+  } catch (e) { $('card').replaceChildren(el('span', { className: 'note err', textContent: `The kit could not be read (${reason(e)}).` })); }
+})();
+</script>
+</body>
+</html>

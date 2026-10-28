@@ -470,6 +470,8 @@ const PINNED_PAGES = [
   { name: 'tacit-v1/index.html', file: TACIT_V1_HTML, script: INLINE_CLASSIC, ...HASH_ONLY },
   // the token pools' admin page: one classic inline script, which sends what the owner presses from their wallet
   { name: 'admin/token-pools/index.html', file: join(DAPP_DIR, 'admin', 'token-pools', 'index.html'), script: INLINE_CLASSIC, ...HASH_ONLY },
+  // the proof market's deploy page: one classic inline script, which sends the CreateX deployment the owner presses from their wallet
+  { name: 'admin/proof-market/index.html', file: join(DAPP_DIR, 'admin', 'proof-market', 'index.html'), script: INLINE_CLASSIC, ...HASH_ONLY },
 ];
 function updatePinnedCsp(page) {
   const htmlText = readFileSync(page.file).toString('utf8');
