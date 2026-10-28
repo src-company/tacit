@@ -57,7 +57,7 @@
 <link rel="preload" as="fetch" href="https://api.tacit.finance/assets/f0bbe868af10c6c67652a99709bf32048d1aa7194efe3e9a1ef1bde43f94762b/bid-intents?network=mainnet" crossorigin fetchpriority="low">
 <link rel="preload" as="fetch" href="https://api.tacit.finance/farm/program?network=mainnet" crossorigin fetchpriority="low">
 <!-- preload:begin -->
-<link rel="modulepreload" href="/trade/app.js?cb=1bba2048">
+<link rel="modulepreload" href="/trade/app.js?cb=efc4793a">
 <link rel="modulepreload" href="/vendor/tacit-deps.min.js" fetchpriority="high">
 <link rel="modulepreload" href="/evm-trade-venues.js?cb=5a940508">
 <link rel="modulepreload" href="/zrouter-guard.js">
@@ -67,7 +67,7 @@
 <link rel="modulepreload" href="/trade/tape.js?cb=a4aefafb">
 <link rel="modulepreload" href="/trade/chart.js?cb=13ad4a30">
 <link rel="modulepreload" href="/trade/fmt.js?cb=32b1744b">
-<link rel="modulepreload" href="/trade/depth.js?cb=07d4ee1c">
+<link rel="modulepreload" href="/trade/depth.js?cb=117b1cfe">
 <link rel="modulepreload" href="/trade/book.js?cb=577d1f94">
 <link rel="modulepreload" href="/zboards.js?cb=e8d21aec">
 <link rel="modulepreload" href="/trade/connect.js?cb=de979716">
@@ -214,6 +214,8 @@ code { font-size: 12px; overflow-wrap: anywhere; }
 .seg { display: inline-grid; grid-auto-flow: column; grid-auto-columns: minmax(0, auto); border: 1px solid var(--hair-2); }
 .seg button { min-height: 34px; padding: 4px 13px; background: none; border: 0; cursor: pointer; color: var(--mute); font-size: 12.5px; }
 .seg button + button { border-left: 1px solid var(--hair-2); }
+.seg button { white-space: nowrap; }
+@media (max-width: 560px) { .seg .zs { display: none; } }
 .seg button[aria-pressed="true"] { background: var(--ink); color: var(--card); }
 @media (hover: hover) { .seg button:not([aria-pressed="true"]):hover { color: var(--ink); } }
 @media (pointer: coarse) { .seg button { min-height: var(--tap); } }
@@ -725,7 +727,7 @@ footer.sf svg.fill { width: 16px; height: 16px; }
       <div class="bar">
         <h2 class="eyebrow" id="d-h"><svg class="tk xs" aria-hidden="true"><use href="#tk-tac"/></svg>Order books</h2>
         <div class="seg" id="book-seg" role="group" aria-label="Which order book">
-          <button type="button" data-book="eth" aria-pressed="true"><svg class="tk xs" aria-hidden="true"><use href="#c-eth"/></svg>Ethereum · zSwap</button>
+          <button type="button" data-book="eth" aria-pressed="true"><svg class="tk xs" aria-hidden="true"><use href="#c-eth"/></svg>Ethereum<span class="zs"> · zSwap</span></button>
           <button type="button" data-book="btc" aria-pressed="false"><svg class="tk xs" aria-hidden="true"><use href="#c-btc"/></svg>Bitcoin</button>
           <button type="button" data-book="trades" aria-pressed="false">Trades</button>
           <button type="button" data-book="mine" aria-pressed="false" hidden>Yours</button>
@@ -758,6 +760,6 @@ footer.sf svg.fill { width: 16px; height: 16px; }
   </footer>
   <!-- chrome:foot:end -->
 </div>
-<script type="module" src="/trade/app.js?cb=1bba2048"></script>
+<script type="module" src="/trade/app.js?cb=efc4793a"></script>
 </body>
 </html>

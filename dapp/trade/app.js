@@ -7,7 +7,7 @@ import { getConfidentialDeployment } from '/confidential-deployments.js';
 import { buildBook, planBuy, planSell as planBtcSell, ladderLevels } from '/btc-book.js?cb=0a09ab9e';
 import { decodeTape, chartBars, continuous, invert, ethLaneUsd, btcLaneUsd, candlesFromTrades, tradePrices, closeAt, volumeSince, gap, TAPE_FINE, TAPE_COARSE } from '/trade/tape.js?cb=a4aefafb';
 import { mountChart, fmtLocalStamp, fmtLocalTime } from '/trade/chart.js?cb=13ad4a30';
-import { mountDepth } from '/trade/depth.js?cb=07d4ee1c';
+import { mountDepth } from '/trade/depth.js?cb=117b1cfe';
 import { readBook, planBuy as planBoardBuy, planSell as planBoardSell, refine as refineBoards, buildFill as buildBoardFill, BOARD_NAMES } from '/zboards.js?cb=e8d21aec';
 import { makeConnect, UserStopped } from '/trade/connect.js?cb=de979716';
 import { takeEarly } from '/trade/rpc.js?cb=63f04503';
@@ -912,7 +912,7 @@ function pinOrder(key) {
   $('.p-ticket').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 function renderAbout() {
-  setHtml($('#about'), `<p><b>TAC</b> is Tacit’s token: 21,000,000, issued once on Bitcoin. On Ethereum it is an ERC-20 minted only against TAC that left Bitcoin. <a href="/verify.html">Check the supply →</a></p>`);
+  setHtml($('#about'), `<p><b>TAC</b> is Tacit’s private money: 21,000,000, issued once on Bitcoin, confidential by default. On Ethereum it is an ERC-20 minted only against TAC that left Bitcoin. <a href="/verify.html">Check the supply →</a></p>`);
   const link = (a, t) => `<a href="${SCAN}${a}" target="_blank" rel="noopener noreferrer">${t || `${a.slice(0, 8)}…${a.slice(-6)}`}</a>`;
   const pool = getConfidentialDeployment('mainnet')?.pool, vol24Usd = D.btc?.vol24 && D.btcUsd ? (D.btc.vol24 * D.btcUsd) / 1e8 : null;
   const main = [

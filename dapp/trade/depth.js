@@ -46,6 +46,9 @@ export function mountDepth(host, { onPick = null } = {}) {
     const top = (st) => st.reduce((m, s) => Math.max(m, s.cum), 0), ta = top(inA), tb = top(inB);
     const share = ta > 0 && tb > 0 ? Math.min(ta, tb) / Math.max(ta, tb) : 1;
     const squash = share < 0.05, pow = squash ? Math.max(0.3, Math.log(0.18) / Math.log(share)) : 1;
+    // what the picture leaves out or bends is said in a line of its own above the plot, not over it
+    const note = [far ? `${far} more beyond range` : '', squash ? 'heights not to scale' : ''].filter(Boolean).join(' · ');
+    if (note) m.t = 26;
     const pw = W - m.l - m.r, ph = H - m.t - m.b;
     const X = (p) => m.l + ((Math.min(Math.max(p, lo), hi) - lo) / (hi - lo)) * pw, Y = (c) => m.t + (1 - Math.pow(Math.min(c, maxCum * 1.05) / (maxCum * 1.05), pow)) * ph;
     const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img', 'aria-label': label, class: 'chart-svg' });
@@ -77,8 +80,7 @@ export function mountDepth(host, { onPick = null } = {}) {
     if (inB.length) svg.append(stairs(inB, 'bid', null));
     if (take?.size > 0) { const st = take.side === 'bid' ? inB : inA, f = stairs(st, take.side, take.size); if (f) svg.append(f); }
     if (mid != null) svg.append(el('line', { x1: X(mid), x2: X(mid), y1: m.t, y2: H - m.b, class: 'dep-mid' }));
-    if (squash) svg.append(el('text', { x: m.l + 4, y: m.t + (far ? 24 : 10), class: 'axis' }, 'heights not to scale'));
-    if (far) svg.append(el('text', { x: m.l + 4, y: m.t + 10, class: 'axis' }, `${far} more order${far === 1 ? '' : 's'} beyond this range`));
+    if (note) svg.append(el('text', { x: m.l + 4, y: 14, class: 'axis' }, note));
     // hover and click: the order nearest the pointer on the side it is on
     const hit = el('rect', { x: m.l, y: m.t, width: pw, height: ph, fill: 'transparent', style: 'cursor:pointer' });
     const cross = el('line', { y1: m.t, y2: H - m.b, class: 'cv', visibility: 'hidden', style: 'stroke:var(--mute);stroke-dasharray:3 3' });
