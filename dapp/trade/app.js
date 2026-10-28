@@ -171,9 +171,21 @@ const tacitEth = () => D.priv?.price ?? null;
 const ethAt = (t) => { const f = D.tape.fine; return f.length && t >= f[0].t ? closeAt(f, t) : closeAt(D.tape.coarse, t); };
 const priceAgo = (secs) => ethAt(now() - secs);
 const compact = (x) => (x >= 1e6 ? `$${(x / 1e6).toFixed(x >= 1e7 ? 0 : 1)}M` : x >= 1e3 ? `$${(x / 1e3).toFixed(x >= 1e4 ? 0 : 1)}k` : usd(x));
+// The last price read is shown at once on the next visit, dimmed until a fresh read replaces it, so the number is there at first paint.
+const PX_KEY = 'tacit-trade-px-v1';
+let keptPx = '';
+function keepPx(text) { if (text === keptPx) return; keptPx = text; try { localStorage.setItem(PX_KEY, JSON.stringify({ s: text, t: now() })); } catch { } }
+function paintKeptPx() {
+  try {
+    const k = JSON.parse(localStorage.getItem(PX_KEY) || 'null'), el = $('#px-usd');
+    if (el && k && typeof k.s === 'string' && /^\$[0-9.,]{1,12}$/.test(k.s) && now() - k.t < 86400 && el.textContent === 'TAC') { el.textContent = k.s; el.classList.add('stale'); keptPx = k.s; }
+  } catch { }
+}
+paintKeptPx();
 function renderHead() {
   const eth = priceEth(), px = usdOf(eth);
   $('#px-usd').textContent = px != null ? usd(px) : eth != null ? `${sig(eth)} ETH` : 'TAC';
+  if (px != null) { $('#px-usd').classList.remove('stale'); keepPx(usd(px)); }
   document.title = px != null ? `TAC ${usd(px)} · tacit trade` : 'tacit trade · TAC';
   const vol = volumeSince(D.tape, now() - 86400, now());
   const bits = [], stats = [], st = (k, v, title = '') => stats.push(html`<span class="st"${title ? ` title="${esc(title)}"` : ''}><i>${k}</i> <b class="num">${v}</b></span>`);
