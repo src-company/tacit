@@ -14,7 +14,7 @@ import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex, hexToBytes, concatBytes } from '@noble/hashes/utils';
 import { readWrapStdin, wrapExpect, proofFits } from './proof-pool.js';
 
-export const MARKET_BOARD = { maxOrders: 200, maxStdin: 4096, maxPublicValues: 8192, maxMemos: 8, maxMemoBytes: 2048, minTtlSecs: 60, maxTtlSecs: 6 * 3600, perClientPerHour: 20 };
+export const MARKET_BOARD = { maxOrders: 200, maxStdin: 4096, maxPublicValues: 8192, maxMemos: 8, maxMemoBytes: 2048, maxProof: 2048, maxProof: 2048, minTtlSecs: 60, maxTtlSecs: 6 * 3600, perClientPerHour: 20 };
 
 const H = /^0x[0-9a-fA-F]{64}$/, A = /^0x[0-9a-fA-F]{40}$/, S = /^0x[0-9a-fA-F]{130}$/, NUM = /^\d{1,78}$/, HEX = /^0x([0-9a-fA-F]{2})*$/;
 const k = (...p) => keccak_256(concatBytes(...p));
@@ -102,6 +102,40 @@ export function makeMarketBoard({ kv, market, chainId = 1, cfg = MARKET_BOARD, n
       const idx = (await readIndex()).filter((e) => e.until > now()).slice(0, limit), out = [];
       for (const e of idx) { const s = await kv.get(`pm:order:${e.id}`); if (s) { try { out.push(JSON.parse(s)); } catch { /* skip */ } } }
       return out;
+    },
+    // A finished proof for an order, kept for its holder: when the holder never sends the deposit (a changed mind, an abandoned zap), the proof is not
+    // lost: their page picks it up and keeps it as a voucher for the same wrap next time. It must be for this order's public values; whether it
+    // verifies is the pool's to say when it is used, and the page checks it is for its own note before keeping it.
+    async postProof(id, { publicValues, proof }) {
+      id = lc(id);
+      const s = await kv.get(`pm:order:${id}`);
+      if (!s) return { ok: false, error: 'no such order on the board' };
+      let o; try { o = JSON.parse(s); } catch { return { ok: false, error: 'unreadable order' }; }
+      if (lc(publicValues) !== lc(o.publicValues)) return { ok: false, error: 'the proof is not for this order\'s public values' };
+      if (!HEX.test(proof || '') || proof.length < 10 || proof.length > 2 + 2 * cfg.maxProof) return { ok: false, error: 'the proof is malformed or too large' };
+      await kv.put(`pm:proof:${id}`, JSON.stringify({ publicValues: o.publicValues, proof, memos: o.memos || [] }), { expirationTtl: 24 * 3600 });
+      return { ok: true };
+    },
+    async getProof(id) {
+      const s = await kv.get(`pm:proof:${lc(id)}`);
+      try { return s ? JSON.parse(s) : null; } catch { return null; }
+    },
+    // A finished proof for an order, kept for its holder: when the holder never sends the deposit (a changed mind, an abandoned zap), the proof is not
+    // lost: their page picks it up and keeps it as a voucher for the same wrap next time. It must be for this order's public values; whether it
+    // verifies is the pool's to say when it is used, and the page checks it is for its own note before keeping it.
+    async postProof(id, { publicValues, proof }) {
+      id = lc(id);
+      const s = await kv.get(`pm:order:${id}`);
+      if (!s) return { ok: false, error: 'no such order on the board' };
+      let o; try { o = JSON.parse(s); } catch { return { ok: false, error: 'unreadable order' }; }
+      if (lc(publicValues) !== lc(o.publicValues)) return { ok: false, error: 'the proof is not for this order\'s public values' };
+      if (!HEX.test(proof || '') || proof.length < 10 || proof.length > 2 + 2 * cfg.maxProof) return { ok: false, error: 'the proof is malformed or too large' };
+      await kv.put(`pm:proof:${id}`, JSON.stringify({ publicValues: o.publicValues, proof, memos: o.memos || [] }), { expirationTtl: 24 * 3600 });
+      return { ok: true };
+    },
+    async getProof(id) {
+      const s = await kv.get(`pm:proof:${lc(id)}`);
+      try { return s ? JSON.parse(s) : null; } catch { return null; }
     },
     // A settled or lapsed order leaves the board (the market's `done(opId)` is the truth; a prover that sees it done calls this).
     async remove(id) {

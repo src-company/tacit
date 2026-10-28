@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-9A3KsJkbPI81O7Y95aw6Rh3wy4XVWMRfHXqclFiHE5k=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-+VB5KIJ3OyLNSd6CX9DHDULFtApD+MCLmU63dmVOpBE=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <link rel="preconnect" href="https://api.tacit.finance" crossorigin>
 <link rel="preconnect" href="https://ethereum-rpc.publicnode.com" crossorigin>
@@ -10533,15 +10533,18 @@ async function proveWithCredit({ run, t, p, plan, prover, tell, pub, priv }) {
 // The proof market (contracts/src/ProofMarket.sol, deployed): the holder signs a fee in TAC for a proof, up to a most, and a permit that only
 // that most can be pulled under; provers (Tacit's relay first, then anyone) race to prove the share and settle it, and are paid in the same
 // transaction the pool accepts it, so no TAC moves unless the share goes in. Offered where Tacit's prover is slow, when the wallet holds the TAC.
-const MARKET = { mod: null, usd: { floor: 0.4, max: 1.5 } };
+const MARKET = { mod: null, usd: { floor: 0.3, max: 1 } };
 const marketMod = async () => (MARKET.mod ||= await import('/proof-market.js?cb=3657bc99'));
 async function marketOffer() {
   try {
     const px = (fpx().ethUsd || 0) * (FARM.precision?.tacEth || 0);
     if (!(px > 0) || !S.key) return null;
     const owner = await payingAccount(), have = wordAt(await ethCall(ADDR.tac, '70a08231' + addrWord(owner)), 0);
+    // What the order costs a prover: a claim and a fulfil (about 830k gas) at the gas price now, plus its proving, in dollars; the fee starts a little above
+    // that and rises to three times it over the minute, never under the dollar floors. A price under the relay's own floor would not be taken.
+    const gp = Number(await rpc('eth_gasPrice', []).then(BigInt).catch(() => 0n)) / 1e18, costUsd = ((830000 * gp * 1.3) + 0.00003) * (fpx().ethUsd || 0);
     const tac = (usd) => BigInt(Math.round((usd / px) * 1e6)) * 10n ** 12n;
-    const q = { floor: tac(MARKET.usd.floor), max: tac(MARKET.usd.max), owner, tank: !!tankRec(owner) };
+    const q = { floor: tac(Math.max(MARKET.usd.floor, costUsd * 1.3)), max: tac(Math.max(MARKET.usd.max, costUsd * 3)), owner, tank: !!tankRec(owner) };
     return have >= q.max ? q : null;
   } catch { return null; }
 }

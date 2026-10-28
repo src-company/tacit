@@ -173,6 +173,8 @@ export async function marketOrders(limit = 20) {
   return Array.isArray(r.orders) ? r.orders : [];
 }
 export const marketClear = (opId) => postJson('/market/done', { opId });
+// A finished proof, kept for the order's holder to pick up (a holder who never sent the deposit keeps it as a voucher).
+export const marketProofPost = (opId, publicValues, proof) => postJson('/market/proof', { opId, publicValues, proof });
 // TacitGasRelay's order board (worker/src/gas-relay-queue.js): the open orders, and clearing one the contract reports used.
 export async function gasOrders(limit = 20) {
   const r = await getJson(`/gas/orders?limit=${limit}`);

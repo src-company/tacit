@@ -649,7 +649,7 @@ const reverseBytes = b => { const r = new Uint8Array(b); r.reverse(); return r; 
 // caller (curl, another server) could already do. This is what lets a third-party page with no fixed
 // origin (an IPFS/web3-gateway-hosted frontend, e.g.) use the relay directly from a browser instead of
 // needing its own backend proxy or a per-deploy entry in ALLOWED_ORIGINS.
-const OPEN_ORIGIN_PATHS = new Set(['/stats', '/flow', '/relay/economics', '/bridge/recover', '/reflection/proof', '/confidential/submit', '/confidential/status', '/confidential/open', '/confidential/landed', '/confidential/quote', '/confidential/index', '/confidential/relay', '/reflection/dump', '/reflection/live', '/reflection/status', '/reflection/note-witness', '/reflection/burndep', '/reflection/eth-state/covers', '/reflection/eth-state/proof', '/reflection/open', '/reflection/open/job', '/reflection/landed', '/reflection/burndep-list', '/crossout/minted', '/farm/program', '/farm/health', '/prover/upload', '/prover/download', '/prover/board', '/prover/pool', '/prover/pool/request', '/prover/pool/lease', '/prover/pool/submit', '/prover/pool/result', '/prover/pool/credits', '/market/order', '/market/orders', '/market/done', '/gas/order', '/gas/orders', '/gas/done']);
+const OPEN_ORIGIN_PATHS = new Set(['/stats', '/flow', '/relay/economics', '/bridge/recover', '/reflection/proof', '/confidential/submit', '/confidential/status', '/confidential/open', '/confidential/landed', '/confidential/quote', '/confidential/index', '/confidential/relay', '/reflection/dump', '/reflection/live', '/reflection/status', '/reflection/note-witness', '/reflection/burndep', '/reflection/eth-state/covers', '/reflection/eth-state/proof', '/reflection/open', '/reflection/open/job', '/reflection/landed', '/reflection/burndep-list', '/crossout/minted', '/farm/program', '/farm/health', '/prover/upload', '/prover/download', '/prover/board', '/prover/pool', '/prover/pool/request', '/prover/pool/lease', '/prover/pool/submit', '/prover/pool/result', '/prover/pool/credits', '/market/order', '/market/orders', '/market/done', '/market/proof', '/gas/order', '/gas/orders', '/gas/done']);
 function corsHeaders(env, reqOrigin, openOrigin) {
   const list = (env.ALLOWED_ORIGINS || '*').split(',').map(s => s.trim());
   const allow = openOrigin || list.includes('*') ? '*' : (list.includes(reqOrigin) ? reqOrigin : list[0]);
@@ -3784,6 +3784,14 @@ async function handleProofMarket(req, env, url, cors) {
   const board = marketBoard(env);
   if (!board) return jsonResponse({ error: 'the proof market is not configured' }, 404, nostore);
   const ip = req.headers.get('CF-Connecting-IP') || 'anon';
+  if (url.pathname === '/market/proof' && req.method === 'GET') {
+    const rl = await proveRateLimit(env, ip, 'market-proof', 30, 2000);
+    if (!rl.ok) return jsonResponse({ ok: false, error: 'too many requests', retryAfter: rl.retryAfter }, 429, { ...nostore, 'Retry-After': String(rl.retryAfter) });
+    const id = String(url.searchParams.get('id') || '').toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(id)) return jsonResponse({ ok: false, error: 'id must be 32-byte hex' }, 400, nostore);
+    const p = await board.getProof(id);
+    return jsonResponse(p ? { ok: true, ...p } : { ok: false, error: 'no proof yet' }, p ? 200 : 404, nostore);
+  }
   if (url.pathname === '/market/orders') {
     if (req.method !== 'GET') return jsonResponse({ error: 'method' }, 405, nostore);
     const rl = await proveRateLimit(env, ip, 'market-list', 30, 2000);
@@ -3800,6 +3808,12 @@ async function handleProofMarket(req, env, url, cors) {
     if (!rl.ok) return jsonResponse({ ok: false, error: `too many orders, retry in ~${rl.retryAfter}s`, retryAfter: rl.retryAfter }, 429, { ...nostore, 'Retry-After': String(rl.retryAfter) });
     const r = await board.post(b.order);
     if (r.ok && !r.existing) wakeRelay();   // the relay waits on its wake: a new order starts proving at once
+    return jsonResponse(r, r.ok ? 200 : 400, nostore);
+  }
+  if (url.pathname === '/market/proof') {
+    const rl = await proveRateLimit(env, ip, 'market-proof-post', 20, 3000);
+    if (!rl.ok) return jsonResponse({ ok: false, error: 'too many requests', retryAfter: rl.retryAfter }, 429, { ...nostore, 'Retry-After': String(rl.retryAfter) });
+    const r = await board.postProof(String(b.opId || ''), { publicValues: b.publicValues, proof: b.proof });
     return jsonResponse(r, r.ok ? 200 : 400, nostore);
   }
   // /market/done { opId }: clears an order the market reports settled.
@@ -27884,7 +27898,7 @@ async function _routeFetch(req, env, ctx) {
     const cors = corsHeaders(env, req.headers.get('Origin') || '', openOrigin);
     // The proof pool (worker/src/proof-pool.js) is open to anyone: pages post wraps, miners lease and prove them.
     if (url.pathname === '/prover/pool' || url.pathname.startsWith('/prover/pool/')) return handleProofPool(req, env, url, cors);
-    if (url.pathname === '/market/order' || url.pathname === '/market/orders' || url.pathname === '/market/done') return handleProofMarket(req, env, url, cors);
+    if (url.pathname === '/market/order' || url.pathname === '/market/orders' || url.pathname === '/market/done' || url.pathname === '/market/proof') return handleProofMarket(req, env, url, cors);
     if (url.pathname === '/gas/order' || url.pathname === '/gas/orders' || url.pathname === '/gas/done') return handleGasRelay(req, env, url, cors);
     // A page proving with its holder's own prover account passes its program input and the finished proof through here
     // (the network's artifact store sends no CORS headers). These answer their own preflight, which names X-Artifact-Url.

@@ -21,10 +21,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { CFG, ADDR, OP_GAS, DEFAULT_OP_GAS, OP_PROVE } from './lib/config.js';
-import { confidentialJob, confidentialWake, confidentialBatch, confidentialAck, confidentialRefresh, confidentialActivateAck, confidentialOpenList, confidentialOpenJob, marketOrders, marketClear, gasOrders, gasClear, confidentialQueue, heartbeat, heartbeatIdle, setHeartbeatLedger, relayBooks, quoteAsset } from './lib/worker-client.js';
+import { confidentialJob, confidentialWake, confidentialBatch, confidentialAck, confidentialRefresh, confidentialActivateAck, confidentialOpenList, confidentialOpenJob, marketOrders, marketClear, marketProofPost, gasOrders, gasClear, confidentialQueue, heartbeat, heartbeatIdle, setHeartbeatLedger, relayBooks, quoteAsset } from './lib/worker-client.js';
 import { makeBatchWindow } from './lib/batch-window.js';
 import { proveSettle, proveMixed, proveSealed, proveStdin, boardAlive } from './lib/prover.js';
 import { makeMarketSolver } from './lib/market-solver.js';
+import { quoteTacForEth, deepest } from './lib/tac-quote.js';
 import { abi as MARKET_ABI, claimCall, fulfillCall } from './lib/market-calls.js';
 import { makeGasSolver } from './lib/gas-solver.js';
 import { abi as GAS_ABI, executeCall } from './lib/gas-calls.js';
@@ -892,8 +893,24 @@ let openReadAt = 0;
 // from the holder's permit in the fulfil, to this settle wallet. The relay is first in line for what it takes; a holder who wants
 // another prover to win raises what they sign, and a prover that claims first has the order.
 let marketReadAt = 0;
+// A claim and a fulfil cost this much gas (measured on mainnet: 128k and 676k). The least price in TAC wei the relay takes an order at is that gas at
+// the current price, plus its proving share, plus a margin, valued in TAC at what ETH buys now (read from the chain at most every minute).
+const MARKET_GAS = 128_000n + 700_000n;
+let tacRate = { at: 0, out: 0n };
+async function marketMinPrice() {
+  const gasPrice = await publicClient.getGasPrice();
+  if (Date.now() - tacRate.at > 60_000) {
+    const q = deepest(await quoteTacForEth(publicClient, 10n ** 16n));
+    if (!q) throw new Error('no TAC quote');
+    tacRate = { at: Date.now(), out: q.amountOut };
+  }
+  const costWei = (MARKET_GAS * gasPrice * 13n) / 10n + CFG.marketProveCostWei;           // gas at the price plus 30% for the base fee moving, plus proving
+  const tac = (costWei * tacRate.out) / 10n ** 16n;
+  const withMargin = (tac * (10_000n + CFG.marketMarginBps)) / 10_000n;
+  return withMargin > CFG.marketMinTacWei ? withMargin : CFG.marketMinTacWei;
+}
 const marketSolver = makeMarketSolver({
-  me: settleWallet.account.address, minPrice: CFG.marketMinTacWei,
+  me: settleWallet.account.address, minPrice: marketMinPrice,
   listOrders: () => marketOrders(),
   depositStatus: async (id) => BigInt((await publicClient.call({ to: POOL, data: `0x7da9874f${id.slice(2)}` })).data || 0),
   done: (id) => publicClient.readContract({ address: CFG.marketAddr, abi: MARKET_ABI, functionName: 'done', args: [id] }),
@@ -901,6 +918,7 @@ const marketSolver = makeMarketSolver({
   claim: async (o) => submitCall({ address: CFG.marketAddr, abi: MARKET_ABI, ...claimCall(o), value: await publicClient.readContract({ address: CFG.marketAddr, abi: MARKET_ABI, functionName: 'claimBond' }) }, `market claim ${o.intent.opId.slice(0, 10)}`),
   prove: (o) => proveStdin({ stdin: Uint8Array.from(Buffer.from(o.stdin.slice(2), 'hex')), type: 'wrap', memos: o.memos || [], timeoutMs: 150_000 }),
   fulfil: (o, p) => submitCall({ address: CFG.marketAddr, abi: MARKET_ABI, ...fulfillCall(o, p.proof) }, `market fulfil ${o.intent.opId.slice(0, 10)}`),
+  deliver: (o, p) => marketProofPost(o.intent.opId, p.publicValues, p.proof),
   clear: (id) => marketClear(id),
   log,
 });

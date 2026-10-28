@@ -46,8 +46,9 @@ test('a claim that lapses before the proof is back is not fulfilled, and the ord
   assert.equal(await r.s.pass(), true);
   assert.ok(!r.calls.some((c) => c[0] === 'fulfil'));
   assert.equal(await r.s.pass(), false, 'not retried at once');
-  r.tick(121_000);
-  assert.equal(await r.s.pass(), true, 'tried again later');
+  r.tick(11_000);
+  assert.equal(await r.s.pass(), true, 'tried again shortly, with the proof it already has');
+  assert.equal(r.calls.filter((c) => c[0] === 'prove').length, 1, 'proved once');
 });
 
 test('a failure in claim, prove or fulfil is logged and the order waits out the retry gap; the board being down is not an error', async () => {
@@ -89,4 +90,14 @@ test('an order whose deposit never lands is proved but never claimed (a claim co
   // the claim now checks the live holder; make claimOf report us after the claim
   assert.equal(await s.pass().catch(() => 'threw'), true);
   assert.ok(r.calls.some((c) => c[0] === 'claim' && c[1] === '0xj'), 'claimed once the deposit was pending');
+});
+
+test('the least price can be a function (the relay prices gas and proving each pass): an order under it is left, one over it is taken, and a pricing failure takes nothing', async () => {
+  const mk2 = (floor) => makeMarketSolver({ me: ME, now: () => 2_000_000, depositStatus: async () => 1, minPrice: async () => floor, listOrders: async () => [mk('0xm', { floorFee: '1000', maxFee: '5000', rampSecs: '60', start: '1990' })],
+    done: async () => false, claimOf: async () => null, claim: async () => '0xc', prove: async () => ({ proof: '0x' }), fulfil: async () => '0xf', clear: async () => {} });
+  assert.equal(await mk2(9000n).pass(), false, 'above anything the order can pay');
+  assert.equal(await mk2(1500n).pass(), true, 'under what the price will be by the time the claim lands');
+  const broken = makeMarketSolver({ me: ME, now: () => 2_000_000, depositStatus: async () => 1, minPrice: async () => { throw new Error('no TAC quote'); }, listOrders: async () => [mk('0xn')],
+    done: async () => false, claimOf: async () => null, claim: async () => { throw new Error('must not claim'); }, prove: async () => ({}), fulfil: async () => {}, clear: async () => {} });
+  assert.equal(await broken.pass(), false);
 });
