@@ -59,6 +59,7 @@ contract ProofMarketTest is Test {
     address solverA = address(0xA0);
     address solverB = address(0xB0);
     address treasury = address(0x7EA5);
+    address owner = address(0x0A11);
     uint256 constant BOND = 0.01 ether;
 
     bytes pv = hex"c0ffee";
@@ -70,11 +71,13 @@ contract ProofMarketTest is Test {
         tac = new MockTac();
         pool = new MockPool();
         vm.deal(address(pool), 5 ether);
-        mkt = new ProofMarket(address(pool), address(tac), 60, BOND, treasury);
+        mkt = new ProofMarket(address(pool), address(tac), 60, owner, treasury);
         tac.mint(payer, 1000e18);
         vm.deal(solverA, 1 ether);
         vm.deal(solverB, 1 ether);
         vm.warp(1_000_000);
+        vm.prank(owner);
+        mkt.setClaimBond(BOND); // the suite runs with a bond; the default is none
     }
 
     // ── helpers (every call into the market that prepares an argument is made BEFORE a prank) ──
@@ -372,11 +375,11 @@ contract ProofMarketTest is Test {
 
     function test_constructorChecks() public {
         vm.expectRevert(ProofMarket.BadConfig.selector);
-        new ProofMarket(address(0xD00D), address(tac), 60, BOND, treasury);
+        new ProofMarket(address(0xD00D), address(tac), 60, owner, treasury);
         vm.expectRevert(ProofMarket.BadConfig.selector);
-        new ProofMarket(address(pool), address(tac), 0, BOND, treasury);
+        new ProofMarket(address(pool), address(tac), 0, owner, treasury);
         vm.expectRevert(ProofMarket.BadConfig.selector);
-        new ProofMarket(address(pool), address(tac), 60, BOND, address(0));
+        new ProofMarket(address(pool), address(tac), 60, owner, address(0));
     }
 
     // ── the proof tank: one signed package, many ops, never past the cap ──
@@ -506,5 +509,27 @@ contract ProofMarketTest is Test {
         vm.prank(solverB);
         vm.expectRevert(ProofMarket.NoClaim.selector);
         mkt.fulfillFromTank(t, ts, i, is_, hex"01", proof, memos, v, r, s);
+    }
+}
+
+contract ProofMarketBondTest is Test {
+    ProofMarket mkt;
+    address owner = address(0x0A11);
+
+    function setUp() public {
+        MockTac tac = new MockTac();
+        mkt = new ProofMarket(address(new MockPool()), address(tac), 60, owner, address(0x7EA5));
+    }
+
+    function test_bondStartsAtZeroAndOnlyTheOwnerSetsIt() public {
+        assertEq(mkt.claimBond(), 0);
+        vm.expectRevert(ProofMarket.NotOwner.selector);
+        mkt.setClaimBond(1);
+        vm.startPrank(owner);
+        mkt.setClaimBond(0.05 ether);
+        assertEq(mkt.claimBond(), 0.05 ether);
+        vm.expectRevert(ProofMarket.BadBond.selector);
+        mkt.setClaimBond(0.1 ether + 1);
+        vm.stopPrank();
     }
 }

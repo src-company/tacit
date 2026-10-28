@@ -88,8 +88,12 @@ contract ProofMarket is EIP712 {
     address public immutable TAC;
     /// How long a claim excludes everyone else, seconds.
     uint64 public immutable CLAIM_WINDOW;
-    /// The ETH a claim puts up (exactly this): back to the prover on fulfil, to TREASURY if the claim lapses.
-    uint256 public immutable CLAIM_BOND;
+    /// The ETH a claim puts up (exactly this): back to the prover on fulfil, to TREASURY if the claim lapses. Starts at
+    /// zero (no bond) and OWNER can raise it, never above MAX_BOND, if claim squatting ever shows up. A claim keeps the
+    /// bond it was made with, so a change never touches a live claim.
+    uint256 public claimBond;
+    uint256 public constant MAX_BOND = 0.1 ether;
+    address public immutable OWNER;
     address public immutable TREASURY;
 
     mapping(bytes32 opId => Claim) public claims;
@@ -108,6 +112,7 @@ contract ProofMarket is EIP712 {
     error NoClaim();
     error BadPrice();
     error BadBond();
+    error NotOwner();
     error Unfunded();
     error WrongMode();
     error TankRevoked();
@@ -117,19 +122,28 @@ contract ProofMarket is EIP712 {
     event ClaimedOp(bytes32 indexed opId, address indexed solver, uint256 price, uint64 until);
     event Fulfilled(bytes32 indexed opId, address indexed payer, address indexed solver, uint256 price);
     event Lapsed(bytes32 indexed opId, address indexed solver, uint256 bond);
+    event BondSet(uint256 bond);
     event Cancel(address indexed payer, bytes32 indexed opId);
     event TankRevokedBy(address indexed payer, bytes32 indexed tankId);
 
-    constructor(address pool, address tac, uint64 claimWindow, uint256 claimBond, address treasury) {
+    constructor(address pool, address tac, uint64 claimWindow, address owner, address treasury) {
         if (
             pool == address(0) || pool.code.length == 0 || tac == address(0) || tac.code.length == 0 || claimWindow == 0
-                || treasury == address(0)
+                || owner == address(0) || treasury == address(0)
         ) revert BadConfig();
         POOL = pool;
         TAC = tac;
         CLAIM_WINDOW = claimWindow;
-        CLAIM_BOND = claimBond;
+        OWNER = owner;
         TREASURY = treasury;
+    }
+
+    /// OWNER sets the bond a new claim must put up, 0 to MAX_BOND.
+    function setClaimBond(uint256 bond) external {
+        if (msg.sender != OWNER) revert NotOwner();
+        if (bond > MAX_BOND) revert BadBond();
+        claimBond = bond;
+        emit BondSet(bond);
     }
 
     /// Lets `settle` pay this contract a native-ETH fee leg, which `fulfill` hands to the prover.
@@ -175,7 +189,7 @@ contract ProofMarket is EIP712 {
         emit TankRevokedBy(t.payer, id);
     }
 
-    /// Takes the op at the price it has now, for CLAIM_WINDOW seconds, against a bond of exactly CLAIM_BOND ETH. Nobody
+    /// Takes the op at the price it has now, for CLAIM_WINDOW seconds, against a bond of exactly claimBond ETH (0 unless OWNER has set one). Nobody
     /// else may claim or fulfill it meanwhile, so a watcher cannot copy the proof out of the mempool and take the fee
     /// (no proof is revealed by a claim). The payer must hold the price. A claim cannot be renewed while it is live.
     function claim(Intent calldata i, bytes calldata signature) external payable {
@@ -227,7 +241,7 @@ contract ProofMarket is EIP712 {
     }
 
     function _claim(Intent calldata i, uint256 room) internal {
-        if (msg.value != CLAIM_BOND) revert BadBond();
+        if (msg.value != claimBond) revert BadBond();
         Claim memory c = claims[i.opId];
         if (c.until > block.timestamp) revert Claimed();
         if (c.solver != address(0) && c.bond != 0) {

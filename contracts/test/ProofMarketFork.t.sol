@@ -32,7 +32,7 @@ contract ProofMarketForkTest is Test {
         }
         vm.createSelectFork(url);
         PoolStub pool = new PoolStub();
-        ProofMarket mkt = new ProofMarket(address(pool), TAC, 60, 0.01 ether, address(0x7EA5));
+        ProofMarket mkt = new ProofMarket(address(pool), TAC, 60, address(0x0A11), address(0x7EA5));
 
         uint256 key = 0xB0B;
         address payer = vm.addr(key);
@@ -61,7 +61,7 @@ contract ProofMarketForkTest is Test {
 
         vm.deal(solver, 1 ether);
         vm.prank(solver);
-        mkt.claim{value: 0.01 ether}(i, sig);
+        mkt.claim(i, sig);
         vm.prank(solver);
         mkt.fulfill(i, sig, pv, hex"", memos, pv_, pr, ps);
 

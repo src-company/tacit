@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Z3DC+15+oKQZGXwOTjThQHAH+c9IwLQsGrda6XevgUU='; style-src 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://mainnet.gateway.tenderly.co https://ethereum-rpc.publicnode.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-UyXYIm4aJlBrm42tXgpUZrhbJ8qelkSRHLkOVqL6qTA='; style-src 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://mainnet.gateway.tenderly.co https://ethereum-rpc.publicnode.com; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <meta name="robots" content="noindex">
 <title>tacit admin · proof market</title>
@@ -91,7 +91,7 @@ const short = (a) => a.slice(0, 6) + '…' + a.slice(-4);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); for (const k of kids) if (k != null) e.append(k); return e; };
 const reason = (e) => String(e?.data?.message || e?.message || e).replace(/^.*?execution reverted:?\s*/i, 'reverted ').slice(0, 160);
-const SEL = { POOL: '0x7535d246', TAC: '0x19f68523', WINDOW: '0x9f34fc80', BOND: '0xe2927519', TREASURY: '0x2d2c5565', DEPLOY: '0x26307668' };   // POOL(), TAC(), CLAIM_WINDOW(), CLAIM_BOND(), TREASURY(), CreateX deployCreate2(bytes32,bytes)
+const SEL = { POOL: '0x7535d246', TAC: '0x19f68523', WINDOW: '0x9f34fc80', BOND: '0xc7cf7484', OWNER: '0x117803e3', TREASURY: '0x2d2c5565', DEPLOY: '0x26307668' };   // POOL(), TAC(), CLAIM_WINDOW(), claimBond(), OWNER(), TREASURY(), CreateX deployCreate2(bytes32,bytes)
 const W = { found: new Map(), prov: null, name: '', account: null, chain: null };
 let KIT = null, state = 'none', log = [];
 
@@ -161,7 +161,7 @@ function draw() {
   const dl = el('dl');
   const row = (t, v) => { dl.append(el('dt', { textContent: t }), el('dd', {}, v)); };
   row('Factory', `CreateX ${k.factory}`);
-  row('Pool', k.args.pool); row('TAC', k.args.tac); row('Claim window', `${k.args.claimWindow} s`); row('Claim bond', `${Number(k.args.claimBond) / 1e18} ETH`); row('Treasury', k.args.treasury);
+  row('Pool', k.args.pool); row('TAC', k.args.tac); row('Claim window', `${k.args.claimWindow} s`); row('Claim bond', 'none to start; the owner can set up to 0.1 ETH'); row('Owner', k.args.owner); row('Treasury', k.args.treasury);
   row('Salt', k.salt); row('Init code hash', k.initHash); row('Init code', `${(strip(k.initCode).length / 2).toLocaleString('en-US')} bytes`);
   row('Build', `solc ${k.build.solc}, via IR, optimizer runs ${k.build.optimizerRuns}; source sha256 ${k.build.sourceSha256.slice(0, 16)}…`);
   const go = el('button', { className: 'btn go', type: 'button', textContent: 'Deploy ProofMarket', disabled: !ready || state === 'open', onclick: deploy });
@@ -211,9 +211,9 @@ async function deploy() {
 async function verify() {
   await refresh();
   const k = KIT, call = (s) => rpc('eth_call', [{ to: k.expected, data: s }, 'latest']);
-  const [pool, tac, win, bond, tre] = await Promise.all([call(SEL.POOL), call(SEL.TAC), call(SEL.WINDOW), call(SEL.BOND), call(SEL.TREASURY)]);
-  const okArgs = lc(addrOf(pool)) === lc(k.args.pool) && lc(addrOf(tac)) === lc(k.args.tac) && BigInt(win) === BigInt(k.args.claimWindow) && BigInt(bond) === BigInt(k.args.claimBond) && lc(addrOf(tre)) === lc(k.args.treasury);
-  say(okArgs && state === 'open' ? 'ok' : 'err', okArgs && state === 'open' ? `Deployed at ${k.expected}: its pool, TAC, claim window, bond and treasury read back as built.` : 'The contract at the address does not read back as built.', `https://etherscan.io/address/${k.expected}#code`);
+  const [pool, tac, win, bond, own, tre] = await Promise.all([call(SEL.POOL), call(SEL.TAC), call(SEL.WINDOW), call(SEL.BOND), call(SEL.OWNER), call(SEL.TREASURY)]);
+  const okArgs = lc(addrOf(pool)) === lc(k.args.pool) && lc(addrOf(tac)) === lc(k.args.tac) && BigInt(win) === BigInt(k.args.claimWindow) && BigInt(bond) === 0n && lc(addrOf(own)) === lc(k.args.owner) && lc(addrOf(tre)) === lc(k.args.treasury);
+  say(okArgs && state === 'open' ? 'ok' : 'err', okArgs && state === 'open' ? `Deployed at ${k.expected}: its pool, TAC, claim window, zero bond, owner and treasury read back as built.` : 'The contract at the address does not read back as built.', `https://etherscan.io/address/${k.expected}#code`);
 }
 
 (async () => {
