@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-W4/N0HxbONiQ2NrtSGGHRMZkYH8d1wxarPIl+NtJneM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-5TPre5tn6K9lKOSHIkY5rE3YyTde2mQJrEzoYMDaaZU=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <link rel="preconnect" href="https://api.tacit.finance" crossorigin>
 <link rel="preconnect" href="https://ethereum-rpc.publicnode.com" crossorigin>
@@ -562,8 +562,8 @@ a.di { color: inherit; text-decoration: none; }
 /* the card's side links (earn points too, join with both) are secondary, so they stay quiet */
 .hx #hx-alt-go, .hx .q a[data-link="farm"] { font-size: 12px; color: var(--mute); }
 @media (hover: hover) { .hx #hx-alt-go:hover, .hx .q a[data-link="farm"]:hover { color: var(--ink); } }
-.hx-mode { display: inline-flex; margin: 12px 0 4px; border: 1px solid var(--hair); border-radius: 10px; overflow: hidden; }
-.hx-mode button { min-height: 38px; padding: 6px 12px; color: var(--mute); font: 13px var(--mono); white-space: nowrap; background: none; border: 0; cursor: pointer; }
+.hx-mode { display: inline-flex; margin: 8px 0 10px; border: 1px solid var(--hair); border-radius: 10px; overflow: hidden; }
+.hx-mode button { min-height: 30px; padding: 3px 12px; color: var(--mute); font: 12px var(--mono); white-space: nowrap; background: none; border: 0; cursor: pointer; }
 .hx-mode button + button { border-left: 1px solid var(--hair); }
 .hx-mode button[aria-checked="true"] { color: var(--card); background: var(--ink); }
 .ptsline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 14px 4px; color: inherit; text-decoration: none; border-bottom: 1px solid var(--hair); }
@@ -14513,8 +14513,7 @@ function paintHx() {
       <p class="q" id="hx-brl"></p>`;
   } else if (m === 'earn') {
     const groups = hxGroups('earn'), place = hxPlaceOf('earn', HX.from);
-    body = html`${field('You put in', heldAt(place), amt(`${hxAsset(HX.from)[1]} to farm`), coin('hx-from', 'You put in', groups, HX.from), true, place === 'private')}
-      ${HX.from === 'ether' ? html`<div class="hx-mode" role="radiogroup" aria-label="Farm it, or keep it as LP">${[[false, 'Farm'], [true, 'LP only']].map(([k, t]) => html`<button type="button" role="radio" aria-checked="${String(HX.lp === k)}" data-hxlp="${k ? '1' : '0'}">${t}</button>`)}</div>` : ''}
+    body = html`${field('You put in', heldAt(place), amt(`${hxAsset(HX.from)[1]} to farm`), coin('hx-from', 'You put in', groups, HX.from), true, place === 'private', HX.from === 'ether' ? html`<div class="hx-mode" role="radiogroup" aria-label="Farm it, or keep it as LP">${[[false, 'Farm'], [true, 'LP only']].map(([k, t]) => html`<button type="button" role="radio" aria-checked="${String(HX.lp === k)}" data-hxlp="${k ? '1' : '0'}">${t}</button>`)}</div>` : '')}
       ${HX.lp && HX.from === 'ether' ? '' : html`${mid()}${field('You earn', '', out('a day'), coin('hx-to', 'You earn', [['', [['tac', 'TAC', 'tac']], '']], 'tac'), false, false, html`<div class="ff"><span class="num" id="hx-out-usd"></span></div>`)}`}${tail}
       <p class="q" id="hx-zs-at" hidden></p>
       <p class="q"><a href="#farm" data-link="farm">Have both sides? Join with both →</a></p>
