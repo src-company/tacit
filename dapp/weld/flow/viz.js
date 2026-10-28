@@ -111,7 +111,7 @@ export function layout(w, h, compact) {
 
 // Progress along the whole way when a mark has to wait at the proof gate: it runs to the gate, waits there, then crosses.
 export function gated(t) {
-  const wait = 0.14, to = 0.42, base = 0.5 + wait * 0.02;
+  const wait = 0.08, to = 0.46, base = 0.5 + wait * 0.02;
   if (t < to) return 0.5 * ease(t / to);
   if (t < to + wait) return 0.5 + (t - to) * 0.02;
   return base + (1 - base) * ease((t - to - wait) / (1 - to - wait));
@@ -126,7 +126,7 @@ export function alpha(color, a) {
 
 // ── marks in flight ───────────────────────────────────────────────────────────────────────────────────────────────
 
-const DUR = { burn: 3300, cross: 3200, mint: 1500, proof: 2400, block: 1600, header: 1900, settle: 900, deposit: 1300, out: 1700, in: 1700 };
+const DUR = { burn: 3300, cross: 3200, mint: 1500, proof: 3200, block: 1600, header: 2600, settle: 900, deposit: 1300, out: 1700, in: 1700 };
 const MAX_LIVE = 160;
 
 function spawn(kind, L, born, jitter) {
@@ -140,12 +140,12 @@ function look(p, t, L, C) {
   const arcAt = (sign, from, to, prog) => ({ x: lerp(from, to, prog), y: L.mid + sign * (4 * L.bow * prog * (1 - prog) + p.j * Math.sin(Math.PI * prog)) });
   const x0 = L.btc.x + L.inset, x1 = L.eth.x - L.inset, edge = (t0) => (t < 0.06 ? t / 0.06 : 1 - clamp((t - 0.94) / 0.06, 0, 1)) * t0;
   switch (p.kind) {
-    case 'burn': return { ...arcAt(-1, x0, x1, gated(t)), r: 2.3, c: C.orange, glow: 0, trail: 9, a: edge(0.9) };
-    case 'cross': return { ...arcAt(1, x1, x0, gated(t)), r: 2.3, c: C.eth, glow: 0, trail: 9, a: edge(0.9) };
+    case 'burn': return { ...arcAt(-1, x0, x1, gated(t)), r: 1.9, c: C.orange, glow: 0, trail: 9, a: edge(0.9) };
+    case 'cross': return { ...arcAt(1, x1, x0, gated(t)), r: 1.9, c: C.eth, glow: 0, trail: 9, a: edge(0.9) };
     case 'block': return { x: L.btc.x + 12 + ease(t) * 28, y: L.mid + p.j, r: 1.2, c: C.orange, glow: 0, sq: true, a: 0.5 * (1 - t) };
-    case 'header': return { x: lerp(x0, x1, ease(t)), y: L.mid, r: 1.2, c: C.orange, glow: 0, a: 0.45 * Math.sin(Math.PI * t) };
+    case 'header': return { x: lerp(x0, x1, ease(t)), y: L.mid, r: 1.2, c: C.orange, glow: 0, a: 0.3 * Math.sin(Math.PI * t) };
     case 'proof': return { x: lerp(x0, x1, ease(t)), y: L.mid, pulse: true, a: Math.sin(Math.PI * Math.min(1, t * 1.05)) };
-    case 'mint': return { x: L.eth.x, y: L.eth.y, ring: lerp(7, compactRing(L), ease(t)), c: C.orange, a: 0.55 * (1 - t) };
+    case 'mint': return { x: L.eth.x, y: L.eth.y, ring: lerp(7, compactRing(L), ease(t)), c: C.orange, a: 0.4 * (1 - t) };
     case 'settle': return { x: L.eth.x, y: L.eth.y, ring: lerp(5, 11, t), c: C.ink, a: 0.2 * (1 - t) };
     case 'deposit': { const ty = L.priv.y; return { x: L.priv.x, y: lerp(0, ty, ease(t)), r: 1.9, c: C.eth, glow: 0, trail: 6, a: 0.9 * (1 - clamp((t - 0.85) / 0.15, 0, 1)) }; }
     case 'out': return arc(L.priv, L.pub, t, C.orange, L);
@@ -191,9 +191,9 @@ function drawScene(ctx, L, C) {
 function drawMark(ctx, m, L, C) {
   if (m.pulse) {
     // The proof: a short capsule, orange at its Bitcoin end and blue at its Ethereum end, travelling along the line.
-    const len = L.compact ? 44 : 74, x0 = m.x - len, g = ctx.createLinearGradient(x0, 0, m.x, 0);
-    g.addColorStop(0, alpha(C.orange, 0)); g.addColorStop(0.6, alpha(C.orange, 0.4 * m.a)); g.addColorStop(1, alpha(C.eth, 0.8 * m.a));
-    ctx.strokeStyle = g; ctx.lineWidth = L.compact ? 1.6 : 2.2; ctx.lineCap = 'round';
+    const len = L.compact ? 32 : 56, x0 = m.x - len, g = ctx.createLinearGradient(x0, 0, m.x, 0);
+    g.addColorStop(0, alpha(C.orange, 0)); g.addColorStop(0.6, alpha(C.orange, 0.28 * m.a)); g.addColorStop(1, alpha(C.eth, 0.55 * m.a));
+    ctx.strokeStyle = g; ctx.lineWidth = L.compact ? 1.2 : 1.5; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(Math.max(L.btc.x + L.inset, x0), m.y); ctx.lineTo(Math.min(L.eth.x - L.inset, m.x), m.y); ctx.stroke();
     ctx.lineCap = 'butt'; ctx.lineWidth = 1;
     return;

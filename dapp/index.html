@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-GE+F+faUT0VrYmx95qRS7EfgLEQgshgv1Y1B4xQs65s=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-wSiXgCsJNSB0ARjwqvOInijDjCkxb5yq5Csi+Ikh5t0=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <link rel="preconnect" href="https://api.tacit.finance" crossorigin>
 <link rel="preconnect" href="https://ethereum-rpc.publicnode.com" crossorigin>
@@ -541,14 +541,15 @@ a.di { color: inherit; text-decoration: none; }
 .wd-wl::after { right: 0; border-color: var(--blue); transform: rotate(45deg); }
 .wd-wl::before { left: 0; border-color: var(--orange); transform: rotate(-135deg); }
 .wd-wire::before, .wd-wire::after { content: ''; position: absolute; top: 50%; left: 14px; right: 20px; height: 6px; margin-top: -3px; pointer-events: none; opacity: 0;
-  background: radial-gradient(circle 3px at 3px 50%, var(--orange) 2.5px, transparent 3px); animation: wd-r 3.2s linear infinite; }
-.wd-wire::after { left: 20px; right: 14px; background: radial-gradient(circle 3px at calc(100% - 3px) 50%, var(--blue) 2.5px, transparent 3px); animation-name: wd-l; animation-delay: -1.6s; }
+  background: radial-gradient(circle 3px at 3px 50%, var(--orange) 1.8px, transparent 2.4px); animation: wd-r 4.4s ease-in-out infinite; }
+.wd-wire::after { left: 20px; right: 14px; background: radial-gradient(circle 3px at calc(100% - 3px) 50%, var(--blue) 1.8px, transparent 2.4px); animation-name: wd-l; animation-delay: -2.2s; }
 .wd-wire.one .wd-wl::before, .wd-wire.one::after { display: none; }
 /* Each dot sits at one end of a strip as long as the line and moves by the strip's own width, so it crosses without a relayout or repaint. */
-@keyframes wd-r { 0% { transform: translateX(0); opacity: 0; } 12%, 85% { opacity: 1; } 100% { transform: translateX(100%); opacity: 0; } }
-@keyframes wd-l { 0% { transform: translateX(0); opacity: 0; } 12%, 85% { opacity: 1; } 100% { transform: translateX(-100%); opacity: 0; } }
-.wd-wire:hover::before, .wd-wire:hover::after, .wd-lane:has(.wd-end:hover) .wd-wire::before, .wd-lane:has(.wd-end:hover) .wd-wire::after { animation-duration: 1.4s; }
-.wd-wire:hover::after, .wd-lane:has(.wd-end:hover) .wd-wire::after { animation-delay: -.7s; }
+@keyframes wd-r { 0% { transform: translateX(0); opacity: 0; } 15%, 80% { opacity: .7; } 100% { transform: translateX(100%); opacity: 0; } }
+@keyframes wd-l { 0% { transform: translateX(0); opacity: 0; } 15%, 80% { opacity: .7; } 100% { transform: translateX(-100%); opacity: 0; } }
+.wd-wire:hover::before, .wd-wire:hover::after, .wd-lane:has(.wd-end:hover) .wd-wire::before, .wd-lane:has(.wd-end:hover) .wd-wire::after { animation-duration: 2.4s; }
+.wd-wire:hover::after, .wd-lane:has(.wd-end:hover) .wd-wire::after { animation-delay: -1.2s; }
+@media (prefers-reduced-motion: reduce) { .wd-wire::before, .wd-wire::after { animation: none; } }
 .wd-wire:hover .wd-wl, .wd-lane:has(.wd-end:hover) .wd-wl { opacity: .85; }
 .wd-wire span { position: relative; z-index: 1; padding: 2px 10px; font: 400 12px var(--mono); letter-spacing: .04em; color: var(--mute); background: var(--card); border-radius: 999px; transition: color .15s; }
 .wd-wire:hover span, .wd-lane:has(.wd-end:hover) .wd-wire span { color: var(--ink); }
@@ -14997,7 +14998,7 @@ document.addEventListener('click', (e) => {
     stage.addEventListener('pointerleave', () => { cancelAnimationFrame(f); f = 0; hand.style.removeProperty('--tx'); hand.style.removeProperty('--ty'); });
   }
 }
-{ const k = $('#kept'); if (k && 'IntersectionObserver' in window) { const io = new IntersectionObserver((es) => { if (!es.some((e) => e.isIntersecting)) return; io.disconnect(); import('/weld/flow/viz.js?cb=46192ff3').then((m) => m.mountFlow($('#kept-v'), { compact: true, quiet: true })).catch(() => { k.hidden = true; }); }, { rootMargin: '400px' }); io.observe(k); } else if (k) k.hidden = true; }
+{ const k = $('#kept'); if (k && 'IntersectionObserver' in window) { const io = new IntersectionObserver((es) => { if (!es.some((e) => e.isIntersecting)) return; io.disconnect(); import('/weld/flow/viz.js?cb=385547bd').then((m) => m.mountFlow($('#kept-v'), { compact: true, quiet: true })).catch(() => { k.hidden = true; }); }, { rootMargin: '400px' }); io.observe(k); } else if (k) k.hidden = true; }
 setInterval(() => { if (!document.hidden) for (const e of $$('[data-left]')) e.textContent = potLeft(); }, 15e3);
 
 function refreshAll() {
