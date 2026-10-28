@@ -4,10 +4,11 @@
 import { keccak_256 } from '/vendor/tacit-deps.min.js';
 import { makeEvmTradeVenues, _internal as V, MULTICALL3 } from '/evm-trade-venues.js?cb=5a940508';
 import { UserStopped } from '/trade/wallet.js?cb=6778fe25';
-import { rpc, RPCS, api, esc, fmtUnits, parseUnits, plain, usd, sig, E10, E18, ago } from '/trade/util.js?cb=dcf3a4f2';
+import { rpc, RPCS, API, api, esc, fmtUnits, parseUnits, plain, usd, sig, E10, E18, ago } from '/trade/util.js?cb=dcf3a4f2';
 import * as R from '/swap/route.js?cb=ce610210';
 import * as A from '/swap/aggregate.js?cb=3c73982e';
 import * as SV from '/swap/solvers.js?cb=94e1df0a';
+import * as GR from '/gas-relay.js?cb=f503517c';
 import { checkSnwapCall, SNWAP_EXECUTORS, SAFE_EXECUTOR } from '/zrouter-guard.js?cb=f5ae4bcd';
 import { rewardPop } from '/reward-pop.js?cb=1b53f6d4';
 import { makePointsNote } from '/points-note.js?cb=dc44d257';
@@ -999,6 +1000,8 @@ async function go() {
   if (!W.account) { await H.connect(); return; }
   const from = W.account, P = { kind, r, q: S.q, wei: S.q.wei, floor: (r.out * BigInt(10000 - S.slip)) / 10000n, pay: S.pay, get: S.get, to: recipient() };
   if (S.toBad) return;
+  // a wallet with no ETH for the gas: the swap goes through the gas relay, paid for in TAC or the token spent (dapp/gas-relay.js)
+  if (P.kind === 'agg' && P.r.sv && !isEth(P.pay)) { const plan = await relayPlan(from).catch(() => null); if (plan) { await relayGo(P, from, plan); return; } }
   S.busy = true; paintQuote();
   const before = P.to ? null : await balanceNow(P.get, from).catch(() => null);
   try {
@@ -1022,6 +1025,82 @@ async function go() {
     live('Swap done'); H.onDone?.();
     readBalances().then(() => paintSides());
     readPrices().catch(() => {});
+  } catch (e) {
+    S.busy = false; paintQuote();
+    say(e instanceof UserStopped || e?.userStopped ? 'Cancelled in your wallet. Nothing was sent.' : `<span class="err">${e?.html ? e.message : esc(e?.message || String(e)).slice(0, 300)}</span>`, '', true);
+  } finally { S.busy = false; }
+}
+// ── the gas relay: a swap with no ETH in the wallet ──
+// TacitGasRelay (contracts/src/TacitGasRelay.sol) takes the wallet's one signed order, pulls the input and the fee with the wallet's permits, makes
+// the swap and pays the output to the wallet; the settle relay sends it and keeps the fee. Only the aggregator (snwap) routes go this way: they
+// pull the token from whoever calls, which is the relay contract.
+let GR_LIVE = null;
+async function relayPlan(from) {
+  const relay = GR.GAS_RELAY[1];
+  if (GR_LIVE == null) GR_LIVE = String(await rpc('eth_getCode', [relay, 'latest']).catch(() => '0x')).length > 2;
+  if (!GR_LIVE) return null;
+  const [ethWei, gasPrice] = await Promise.all([rpc('eth_getBalance', [from, 'latest']).then(BigInt), rpc('eth_gasPrice', []).then(BigInt)]);
+  return GR.needsRelay({ ethWei, gasPriceWei: gasPrice }) ? { gasPrice } : null;
+}
+const kyberEthTo = async (token, wei) => {
+  const r = await fetch(`https://aggregator-api.kyberswap.com/ethereum/api/v1/routes?${new URLSearchParams({ tokenIn: '0xEeeeeEeeeEeEeeEeEeeEeEEEeeeeEeeeeeeeEEeE', tokenOut: token, amountIn: String(wei) })}`, { signal: AbortSignal.timeout(8000) }).then((q) => (q.ok ? q.json() : null)).catch(() => null);
+  const o = r?.data?.routeSummary?.amountOut;
+  return /^\d+$/.test(String(o ?? '')) ? BigInt(o) : null;
+};
+async function relayGo(P, from, plan) {
+  S.busy = true; paintQuote();
+  try {
+    const relay = GR.GAS_RELAY[1], v = SV.solverOf(P.r.sv.id), pt = tokenOf(P.pay), gt = tokenOf(P.get), dest = P.to || from, tac = lc(R.TAC);
+    say('No ETH needed: reading the price and the fee…');
+    const f = await SV.firm(v.id, { tokenIn: P.pay, tokenOut: P.get, amountIn: P.wei, decIn: pt.dec, decOut: gt.dec, slippageBps: S.slip }, P.r.sv.ctx);
+    if (!f) { say(`${esc(v.name)} has no route for this right now. Nothing was sent.`, '', true); requote(true); return; }
+    if (f.out != null && f.out < P.floor) { say('The price moved. Nothing was sent; the quote above is the new one.', '', true); requote(true); return; }
+    const min = f.out != null && (f.out * BigInt(10000 - S.slip)) / 10000n > P.floor ? (f.out * BigInt(10000 - S.slip)) / 10000n : P.floor;
+    const call = SV.snwapCall({ tokenIn: P.pay, tokenOut: P.get, amountIn: P.wei, to: dest, minOut: min, fwd: v.fwd, router: f.router, data: f.data });
+    const why = checkSnwapCall(call.data, { to: dest, tokenIn: P.pay, tokenOut: P.get, amount: P.wei, minOut: min, executor: v.fwd });
+    if (why) throw new Error(`${v.name}’s route was refused (${why}). Nothing was sent.`);
+    // the fee: in TAC when the wallet holds enough and the token spent takes a permit, else in the token spent
+    const permitTok = !!GR.PERMIT_TOKENS[lc(P.pay)], bal = (k) => S.bal[k] ?? 0n;
+    let feeToken = P.pay, fee = await GR.feeFor({ gasPriceWei: plan.gasPrice, ethToToken: (w) => kyberEthTo(P.pay, w) });
+    if (permitTok && lc(P.pay) !== tac) { const ft = await GR.feeFor({ gasPriceWei: plan.gasPrice, ethToToken: (w) => kyberEthTo(R.TAC, w) }); if (ft != null && bal(tac) >= ft) { feeToken = R.TAC; fee = ft; } }
+    if (fee == null) throw new Error('Could not price the network fee. Nothing was sent.');
+    const total = lc(feeToken) === lc(P.pay) ? P.wei + fee : P.wei;
+    if (bal(lc(P.pay)) < total) throw new Error(`Not enough ${esc(pt.sym)}: the swap and the network fee need ${tidy(amtFmt(total, pt.dec))}.`);
+    const { order, data } = GR.buildOrder({ payer: from, tokenIn: P.pay, amountIn: P.wei, feeToken, fee, tokenOut: isEth(P.get) ? R.ZERO : P.get, minOut: min, recipient: dest, target: call.to, data: call.data });
+    const feeTxt = `${tidy(amtFmt(fee, lc(feeToken) === tac ? 18 : pt.dec))} ${lc(feeToken) === tac ? 'TAC' : esc(pt.sym)}`;
+    // the wallet's permits: one per token the relay pulls (ERC-2612), or one Permit2 signature for a token with none that Permit2 can already spend
+    let inPermit = GR.NO_PERMIT, feePermit = GR.NO_PERMIT, p2 = GR.NO_P2;
+    const dl = Math.floor(Date.now() / 1000) + 900;
+    say(`Sign the swap in your wallet. ${feeTxt} pays the network fee: no ETH is needed.`);
+    if (permitTok) {
+      const nonceOf = async (t) => wordAt(await ethCall(t, '0x7ecebe00' + addrWord(from)), 0);
+      const sp = async (t, value) => { const td = GR.permitTypedData({ token: t, owner: from, value, nonce: await nonceOf(t), deadline: dl }); return { value: String(value), deadline: String(dl), ...GR.splitSig(await signTyped(td, from)) }; };
+      inPermit = await sp(P.pay, total);
+      if (lc(feeToken) !== lc(P.pay)) feePermit = await sp(feeToken, fee);
+    } else {
+      const allow = wordAt(await ethCall(P.pay, '0xdd62ed3e' + addrWord(from) + addrWord(GR.PERMIT2)), 0);
+      if (allow < total) throw new Error(`${esc(pt.sym)} has not been approved for Permit2 from this wallet yet, which takes one transaction with a little ETH. Nothing was sent.`);
+      const pn = wordAt(await ethCall(GR.PERMIT2, '0x927da105' + addrWord(from) + addrWord(P.pay) + addrWord(relay)), 2);
+      const b = GR.permit2TypedData({ details: [{ token: P.pay, amount: total, expiration: dl, nonce: pn }], owner: from, deadline: dl });
+      p2 = { use: true, batch: b.batch, sig: await signTyped(b.typed, from) };
+    }
+    const signature = await signTyped(GR.orderTypedData(order), from);
+    say('Sending it to the relay…');
+    const r = await fetch(`${API}/gas/order`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ order: { order, data, signature, inPermit, feePermit, p2 } }), signal: AbortSignal.timeout(15e3) }).then((q) => q.json()).catch(() => null);
+    if (!r?.ok) throw new Error(`The relay did not take the order${r?.error ? `: ${esc(r.error)}` : ''}. Nothing was spent.`);
+    // wait for the relay to send it: the contract marks the order's nonce used when it runs (or when the wallet cancels it)
+    const usedSel = '0xad04dc3f' + addrWord(from) + BigInt(order.nonce).toString(16).padStart(64, '0');
+    const before = P.to ? null : await balanceNow(P.get, from).catch(() => null);
+    const end = Date.now() + 5 * 60e3;
+    say('Waiting for the relay to send it. Nothing leaves your wallet unless the swap lands.');
+    let done = false;
+    while (Date.now() < end && !done) { await new Promise((q) => setTimeout(q, 3000)); done = wordAt(await ethCall(relay, usedSel).catch(() => '0x'), 0) === 1n; }
+    if (!done) throw new Error('The relay has not sent it yet. Nothing was spent; the order lapses by itself in a few minutes. Try again.');
+    const after = P.to ? null : await balanceNow(P.get, from).catch(() => null), got = before != null && after != null ? after - before : null;
+    S.amt = ''; S.q = null; S.busy = false; changed(); paint();
+    say(`Done: ${got != null && got > 0n ? `${tidy(amtFmt(got, gt.dec))} ${esc(gt.sym)} in your wallet` : `about ${tidy(amtFmt(P.r.out, gt.dec))} ${esc(gt.sym)} to ${esc(who(dest))}`}. The network fee was ${feeTxt}.`);
+    live('Swap done'); H.onDone?.();
+    readBalances().then(() => paintSides());
   } catch (e) {
     S.busy = false; paintQuote();
     say(e instanceof UserStopped || e?.userStopped ? 'Cancelled in your wallet. Nothing was sent.' : `<span class="err">${e?.html ? e.message : esc(e?.message || String(e)).slice(0, 300)}</span>`, '', true);

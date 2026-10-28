@@ -21,11 +21,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { CFG, ADDR, OP_GAS, DEFAULT_OP_GAS, OP_PROVE } from './lib/config.js';
-import { confidentialJob, confidentialWake, confidentialBatch, confidentialAck, confidentialRefresh, confidentialActivateAck, confidentialOpenList, confidentialOpenJob, marketOrders, marketClear, confidentialQueue, heartbeat, heartbeatIdle, setHeartbeatLedger, relayBooks, quoteAsset } from './lib/worker-client.js';
+import { confidentialJob, confidentialWake, confidentialBatch, confidentialAck, confidentialRefresh, confidentialActivateAck, confidentialOpenList, confidentialOpenJob, marketOrders, marketClear, gasOrders, gasClear, confidentialQueue, heartbeat, heartbeatIdle, setHeartbeatLedger, relayBooks, quoteAsset } from './lib/worker-client.js';
 import { makeBatchWindow } from './lib/batch-window.js';
 import { proveSettle, proveMixed, proveSealed, proveStdin, boardAlive } from './lib/prover.js';
 import { makeMarketSolver } from './lib/market-solver.js';
 import { abi as MARKET_ABI, claimCall, fulfillCall } from './lib/market-calls.js';
+import { makeGasSolver } from './lib/gas-solver.js';
+import { abi as GAS_ABI, executeCall } from './lib/gas-calls.js';
 import { notExecuted } from './lib/stdin-prover.js';
 import { assertMemosMatchProof } from './lib/memo-root.js';
 import { consumedInput, consumedAck, unlandedDeposits, spentInputsOf, noteNullifier } from './lib/spent-precheck.js';
@@ -910,6 +912,40 @@ async function marketCycle() {
   return worked;
 }
 
+// TacitGasRelay (lib/gas-solver.js): an order is simulated, and sent only when its fee (TAC or the token spent, valued by a KyberSwap quote into
+// ETH) covers the gas with the margin; the contract pays the fee only if the whole swap lands.
+let gasReadAt = 0;
+const ETH_KYBER = '0xEeeeeEeeeEeEeeEeEeeEeEEEeeeeEeeeeeeeEEeE';
+async function gasFeeWei(x) {
+  const o = x.order;
+  if (BigInt(o.fee) === 0n) return 0n;
+  const r = await fetch(`https://aggregator-api.kyberswap.com/ethereum/api/v1/routes?${new URLSearchParams({ tokenIn: o.feeToken, tokenOut: ETH_KYBER, amountIn: String(o.fee) })}`, { signal: AbortSignal.timeout(8000) }).then((q) => (q.ok ? q.json() : null)).catch(() => null);
+  const out = r?.data?.routeSummary?.amountOut;
+  return /^\d+$/.test(String(out ?? '')) ? BigInt(out) : null;
+}
+const gasSolver = makeGasSolver({
+  marginBps: CFG.gasRelayMarginBps,
+  listOrders: () => gasOrders(),
+  used: (payer, nonce) => publicClient.readContract({ address: CFG.gasRelayAddr, abi: GAS_ABI, functionName: 'used', args: [payer, BigInt(nonce)] }),
+  simulate: async (x) => {
+    const base = { address: CFG.gasRelayAddr, abi: GAS_ABI, ...executeCall(x), account: settleWallet.account };
+    await publicClient.simulateContract(base);                                  // throws when the contract would refuse it
+    return (await publicClient.estimateContractGas(base)) * 12n / 10n;
+  },
+  feeWei: gasFeeWei,
+  gasPrice: () => publicClient.getGasPrice(),
+  send: (x, gas) => submitCall({ address: CFG.gasRelayAddr, abi: GAS_ABI, ...executeCall(x) }, `gas relay ${x.id.slice(0, 10)}`, { gasLimit: gas }),
+  clear: (x) => gasClear(x),
+  log,
+});
+async function gasCycle() {
+  if (!CFG.gasRelaySolve || Date.now() - gasReadAt < CFG.gasRelayPollSecs * 1000) return false;
+  gasReadAt = Date.now();
+  const worked = await gasSolver.pass();
+  if (worked) gasReadAt = 0;
+  return worked;
+}
+
 async function openCycle() {
   if (!CFG.openBoard || Date.now() - openReadAt < CFG.openBoardPollSecs * 1000) return false;
   openReadAt = Date.now();
@@ -1212,6 +1248,7 @@ async function main() {
     try {
       let worked = await cycle();
       if (!worked) worked = await marketCycle();
+      if (!worked) worked = await gasCycle();
       // An empty queue is the common case, not an error — but it must still beat, or /prover-health
       // goes stale (and "down") after 10 quiet minutes on a perfectly healthy relay. heartbeat() itself
       // only fires on real activity (proving/settled/error), so idle time needs its own signal. While the relay is short or

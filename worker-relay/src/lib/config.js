@@ -261,6 +261,12 @@ export const CFG = {
   marketAddr: opt('PROOF_MARKET_ADDR', '0x0000000033Dd45B1686Ba37e5F6e4ABDdaC17609'),
   marketMinTacWei: BigInt(opt('PROOF_MARKET_MIN_TAC_WEI', '0')),
   marketPollSecs: num('PROOF_MARKET_POLL_SECS', 10),
+  // TacitGasRelay (contracts/src/TacitGasRelay.sol): the relay sends open orders from holders with no ETH and keeps the fee, when the fee is
+  // worth more than the gas by the margin. GAS_RELAY_SOLVE=0 turns it off; GAS_RELAY_ADDR names another relay.
+  gasRelaySolve: opt('GAS_RELAY_SOLVE', '1') === '1',
+  gasRelayAddr: opt('GAS_RELAY_ADDR', '0x000000197E8f0B64463B2010e568fF42090Af88d'),
+  gasRelayMarginBps: num('GAS_RELAY_MARGIN_BPS', 12000),
+  gasRelayPollSecs: num('GAS_RELAY_POLL_SECS', 5),
   openBoard: opt('OPEN_BOARD', '1') === '1',
   openBoardPollSecs: num('OPEN_BOARD_POLL_SECS', 15),
   // Relay fees paid in cTAC are never sold (TAC is never in FEE_ASSETS), so they pile up on the earning wallet.

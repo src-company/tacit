@@ -124,6 +124,7 @@ import { handleProverUpload, handleProverDownload, PROVER_PROXY_PATHS } from './
 import { buildProverBoard, workerOf } from './prover-board.js';
 import { buildProofPool, verifyCalldata, clientOf, PROOF_POOL } from './proof-pool.js';
 import { makeMarketBoard, MARKET_BOARD } from './proof-market-queue.js';
+import { makeGasBoard, GAS_RELAY, GAS_RELAY_ADDR } from './gas-relay-queue.js';
 import { SWAP_BATCH_VK } from '../../dapp/confidential-swapbatch-vk.js';
 import { bpRangeVerify, bpClassicProofLen } from '../../dapp/bulletproofs.js';
 import { makeBridgeRecover } from '../../dapp/bridge-recover.js';
@@ -648,7 +649,7 @@ const reverseBytes = b => { const r = new Uint8Array(b); r.reverse(); return r; 
 // caller (curl, another server) could already do. This is what lets a third-party page with no fixed
 // origin (an IPFS/web3-gateway-hosted frontend, e.g.) use the relay directly from a browser instead of
 // needing its own backend proxy or a per-deploy entry in ALLOWED_ORIGINS.
-const OPEN_ORIGIN_PATHS = new Set(['/stats', '/flow', '/relay/economics', '/bridge/recover', '/reflection/proof', '/confidential/submit', '/confidential/status', '/confidential/open', '/confidential/landed', '/confidential/quote', '/confidential/index', '/confidential/relay', '/reflection/dump', '/reflection/live', '/reflection/status', '/reflection/note-witness', '/reflection/burndep', '/reflection/eth-state/covers', '/reflection/eth-state/proof', '/reflection/open', '/reflection/open/job', '/reflection/landed', '/reflection/burndep-list', '/crossout/minted', '/farm/program', '/farm/health', '/prover/upload', '/prover/download', '/prover/board', '/prover/pool', '/prover/pool/request', '/prover/pool/lease', '/prover/pool/submit', '/prover/pool/result', '/prover/pool/credits', '/market/order', '/market/orders', '/market/done']);
+const OPEN_ORIGIN_PATHS = new Set(['/stats', '/flow', '/relay/economics', '/bridge/recover', '/reflection/proof', '/confidential/submit', '/confidential/status', '/confidential/open', '/confidential/landed', '/confidential/quote', '/confidential/index', '/confidential/relay', '/reflection/dump', '/reflection/live', '/reflection/status', '/reflection/note-witness', '/reflection/burndep', '/reflection/eth-state/covers', '/reflection/eth-state/proof', '/reflection/open', '/reflection/open/job', '/reflection/landed', '/reflection/burndep-list', '/crossout/minted', '/farm/program', '/farm/health', '/prover/upload', '/prover/download', '/prover/board', '/prover/pool', '/prover/pool/request', '/prover/pool/lease', '/prover/pool/submit', '/prover/pool/result', '/prover/pool/credits', '/market/order', '/market/orders', '/market/done', '/gas/order', '/gas/orders', '/gas/done']);
 function corsHeaders(env, reqOrigin, openOrigin) {
   const list = (env.ALLOWED_ORIGINS || '*').split(',').map(s => s.trim());
   const allow = openOrigin || list.includes('*') ? '*' : (list.includes(reqOrigin) ? reqOrigin : list[0]);
@@ -3806,6 +3807,55 @@ async function handleProofMarket(req, env, url, cors) {
   const done = await marketOpDone(env, id);
   if (done === null) return jsonResponse({ ok: false, error: 'could not read the market, try again' }, 502, nostore);
   if (!done) return jsonResponse({ ok: false, error: 'the market does not report this op settled' }, 409, nostore);
+  return jsonResponse(await board.remove(id), 200, nostore);
+}
+// TacitGasRelay's order board (worker/src/gas-relay-queue.js): a holder with no ETH posts a signed order, the settle relay sends it. Orders are
+// public and hold no secret; one leaves the board only when the contract itself says its nonce is used.
+const gasBoard = (env) => {
+  const kv = env.CONFIDENTIAL_KV || env.REGISTRY_KV, relay = env.GAS_RELAY_ADDR === 'off' ? null : env.GAS_RELAY_ADDR || GAS_RELAY_ADDR;
+  return relay && kv ? makeGasBoard({ kv, relay, chainId: 1 }) : null;
+};
+async function gasOrderUsed(env, payer, nonce) {
+  const data = '0x' + GAS_USED_SEL + payer.slice(2).toLowerCase().padStart(64, '0') + BigInt(nonce).toString(16).padStart(64, '0');
+  for (const rpc of [env.CONFIDENTIAL_SIM_RPC, 'https://mainnet.gateway.tenderly.co', ..._TETH_ETH_RPCS.mainnet].filter(Boolean)) {
+    try {
+      const r = await fetch(rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(10000),
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: env.GAS_RELAY_ADDR || GAS_RELAY_ADDR, data }, 'latest'] }) });
+      const j = r.ok ? await r.json() : null;
+      if (j && typeof j.result === 'string' && j.result.length === 66) return BigInt(j.result) === 1n;
+    } catch { /* next node */ }
+  }
+  return null;
+}
+const GAS_USED_SEL = 'ad04dc3f';   // used(address,uint256)
+async function handleGasRelay(req, env, url, cors) {
+  const nostore = { ...cors, 'Cache-Control': 'no-store' };
+  const board = gasBoard(env);
+  if (!board) return jsonResponse({ error: 'the gas relay is not configured' }, 404, nostore);
+  const ip = req.headers.get('CF-Connecting-IP') || 'anon';
+  if (url.pathname === '/gas/orders') {
+    if (req.method !== 'GET') return jsonResponse({ error: 'method' }, 405, nostore);
+    const rl = await proveRateLimit(env, ip, 'gas-list', 30, 2000);
+    if (!rl.ok) return jsonResponse({ ok: false, error: `too many requests, retry in ~${rl.retryAfter}s`, retryAfter: rl.retryAfter }, 429, { ...nostore, 'Retry-After': String(rl.retryAfter) });
+    const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit')) || 20));
+    return jsonResponse({ relay: env.GAS_RELAY_ADDR || GAS_RELAY_ADDR, orders: await board.list(limit) }, 200, nostore);
+  }
+  if (req.method !== 'POST') return jsonResponse({ error: 'method' }, 405, nostore);
+  let b;
+  try { b = await req.json(); } catch { b = null; }
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return jsonResponse({ ok: false, error: 'bad json' }, 400, nostore);
+  if (url.pathname === '/gas/order') {
+    const rl = await proveRateLimit(env, ip, 'gas-post', GAS_RELAY.perClientPerHour, Math.floor(3600000 / GAS_RELAY.perClientPerHour));
+    if (!rl.ok) return jsonResponse({ ok: false, error: `too many orders, retry in ~${rl.retryAfter}s`, retryAfter: rl.retryAfter }, 429, { ...nostore, 'Retry-After': String(rl.retryAfter) });
+    const r = await board.post(b.order);
+    return jsonResponse(r, r.ok ? 200 : 400, nostore);
+  }
+  // /gas/done { id, payer, nonce }: clears an order the contract reports used (its nonce spent, by a send or a cancel).
+  const id = String(b.id || '').toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(id) || !/^0x[0-9a-fA-F]{40}$/.test(String(b.payer || '')) || !/^\d{1,78}$/.test(String(b.nonce ?? ''))) return jsonResponse({ ok: false, error: 'id, payer and nonce are required' }, 400, nostore);
+  const used = await gasOrderUsed(env, b.payer, b.nonce);
+  if (used === null) return jsonResponse({ ok: false, error: 'could not read the relay, try again' }, 502, nostore);
+  if (!used) return jsonResponse({ ok: false, error: 'the relay does not report this order used' }, 409, nostore);
   return jsonResponse(await board.remove(id), 200, nostore);
 }
 async function handleConfidentialRelay(env, cors) {
@@ -27834,6 +27884,7 @@ async function _routeFetch(req, env, ctx) {
     // The proof pool (worker/src/proof-pool.js) is open to anyone: pages post wraps, miners lease and prove them.
     if (url.pathname === '/prover/pool' || url.pathname.startsWith('/prover/pool/')) return handleProofPool(req, env, url, cors);
     if (url.pathname === '/market/order' || url.pathname === '/market/orders' || url.pathname === '/market/done') return handleProofMarket(req, env, url, cors);
+    if (url.pathname === '/gas/order' || url.pathname === '/gas/orders' || url.pathname === '/gas/done') return handleGasRelay(req, env, url, cors);
     // A page proving with its holder's own prover account passes its program input and the finished proof through here
     // (the network's artifact store sends no CORS headers). These answer their own preflight, which names X-Artifact-Url.
     // The prover board (worker/src/prover-board.js): the relay posts, reads and cancels jobs with the box token; workers claim and
