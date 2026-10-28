@@ -151,3 +151,23 @@ test('a tank order assembled the way the page does it (a held payer key signs th
   const i3 = pm.buildIntent({ payer: owner, publicValues: j.publicValues, floor: 10n ** 18n, max: perOp + 1n, now: NOW, tank: pm.tankDigest(tank) });
   assert.match(check({ ...o2, intent: i3, signature: fmt(secp.sign(hexToBytes(pm.intentDigest(i3).slice(2)), sessionPriv)) }), /above the tank's limit/);
 });
+
+test('one payer cannot hold more than a few open orders on the board', async () => {
+  const b = makeMarketBoard({ kv: kv(), market: MARKET, cfg: { ...MARKET_BOARD, maxPerPayer: 2 }, now: () => NOW });
+  assert.equal((await b.post(await order({ value: 1900 }))).ok, true);
+  assert.equal((await b.post(await order({ value: 1901 }))).ok, true);
+  const r = await b.post(await order({ value: 1902 }));
+  assert.equal(r.ok, false);
+  assert.match(r.error, /too many open orders/);
+});
+
+test('a proof posted back is kept only for the order it is for', async () => {
+  const b = makeMarketBoard({ kv: kv(), market: MARKET, now: () => NOW });
+  const o = await order({ value: 1950 });
+  assert.equal((await b.post(o)).ok, true);
+  assert.equal((await b.postProof(o.intent.opId, { publicValues: o.publicValues, proof: '0x' + 'ab'.repeat(260) })).ok, true);
+  assert.equal((await b.getProof(o.intent.opId)).proof, '0x' + 'ab'.repeat(260));
+  assert.equal((await b.postProof(o.intent.opId, { publicValues: o.publicValues.slice(0, -1) + '0', proof: '0x' + 'ab'.repeat(260) })).ok, false, 'another order\'s public values');
+  assert.equal((await b.postProof('0x' + '12'.repeat(32), { publicValues: o.publicValues, proof: '0xab' })).ok, false, 'no such order');
+  assert.equal((await b.postProof(o.intent.opId, { publicValues: o.publicValues, proof: '0x' + 'ab'.repeat(5000) })).ok, false, 'too large');
+});

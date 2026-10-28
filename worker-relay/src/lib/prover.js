@@ -9,7 +9,7 @@ import { spawn, execFile } from 'node:child_process';
 import { STALE_PROOF_SELECTORS } from './open-board.js';
 import { readFile, mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { keccak256 } from 'viem';
+import { keccak256, encodeFunctionData, parseAbi } from 'viem';
 import { CFG } from './config.js';
 import { POOL, POOL_ABI, publicClient, settleWallet } from './chain.js';
 import { reflectionEthProofPatient } from './worker-client.js';
@@ -418,12 +418,12 @@ async function verifySettle({ publicValues, proof, memos }) {
   }
 }
 // The board lane for `stdin`, or null when it missed; the time it took comes off `timeoutMs` for the lane after it.
-async function viaBoard({ stdin, cycleLimit, gasLimit, label, memos, timeoutMs }) {
+async function viaBoard({ stdin, cycleLimit, gasLimit, label, memos, timeoutMs, check = null }) {
   const lane = boardLane();
   if (!lane) return { proof: null, spentMs: 0 };
   const t0 = Date.now();
   try {
-    const r = await lane.prove({ stdin, cycleLimit, gasLimit, cls: 'private', label, memos, timeoutMs });
+    const r = await lane.prove({ stdin, cycleLimit, gasLimit, cls: 'private', label, memos, timeoutMs, ...(check ? { check } : {}) });
     boardLog(`${label}: proved on the board by ${r.worker} in ${Math.round((Date.now() - t0) / 1000)} s`);
     return { proof: { publicValues: r.publicValues, proof: r.proof, lane: 'board', worker: r.worker }, spentMs: Date.now() - t0 };
   } catch (e) {
@@ -468,10 +468,19 @@ export async function proveMixed({ items, timeoutMs }) {
 }
 // A proof of one program input built elsewhere (a proof market order's wrap): Tacit's board first, then the prover network.
 // → { publicValues, proof, lane }
-export async function proveStdin({ stdin, type = 'wrap', memos = [], timeoutMs = 120_000 }) {
+// A proof checked on its own (the SP1 verifier, over eth_call) rather than as the pool's settle: a market order is proved before its holder's deposit lands, and the
+// pool's settle check refuses a proof whose deposit is not there yet, which sent every one of these to the slower network lane.
+const SP1_VERIFIER = '0xb69f2584CBcFf99a58C4e7002E8b89Af54a6f4e2', POOL_PROGRAM_VKEY = '0x006cd47fd23937a6d247696cace28c22d2c6a8280447e6ac45a3571de232d6e3';
+const VERIFY_ABI = parseAbi(['function verifyProof(bytes32 programVKey, bytes publicValues, bytes proofBytes)']);
+const proofOnly = (expectPv) => async ({ publicValues, proof }) => {
+  if (expectPv && String(publicValues).toLowerCase() !== String(expectPv).toLowerCase()) return false;   // not this order's proof
+  try { await publicClient.call({ to: SP1_VERIFIER, data: encodeFunctionData({ abi: VERIFY_ABI, functionName: 'verifyProof', args: [POOL_PROGRAM_VKEY, publicValues, proof] }) }); return true; }
+  catch (e) { return /revert|execution|invalid/i.test(String(e && (e.shortMessage || e.message))) ? false : 'unchecked'; }
+};
+export async function proveStdin({ stdin, type = 'wrap', memos = [], timeoutMs = 120_000, expectPublicValues = null }) {
   const limits = LIMITS[type];
   if (!limits) throw new Error(`proveStdin: no limits for ${type}`);
-  const first = await viaBoard({ stdin, ...limits, label: `market ${type}`, memos, timeoutMs });
+  const first = await viaBoard({ stdin, ...limits, label: `market ${type}`, memos, timeoutMs, check: proofOnly(expectPublicValues) });
   if (first.proof) return first.proof;
   if (!CFG.networkPrivateKey) throw new Error('the board missed and NETWORK_PRIVATE_KEY is not set');
   stdinProver ||= makeStdinProver({ key: CFG.networkPrivateKey, rpc: CFG.networkRpcUrl, env: process.env });

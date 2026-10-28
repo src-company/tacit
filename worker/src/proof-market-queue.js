@@ -14,7 +14,7 @@ import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex, hexToBytes, concatBytes } from '@noble/hashes/utils';
 import { readWrapStdin, wrapExpect, proofFits } from './proof-pool.js';
 
-export const MARKET_BOARD = { maxOrders: 200, maxStdin: 4096, maxPublicValues: 8192, maxMemos: 8, maxMemoBytes: 2048, maxProof: 2048, maxProof: 2048, minTtlSecs: 60, maxTtlSecs: 6 * 3600, perClientPerHour: 20 };
+export const MARKET_BOARD = { maxOrders: 200, maxPerPayer: 6, maxStdin: 4096, maxPublicValues: 8192, maxMemos: 8, maxMemoBytes: 2048, maxProof: 2048, maxProof: 2048, minTtlSecs: 60, maxTtlSecs: 6 * 3600, perClientPerHour: 20 };
 
 const H = /^0x[0-9a-fA-F]{64}$/, A = /^0x[0-9a-fA-F]{40}$/, S = /^0x[0-9a-fA-F]{130}$/, NUM = /^\d{1,78}$/, HEX = /^0x([0-9a-fA-F]{2})*$/;
 const k = (...p) => keccak_256(concatBytes(...p));
@@ -92,8 +92,10 @@ export function makeMarketBoard({ kv, market, chainId = 1, cfg = MARKET_BOARD, n
       if (await kv.get(`pm:order:${id}`)) return { ok: true, id, existing: true };
       const idx = (await readIndex()).filter((e) => e.until > now());
       if (idx.length >= cfg.maxOrders) return { ok: false, error: 'the board is full, try again shortly' };
+      // one payer cannot fill the board, or the prover's day, with orders it will never settle
+      if (idx.filter((e) => e.payer === lc(order.intent.payer)).length >= cfg.maxPerPayer) return { ok: false, error: 'this payer has too many open orders; wait for them to settle or expire' };
       await kv.put(`pm:order:${id}`, JSON.stringify(order), { expirationTtl: Math.max(60, until - now() + 60) });
-      idx.push({ id, at: now(), until, max: order.intent.maxFee, tank: !!order.tank });
+      idx.push({ id, at: now(), until, max: order.intent.maxFee, tank: !!order.tank, payer: lc(order.intent.payer) });
       await writeIndex(idx);
       return { ok: true, id };
     },
