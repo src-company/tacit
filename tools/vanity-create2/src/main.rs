@@ -6,6 +6,8 @@
 //! so it commits to the exact init code (constructor arguments included): only that code can land there, and only
 //! on that chain.
 //!
+//!   (add --create3 to mine CreateX deployCreate3 salts: the address then does not depend on the init code, so --init-hash is not needed)
+//!   (add --deployer 0x.. to bind the salt to one caller: only that address can deploy with it, which CREATE3 needs, since its address does not pin the code)
 //!   vanity-create2 mine --factory 0x.. --init-hash 0x.. [--chain-id 1] --zeros 3 --tag NAME
 //!   vanity-create2 address --factory 0x.. --init-hash 0x.. [--chain-id 1] --salt 0x..
 use rayon::prelude::*;
@@ -26,21 +28,51 @@ struct Ctx {
     factory: [u8; 20],
     init_hash: [u8; 32],
     chain_id: u64,
+    create3: bool,
+    deployer: Option<[u8; 20]>,   // Some: the salt is bound to this caller too (CreateX permissioned form), so nobody else can use it
 }
 
+// keccak256 of CreateX's CREATE3 proxy init code (hex"67363d3d37363d34f03d5260086018f3")
+const PROXY_INIT_HASH: [u8; 32] = [
+    0x21, 0xc3, 0x5d, 0xbe, 0x1b, 0x34, 0x4a, 0x24, 0x88, 0xcf, 0x33, 0x21, 0xd6, 0xce, 0x54, 0x2f, 0x8e, 0x9f, 0x30, 0x55,
+    0x44, 0xff, 0x09, 0xe4, 0x99, 0x3a, 0x62, 0x31, 0x9a, 0x49, 0x7c, 0x1f,
+];
+
 fn address_of(c: &Ctx, salt: &[u8; 32]) -> [u8; 20] {
-    let mut g = [0u8; 64];
-    g[24..32].copy_from_slice(&c.chain_id.to_be_bytes());
-    g[32..].copy_from_slice(salt);
-    let guarded = keccak(&g);
+    let guarded = match &c.deployer {
+        // keccak256(abi.encode(msg.sender, block.chainid, salt))
+        Some(d) => {
+            let mut g = [0u8; 96];
+            g[12..32].copy_from_slice(d);
+            g[56..64].copy_from_slice(&c.chain_id.to_be_bytes());
+            g[64..].copy_from_slice(salt);
+            keccak(&g)
+        }
+        None => {
+            let mut g = [0u8; 64];
+            g[24..32].copy_from_slice(&c.chain_id.to_be_bytes());
+            g[32..].copy_from_slice(salt);
+            keccak(&g)
+        }
+    };
     let mut p = [0u8; 85];
     p[0] = 0xff;
     p[1..21].copy_from_slice(&c.factory);
     p[21..53].copy_from_slice(&guarded);
-    p[53..85].copy_from_slice(&c.init_hash);
+    p[53..85].copy_from_slice(if c.create3 { &PROXY_INIT_HASH } else { &c.init_hash });
     let h = keccak(&p);
     let mut out = [0u8; 20];
     out.copy_from_slice(&h[12..32]);
+    if c.create3 {
+        // CREATE3: the contract is the proxy's first CREATE, keccak256(rlp([proxy, 1])), so it does not depend on the init code
+        let mut r = [0u8; 23];
+        r[0] = 0xd6;
+        r[1] = 0x94;
+        r[2..22].copy_from_slice(&out);
+        r[22] = 0x01;
+        let h2 = keccak(&r);
+        out.copy_from_slice(&h2[12..32]);
+    }
     out
 }
 
@@ -81,6 +113,9 @@ fn mine(c: &Ctx, zeros: usize) -> ([u8; 32], [u8; 20], u64) {
     let base = u64::from_be_bytes(seed);
     (0..workers).into_par_iter().for_each(|w| {
         let mut salt = [0u8; 32];
+        if let Some(d) = &c.deployer {
+            salt[..20].copy_from_slice(d);
+        }
         salt[20] = 0x01;
         salt[21] = (w >> 8) as u8;
         salt[22] = w as u8;
@@ -117,7 +152,9 @@ fn main() {
     let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("");
     let c = Ctx {
         factory: parse_hex(&arg(&args, "--factory").expect("--factory")),
-        init_hash: parse_hex(&arg(&args, "--init-hash").expect("--init-hash")),
+        init_hash: if args.iter().any(|a| a == "--create3") { [0u8; 32] } else { parse_hex(&arg(&args, "--init-hash").expect("--init-hash")) },
+        create3: args.iter().any(|a| a == "--create3"),
+        deployer: arg(&args, "--deployer").map(|d| parse_hex(&d)),
         chain_id: arg(&args, "--chain-id").unwrap_or("1".into()).parse().unwrap(),
     };
     match cmd {

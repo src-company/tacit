@@ -472,6 +472,8 @@ const PINNED_PAGES = [
   { name: 'admin/token-pools/index.html', file: join(DAPP_DIR, 'admin', 'token-pools', 'index.html'), script: INLINE_CLASSIC, ...HASH_ONLY },
   // the proof market's deploy page: one classic inline script, which sends the CreateX deployment the owner presses from their wallet
   { name: 'admin/proof-market/index.html', file: join(DAPP_DIR, 'admin', 'proof-market', 'index.html'), script: INLINE_CLASSIC, ...HASH_ONLY },
+  // the gas relay's deploy page: the same shape, for an ownerless contract with no arguments
+  { name: 'admin/gas-relay/index.html', file: join(DAPP_DIR, 'admin', 'gas-relay', 'index.html'), script: INLINE_CLASSIC, ...HASH_ONLY },
 ];
 function updatePinnedCsp(page) {
   const htmlText = readFileSync(page.file).toString('utf8');
