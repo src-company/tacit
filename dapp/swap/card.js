@@ -767,7 +767,7 @@ function paintSides() {
   // a side sitting in the Pay pool has its balances read (the page keeps them a minute), so a link to it shows what it holds
   if (moving() && atOf('pay') === 'pay' && Date.now() - PAYWARM > 30e3) { PAYWARM = Date.now(); H.moves.warm?.(); }
   const getBal = !S.outP && !S.at.get && !S.to && W.account ? S.bal[S.get] : null;
-  $('#get-side').textContent = getBal ? `You have ${amtFmt(getBal, get.dec)}` : '';
+  $('#get-side').textContent = getBal ? `Balance ${amtFmt(getBal, get.dec)}` : '';
   // a move's own quick amounts (the page's sizes kept ready, marked once proved) stand where the dollar value goes until one is typed
   const v = wei && !fixed ? usdOf(S.pay, wei) : null, pu = $('#pay-usd');
   const h = sizes ? `<span class="quick">${sizes.map((x) => `<button type="button" data-quick="${esc(x.v)}"${x.rd ? ' class="rd" title="Proved already: one transaction"' : ''}>${x.rd ? '<svg aria-hidden="true"><use href="#i-bolt"/></svg>' : ''}${esc(x.v)}</button>`).join('')}</span>` : '';
@@ -807,7 +807,19 @@ function shareLink() {
   // any other swap: the pair, amount and private sides as the swap links name them (?from=&to=&amt=&private=)
   return kindOf(S.pay, S.get) && !S.btc ? `${location.origin}/?${params()}` : null;
 }
-const shareSync = () => { const b = $('#copy'); if (b) b.hidden = !shareLink(); };
+// The address bar follows the same link (replaced in place, so no history entry): copying it from there works as well as the icon.
+const shareSync = () => {
+  const b = $('#copy'), u = shareLink();
+  if (b) b.hidden = !u;
+  if (!b || !history.replaceState) return;
+  try {
+    const at = location.pathname + location.search + location.hash, cur = new URL(location.href);
+    let want;
+    if (u) { const w = new URL(u); want = w.pathname + (w.hash ? cur.search : w.search || cur.search) + w.hash; if (!w.hash) { const q = new URLSearchParams(cur.search); for (const [k, v] of new URLSearchParams(w.search)) q.set(k, v); want = cur.pathname + (q.toString() ? `?${q}` : '') + cur.hash; } }
+    else { const q = new URLSearchParams(cur.search); q.delete('amt'); want = cur.pathname + (q.toString() ? `?${q}` : '') + (/^#card=shield:/.test(cur.hash) ? '' : cur.hash); }
+    if (want !== at) history.replaceState(null, '', want);
+  } catch { }
+};
 function paintQuote() {
   shareSync();
   if (moveOf()) { paintMove(); return; }
@@ -2224,6 +2236,7 @@ function arrows(box, attr) {
 // that has none, a swap through the private pool to an address); Bitcoin is TAC and tETH held on Bitcoin
 // where a side's coin is held, named in its field's corner (paintSides fills it)
 const side = (s) => `<span class="where" id="${s}-at"></span>`;
+const CP_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 const markup = (o) => `<p class="sr" id="sw-live" role="status" aria-live="polite"></p>
   ${o.lane === false ? '' : `<div class="mode" role="radiogroup" aria-label="Chain">
     <button type="button" role="radio" data-mode="wallet" aria-checked="true"><svg class="tk" aria-hidden="true"><use href="#c-eth"/></svg>Ethereum</button>
@@ -2251,7 +2264,7 @@ const markup = (o) => `<p class="sr" id="sw-live" role="status" aria-live="polit
     <div id="ackbox"></div>
     <button class="go" id="go" type="button" disabled>Enter an amount</button>
     <p class="q" id="q" role="status"></p>
-    ${o.moves ? '<button class="link" id="copy" type="button" hidden>Copy link</button>' : ''}
+    ${o.moves ? '<button class="cp" id="copy" type="button" title="Copy link" aria-label="Copy link" hidden>${CP_ICON}</button>' : ''}
   </div>
   <div class="sw-foot"><span>Slippage</span><span class="slip" id="slip" role="group" aria-label="Slippage"></span></div>
   <div class="steps" id="steps" hidden></div>

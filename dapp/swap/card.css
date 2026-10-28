@@ -141,7 +141,7 @@
 .swc .q.err { color: var(--err); } .swc .q.ok { color: var(--ok); }
 .swc .link { padding: 0; font: inherit; color: var(--ink); background: none; border: 0; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .swc .sw-foot[hidden] { display: none; }
-.swc .sw-foot { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin: 4px 2px 0; padding-top: 10px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--mute); }
+.swc .sw-foot { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin: 2px 2px 0; padding-top: 4px; font-size: 12px; color: var(--mute); }
 /* Swap privately: one row that switches it, the buffer and the three steps it takes while it is on; and the swaps in progress, as the same steps */
 .swc .later { margin: 10px 2px 0; padding: 10px 12px; border: 1px solid var(--hair); border-radius: 12px; transition: border-color .15s; }
 .swc .later.on { border-color: var(--hair-2); }
@@ -220,7 +220,8 @@
 .swc .recent a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--hair-2); overflow-wrap: break-word; }
 .swc .recent time { white-space: nowrap; }
 .swc .slip { display: inline-flex; gap: 4px; min-height: 26px; }
-.swc .slip button { min-height: 26px; padding: 1px 9px; font: 12px var(--mono); color: var(--mute); background: none; border: 1px solid var(--hair-2); border-radius: 999px; cursor: pointer; }
+.swc .slip button { min-height: 26px; padding: 1px 9px; font: 12px var(--mono); color: var(--mute); background: none; border: 1px solid transparent; border-radius: 999px; cursor: pointer; }
+.swc .slip button:hover { border-color: var(--hair-2); }
 .swc .slip button[aria-pressed="true"] { color: var(--card); background: var(--ink); border-color: var(--ink); }
 @media (pointer: coarse) { .swc .slip { min-height: 34px; } .swc .slip button { min-height: 34px; padding: 1px 12px; } }
 /* the coin picker: a sheet that rises inside the card */
@@ -319,3 +320,11 @@
 .swc .quick button.rd svg { width: 8px; height: 10px; margin: 0 4px -1px -2px; fill: var(--ok); }
 
 .swc .buf small { color: var(--mute); }
+
+/* the copy-link icon and the optional 'to your wallet' default stay quiet until hovered */
+.swc .cp, #hx-copy.cp { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; color: var(--mute); background: none; border: 0; border-radius: 6px; opacity: .6; cursor: pointer; }
+.swc .cp[hidden], #hx-copy.cp[hidden] { display: none; }
+.swc .cp svg, #hx-copy.cp svg { width: 15px; height: 15px; }
+@media (hover: hover) { .swc .cp:hover, #hx-copy.cp:hover { color: var(--ink); opacity: 1; } }
+.swc .ff button.where:not(.priv) { text-decoration: none; }
+@media (hover: hover) { .swc .ff button.where:not(.priv):hover { text-decoration: underline; text-underline-offset: 3px; } }

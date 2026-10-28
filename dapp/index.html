@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-PrHYR/atDGY1MmyYpAnheCc/8w8LiJQlOmLgrEygZYg=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-CHnEZGkr2huTIyGklMKGLItd742M8qxqutVxltHbUlw=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <link rel="preconnect" href="https://api.tacit.finance" crossorigin>
 <link rel="preconnect" href="https://ethereum-rpc.publicnode.com" crossorigin>
 <script type="module" src="/px-strip.js" async fetchpriority="high"></script>
-<link rel="preload" href="/swap/card.css?cb=d556cf5d" as="style">
+<link rel="preload" href="/swap/card.css?cb=e6c5d853" as="style">
 <link rel="preload" href="/fonts/instrument-serif-400-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/instrument-serif-400i-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/ibm-plex-mono-400-latin.woff2" as="font" type="font/woff2" crossorigin>
@@ -1093,7 +1093,7 @@ dialog.layer { width: min(460px, calc(100vw - 32px)); }
 }
 </style>
 <!-- the hero tile is drawn with the swap card's parts (swap/card.js, which the Swap tab mounts): its styles, after the page's own -->
-<link rel="stylesheet" href="/swap/card.css?cb=d556cf5d">
+<link rel="stylesheet" href="/swap/card.css?cb=e6c5d853">
 <!-- chrome:head:begin inline -->
 <style>
 /* The header's page links and the footer, as every page that wears them draws them. The markup is made by build/chrome.mjs and stamped
@@ -1297,8 +1297,8 @@ footer.sf svg.fill { width: 16px; height: 16px; }
       <a class="news" id="air-news" href="/rewards/"><span class="dot" data-dot="tac"></span><b>TAC airdrop</b><span data-foot="tac">Is your wallet in it?</span><span class="go"><span class="w">Check yours </span>→</span></a>
       <a class="news" id="task-news" href="/tasks/" hidden><span class="dot on" aria-hidden="true"></span><b>Task</b><span data-task-t>Earn TAC</span><span class="go">→</span></a>
       </div>
-      <h1 id="hero-h">Private DeFi on <em>Bitcoin</em> and Ethereum.</h1>
-      <p class="sub">One <b>tacit1</b> ID for both chains, with amounts and owners hidden.</p>
+      <h1 id="hero-h">Swap, send and earn <em>privately</em>.</h1>
+      <p class="sub">On Bitcoin and Ethereum, with one <b>tacit1</b> ID. Amounts and owners stay hidden.</p>
     </div>
     <section class="hx" id="hx" aria-label="Swap, bridge, send, earn or borrow"><div id="hx-body"></div></section>
     <div class="proof-row">
@@ -14086,10 +14086,18 @@ function hxPrivOut() {
 // amount (hxUrl), so the link is made here, and shown only once there is an amount.
 function hxShareLink() {
   const u = hxUnits();
+  if (u && HX.tab === 'send' && HX.send) return `${location.origin}/#card=send:${HX.send}&amt=${plain(u, hxDec())}`;
   if (!u || HX.tab !== 'earn' || HX.from !== 'ether' || !HX.pool) return null;
   return `${location.origin}/#card=earn:ether:${HX.pool === 'precision' ? 'public' : `p${Number(HX.pool)}`}&amt=${plain(u, 8)}${HX.lp && HX.pool !== 'precision' ? '&lp=1' : ''}`;
 }
-const hxShareSync = () => { const b = $('#hx-copy'); if (b) b.hidden = !hxShareLink(); };
+// The address bar follows the link (replaced in place, no history entry); the swap tab's own card writes its own.
+const hxShareSync = () => {
+  const b = $('#hx-copy'), u = hxShareLink();
+  if (b) b.hidden = !u;
+  if (!history.replaceState || HX.tab === 'swap') return;
+  const h = u ? new URL(u).hash : /^#card=(earn|send):/.test(location.hash) ? '' : location.hash;
+  if (location.hash !== h) history.replaceState(null, '', location.pathname + location.search + h);
+};
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-hxlp]');
   if (!b) return;
@@ -14311,8 +14319,9 @@ function hxAskFromUrl() {
 }
 function hxUrl() {
   if (!history.replaceState) return;
-  const u = new URLSearchParams(location.search);
+  const u = new URLSearchParams(location.search), amt = u.get('amt');
   for (const k of HX_QK) u.delete(k);
+  if (HX.tab === 'swap' && amt && (SWC.touched || SWC.url)) u.set('amt', amt);
   if (HX.tab === 'swap' && HX.swq !== HX_SWQ0 && (SWC.touched || SWC.url)) {
     // the card leaves out ETH and TAC, its own first pair, but this page's first pair is another, so both sides are named
     const c = new URLSearchParams(HX.swq);
@@ -14387,7 +14396,7 @@ function swcPace(id) {
   if (b) b.dataset.pace = id;
   else q.insertAdjacentHTML('afterend', html`<div class="pace" data-card="1" data-pace="${id}"><div class="actr-bar" role="progressbar" aria-label="How far along" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i style="width:0%"></i></div><span></span></div>`.s);
 }
-const swcLoad = () => (SWC.p ||= import('/swap/card.js?cb=530d0df2').catch((e) => { SWC.p = null; throw e; }));
+const swcLoad = () => (SWC.p ||= import('/swap/card.js?cb=bda5815f').catch((e) => { SWC.p = null; throw e; }));
 function swcAsk() { if (SWC.ask && SWC.card?.load(SWC.ask)) SWC.ask = null; }
 function hxSwap() {
   const put = () => { const s = $('#hx-swap'); if (s && s !== SWC.el) { s.replaceWith(SWC.el); SWC.card?.requote?.(); } swcAsk(); };
@@ -14442,7 +14451,7 @@ function paintHx() {
   const amt = (label) => html`<input class="amt" id="hx-amt" inputmode="decimal" placeholder="0" autocomplete="off" spellcheck="false" aria-label="${label}" value="${HX.amt}">`;
   const out = (unit = '') => html`<output class="big ph num" id="hx-out" for="hx-amt">0</output>${unit ? html`<span class="unit">${unit}</span>` : ''}`;
   const rowsOf = (label, many, inner, fold = '') => html`<div class="rows" id="hx-dest" role="${many ? 'radiogroup' : 'group'}" aria-label="${label}"><div class="rows-h"><span>${label}</span></div>${inner}${fold}</div>`;
-  const button = (label, line = '') => html`<div class="act"><button class="go" type="button" id="hx-go">${label}</button><p class="q" id="hx-q" aria-live="polite">${line}</p><button class="link" type="button" id="hx-copy" hidden>Copy link</button></div>`;
+  const button = (label, line = '') => html`<div class="act"><button class="go" type="button" id="hx-go">${label}</button><p class="q" id="hx-q" aria-live="polite">${line}</p><button class="cp" type="button" id="hx-copy" title="Copy link" aria-label="Copy link" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></div>`;
   const m = HX.tab, md = HX.mode;
   const go0 = hxHandoff(md, null)?.go || {
     private: 'Make ETH private', earn: 'Farm with ETH', borrow: HX.bsrc === 'tac' ? `Borrow ${HX.bm === 'tace' ? 'TACE' : 'TACD'}` : HX.bsrc === 'cbtc' ? (S.key ? 'Borrow cUSD' : 'Open your Tacit wallet to borrow') : HX.bm === 'cbtc' ? 'Lock BTC for cBTC' : 'Lock BTC and borrow',
