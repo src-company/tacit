@@ -18382,9 +18382,9 @@ function _renderHoldingsBurndepBridges(listEl) {
       </div>`;
   }).join('');
   const resumeBoxHtml = `
-    <details style="${records.length ? 'margin-top:10px;padding-top:8px;border-top:1px solid var(--ink-faint);' : ''}">
+    <details ${records.length ? '' : 'open'} style="${records.length ? 'margin-top:10px;padding-top:8px;border-top:1px solid var(--ink-faint);' : ''}">
       <summary class="muted" style="cursor:pointer;font-size:11px;">${records.length ? "Don't see a bridge you expect? " : ''}Recover a bridge from its transaction id or amount →</summary>
-      <div class="muted" style="font-size:10px;margin-top:6px;line-height:1.5;">With the burn transaction id, a bridge still in progress is picked up again; if it asks for the amount, add it. With the amount alone, your Ethereum notes are searched for a finished one; this browser remembers the amount.</div>
+      <div class="muted" style="font-size:10px;margin-top:6px;line-height:1.5;">Bridge progress is saved in the browser, so clearing site data or switching devices hides it here. Your TAC is not lost. With the burn transaction id, a bridge still in progress is picked up again from chain data. With the amount alone, your Ethereum notes are searched for a finished one.</div>
       <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
         <input type="text" data-burndep-resume-txid placeholder="Burn transaction id" style="flex:1;min-width:160px;font-size:11px;">
         <input type="text" data-burndep-resume-amount placeholder="Amount (e.g. 250)" style="width:100px;font-size:11px;">

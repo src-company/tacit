@@ -11,7 +11,7 @@ import { forgetUx } from '/trade/poolux.js?cb=ac4a1175';
 import { relayWords } from '/relay-outcome.js?cb=26298b8e';
 import { secp, bytesToHex, hexToBytes } from '/vendor/tacit-deps.min.js';
 
-const TACIT_URL = '/tacit.js?cb=3e031d49';
+const TACIT_URL = '/tacit.js?cb=0bd37721';
 const PLAN_KEY = 'tacit-lite-bridge-plan-v1', SELF_PROVE = 'tacit-lite-prove-self-v1:';
 const EVERY = 75e3;                                                                  // as often as the front page's pass
 const read = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
