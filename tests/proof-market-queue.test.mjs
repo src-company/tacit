@@ -182,3 +182,19 @@ test('an order whose index entry was lost to a racing post is put back', async (
   assert.equal((await b.post(o)).ok, true);
   assert.deepEqual((await b.list()).map((x) => x.intent.opId), [o.intent.opId], 'the order is on the board');
 });
+
+test('a proof the board hands back is kept only if it is exactly the wrap that was posted (its own memos, its own op id)', async () => {
+  const memos = ['0xaabbccddeeff00112233'];
+  const first = { wrapOp: { ...WRAP_OP, value: '2100' }, leaf: '0x' + '00'.repeat(32), depositId: '0x' + '00'.repeat(32), memos };
+  const e = wrapExpect(readWrapStdin(hexToBytes(pm.wrapOrderInputs(first).stdin.slice(2))));
+  const built = { ...first, leaf: e.leaf, depositId: e.depositId };
+  const inputs = pm.wrapOrderInputs(built);
+  const pending = { opId: pm.opIdOf(inputs.publicValues), memos };
+  const good = { publicValues: inputs.publicValues, proof: '0x' + 'ab'.repeat(200) };
+  assert.equal(pm.handBackFits(built, pending, good), true);
+  assert.equal(pm.handBackFits(built, { ...pending, memos: ['0xdeadbeef'] }, good), false, 'a rebuilt wrap draws other memos: its proof is another');
+  assert.equal(pm.handBackFits(built, { ...pending, opId: '0x' + '12'.repeat(32) }, good), false, 'another op id');
+  assert.equal(pm.handBackFits(built, pending, { ...good, publicValues: good.publicValues.slice(0, -1) + (good.publicValues.endsWith('0') ? '1' : '0') }), false, 'other public values');
+  assert.equal(pm.handBackFits(built, pending, { ...good, proof: 'nope' }), false, 'not a proof');
+  assert.equal(pm.handBackFits(built, pending, null), false);
+});

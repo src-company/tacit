@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-iKKnRygWyRfTwliq6GArpB9lJ5vJbPK5G1VAHG3m5bk=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-W4/N0HxbONiQ2NrtSGGHRMZkYH8d1wxarPIl+NtJneM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' http://127.0.0.1:47815 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://base.gateway.tenderly.co https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://base.rpc.blxrbdn.com https://rpc.mainnet.chain.robinhood.com https://tacit-evm-pool-keepers.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <link rel="preconnect" href="https://api.tacit.finance" crossorigin>
 <link rel="preconnect" href="https://ethereum-rpc.publicnode.com" crossorigin>
@@ -8717,7 +8717,7 @@ const lpKeep = (poolId) => { if (S.key && poolId && !lpStored().includes(poolId)
 const scanOwned = async () => { const s = await scanDone(); return [...(s?.notes || []), ...(s?.spentNotes || [])]; };
 // A share note of `shares` in pool `poolId`, at an index no note, zap or voucher of this key holds.
 async function lpBuild(t, priv, poolId, shares, at = null) {
-  const pub = S.key.pubHex, used = [...zapsKept().filter((x) => x.pub === pub && x.poolId === poolId), ...(await vouchers()).list(pub, lpTicker(poolId))].map((x) => x.index);
+  const pub = S.key.pubHex, used = [...zapsKept().filter((x) => x.pub === pub && x.poolId === poolId), ...(await vouchers()).list(pub, lpTicker(poolId))].map((x) => x.index).concat(marketPendingIdx(pub, poolId));
   const index = at ?? t.nextShareIndex({ walletPriv: priv, poolId, owned: await scanOwned(), used });
   return t.buildShareWrap({ walletPriv: priv, poolId, shares, index });
 }
@@ -8777,6 +8777,7 @@ async function lpReady(poolId, wei, res) {
 function keepReady() { return (VOUCH.keeping ||= keepReadyOnce().finally(() => { VOUCH.keeping = null; })); }
 async function keepReadyOnce() {
   if (!S.key) return;
+  await marketPickup().catch(() => {});
   const v = await vouchers(), pub = S.key.pubHex, device = devOn();
   if (device ? VOUCH.ahead : Date.now() < (VOUCH.poolCapUntil || 0)) return;
   // this computer proves one at a time while it is idle; the pool is asked for up to POOL_PER_TICK a minute
@@ -10569,7 +10570,7 @@ async function proveWithCredit({ run, t, p, plan, prover, tell, pub, priv }) {
 // that most can be pulled under; provers (Tacit's relay first, then anyone) race to prove the share and settle it, and are paid in the same
 // transaction the pool accepts it, so no TAC moves unless the share goes in. Offered where Tacit's prover is slow, when the wallet holds the TAC.
 const MARKET = { mod: null, usd: { floor: 0.3, max: 1 } };
-const marketMod = async () => (MARKET.mod ||= await import('/proof-market.js?cb=3657bc99'));
+const marketMod = async () => (MARKET.mod ||= await import('/proof-market.js?cb=72d5e4f5'));
 async function marketOffer() {
   try {
     const px = (fpx().ethUsd || 0) * (FARM.precision?.tacEth || 0);
@@ -10632,6 +10633,33 @@ async function postMarketOrder({ built, q, status }) {
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.ok) throw new Error(j.error || `the proof market answered ${r.status}`);
   return order;
+}
+// An order posted for a share wrap that is never sent (a changed mind, a zap that failed) still gets its proof made: the relay hands it back, and it is kept here as
+// a ready voucher for the same share next time. A pending order holds its wrap's index (a rebuilt wrap would draw new memos, so the order's own are kept with it).
+const PENDING_KEY = 'tacit-market-pending-v1';
+function marketPendingList() { try { return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]') || []; } catch { return []; } }
+const marketPendingSave = (l) => { try { localStorage.setItem(PENDING_KEY, JSON.stringify(l.slice(-20))); } catch { /* a convenience */ } };
+const marketPendingAdd = (rec) => marketPendingSave([...marketPendingList().filter((x) => x.opId !== rec.opId), rec]);
+const marketPendingIdx = (pub, poolId) => marketPendingList().filter((x) => x.pub === pub && x.poolId === poolId).map((x) => x.index);
+async function marketPickup() {
+  if (!S.key) return;
+  const pub = S.key.pubHex, all = marketPendingList();
+  if (!all.some((x) => x.pub === pub)) return;
+  const pm = await marketMod(), t = await getUx(), priv = walletPriv(), v = await vouchers(), keep = [];
+  for (const p of all) {
+    if (p.pub !== pub) { keep.push(p); continue; }
+    if (Date.now() - p.at > 24 * 3600e3) continue;
+    try {
+      const built = t.buildShareWrap({ walletPriv: priv, poolId: p.poolId, shares: BigInt(p.shares), index: p.index });
+      if (wordAt(await ethCall(ADDR.pool, '7da9874f' + strip(built.depositId).padStart(64, '0')), 0) !== 0n) continue;   // the zap went in: nothing to keep
+      const r = await fetch(`${API}/market/proof?id=${p.opId}`);
+      if (!r.ok) { keep.push(p); continue; }
+      const back = await r.json();
+      if (!pm.handBackFits(built, p, back)) continue;                                                                      // not this wrap's proof: dropped
+      v.put(pub, { ...lpRec(p.poolId, built, { size: null, by: 'market' }), memos: p.memos, status: 'ready', publicValues: back.publicValues, proof: back.proof });
+    } catch { keep.push(p); }
+  }
+  marketPendingSave(keep);
 }
 const ZAPWAY = { cb: null, then: null };
 function zapWay({ tell, inflight = null, down = false, then = null, market = null }) {
@@ -10726,10 +10754,10 @@ async function zapNow({ run, p, z, status, bond = true, clear = () => {}, moved 
     }
     // an index no note of this key has used: not one it holds, has spent (bonded), has a zap waiting on or a voucher keeps
     const index = t.nextShareIndex({ walletPriv: priv, poolId: p.poolId, owned: await scanOwned(),
-      used: [...zapsKept().filter((x) => x.pub === pub && x.poolId === p.poolId), ...(await vouchers()).list(pub, lpTicker(p.poolId))].map((x) => x.index) });
+      used: [...zapsKept().filter((x) => x.pub === pub && x.poolId === p.poolId), ...(await vouchers()).list(pub, lpTicker(p.poolId))].map((x) => x.index).concat(marketPendingIdx(pub, p.poolId)) });
     built = t.buildShareWrap({ walletPriv: priv, poolId: p.poolId, shares: plan.shares, index });
     if (marketQ) {
-      try { await postMarketOrder({ built, q: marketQ, status }); tell('Posted to the proving market. Sending the zap; a prover settles your share as soon as it is made…'); }
+      try { const posted = await postMarketOrder({ built, q: marketQ, status }); marketPendingAdd({ opId: posted.intent.opId, pub, poolId: p.poolId, shares: String(plan.shares), index: built.index, memos: posted.memos, at: Date.now() }); tell('Posted to the proving market. Sending the zap; a prover settles your share as soon as it is made…'); }
       catch (e) { tell(`The proving market was not used (${errText(e)}). Sending the zap; the relay finishes it.`); }
     }
     // Proved here or with your own credit (a single-pool zap): the share note first, then the zap and its settle together.

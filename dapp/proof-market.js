@@ -173,3 +173,14 @@ export function tankDigest(tank, chainId = 1, market = MARKET[chainId]) {
   const struct = k256(typehash, addrWord(tank.payer), addrWord(tank.delegate), word(tank.cap), word(tank.perOpMax), word(tank.expiry), word(tank.salt));
   return hex(k256(new Uint8Array([0x19, 0x01]), domain, struct));
 }
+
+/// Whether a proof the board handed back is for a wrap the holder meant: `built` is the wrap rebuilt from the key (its deposit and leaf are fixed by the
+/// key and the index), `pending` carries the memos it was posted with (a rebuild draws new ones), and `back` is { publicValues, proof } from the board.
+/// The public values must be exactly what that wrap's proof has, and the op id the order named.
+export function handBackFits(built, pending, back) {
+  try {
+    if (!back || !/^0x([0-9a-fA-F]{2})+$/.test(String(back.proof || '')) || !/^0x([0-9a-fA-F]{2})+$/.test(String(back.publicValues || ''))) return false;
+    const want = wrapOrderInputs({ ...built, memos: pending.memos }).publicValues;
+    return String(back.publicValues).toLowerCase() === want.toLowerCase() && opIdOf(back.publicValues) === String(pending.opId).toLowerCase();
+  } catch { return false; }
+}
