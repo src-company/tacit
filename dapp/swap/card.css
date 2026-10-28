@@ -337,3 +337,8 @@
 .swc .pt { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .swc .pt .tk, .swc dt .tk.xs { flex: none; }
 .swc dt .tk.xs { margin-right: 5px; vertical-align: -2px; }
+
+/* a split across the two TAC pools, drawn as on the TAC trading page: each pool's share, named */
+.swc .splitbar { display: flex; gap: 2px; height: 18px; margin-top: 3px; min-width: 150px; font: 10.5px var(--mono); letter-spacing: .02em; }
+.swc .splitbar span { display: flex; align-items: center; min-width: 0; padding: 0 6px; overflow: hidden; white-space: nowrap; color: #fff; }
+.swc .splitbar .pp { background: #4a63d6; border-radius: 3px 0 0 3px; } .swc .splitbar .tp { background: #15803d; border-radius: 0 3px 3px 0; }
