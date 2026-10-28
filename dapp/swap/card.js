@@ -816,7 +816,7 @@ const shareSync = () => {
     const at = location.pathname + location.search + location.hash, cur = new URL(location.href);
     let want;
     if (u) { const w = new URL(u); want = w.pathname + (w.hash ? cur.search : w.search || cur.search) + w.hash; if (!w.hash) { const q = new URLSearchParams(cur.search); for (const [k, v] of new URLSearchParams(w.search)) q.set(k, v); want = cur.pathname + (q.toString() ? `?${q}` : '') + cur.hash; } }
-    else { const q = new URLSearchParams(cur.search); q.delete('amt'); want = cur.pathname + (q.toString() ? `?${q}` : '') + (/^#card=shield:/.test(cur.hash) ? '' : cur.hash); }
+    else { const q = new URLSearchParams(cur.search); q.delete('amt'); want = cur.pathname + (q.toString() ? `?${q}` : '') + (/^#card=(?:shield|earn|send):/.test(cur.hash) ? '' : cur.hash); }
     if (want !== at) history.replaceState(null, '', want);
   } catch { }
 };
@@ -2264,7 +2264,7 @@ const markup = (o) => `<p class="sr" id="sw-live" role="status" aria-live="polit
     <div id="ackbox"></div>
     <button class="go" id="go" type="button" disabled>Enter an amount</button>
     <p class="q" id="q" role="status"></p>
-    ${o.moves ? '<button class="cp" id="copy" type="button" title="Copy link" aria-label="Copy link" hidden>${CP_ICON}</button>' : ''}
+    ${o.moves ? `<button class="cp" id="copy" type="button" title="Copy link" aria-label="Copy link" hidden>${CP_ICON}</button>` : ''}
   </div>
   <div class="sw-foot"><span>Slippage</span><span class="slip" id="slip" role="group" aria-label="Slippage"></span></div>
   <div class="steps" id="steps" hidden></div>
