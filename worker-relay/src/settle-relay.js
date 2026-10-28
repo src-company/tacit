@@ -21,9 +21,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { CFG, ADDR, OP_GAS, DEFAULT_OP_GAS, OP_PROVE } from './lib/config.js';
-import { confidentialJob, confidentialWake, confidentialBatch, confidentialAck, confidentialRefresh, confidentialActivateAck, confidentialOpenList, confidentialOpenJob, confidentialQueue, heartbeat, heartbeatIdle, setHeartbeatLedger, relayBooks, quoteAsset } from './lib/worker-client.js';
+import { confidentialJob, confidentialWake, confidentialBatch, confidentialAck, confidentialRefresh, confidentialActivateAck, confidentialOpenList, confidentialOpenJob, marketOrders, marketClear, confidentialQueue, heartbeat, heartbeatIdle, setHeartbeatLedger, relayBooks, quoteAsset } from './lib/worker-client.js';
 import { makeBatchWindow } from './lib/batch-window.js';
-import { proveSettle, proveMixed, proveSealed, boardAlive } from './lib/prover.js';
+import { proveSettle, proveMixed, proveSealed, proveStdin, boardAlive } from './lib/prover.js';
+import { makeMarketSolver } from './lib/market-solver.js';
+import { abi as MARKET_ABI, claimCall, fulfillCall } from './lib/market-calls.js';
 import { notExecuted } from './lib/stdin-prover.js';
 import { assertMemosMatchProof } from './lib/memo-root.js';
 import { consumedInput, consumedAck, unlandedDeposits, spentInputsOf, noteNullifier } from './lib/spent-precheck.js';
@@ -264,7 +266,7 @@ async function submitCall(base, label, { gasLimit = null, landed = null } = {}) 
   // unreachable node is not a verdict. Returns the revert, or null.
   // The revert carries its selector when any node will name it (lib/revert-data.js), for the ack's words.
   const wouldRevert = async () => {
-    try { await publicClient.call({ account: settleWallet.account, to: base.address, data }); return null; }
+    try { await publicClient.call({ account: settleWallet.account, to: base.address, data, ...(base.value ? { value: base.value } : {}) }); return null; }
     catch (e) {
       if (!isRevert(e)) return null;
       e.revertSelector = await revertSelector(e, { from: settleWallet.account.address, to: base.address, data }, { chainId: CFG.chainId }).catch(() => null);
@@ -884,6 +886,30 @@ async function beating(detail, fn) {
 // is read at most every OPEN_BOARD_POLL_SECS (straight away again after a send, there may be more), and the claim makes
 // sure two relays never send the same job.
 let openReadAt = 0;
+// The proof market (lib/market-solver.js): an open order is claimed and proved at the same time, then fulfilled; the TAC price is pulled
+// from the holder's permit in the fulfil, to this settle wallet. The relay is first in line for what it takes; a holder who wants
+// another prover to win raises what they sign, and a prover that claims first has the order.
+let marketReadAt = 0;
+const marketSolver = makeMarketSolver({
+  me: settleWallet.account.address, minPrice: CFG.marketMinTacWei,
+  listOrders: () => marketOrders(),
+  done: (id) => publicClient.readContract({ address: CFG.marketAddr, abi: MARKET_ABI, functionName: 'done', args: [id] }),
+  claimOf: async (id) => { const [solver, until] = await publicClient.readContract({ address: CFG.marketAddr, abi: MARKET_ABI, functionName: 'claims', args: [id] }); return solver === '0x0000000000000000000000000000000000000000' ? null : { solver, until: Number(until) }; },
+  claim: async (o) => submitCall({ address: CFG.marketAddr, abi: MARKET_ABI, ...claimCall(o), value: await publicClient.readContract({ address: CFG.marketAddr, abi: MARKET_ABI, functionName: 'claimBond' }) }, `market claim ${o.intent.opId.slice(0, 10)}`),
+  prove: (o) => proveStdin({ stdin: Uint8Array.from(Buffer.from(o.stdin.slice(2), 'hex')), type: 'wrap', memos: o.memos || [], timeoutMs: 150_000 }),
+  fulfil: (o, p) => submitCall({ address: CFG.marketAddr, abi: MARKET_ABI, ...fulfillCall(o, p.proof) }, `market fulfil ${o.intent.opId.slice(0, 10)}`),
+  clear: (id) => marketClear(id),
+  log,
+});
+async function marketCycle() {
+  if (!CFG.marketSolve || Date.now() - marketReadAt < CFG.marketPollSecs * 1000) return false;
+  marketReadAt = Date.now();
+  await beat('market orders');
+  const worked = await marketSolver.pass();
+  if (worked) marketReadAt = 0;
+  return worked;
+}
+
 async function openCycle() {
   if (!CFG.openBoard || Date.now() - openReadAt < CFG.openBoardPollSecs * 1000) return false;
   openReadAt = Date.now();
@@ -1184,7 +1210,8 @@ async function main() {
   for (;;) {
     if (stopping) { log('stopped cleanly'); process.exit(0); }
     try {
-      const worked = await cycle();
+      let worked = await cycle();
+      if (!worked) worked = await marketCycle();
       // An empty queue is the common case, not an error — but it must still beat, or /prover-health
       // goes stale (and "down") after 10 quiet minutes on a perfectly healthy relay. heartbeat() itself
       // only fires on real activity (proving/settled/error), so idle time needs its own signal. While the relay is short or

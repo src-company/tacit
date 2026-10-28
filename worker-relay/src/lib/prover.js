@@ -466,6 +466,18 @@ export async function proveMixed({ items, timeoutMs }) {
   const r = await stdinProver.proveBatch({ items, timeoutMs: Math.max(60_000, timeoutMs - first.spentMs), onUpdate: (u) => console.log(`${tag} ${u.requestId ? u.requestId.slice(0, 10) + ' ' : ''}${u.status}/${u.stage}${u.public ? ' (public input)' : ''}`) });
   return { ...r, lane: r.private === false ? 'network-public' : 'network-private' };
 }
+// A proof of one program input built elsewhere (a proof market order's wrap): Tacit's board first, then the prover network.
+// → { publicValues, proof, lane }
+export async function proveStdin({ stdin, type = 'wrap', memos = [], timeoutMs = 120_000 }) {
+  const limits = LIMITS[type];
+  if (!limits) throw new Error(`proveStdin: no limits for ${type}`);
+  const first = await viaBoard({ stdin, ...limits, label: `market ${type}`, memos, timeoutMs });
+  if (first.proof) return first.proof;
+  if (!CFG.networkPrivateKey) throw new Error('the board missed and NETWORK_PRIVATE_KEY is not set');
+  stdinProver ||= makeStdinProver({ key: CFG.networkPrivateKey, rpc: CFG.networkRpcUrl, env: process.env });
+  const r = await stdinProver.proveRaw({ stdin, ...limits, timeoutMs: Math.max(60_000, timeoutMs - first.spentMs) });
+  return { ...r, lane: r.private === false ? 'network-public' : 'network-private' };
+}
 // Where a proof was made, carried on the settle's ack so a page can say so: 'board' (Tacit's own machine; the input never
 // left Tacit), 'network-private' (the prover network, input readable only by the whitelisted prover) or 'network-public'
 // (the prover network, input readable by anyone).

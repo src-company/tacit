@@ -63,5 +63,16 @@ export function makeStdinProver({ key, rpc, env = process.env, transport = null,
       throw e;
     }
   }
-  return { address, input, proveBatch, close: () => { if (t && typeof t.close === 'function') t.close(); } };
+  // One program input already built (a market order's wrap), with its own limits: the same request as proveBatch makes.
+  async function proveRaw({ stdin, cycleLimit, gasLimit, timeoutMs = 120_000, onUpdate = () => {} }) {
+    const timeoutSecs = Math.max(300, Math.floor(timeoutMs / 1000) - 180);
+    try {
+      const r = await p.proveStdin({ stdin, cycleLimit, gasLimit, timeoutSecs, onUpdate });
+      return { publicValues: r.publicValues, proof: r.proof, requestId: r.requestId, private: r.private };
+    } catch (e) {
+      if (e && (e.code === 'prover_credit' || CREDIT_SHORT.test(String(e.message || e)))) e.creditShort = true;
+      throw e;
+    }
+  }
+  return { address, input, proveBatch, proveRaw, close: () => { if (t && typeof t.close === 'function') t.close(); } };
 }

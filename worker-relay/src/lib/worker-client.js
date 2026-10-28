@@ -167,6 +167,12 @@ export async function confidentialWake(secs) {
 }
 // The open board as anyone reads it: [{ jobId, type, status, posted, publicValues, proof, memos, openSince, expiresAt,
 // feeUsd, feeAsset }], oldest first. An older API without the board answers nothing.
+// The proof market's order board (worker/src/proof-market-queue.js): the open orders, and clearing one the market reports settled.
+export async function marketOrders(limit = 20) {
+  const r = await getJson(`/market/orders?limit=${limit}`);
+  return Array.isArray(r.orders) ? r.orders : [];
+}
+export const marketClear = (opId) => postJson('/market/done', { opId });
 export async function confidentialOpenList(limit = 32) {
   const r = await getJson(`/confidential/open?limit=${limit}`);
   return Array.isArray(r.jobs) ? r.jobs : [];

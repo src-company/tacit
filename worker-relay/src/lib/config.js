@@ -255,6 +255,12 @@ export const CFG = {
   // 1B gas limit needs about 1.01 PROVE on hand.
   settleProveMinCreditWei: BigInt(opt('SETTLE_PROVE_MIN_CREDIT_WEI', '1100000000000000000')), // 1.1 PROVE
   settleProvePauseRecheckSecs: num('SETTLE_PROVE_PAUSE_RECHECK_SECS', 120),
+  // The proof market (contracts/src/ProofMarket.sol): the relay takes open orders and is paid in TAC from the holder's permit.
+  // PROOF_MARKET_SOLVE=0 turns it off; PROOF_MARKET_ADDR names another market; the least price in TAC wei it will work for.
+  marketSolve: opt('PROOF_MARKET_SOLVE', '1') === '1',
+  marketAddr: opt('PROOF_MARKET_ADDR', '0x0000000033Dd45B1686Ba37e5F6e4ABDdaC17609'),
+  marketMinTacWei: BigInt(opt('PROOF_MARKET_MIN_TAC_WEI', '0')),
+  marketPollSecs: num('PROOF_MARKET_POLL_SECS', 10),
   openBoard: opt('OPEN_BOARD', '1') === '1',
   openBoardPollSecs: num('OPEN_BOARD_POLL_SECS', 15),
   // Relay fees paid in cTAC are never sold (TAC is never in FEE_ASSETS), so they pile up on the earning wallet.
