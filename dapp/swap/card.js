@@ -889,6 +889,8 @@ function paintQuote() {
     const tacSide = S.pay === lc(R.TAC) || S.get === lc(R.TAC);
     if (m != null && tacSide) lines.push(['Price impact', `${(Math.max(0, -m) * 100).toFixed(2)}%`, m <= GATE ? 'warn' : '']);
     else if (m != null && (!(r.agg || r.pin) || Math.abs(m) >= 0.01)) lines.push(['Against the market', m <= BAD ? `${(Math.abs(m) * 100).toFixed(1)}% below` : m >= 0.02 ? `${(m * 100).toFixed(1)}% above` : `${m >= 0 ? '+' : '−'}${(Math.abs(m) * 100).toFixed(2)}%`, m <= BAD ? 'warn' : m >= 0.02 ? 'ok' : '']);
+    // a pair with no reference price here (neither side is ETH, a dollar, BTC or TAC): the rate is not checked against a market, which a thin pool could make poor
+    if (m == null && (r.agg || r.sv) && !tacSide) lines.push(['Against the market', 'not checked', '', 'There is no reference price for this pair here, so a thin pool could give a poor rate. Compare the routes before sending, and use a small amount first.']);
     if (r.priv) lines.push(...feeLines(q, r));
     { const a = r.priv && aheadArgs(q), ra = r.priv && !a && routeAheadArgs(q), st = a ? PV?.aheadOf?.(a) : ra ? PV?.routeAheadOf?.(ra) : null;
       if (st) lines.push(['Proof', st === 'ready' ? (a ? 'made: one transaction' : 'made: the relay only sends it') : 'being made, about a minute', st === 'ready' ? 'ok' : '']); }
@@ -1903,7 +1905,7 @@ async function privateGo(r, kind = 'private') {
   }
   const pay = tokenOf(S.pay), get = tokenOf(S.get), what = `${tidy(plain(units, 8))} ${pay.sym}`, payKey = S.pay, earned = rowPts(r, q);
   let popped = false;
-  const step = (k, h) => (k === 'sent' && !popped && (popped = true) && reward(earned), say({
+  const step = (k, h) => (say({
     prepare: 'Preparing the deposit…', confirm: 'Confirm the deposit in your wallet…', sent: `Deposit sent ${h ? txLink(h) : ''}. Waiting for it to land…`,
     proving: `Deposited ${h ? txLink(h) : ''}. The relay is making it private, about a minute…`, note: 'Private now. Finding its note…',
     split: 'The relay is cutting a note to the amount first, about a minute…', combine: 'The relay is combining your notes into one of the amount first, about a minute…',
@@ -1939,6 +1941,7 @@ async function privateGo(r, kind = 'private') {
       path: S.get === 'teth' && fromWallet ? [] : (q.pools || []).map((p) => ({ assetNext: IDS[p.b], feeBps: p.feeBps })),
       minOut: poolFloor(r.out / E10), label: `Swap ${what} for ${get.sym} privately`, sendTo: S.toTacit, outTicker: POOL_TK[PK[S.get]] };
     const res = await pv.swap(plan, { wallet, from: W.account, say: step });
+    if (!popped) { popped = true; reward(earned); }                 // the points pop once the swap has gone through, not when its first step is sent
     const got = res.made != null ? `${tidy(plain(res.made, 8))} tETH` : `${tidy(amtFmt(res.out * E10, 18))} ${get.sym}`;
     if (res.txHash) remember(res.txHash, res.made != null ? `Made ${what} private` : `Swapped ${what} for ${got} privately`);
     if (S.pay === payKey) { S.amt = ''; S.q = null; }
@@ -2001,6 +2004,7 @@ async function pinGo(r) {
     const step = (k, x) => say({ prepare: 'Swapped to ETH. Preparing the deposit…', confirm: 'Confirm the deposit in your wallet…', sent: `Deposit sent ${x ? txLink(x) : ''}. Waiting for it to land…`,
       proving: `Deposited ${x ? txLink(x) : ''}. The relay is making it private, about a minute…`, note: 'Private now. Finding its note…', route: 'The relay is proving your private swap, about a minute…', ahead: 'Finishing the proof of your swap…', posted: 'The relay is sending your private swap, its proof is made, a few moments…', own: 'Proving your swap with your own prover, about a minute. Nothing has left your wallet yet…', check: 'Checking it first…', swap: `Deposited ${x ? txLink(x) : ''}. The relay is proving your swap, about a minute…`, send: 'The relay is sending it on to them, about a minute…' }[k] || '');
     const res = await pv.swap(plan, { wallet, from, say: step });
+    if (!popped) { popped = true; reward(earned); }
     const got = res.made != null ? `${tidy(plain(res.made, 8))} tETH` : `about ${tidy(amtFmt(res.out * E10, 18))} ${get.sym}`;
     if (res.txHash) remember(res.txHash, `Swapped ${what} for ${got} privately`);
     if (S.pay === payKey) { S.amt = ''; S.q = null; }
@@ -2416,7 +2420,11 @@ function wire() {
       const keep = isEth(S.pay) && !S.at.pay ? (gasKeep() * 3n) / 2n + (S.outP ? tipKeep() : 0n) : 0n, left = bal > keep ? bal - keep : 0n;
       // with Swap privately on, what is left is the deposit: the swap is the most whose deposit (its extra and the relay's fee with it) fits
       const hop = isEth(S.pay) && !S.at.pay && laterOn(kindOf(S.pay, S.get)) && LATER.fee != null && LT;
-      const v = hop ? LT.mod.swapFor({ capWei: left, feeWei: LATER.fee, pct: LATER.pct, rand: () => LATER.rand, gasWei: laterGas() }) : left;
+      // from a token with Swap privately on, the deposit is the swap scaled up (its extra and the relay's fee): Max takes the most whose deposit fits the balance, by the live
+      // quote's own ratio where there is one, else from the extra the slider asks, with a margin so the exact deposit that follows still fits
+      const tokLater = !isEth(S.pay) && !S.at.pay && !S.inP && laterOn(kindOf(S.pay, S.get));
+      const tokMax = () => { const q0 = S.q, dep = q0?.wei ? laterIn(q0) : null, ratio = dep ? Number(dep) / Number(q0.wei) : (1 + LATER.pct / 100) * 1.002 * 1.03; return BigInt(Math.floor((Number(left) / ratio) * 0.985)); };
+      const v = hop ? LT.mod.swapFor({ capWei: left, feeWei: LATER.fee, pct: LATER.pct, rand: () => LATER.rand, gasWei: laterGas() }) : tokLater ? tokMax() : left;
       S.amt = tidy(fitAmt(plain(v, t.dec))); S.note = ''; changed(); paintSides(); requote(true); return;
     }
     if (e.target.closest('[data-watch]')) { const t = tokenOf(e.target.closest('[data-watch]').dataset.watch); if (t) wallet.watchAsset({ address: t.addr, symbol: t.sym, decimals: t.dec }); return; }
