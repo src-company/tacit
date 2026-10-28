@@ -2,9 +2,10 @@
 
 **Version 1.** Bitcoin envelope version `0x01`; confidential-pool public-values version `1`.
 
-Tacit is a metaprotocol for issuing assets and running confidential DeFi on Bitcoin. Its state
-extends into a confidential zone on Ethereum through zero-knowledge reflection. This document is the
-normative description of both halves and the bridge that joins them.
+Tacit is a metaprotocol for confidential tokens and peer-to-peer swaps on Bitcoin, with its own AMM and
+farms. Its state extends into a confidential zone on Ethereum through zero-knowledge reflection, which
+adds Ethereum's markets and programmability. This document is the normative description of both halves
+and the bridge that joins them.
 
 Where this document and the reference implementation disagree, the implementation wins, and the
 disagreement is a bug in this document:
@@ -20,6 +21,26 @@ disagreement is a bug in this document:
 | Pool contract | [`contracts/src/ConfidentialPool.sol`](./contracts/src/ConfidentialPool.sol), [`ReflectionLib.sol`](./contracts/src/ReflectionLib.sol) |
 
 Deployed addresses and verifying keys are in [`docs/DEPLOYMENTS.md`](./docs/DEPLOYMENTS.md).
+
+---
+
+## Contents
+
+1. [Overview](#1-overview)
+2. [Cryptographic primitives](#2-cryptographic-primitives)
+3. [The Bitcoin metaprotocol](#3-the-bitcoin-metaprotocol)
+4. [The confidential pool: notes and state](#4-the-confidential-pool-notes-and-state)
+5. [The confidential pool: settlement and ops](#5-the-confidential-pool-settlement-and-ops)
+6. [Reflection and the bridge](#6-reflection-and-the-bridge)
+7. [Contracts, roles and governance](#7-contracts-roles-and-governance)
+8. [Deployment lineage](#8-deployment-lineage)
+9. [Recovery](#9-recovery)
+10. [Extensions and covenant placeholders](#10-extensions-and-covenant-placeholders)
+11. [Security properties and limits](#11-security-properties-and-limits)
+
+**Where to start.** New to Tacit: §1, then §4 and §5 (the pool) and §6 (the bridge). Building a client: §3.1 to §3.4 and
+§5.2 to §5.3. Reviewing security: §2, §6 and §11. Deployed addresses live in
+[`docs/DEPLOYMENTS.md`](./docs/DEPLOYMENTS.md), and TAC's uses in [`docs/TAC.md`](./docs/TAC.md).
 
 ---
 

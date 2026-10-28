@@ -168,6 +168,33 @@ config. Integrator guide: [`FARMS.md`](./FARMS.md).
 Weights are governed on-chain and can change (timelocked, bounded), so read `poolInfo(pid)` for the live values.
 Full ids are in [`FARMS.md`](./FARMS.md).
 
+### TAC vaults
+
+Borrow TACD (a dollar) or TACE (ether) against TAC: no interest and a one-time borrow fee that goes to the ops multisig
+(the reserve). Two `TacVault`s share one `TacVaultRouter`, which makes the oracle's price records, moves TAC in with a permit and
+borrows on a signature in one transaction; the router has no owner or settings. A vault's oracle, price feed, terms and
+tokens are read from the vault itself, because its owner can change them within fixed limits after an announcement. The
+dapp reads the same addresses from [`dapp/vault/deployments.js`](../dapp/vault/deployments.js); how they were deployed
+is in [`TAC-VAULTS-DEPLOY.md`](./TAC-VAULTS-DEPLOY.md).
+
+| Contract | Address |
+| --- | --- |
+| Dollar vault (TacVault, lends TACD) | [`0x00000087ac9ed3E1Bd443E00FBe18B4EdcAEeb1F`](https://etherscan.io/address/0x00000087ac9ed3E1Bd443E00FBe18B4EdcAEeb1F) |
+| Ether vault (TacVault, lends TACE) | [`0x00000047bFC8cF504967049D9Cf9E1FD9651ED80`](https://etherscan.io/address/0x00000047bFC8cF504967049D9Cf9E1FD9651ED80) |
+| TacVaultRouter | [`0x000000F9ab49650502BeC910D13b4717F0082598`](https://etherscan.io/address/0x000000F9ab49650502BeC910D13b4717F0082598) |
+| TACD (TacSynth) | [`0xA0f6B02561C8ef08335B69aD25e022C0B342147C`](https://etherscan.io/address/0xA0f6B02561C8ef08335B69aD25e022C0B342147C) |
+| TACE (TacSynth) | [`0x9DE27883C5Dc9Db47BE12E595D59b8f1aBEC8570`](https://etherscan.io/address/0x9DE27883C5Dc9Db47BE12E595D59b8f1aBEC8570) |
+
+### TAC for gas and proofs
+
+Two immutable contracts let TAC pay for work, outside the pool's own surface. Integrator notes:
+[`TAC.md`](./TAC.md#what-tac-does) and the [build guide](https://tacit.finance/build/#tacpay).
+
+| Contract | Address |
+| --- | --- |
+| TacitGasRelay (a signed order pays a solver in TAC or the token spent; calls only the routers it was deployed with) | [`0x000000197E8f0B64463B2010e568fF42090Af88d`](https://etherscan.io/address/0x000000197E8f0B64463B2010e568fF42090Af88d) |
+| ProofMarket (a signed TAC order pays the prover whose proof the pool accepts) | [`0x0000000033Dd45B1686Ba37e5F6e4ABDdaC17609`](https://etherscan.io/address/0x0000000033Dd45B1686Ba37e5F6e4ABDdaC17609) |
+
 ### Bitcoin-native AMM pool
 
 A pool founded directly on Bitcoin via `T_LP_ADD` variant 1 (`POOL_INIT`, [SPEC §5.5](../SPEC.md#55-amm)) — no
