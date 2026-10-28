@@ -227,14 +227,14 @@ try {
     ok(await page.isVisible('.faq details[open] p'), 'a question opens to its answer');
     ok((await page.$$('.faq details')).length === 5, 'five questions');
     const faq = await page.textContent('.faq');
-    ok(/tETH takes 0\.001 to 0\.5 to Bitcoin and up to 0\.5 back/.test(faq) && /TAC takes 20 to 1,000 to Bitcoin and up to 1,000 back/.test(faq) && /255 transfers/.test(faq), 'the limits answer gives each asset its own range, both ways, and the history it proves');
-    ok(/Ethereum to Bitcoin takes a small relay fee out of the note/.test(faq) && /Tacit is covering the Ethereum mint/.test(faq), 'and the cost answer is right for both directions');
+    ok(/TAC 20 to 1,000 to Bitcoin and up to 1,000 back/.test(faq) && /tETH 0\.001 to 0\.5 to Bitcoin and up to 0\.5 back/.test(faq) && /cBTC 0\.00001 to 0\.5 to Bitcoin and up to 0\.5 back/.test(faq) && /cUSD 10 to 1,000 to Bitcoin and up to 1,000 back/.test(faq) && /255 transfers/.test(faq), 'the limits answer gives each asset its own range, both ways, and the history it proves');
+    ok(/To Bitcoin, a small relay fee comes out of the note/.test(faq) && /Tacit covers the Ethereum mint/.test(faq), 'and the cost answer is right for both directions');
     ok(!/allowance|free/i.test(await page.textContent('.faq')), 'the answers keep to plain words about who pays');
     ok(await page.getAttribute('.runcta .go', 'href') === '/weld/keeper/' && (await page.$$('#run .cap3 li')).length === 3 && (await page.$$('#run .pill')).length === 3, 'anyone can run it: three steps, each open to anyone, and a door to community ops');
     ok(await page.getAttribute('.trio a', 'href') === '#run', 'and the top of the page points to it');
     const body = await page.textContent('main');
     ok(!/same commitment|same note|without opening/i.test(body) && /fresh note of the same value/.test(body), 'a bridge is said to mint a fresh note of the same value, not the same note');
-    ok(/Whoever makes the mint’s proof sees it/.test(await page.textContent('.faq')), 'and the privacy answer says who sees the amount');
+    ok(/Only whoever proves the mint sees it/.test(await page.textContent('.faq')), 'and the privacy answer says who sees the amount');
     await page.click('#mv-dir button[data-dir="out"]');
     ok(await page.$eval('#mv', (f) => f.dataset.dir) === 'out' && (await page.$eval('#mv-a', (u) => u.getAttribute('href'))) === '#c-eth' && (await page.isVisible('.mvc .out')) && !(await page.isVisible('.mvc .in')), 'burn, prove, mint: the switch turns it to Ethereum → Bitcoin');
     ok((await page.textContent('#rf')).includes('972,090'), 'the reflection drawing carries the live block');

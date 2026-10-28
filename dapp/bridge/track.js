@@ -57,6 +57,10 @@ export const LIMITS = {
   cusd: { in: { max: 1000n * E8 }, out: { min: 10n * E8, max: 1000n * E8 } },
 };
 // The line under the steps: '20 to 1,000 TAC a bridge', 'Up to 0.5 tETH a bridge', or '' for a way with no such limit.
+// The FAQ's sentence of every asset's limits, read from the same table as the line under the steps.
+export function limitsSaid() {
+  return ['tac', 'teth', 'cbtc', 'cusd'].map((k) => { const l = LIMITS[k], r = ROUTES[k]; return `${r.ticker} ${fmtAmount(l.out.min, r.dp)} to ${fmtAmount(l.out.max, r.dp)} to Bitcoin and up to ${fmtAmount(l.in.max, r.dp)} back`; }).join('; ');
+}
 export function limitLine(asset, dir) {
   const l = LIMITS[asset]?.[dir], r = ROUTES[asset];
   if (!l || !r) return '';
