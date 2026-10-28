@@ -312,7 +312,8 @@ export function makeLater({ keyHex, signer, ethCall, venues = null, ux = null, s
   async function mined(h, failed = 'The approval did not go through. Nothing was deposited.') {
     rpc ||= (await mods()).wm.jsonRpc(chain.rpc);
     const rc = signer.receipt ? await signer.receipt(h) : await (async () => { for (let i = 0; i < 80; i++) { const r = await rpc('eth_getTransactionReceipt', [h]).catch(() => null); if (r) return r; await sleep(3000); } return null; })();
-    if (rc?.status !== '0x1') throw new Error(failed);
+    if (!rc) throw new Error('It has not confirmed yet. Check your wallet before sending anything again.');   // a slow transaction is not a failed one
+    if (rc.status !== '0x1') throw new Error(failed);
     return rc;
   }
   // How a token pool's router takes `amount` of its token from the wallet: an allowance it has; an EIP-2612 permit signed for it (checked on
