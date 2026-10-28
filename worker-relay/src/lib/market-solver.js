@@ -39,6 +39,10 @@ export function makeMarketSolver({ listOrders, done, claim, prove, fulfil, clear
       try { minP = typeof minPrice === 'function' ? await minPrice() : minPrice; } catch (e) { log(`market: could not price the work: ${e.message}`); return false; }
       const open = new Set(orders.map((o) => o.intent.opId));
       for (const id of proofs.keys()) if (!open.has(id)) proofs.delete(id);
+      // Orders whose deposit has landed come first (their holder is waiting on them), then the newest of the rest: a holder who has just posted is
+      // waiting, an old order that never got its deposit is probably abandoned. One prover, so the order it works in matters.
+      const status = new Map(await Promise.all(orders.map(async (o) => [o.intent.opId, Number(await depositStatus(depositOf(o.publicValues)).catch(() => 0))])));
+      orders = orders.slice().sort((a, b) => ((status.get(b.intent.opId) === 1) - (status.get(a.intent.opId) === 1)) || (Number(b.intent.deadline) - Number(a.intent.deadline)));
       for (const o of orders) {
         const id = o.intent.opId;
         if (now() - (tried.get(id) || 0) < retryMs) continue;
@@ -70,7 +74,7 @@ export function makeMarketSolver({ listOrders, done, claim, prove, fulfil, clear
           }
           if (st.failed) { log(`market: order ${id.slice(0, 10)}: the proof failed: ${String(st.failed.message || st.failed).slice(0, 160)}`); proofs.delete(id); tried.set(id, now()); continue; }
           // An order whose holder never sent the deposit (an abandoned zap) is never claimed: a claim costs gas.
-          if (Number(await depositStatus(depositOf(o.publicValues))) !== 1) continue;
+          if (status.get(id) !== 1) continue;
           // Proof first, then the claim: the claim window (a minute) starts when the claim lands, so it is made when the proof is in hand and the fulfil
           // follows in the next block, rather than racing a proof that may take most of the window.
           if (!st.done) continue;

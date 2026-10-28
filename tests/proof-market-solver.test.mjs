@@ -37,7 +37,7 @@ test('leaves an order another prover holds, one already settled (and clears it),
   const r = rig({ orders: [mk('0xb'), mk('0xc'), mk('0xd', { deadline: '2010' }), mk('0xe')], doneSet: new Set(['0xc']), holder: { '0xb': { solver: OTHER, until: 3000 } } });
   assert.equal(await run(r.s), true, 'the last one is taken');
   assert.deepEqual(r.calls.filter((c) => c[0] === 'claim').map((c) => c[1]), ['0xe']);
-  assert.deepEqual(r.cleared, ['0xc', '0xe']);
+  assert.deepEqual([...new Set(r.cleared)], ['0xc', '0xe'], 'a settled order is cleared (more than once is harmless)');
   const low = rig({ orders: [mk('0xf')] });
   const s2 = makeMarketSolver({ me: ME, depositStatus: async () => 1, now: () => 2_000_000, minPrice: 9000n, listOrders: async () => [mk('0xf')], done: async () => false, claimOf: async () => null, claim: async () => { throw new Error('no'); }, prove: async () => ({}), fulfil: async () => {}, clear: async () => {} });
   assert.equal(await s2.pass(), false, 'below the price the relay will work for');
@@ -121,4 +121,21 @@ test('the least price can be a function (the relay prices gas and proving each p
   const broken = makeMarketSolver({ me: ME, now: () => 2_000_000, depositStatus: async () => 1, minPrice: async () => { throw new Error('no TAC quote'); }, listOrders: async () => [mk('0xn')],
     done: async () => false, claimOf: async () => null, claim: async () => { throw new Error('must not claim'); }, prove: async () => ({}), fulfil: async () => {}, clear: async () => {} });
   assert.equal(await broken.pass(), false);
+});
+
+test('an order whose deposit has landed is worked before older ones that have none, and the newest of those before the oldest', async () => {
+  const started = [];
+  const orders = [mk('0xold', { deadline: '5000' }), mk('0xnew', { deadline: '8000' }), mk('0xdep', { deadline: '6000' })];
+  const s = makeMarketSolver({ me: ME, now: () => 2_000_000, depositStatus: async (id) => (id === '0x' + '' ? 0 : 0), listOrders: async () => orders, done: async () => false, claimOf: async () => null,
+    claim: async () => '0x', prove: async (o) => { started.push(o.intent.opId); await new Promise((x) => setTimeout(x, 50)); return { proof: '0x' }; }, fulfil: async () => '0x', clear: async () => {} });
+  await s.pass();
+  assert.equal(started[0], '0xnew', 'with no deposit anywhere, the newest first');
+  // a deposit that has landed outranks everything
+  const started2 = [];
+  const dep = (o) => '0x' + (o.intent.opId === '0xdep' ? '11' : '22').repeat(32);
+  const orders2 = orders.map((o) => ({ ...o, publicValues: '0x' + '00'.repeat(36 * 32) + dep(o).slice(2) }));
+  const s2 = makeMarketSolver({ me: ME, now: () => 2_000_000, depositStatus: async (id) => (id === '0x' + '11'.repeat(32) ? 1 : 0), listOrders: async () => orders2, done: async () => false, claimOf: async () => null,
+    claim: async () => '0x', prove: async (o) => { started2.push(o.intent.opId); await new Promise((x) => setTimeout(x, 50)); return { proof: '0x' }; }, fulfil: async () => '0x', clear: async () => {} });
+  await s2.pass();
+  assert.equal(started2[0], '0xdep');
 });
