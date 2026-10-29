@@ -2114,7 +2114,8 @@ function openPicker(side) {
       l.classList.toggle('srch', on);                 // with the headings gone, every row names its place (CSS: .pw)
       const jp = $('#pk .pk-jump'); if (jp) jp.hidden = on;
       l.querySelector('[data-add]')?.remove();
-      $('#pk-n').textContent = '';
+      // a search that matches nothing says so (and what to do), and a half-pasted address says what is missing, rather than an empty or unchanged list
+      $('#pk-n').textContent = on && words.every(({ b }) => b.hidden) ? `Nothing matches “${v.slice(0, 24)}”. Paste a token’s address to add it.` : /^0x/i.test(v) && !/^0x[0-9a-fA-F]{40}$/.test(v) ? 'Paste the whole address: 0x and 40 characters.' : '';
       if (!/^0x[0-9a-fA-F]{40}$/.test(v)) return;
       const k = lc(v);
       if (tokenOf(k)) { l.querySelectorAll('.pk-r').forEach((b) => { b.hidden = b.dataset.k !== k; }); return; }

@@ -195,7 +195,7 @@ const { chromium } = require(process.env.PLAYWRIGHT || '/Users/z/zFi/node_module
 const DAPP = new URL('../dapp/', import.meta.url).pathname;
 // Borrow reports under each step's own line (#bw-s1…#bw-s4) as well as the sheet's: read them all.
 const bwText = (page) => page.evaluate((s) => [...document.querySelectorAll(s)].map((e) => e.textContent).join(' '), '#bw-status, #bw-s1, #bw-s2, #bw-s3, #bw-s4');
-const ONLY = new Set((process.argv[2] || 'airdrop,links,swapurl,hints,hxbridge,hxbridgec,flowpanel,ux,apr,farmgate,pair,farm,reinvest,buy,tacfarm,sell,v1,v1refuse,wrapform,devsend,device,devtac,devtacdraft,devtacacct,borrow,bonds,bondadd,mainbond,locks,redeem,repay,csend,tacsend,selfexit,selfmore,selflocks,selfsplit,makepub,farmjoin,lpsend,rsend,swapahead,zapfirst,swapown,routeahead,connectkey,copylink,zapway,zapcredit,zapresume,zapresume2,lponly,hxsendname,pace,farmpos,hxpos,farmsteps,farmzap,farmzapeth,lpvoucher,fastzap,farmzapdrop,farmzapsplit,farmbondnote,farmqueue,farmheld,farmreuse,hxtip,farmexit,farmclaim,farmself,farmworth,swap,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,bridge,clearedfind,bridgedeep,bridgemerge,bridgeall,bridgeto,bridgepub,xobridge,xbring,xtbridge,xtring,xtfind,hxout,hxlink,hxpanel,hxweek,hxsell,hxlater,hxsats,devtokpool,hxsendpool,hxexit,hxsendpp,hxdry,hxnudge,hxfold,hxteth,hxsend,hxsendcheck,hxplace,hxsendtac,hxsendwallet,hxsendways,hxborrow,hxvault,hxvaultkey,hxborrowback,tradelinks,pxs,pxsback,fmchips,pts,ptsview,retention,activity,receipts,stats,dash,tacdeposit,openact,openfarm,heldoff,provecap,heldborrow,vaultborrow,rewardspriv,rewardsout,rewardsjoin,bridgemove,bridgepresses,bridgefindhere,holdborrow,hxheld,holdpublic,selffund,selfeth,selfprove,exitahead,selfdevice,wrapfirst,poolkeep,tacvoucher,relaystate,relayfail,selfwallet,slowline').split(','));
+const ONLY = new Set((process.argv[2] || 'airdrop,links,swapurl,swapfield,hints,hxbridge,hxbridgec,flowpanel,ux,apr,farmgate,pair,farm,reinvest,buy,tacfarm,sell,v1,v1refuse,wrapform,devsend,device,devtac,devtacdraft,devtacacct,borrow,bonds,bondadd,mainbond,locks,redeem,repay,csend,tacsend,selfexit,selfmore,selflocks,selfsplit,makepub,farmjoin,lpsend,rsend,swapahead,zapfirst,swapown,routeahead,connectkey,copylink,zapway,zapcredit,zapresume,zapresume2,lponly,hxsendname,pace,farmpos,hxpos,farmsteps,farmzap,farmzapeth,lpvoucher,fastzap,farmzapdrop,farmzapsplit,farmbondnote,farmqueue,farmheld,farmreuse,hxtip,farmexit,farmclaim,farmself,farmworth,swap,shield,keys,tacopen,saved,bitcoin,passkey,acct,devmove,btc,bridge,clearedfind,bridgedeep,bridgemerge,bridgeall,bridgeto,bridgepub,xobridge,xbring,xtbridge,xtring,xtfind,hxout,hxlink,hxpanel,hxweek,hxsell,hxlater,hxsats,devtokpool,hxsendpool,hxexit,hxsendpp,hxdry,hxnudge,hxfold,hxteth,hxsend,hxsendcheck,hxplace,hxsendtac,hxsendwallet,hxsendways,hxborrow,hxvault,hxvaultkey,hxborrowback,tradelinks,pxs,pxsback,fmchips,pts,ptsview,retention,activity,receipts,stats,dash,tacdeposit,openact,openfarm,heldoff,provecap,heldborrow,vaultborrow,rewardspriv,rewardsout,rewardsjoin,bridgemove,bridgepresses,bridgefindhere,holdborrow,hxheld,holdpublic,selffund,selfeth,selfprove,exitahead,selfdevice,wrapfirst,poolkeep,tacvoucher,relaystate,relayfail,selfwallet,slowline').split(','));
 const FORK = process.argv[3] || 'https://mainnet.gateway.tenderly.co';
 const SHOTS = process.env.SHOTS || null;
 const PORT = 20000 + Math.floor(Math.random() * 2000), WEB = PORT + 1;
@@ -684,6 +684,29 @@ await step('swapurl', async () => {
     ok(await f.page.waitForFunction(() => document.querySelector('[data-hxm="bridge"]')?.getAttribute('aria-selected') === 'true' && !/card=/.test(location.hash), null, { timeout: 30000 }).then(() => true, () => false), 'swapurl: #card=bridge opens the Bridge tab, and the link leaves the address');
     ok(!(await f.page.$('.sn > a[href*="card="], .sn > a[href="/swap/"], .sn > a[href="/bridge/"]')), 'swapurl: the header has no Swap or Bridge link: both are the tile\'s');
   } finally { await f.browser.close(); }
+});
+
+// The Swap card's fields stay usable when something is wrong: an amount that cannot be read says so under the row (the input keeps its width, so it can be mended), and a
+// picker search that matches nothing, or a half-pasted address, says what to do instead of showing an empty or unchanged list.
+await step('swapfield', async () => {
+  const r = await openPage({ account: A0, key: K0 }), p = r.page;
+  try {
+    await p.goto(r.url + '?from=TAC&to=ETH');
+    await p.waitForSelector('#hx-swap #amt', { timeout: 60000 });
+    await p.fill('#hx-swap #amt', '0.1.2');
+    ok(await p.waitForFunction(() => !!document.querySelector('#hx-swap [data-amt-hint]'), null, { timeout: 10000 }).then(() => true, () => false), 'swapfield: an unreadable amount says so');
+    ok((await p.$eval('#hx-swap #amt', (e) => e.getBoundingClientRect().width)) > 40, 'swapfield: and the amount field keeps its width, so it can be mended');
+    ok(await p.$eval('#hx-swap [data-amt-hint]', (h) => h.previousElementSibling?.classList.contains('fm')), 'swapfield: the hint sits under the amount row, not inside it');
+    await p.fill('#hx-swap #amt', '0.1');
+    ok(await p.waitForFunction(() => !document.querySelector('#hx-swap [data-amt-hint]'), null, { timeout: 10000 }).then(() => true, () => false), 'swapfield: mending the amount takes the hint away');
+    await p.click('#hx-swap #get-coin');
+    await p.fill('#hx-swap #pk-q', 'zzzzqq');
+    ok(await p.waitForFunction(() => /Nothing matches/.test(document.querySelector('#hx-swap #pk-n')?.textContent || ''), null, { timeout: 10000 }).then(() => true, () => false), 'swapfield: a search that matches nothing says so');
+    await p.fill('#hx-swap #pk-q', '0x1234');
+    ok(await p.waitForFunction(() => /whole address/.test(document.querySelector('#hx-swap #pk-n')?.textContent || ''), null, { timeout: 10000 }).then(() => true, () => false), 'swapfield: a half-pasted address says what is missing');
+    await p.fill('#hx-swap #pk-q', 'usdc');
+    ok(await p.waitForFunction(() => !document.querySelector('#hx-swap #pk-n')?.textContent, null, { timeout: 10000 }).then(() => true, () => false), 'swapfield: a search that matches shows no note');
+  } finally { await r.browser.close(); }
 });
 
 // The quick starts above the tile: three chips at 0.01 ETH; the private swap one fills the card with ETH for USDC, Swap privately on and 0.01 in; the shield one opens the
