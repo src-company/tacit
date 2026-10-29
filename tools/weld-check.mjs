@@ -654,7 +654,7 @@ await step('swapurl', async () => {
     await p.goto(u + '?stealth=1&from=TAC&to=ETH&amt=2');
     ok(await cardIs(p, 'TAC>ETH'), 'swapurl: ?from=TAC&to=ETH opens the Swap tab on TAC for ETH');
     ok(await p.waitForFunction(() => document.querySelector('#hx-swap #amt')?.value === '2', null, { timeout: 30000 }).then(() => true, () => false), 'swapurl: with the amount in the card');
-    ok(await p.waitForFunction(() => !/amt=/.test(location.search) && /from=TAC/.test(location.search), null, { timeout: 30000 }).then(() => true, () => false), 'swapurl: and the amount out of the address');
+    ok(await p.waitForFunction(() => /amt=2/.test(location.search) && /from=TAC/.test(location.search), null, { timeout: 30000 }).then(() => true, () => false), 'swapurl: and the address follows the card, amount included (it is the copy link)');
     ok(qs().get('stealth') === '1' && qs().get('to') === 'ETH', 'swapurl: the address keeps the pair and what else was in it');
     await p.click('#hx-swap #flip');
     ok((await cardIs(p, 'ETH>TAC')) && (await p.waitForFunction(() => /from=ETH/.test(location.search) && /to=TAC/.test(location.search), null, { timeout: 30000 }).then(() => true, () => false)), 'swapurl: the card turned over, and the address with it');
@@ -8971,7 +8971,8 @@ await step('hxearn', async () => {
     await p.click('#hx-pts [data-ptsinfo]');
     const how = await line();
     ok(/Deposits in the ETH pools together take at most 40% of a day’s 1,111 TAC\./.test(how.replace(/'/g, '’')), `hxearn: a pool deposit's "how?" names the share limit (${how.slice(-200)})`);
-    // A deposit into the Tacit pool is a different activity, and is not under it.
+    // A deposit into the Tacit pool is a different activity, and is not under it. (The card shows the chosen home alone until it is opened.)
+    if (!(await p.$('#hx-swap [data-home="defi"]'))) await p.click('#hx-swap #homes [data-home]');
     await p.click('#hx-swap [data-home="defi"]');
     await until(p, () => /TAC points/.test(document.querySelector('#hx-pts')?.textContent || ''), null, 120000);
     ok(!/together take at most/.test(await line()), `hxearn: a wrap into the Tacit pool does not carry the limit of pool deposits (${(await line()).slice(-160)})`);
@@ -9054,12 +9055,16 @@ await step('hxfold', async () => {
     await p.goto(r.url);
     await p.waitForSelector(MV.go, { timeout: 120000 });
     const homes = () => p.$$eval('#hx-swap [data-home]', (b) => b.map((x) => `${x.dataset.home}${x.getAttribute('aria-checked') === 'true' ? '*' : ''}`).join());
-    ok((await homes()) === 'defi*,pay', `hxfold: the Swap card opens on making ETH private, its two private homes side by side (${await homes()})`);
+    // the card shows the chosen home alone, and opens both rows when it is pressed (its Change link)
+    ok((await homes()) === 'defi*', `hxfold: the Swap card opens on making ETH private, its chosen private home alone (${await homes()})`);
+    await p.click('#hx-swap #homes [data-home]');
+    ok((await homes()) === 'defi*,pay', `hxfold: opened, its two private homes side by side (${await homes()})`);
     await p.fill(MV.amt, '0.1');
     await until(p, () => document.querySelector('#hx-swap #go')?.textContent === 'Make ETH private', null, 120000);
     await p.click('#hx-swap [data-home="pay"]');
     await until(p, () => document.querySelector('#hx-swap #go')?.textContent === 'Deposit privately', null, 120000);
-    ok((await homes()) === 'defi,pay*', 'hxfold: choosing the Pay pool moves the choice, and the button follows it');
+    ok((await homes()) === 'pay*', 'hxfold: choosing the Pay pool moves the choice, and the button follows it');
+    await p.click('#hx-swap #homes [data-home]');
     await p.focus('#hx-swap [data-home="pay"]'); await p.keyboard.press('ArrowUp');
     await until(p, () => document.activeElement?.dataset?.home === 'defi', null, 30000);
     ok(true, 'hxfold: the arrow keys move between the homes');
