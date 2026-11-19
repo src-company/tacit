@@ -32,6 +32,13 @@ const G = {
   borrow: '<path d="M3 9.5L12 4l9 5.5"/><path d="M5.5 10v8M10 10v8M14 10v8M18.5 10v8"/><path d="M3 20.5h18"/>',
   more: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.7"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.7"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.7"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.7"/>',
   tac: '<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8-7.5 9.5-4.3-1.5-7.5-4.9-7.5-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/>',
+  shield: '<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8-7.5 9.5-4.3-1.5-7.5-4.9-7.5-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/>',
+  swap: '<path d="M4 8h14l-3.5-3.5"/><path d="M20 16H6l3.5 3.5"/>',
+  stake: '<ellipse cx="12" cy="6.5" rx="7" ry="2.8"/><path d="M5 6.5v5c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-5"/><path d="M5 11.5v5c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-5"/>',
+  send: '<path d="M21 3L10.5 13.5"/><path d="M21 3l-6.5 18-4-7.5L3 9.5z"/>',
+  chev: '<path d="M7 10l5 5 5-5"/>',
+  activity: '<path d="M3 12h4l3-7 4 14 3-7h4"/>',
+  back: '<path d="M14.5 6l-6 6 6 6"/>',
   bridge: '<path d="M3 17h18"/><path d="M5 17v-3a7 7 0 0 1 14 0v3"/><path d="M9 17v-4.5M15 17v-4.5M12 17v-6"/>',
   farm: '<path d="M6.5 14.2A4.2 4.2 0 0 1 7.8 6.1a4.6 4.6 0 0 1 8.4 0 4.2 4.2 0 0 1 1.3 8.1"/><path d="M6.5 14.2V19a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-4.8"/><path d="M6.5 16.8h11"/>',
   rewards: '<rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13"/><path d="M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8"/><path d="M7.5 8a2.5 2.5 0 1 1 0-5C10 3 12 8 12 8s2-5 4.5-5a2.5 2.5 0 1 1 0 5"/>',
@@ -59,24 +66,31 @@ const svg = (k) => `<svg viewBox="0 0 24 24"${FILLED.has(k) ? ' class="fill"' : 
 // farm page's chef's hat), what else pays and what there is to claim (rewards: points, the airdrop) and proving. Shielding, swapping, sending, earning, bridging and borrowing are the front page's tile, which the logo opens.
 // The menu holds the rest: the pages of their own for a holder (pay, borrow, the bridge page that follows bridges under way). The footer has the
 // network's own (build, stats)
-const MAIN = [['assets', '/assets/', 'Assets'], ['farm', '/farm/', 'Farm'], ['rewards', '/rewards/', 'Rewards'], ['prove', '/prove/', 'Prove']];
-const MORE = [['portfolio', '/#portfolio', 'Portfolio'], ['pay', '/pay/', 'Pay'], ['borrow', '/vault/', 'Borrow'], ['bridge', '/bridge/', 'Bridges'], ['tac', '/tac/', 'TAC'], ['etch', '/etch/', 'Etch'], ['shop', '/shop/', 'Shop'], ['tasks', '/tasks/', 'Tasks'], ['face', '/face/', 'FACE']];
+// The header's app switcher: one chip that names the app you are on and opens a grid of every app, with the way back to the front page's hub
+// (All apps) first. The tools are the hub's (dapp/hub.css): Shield, Swap and Send open the front page's tile on that tab alone (/#app=…), the others
+// are pages of their own; below them, the rest of the site. chrome.js keeps the chip's name in step with the link marked as the page you are on.
+// The front page's hub hides the switcher (hub.css): its cards are the same list.
+// Shield comes first and looks a little apart (chrome.css): it is the way into the private pool, which every other tool can spend from.
+const APPS = [['shield', '/#app=shield', 'Shield'], ['swap', '/#app=swap', 'Swap'], ['farm', '/farm/', 'Earn'], ['stake', '/tac/', 'Stake'], ['borrow', '/vault/', 'Borrow'],
+  ['send', '/#app=send', 'Send'], ['bridge', '/bridge/', 'Bridge'], ['prove', '/prove/', 'Prove'], ['rewards', '/rewards/', 'Rewards']];
+const MORE = [['portfolio', '/#portfolio', 'Portfolio'], ['assets', '/assets/', 'Assets'], ['pay', '/pay/', 'Pay links'], ['etch', '/etch/', 'Etch'], ['shop', '/shop/', 'Shop'], ['tasks', '/tasks/', 'Tasks'], ['face', '/face/', 'FACE'], ['activity', '/#activity', 'Activity']];
 
 const here = (key, k) => (key === k ? ' aria-current="page"' : '');
 
 export function navHtml(key) {
-  const main = MAIN.map(([k, href, name]) => `<a href="${href}" title="${name}"${here(key, k)}>${svg(k)}<span>${name}</span></a>`).join('\n    ');
-  const phone = MAIN.map(([k, href, name]) => `<a class="pr" href="${href}"${here(key, k)}>${svg(k)}${name}</a>`).join('\n      ');
-  const more = MORE.map(([k, href, name]) => `<a href="${href}"${here(key, k)}>${svg(k)}${name}</a>`).join('\n      ');
-  const inMenu = MORE.some(([k]) => k === key);
-  return `<nav class="sn" aria-label="Pages">
-    ${main}
-    <details class="sm">
-      <summary aria-label="More pages" title="More"${inMenu ? ' class="here"' : ''}>${svg('more')}</summary>
-      <div class="sm-p">
-      ${phone}
-      <hr class="pr">
-      ${more}
+  const name = [...APPS, ...MORE].find(([k]) => k === key)?.[2] || 'Apps';
+  const tile = ([k, href, n]) => `<a href="${href}"${k === 'shield' ? ' class="tapps-key"' : ''}${here(key, k)}>${svg(k)}<span>${n}</span></a>`;
+  return `<nav class="sn" aria-label="Apps">
+    <details class="sm tapps">
+      <summary aria-label="Apps, on ${name}" title="All apps">${svg('more')}<span class="cur">${name}</span>${svg('chev')}</summary>
+      <div class="sm-p tapps-p">
+      <a class="tapps-home" href="/">${svg('back')}All apps</a>
+      <div class="tapps-g">
+      ${APPS.map(tile).join('\n      ')}
+      </div>
+      <div class="tapps-l">
+      ${MORE.map(tile).join('\n      ')}
+      </div>
       </div>
     </details>
   </nav>`;

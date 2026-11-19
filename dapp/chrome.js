@@ -61,12 +61,70 @@
     dot.hidden = tag.hidden = !under;
     tag.textContent = under ? (needs ? `${needs} needs you` : `${under} under way`) : '';
     const says = under ? `, ${under} bridge${under === 1 ? '' : 's'} under way${needs ? `, ${needs} needs you` : ''}` : '';
-    summary.setAttribute('aria-label', label + says);
+    const c = summary.querySelector('.cur'); summary.setAttribute('aria-label', (c ? `Apps, on ${c.textContent}` : label) + says);
   };
   paint();
   addEventListener('storage', (e) => { if (!e.key || e.key.startsWith(OUT) || e.key.startsWith(IN) || e.key === PLANS) paint(); });
   addEventListener('focus', paint);
   setInterval(paint, 30e3);
+})();
+
+// Activity opens over the page you are on (activity-lite.js), so looking at it does not leave the page. The front page keeps its own, fuller one,
+// which its #activity link opens; the light one's foot links there to act on a row. The switcher's Activity row carries the count under way.
+(() => {
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest?.('a[href="/#activity"]');
+    if (!a || document.getElementById('sheet-act') || a.closest('.tact') || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+    e.preventDefault();
+    const m = document.querySelector('.sm[open]'); if (m) m.open = false;
+    import('/activity-lite.js').then((x) => x.openActivity()).catch(() => { location.href = '/#activity'; });
+  });
+  // On the front page itself, a switcher link to one of its own views (/#app=…, /#portfolio, /#activity) changes the fragment only: the address can carry
+  // the swap card's search (?from=…), and a link without it would load the whole page again and lose the tool on screen.
+  document.addEventListener('click', (e) => {
+    const l = e.target.closest?.('.sn a[href^="/#"]');
+    if (!l || !document.getElementById('hub') || !(location.pathname === '/' || location.pathname === '/index.html') || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+    e.preventDefault();
+    const m = document.querySelector('.sm[open]'); if (m) m.open = false;
+    const h = l.getAttribute('href').slice(1);
+    if (location.hash !== h) location.hash = h; else dispatchEvent(new HashChangeEvent('hashchange'));
+  });
+  const row = document.querySelector('.tapps-p a[href="/#activity"]');
+  if (!row) return;
+  const n = document.createElement('b'); n.className = 'tapps-n'; n.hidden = true; row.append(n);
+  import('/activity.js').then(({ activityCount, onActivity }) => {
+    const paint = () => { const { live } = activityCount(); n.hidden = !live; n.textContent = live ? String(live) : ''; };
+    paint(); onActivity(paint); addEventListener('focus', paint);
+  }).catch(() => {});
+})();
+
+// The mark goes back to the front page's hub (every page's mark links to /). Off the hub it says so: a small "‹" before it, and on hover
+// "All apps" in the place of the page's name. The hub itself hides both (chrome.css).
+(() => {
+  const b = document.querySelector('header.top a.brand');
+  if (!b || b.getAttribute('href') !== '/' || b.querySelector('.tb-back')) return;
+  b.classList.add('to-hub');
+  b.title = 'All apps';
+  const c = document.createElement('span'), l = document.createElement('span');
+  c.className = 'tb-back'; c.setAttribute('aria-hidden', 'true'); c.innerHTML = '<svg viewBox="0 0 24 24"><path d="M14.5 6l-6 6 6 6"/></svg>';
+  l.className = 'tb-all'; l.setAttribute('aria-hidden', 'true'); l.textContent = 'All apps';
+  b.prepend(c); b.append(l);
+})();
+
+// The app switcher's chip names the app you are on: the link in its grid marked as this page (the TAC page and the front page's tools mark theirs
+// after this has run, so a mark that moves renames the chip too). With none marked it says Apps.
+(() => {
+  const m = document.querySelector('.sm.tapps'), cur = m && m.querySelector('summary .cur');
+  if (!cur) return;
+  const sum = m.querySelector('summary');
+  const name = () => {
+    const a = m.querySelector('.tapps-p a[aria-current="page"]:not(.tapps-home)'), n = a ? a.textContent.trim() : 'Apps';
+    if (cur.textContent !== n) cur.textContent = n;
+    const say = `Apps, on ${n}`;
+    if (!(sum.getAttribute('aria-label') || '').startsWith(say)) sum.setAttribute('aria-label', say + (sum.getAttribute('aria-label') || '').replace(/^Apps, on [^,]*/, ''));
+  };
+  name();
+  new MutationObserver(name).observe(m.querySelector('.tapps-p'), { subtree: true, attributes: true, attributeFilter: ['aria-current'] });
 })();
 
 (() => {

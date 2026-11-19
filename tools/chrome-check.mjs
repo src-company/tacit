@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Checks the header's page menu and the footer that every page wears (build/chrome.mjs) in a real browser, with nothing reaching a live
 // service and no fork needed:
-//   menu     the pages a holder goes to, in order, with no divider; Assets, Farm, Rewards and Prove beside it in a wide header and first in it on a phone
+//   menu     the app switcher: All apps first, then every app in order, with no divider and no page links beside it; the front page's hub hides it
 //   footer   icons for the places outside the app, Build and Stats among them, and the whole row on the page down to a 320 px phone
 //   here     the page you are on is marked in the menu; the Tacit chain has no entry of its own, and its old address goes on to TAC's page
 //   PLAYWRIGHT=<path to playwright-core> node tools/chrome-check.mjs
@@ -28,11 +28,11 @@ const server = createServer((req, res) => {
 let failed = 0;
 const ok = (c, m, extra = '') => { console.log(`${c ? 'ok  ' : 'FAIL'} ${m}${extra ? ` (${extra})` : ''}`); if (!c) failed++; };
 
-const HEADER = 'Assets:/assets/ Farm:/farm/ Rewards:/rewards/ Prove:/prove/';
-const MENU = 'Portfolio:/#portfolio Pay:/pay/ Borrow:/vault/ Bridges:/bridge/ TAC:/tac/ Etch:/etch/ Shop:/shop/ Tasks:/tasks/ FACE:/face/';
+const HEADER = '';
+const MENU = 'All apps:/ Shield:/#app=shield Swap:/#app=swap Earn:/farm/ Stake:/tac/ Borrow:/vault/ Send:/#app=send Bridge:/bridge/ Prove:/prove/ Rewards:/rewards/ Portfolio:/#portfolio Assets:/assets/ Pay links:/pay/ Etch:/etch/ Shop:/shop/ Tasks:/tasks/ FACE:/face/ Activity:/#activity';
 const FOOTER = 'Whitepaper | Build | Security | Source | Pool contract | Stats | DefiLlama | Listed on ETHBeat | @tacitfi on X | Tacit Discord community';
 // page → the menu entry marked as the page you are on (none for a page the menu does not list)
-const PAGES = { '/': null, '/tac/': 'TAC', '/chain/': 'TAC', '/vault/': 'Borrow', '/bridge/': 'Bridges', '/pay/': 'Pay', '/shop/': 'Shop', '/build/': null, '/docs/chain/': null, '/weld/stats/': null };
+const PAGES = { '/': null, '/tac/': 'Stake', '/chain/': 'Stake', '/vault/': 'Borrow', '/bridge/': 'Bridge', '/pay/': 'Pay links', '/shop/': 'Shop', '/build/': null, '/docs/chain/': null, '/weld/stats/': null };
 const VIEWS = { desktop: { width: 1280, height: 800 }, 'phone 390': { width: 390, height: 800 }, 'phone 360': { width: 360, height: 800 }, 'phone 320': { width: 320, height: 700 } };
 
 const browser = await chromium.launch();
@@ -54,7 +54,7 @@ for (const [vname, viewport] of Object.entries(VIEWS)) {
     page.on('console', (m) => { if (m.type() === 'error' && /Content Security Policy|Refused to/.test(m.text())) errs.push(m.text().slice(0, 140)); });
     await page.goto(`http://127.0.0.1:${WEB}${path}`, { waitUntil: 'domcontentloaded' }).catch(() => {});      // /chain/ goes on at once
     if (path === '/chain/') await page.waitForURL(/\/tac\/$/);
-    await page.waitForSelector('.sn .sm > summary');
+    await page.waitForSelector('.sn .sm > summary', { state: 'attached' });
     await page.waitForTimeout(600);
     const seen = await page.evaluate(() => {
       const list = (s) => [...document.querySelectorAll(s)].map((a) => `${a.textContent.trim()}:${a.getAttribute('href')}`).join(' ');
@@ -63,7 +63,7 @@ for (const [vname, viewport] of Object.entries(VIEWS)) {
       return {
         at: location.pathname, header: [...document.querySelectorAll('.sn > a')].filter(visible).map((a) => `${a.textContent.trim()}:${a.getAttribute('href')}`).join(' '),
         menu: list('.sm-p a:not(.pr)'), phone: list('.sm-p a.pr'), dividers: document.querySelectorAll('.sm-p hr:not(.pr)').length,
-        marked: [...document.querySelectorAll('.sm-p a[aria-current="page"]')].map((a) => a.textContent.trim()).join(','),
+        marked: [...document.querySelectorAll('.sm-p a[aria-current="page"]')].map((a) => a.textContent.trim()).join(','), chip: document.querySelector('.sm.tapps summary .cur')?.textContent.trim(), shown: !!document.querySelector('.sn')?.getBoundingClientRect().width,
         chain: document.querySelectorAll('.sn a[href="/chain/"], .sm-p a[href="/chain/"]').length,
         foot: foot.map((a) => a.getAttribute('aria-label')).join(' | '), footHref: Object.fromEntries(foot.map((a) => [a.getAttribute('aria-label'), a.getAttribute('href')])),
         footIn: !!fr && fr.left >= -12 && fr.right <= window.innerWidth + 1, scroll: document.documentElement.scrollWidth > window.innerWidth + 1,
@@ -72,14 +72,16 @@ for (const [vname, viewport] of Object.entries(VIEWS)) {
     const tag = `${vname} ${path}`;
     if (path === '/chain/') ok(seen.at === '/tac/', `${tag}: the old address goes on to TAC's page`, seen.at);
     ok(seen.menu === MENU && seen.dividers === 0, `${tag}: the menu is the pages a holder goes to, with no divider`, seen.menu);
-    if (vname === 'desktop') ok(seen.header === HEADER, `${tag}: and Assets, Farm, Rewards and Prove sit beside it`, seen.header);
-    else ok(seen.phone === HEADER, `${tag}: and on a phone it holds them first`, seen.phone);
+    if (vname === 'desktop') ok(seen.header === HEADER, `${tag}: and no page links sit beside it`, seen.header);
+    else ok(seen.phone === HEADER, `${tag}: and no phone-only copies of them`, seen.phone);
     ok(seen.chain === 0, `${tag}: the Tacit chain has no entry of its own`);
     ok(seen.marked === (here || ''), `${tag}: the page you are on is marked${here ? ` (${here})` : ' (none)'}`, seen.marked);
+    if (path !== '/') ok(seen.chip === (here || 'Apps'), `${tag}: and the switcher's chip names it`, seen.chip);
+    ok(seen.shown === (path !== '/'), `${tag}: the switcher shows${path === '/' ? ' nowhere on the hub' : ''}`);
     ok(seen.foot === FOOTER && seen.footHref.Build === '/build/' && seen.footHref.Stats === '/weld/stats/', `${tag}: the footer has Build and Stats among its icons`, seen.foot);
     ok(seen.footIn && !seen.scroll, `${tag}: the footer is on the page, which does not scroll sideways`);
     ok(errs.length === 0, `${tag}: no page or CSP errors`, errs.slice(0, 2).join(' | '));
-    if (path === '/') {
+    if (path === '/vault/') {
       await page.click('.sn .sm > summary');
       ok(await page.$eval('.sm', (d) => d.open), `${tag}: the menu opens`);
       await page.keyboard.press('Escape');

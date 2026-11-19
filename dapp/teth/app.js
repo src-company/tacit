@@ -1,6 +1,6 @@
 import '/relay-route.js?cb=0152b0db';
 import { mountChart, fmtLocalStamp, fmtLocalTime } from '/trade/chart.js?cb=c0b1d232';
-import { makeConnect, UserStopped } from '/trade/connect.js?cb=41394526';
+import { makeConnect, UserStopped } from '/trade/connect.js?cb=b68b66d6';
 import { makeKeySession, signInSheet, pickWalletSheet, Cancelled } from '/trade/key.js?cb=04a214c9';
 import { readPool, heldHistory, heldBars, rangesFor, barSize, recentMoves, movedSince, readRates, readProgram, poolRows, positionsIn, programEnds, wrapQuote, shown, POOL, WRAP_TIP } from '/teth/read.js?cb=1fc456f6';
 import { wrapEth, wrapFirst, settle, readHeld, finish, wrapIssue, relayWords, selfable, selfFinish, settleCost, proveOwn, ownWords, ownable, deviceWords, relayState, relayStopped, forgetUx, getUx } from '/teth/wrap.js?cb=7c3cdef5';
