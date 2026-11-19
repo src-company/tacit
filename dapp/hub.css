@@ -1,0 +1,150 @@
+/* The front page as a hub (dapp/hub.js sets html[data-hub] before the first paint; the page's module keeps it in step with the address).
+   home:  the hero's title, the grid of apps (#hub) and, once signed in, "Your Tacit". Everything else on the long page is put away.
+   a tool (shield, swap, send, …): a back link and that tool's name above the tile, the tile on that tab alone, no tab strip.
+   Nothing here applies to the pages made from this one (html[data-page]: /spx/, /tac/), nor before hub.js has run. */
+
+.hub, .hub-bar { display: none; }
+html[data-hub]:not([data-page]) .hub-bar { display: none; }
+
+/* ── home ─────────────────────────────────────────────────────────────── */
+html[data-hub="home"]:not([data-page]) .hero { padding-bottom: 8px; }
+html[data-hub="home"]:not([data-page]) .hero-t { margin-bottom: 8px; }
+html[data-hub="home"]:not([data-page]) :is(#hx, #hx-fback, .hero .starts, .hero .proof-row, .hero .says, #tape, #how, #tac, main > .pg, main > .sx.pi) { display: none !important; }
+html[data-hub="home"]:not([data-page]) .hub { display: block; }
+
+.hub { padding: 8px 16px 32px; }
+.hub-k { margin: 40px 0 14px; font: 500 11.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--mute); }
+.hub-k:first-child { margin-top: 24px; }
+
+/* the private balance bar: the way into and out of the pool, which every tool can spend from. Not a tool of its own, so not a card. */
+.hub-pv {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 4px 16px; margin: 16px 0 20px; padding: 16px 18px;
+  background: color-mix(in srgb, var(--ink) 4%, var(--card)); border: 1px solid color-mix(in srgb, var(--ink) 9%, transparent); border-radius: 18px;
+}
+.hub-pv-ic { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--ink); color: var(--paper); }
+.hub-pv-ic svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.hub-pv h2 { margin: 0 0 2px; font: 400 22px/1.1 var(--serif); letter-spacing: -.01em; }
+.hub-pv p { margin: 0; font: 400 12.5px/1.45 var(--mono); color: var(--mute); }
+.hub-pv[data-on="some"] p { color: var(--ink); }
+.hub-pv-go { display: flex; gap: 8px; }
+.hub-btn {
+  display: inline-flex; align-items: center; justify-content: center; height: 40px; padding: 0 18px; border-radius: 999px; box-sizing: border-box;
+  background: var(--ink); color: var(--paper); border: 1px solid var(--ink); font: 500 12.5px/1 var(--mono); text-decoration: none; white-space: nowrap;
+  transition: transform .2s var(--spring), background-color .15s, color .15s;
+}
+.hub-btn.ghost { background: transparent; color: var(--ink); border-color: var(--hair-2); }
+@media (hover: hover) { .hub-btn:hover { transform: translateY(-1px); } .hub-btn.ghost:hover { background: var(--hair); } }
+.hub-btn:active { transform: scale(.97); }
+.hub-btn:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+/* before sign-in, and with nothing in the pool, Withdraw has nothing to do */
+.hub-pv:not([data-on="some"]) .hub-btn.ghost { display: none; }
+@media (max-width: 620px) {
+  .hub-pv { grid-template-columns: 40px minmax(0, 1fr); padding: 14px; }
+  .hub-pv-ic { width: 40px; height: 40px; }
+  .hub-pv-go { grid-column: 1 / -1; margin-top: 8px; }
+  .hub-pv-go .hub-btn { flex: 1; }
+}
+
+/* the four big cards: what most people come for */
+.hub-main { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 0; padding: 0; list-style: none; }
+.hub-c {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; box-sizing: border-box; height: 100%; min-height: 300px;
+  padding: 28px 20px 26px; color: var(--ink); text-align: center; text-decoration: none;
+  background: var(--card); border: 1px solid color-mix(in srgb, var(--ink) 9%, transparent); border-radius: 22px;
+  box-shadow: var(--float), inset 0 1px 0 color-mix(in srgb, var(--ink) 4%, transparent);
+  transition: transform .25s var(--spring), border-color .15s, box-shadow .2s;
+}
+@media (hover: hover) { .hub-c:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--ink) 22%, transparent); } }
+.hub-c:active { transform: scale(.985); }
+.hub-c:focus-visible, .hub-s:focus-visible, .hub-m a:focus-visible { outline: 2px solid var(--orange); outline-offset: 3px; }
+.hub-art { position: relative; display: grid; place-items: center; flex: 1; width: 100%; min-height: 150px; }
+.hub-art .tk { width: 84px; height: 84px; filter: drop-shadow(0 14px 18px rgba(0,0,0,.18)); transition: transform .35s var(--spring); }
+@media (hover: hover) { .hub-c:hover .hub-art .tk { transform: translateY(-4px) rotate(-4deg); } .hub-c:hover .hub-art .tk + .tk { transform: translateY(-2px) rotate(5deg); } }
+.hub-art .pair { display: inline-flex; align-items: center; }
+.hub-art .pair .tk + .tk { margin-left: -26px; box-shadow: none; }
+.hub-art .arrow { width: 26px; height: 26px; margin: 0 2px; fill: none; stroke: var(--orange); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.hub-art .badge {
+  position: absolute; left: calc(50% + 18px); bottom: calc(50% - 50px); display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%;
+  background: var(--ink); color: var(--paper); box-shadow: 0 0 0 4px var(--card);
+}
+.hub-art .badge svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.hub-c b { font: 400 34px/1.05 var(--serif); letter-spacing: -.02em; }
+.hub-c small { font: 400 12.5px/1.4 var(--mono); color: var(--mute); text-wrap: balance; }
+.hub-c small em { font-style: normal; color: var(--ok); }
+
+/* the next four: a row of smaller cards, icon on the left */
+.hub-sub { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 16px 0 0; padding: 0; list-style: none; }
+.hub-s {
+  display: grid; grid-template-columns: 44px 1fr; align-items: center; gap: 2px 14px; box-sizing: border-box; height: 100%; padding: 18px;
+  color: var(--ink); text-decoration: none; background: var(--card); border: 1px solid color-mix(in srgb, var(--ink) 9%, transparent); border-radius: 18px;
+  transition: transform .25s var(--spring), border-color .15s;
+}
+@media (hover: hover) { .hub-s:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--ink) 22%, transparent); } }
+.hub-s:active { transform: scale(.985); }
+.hub-s .ic { grid-row: span 2; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; background: var(--field); color: var(--ink); }
+.hub-s .ic svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.hub-s b { font: 400 23px/1.05 var(--serif); letter-spacing: -.01em; }
+.hub-s small { font: 400 12px/1.35 var(--mono); color: var(--mute); }
+
+/* everything else: a quiet list of links */
+.hub-m { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.hub-m a {
+  display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px 0 11px; border: 1px solid var(--hair-2); border-radius: 999px;
+  color: var(--ink); font: 500 12.5px/1 var(--mono); text-decoration: none; transition: background-color .15s, border-color .15s;
+}
+.hub-m a svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; color: var(--mute); }
+@media (hover: hover) { .hub-m a:hover { background: var(--hair); border-color: var(--mute); } }
+
+@media (max-width: 900px) {
+  .hub-main, .hub-sub { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .hub-c { min-height: 250px; }
+  .hub-art { min-height: 120px; }
+  .hub-art .tk { width: 72px; height: 72px; }
+}
+@media (max-width: 520px) {
+  .hub-sub { grid-template-columns: minmax(0, 1fr); }
+  .hub-c { min-height: 210px; padding: 20px 12px 18px; }
+  .hub-art { min-height: 96px; }
+  .hub-art .tk { width: 58px; height: 58px; }
+  .hub-art .pair .tk + .tk { margin-left: -18px; }
+  .hub-art .pair .arrow { width: 16px; height: 16px; margin: 0 1px; }
+  .hub-art .pair .arrow + .tk { margin-left: 0; }
+  .hub-art .pair:has(.arrow) .tk { width: 50px; height: 50px; }
+  .hub-art .badge { left: calc(50% + 12px); bottom: calc(50% - 40px); width: 32px; height: 32px; }
+  .hub-art .badge svg { width: 17px; height: 17px; }
+  .hub-c b { font-size: 27px; }
+  .hub-c small { font-size: 11.5px; }
+}
+
+/* ── one tool ─────────────────────────────────────────────────────────── */
+html[data-hub]:not([data-hub="home"]):not([data-page]) .hub-bar { display: block; }
+html[data-hub]:not([data-hub="home"]):not([data-page]) :is(.hero-t, .hero .starts .hints, .hero .proof-row, .hero .says, #tape, #how, #tac, main > .pg, main > .sx.pi, #dash) { display: none !important; }
+html[data-hub]:not([data-hub="home"]):not([data-page]) .hero { padding-top: 24px; }
+/* the tile on its own tab: the strip that picks a tab, and the Bridge / Borrow choice under More, are this page's job now */
+html[data-hub]:not([data-hub="home"]):not([data-page]) #hx :is(.hx-h, .hx-more) { display: none !important; }
+/* the farms' chips belong to Earn alone */
+html[data-hub]:not([data-hub="home"]):not([data-hub="earn"]):not([data-page]) .hero .starts .fms { display: none !important; }
+
+.hub-bar { max-width: 480px; margin: 0 auto 18px; padding: 0 16px; box-sizing: border-box; text-align: center; }
+.hub-bar h1 { margin: 0 0 6px; font: 400 clamp(40px, 9vw, 52px)/1.02 var(--serif); letter-spacing: -.03em; }
+.hub-bar p { margin: 0; font: 400 clamp(17px, 2.2vw, 20px)/1.3 var(--serif); color: color-mix(in srgb, var(--ink) 72%, var(--mute)); text-wrap: balance; }
+/* Shield and Withdraw are one tool, both ways: a switch between them under the title */
+.hub-sw { display: none; width: fit-content; margin: 14px auto 0; padding: 3px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 6%, var(--card)); }
+html:is([data-hub="shield"], [data-hub="withdraw"]):not([data-page]) .hub-sw { display: flex; }
+.hub-sw a { padding: 8px 16px; border-radius: 999px; color: var(--mute); font: 500 12.5px/1 var(--mono); text-decoration: none; transition: color .15s, background-color .15s; }
+.hub-sw a[aria-current="page"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.hub-sw a:hover { color: var(--ink); }
+.hub-sw a:focus-visible { outline: 2px solid var(--orange); outline-offset: 1px; }
+/* a tool that would spend from the pool, and the pool is short */
+.hub-first { margin: 14px 0 0; padding: 10px 14px; border-radius: 12px; background: color-mix(in srgb, var(--orange) 12%, var(--card)); font: 400 12.5px/1.45 var(--mono); color: var(--ink); }
+.hub-first a { color: var(--ink); font-weight: 500; }
+
+/* ── the hub's header: the mark and the wallet, nothing else. The app switcher lists what the cards below list, so it waits for a tool. ── */
+html[data-hub="home"]:not([data-page]) header.top .sn { display: none; }
+html[data-hub="home"]:not([data-page]) header.top #wallet {
+  height: 46px; padding: 0 22px 0 18px; gap: 10px; font-size: 14px;
+  background: var(--ink); color: var(--paper); border-color: var(--ink);
+}
+html[data-hub="home"]:not([data-page]) header.top #wallet .dot { background: color-mix(in srgb, var(--paper) 45%, transparent); }
+html[data-hub="home"]:not([data-page]) header.top #wallet .dot.on { background: var(--ok); }
+@media (hover: hover) { html[data-hub="home"]:not([data-page]) header.top #wallet:hover { background: color-mix(in srgb, var(--ink) 85%, var(--paper)); border-color: var(--ink); } }

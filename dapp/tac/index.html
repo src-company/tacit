@@ -7,7 +7,7 @@
 <!-- One page, one inline module. The module's sha256 is pinned in script-src (build/build.mjs recomputes it and
      the ?cb= tokens on every build), so nothing else can run on this origin from here.
      The tacit chain's leader origin (TACIT_CHAIN_PAGE.leader in the module) is put in connect-src by tools/tacit-chain-golive.mjs. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-H4ovQo0yYs6AM5+3aeBtBYDTUvRhgfdUOwqppYeKTK4=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ipfs.filebase.io https://trustless-gateway.link https://ipfs.orbitor.dev https://gateway.pinata.cloud http://127.0.0.1:47815 http://127.0.0.1:8545 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://rpc.mevblocker.io https://mainnet.rpc.buidlguidl.com https://eth-mainnet.public.blastapi.io https://base-rpc.publicnode.com https://base-mainnet.public.blastapi.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://robinhood.drpc.org https://robinhood-rpc.publicnode.com https://tacit-evm-pool-keepers.onrender.com https://tacit-evm-pool-forwarder.onrender.com https://tacit-evm-pool-forwarder-2.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://tacit-fast-board.onrender.com https://fast.tacit.finance https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://eth-mainnet.nodereal.io https://1.rpc.thirdweb.com https://ethereum-json-rpc.stakely.io wss://relay.damus.io wss://nos.lol wss://relay.primal.net wss://offchain.pub https://eth.rpc.blxrbdn.com https://tacit-chain-leader.onrender.com; frame-src 'self' https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-amPaEJW6quoZELCRGxuYsSrpC6CfvvybXsQW5X/L7cM=' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://ipfs.filebase.io https://trustless-gateway.link https://ipfs.orbitor.dev https://gateway.pinata.cloud http://127.0.0.1:47815 http://127.0.0.1:8545 https://api.tacit.finance https://aggregator-api.kyberswap.com https://api.zfi.wei.is https://api.paraswap.io https://rpc.mainnet.succinct.xyz https://tacit-points.onrender.com wss://relay.walletconnect.org https://verify.walletconnect.org https://verify.walletconnect.com https://ethereum-rpc.publicnode.com https://eth.drpc.org https://1rpc.io https://mainnet.gateway.tenderly.co https://rpc.mevblocker.io https://mainnet.rpc.buidlguidl.com https://eth-mainnet.public.blastapi.io https://base-rpc.publicnode.com https://base-mainnet.public.blastapi.io https://rpc.flashbots.net https://mainnet.base.org https://base.drpc.org https://rpc.mainnet.chain.robinhood.com https://robinhood.drpc.org https://robinhood-rpc.publicnode.com https://tacit-evm-pool-keepers.onrender.com https://tacit-evm-pool-forwarder.onrender.com https://tacit-evm-pool-forwarder-2.onrender.com https://tacit-btc-pool-mainnet.onrender.com https://tacit-btc-pool-relay-mainnet.onrender.com https://tacit-fast-board.onrender.com https://fast.tacit.finance https://mempool.space https://*.mempool.space https://blockstream.info https://mempool.emzy.de https://mempool.bitaroo.net https://slipstream.mara.com https://eth-mainnet.nodereal.io https://1.rpc.thirdweb.com https://ethereum-json-rpc.stakely.io wss://relay.damus.io wss://nos.lol wss://relay.primal.net wss://offchain.pub https://eth.rpc.blxrbdn.com https://tacit-chain-leader.onrender.com; frame-src 'self' https://verify.walletconnect.org https://verify.walletconnect.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="color-scheme" content="light dark">
 <link rel="preconnect" href="https://api.tacit.finance" crossorigin>
 <link rel="preconnect" href="https://ethereum-rpc.publicnode.com" crossorigin>
@@ -21,6 +21,8 @@
 <link rel="preload" href="/fonts/ibm-plex-mono-400-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/ibm-plex-mono-500-latin.woff2" as="font" type="font/woff2" crossorigin>
 <script defer src="/front-route.js?cb=3ab43ba5"></script>
+<script src="/hub.js?cb=8124ad0d"></script>
+<link rel="stylesheet" href="/hub.css?cb=737a9ca1">
 <title>tacit TAC</title>
 <link rel="canonical" href="https://tacit.finance/tac/">
 <meta name="description" content="The Tacit chain: stake TAC privately, earn from every payment and pay in about a minute. A zk-rollup settled on Ethereum, connected to Bitcoin by proof.">
@@ -994,7 +996,9 @@ a.btn { text-decoration: none; white-space: nowrap; }
 .link { background: none; border: 0; padding: 0; cursor: pointer; color: var(--mute); text-decoration: underline; text-underline-offset: 3px; font-size: 13px; }
 @media (hover: hover) { .link:hover { color: var(--ink); } }
 .actr-f .link, .callout .link, .status .link, .note .link { padding: 6px 2px; margin: -6px -2px; }
-.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* the live region moves into the open dialog (announce, below): at the dialog's corner it adds no height, so a sheet that fits has nothing to scroll and shows no scrollbar */
+dialog #live { top: 0; left: 0; }
 
 .status { font-size: 13px; min-height: 20px; margin-top: 12px; overflow-wrap: anywhere; }
 .status:empty { min-height: 0; margin-top: 0; }                    /* kept in the page, so a live region is there before it speaks */
@@ -2001,13 +2005,11 @@ header.top .sm > summary::before, header.top .sm > summary::after { content: non
 .sn a:focus-visible, .sn summary:focus-visible, .sf a:focus-visible { outline: 2px solid var(--orange); outline-offset: 1px; }
 @container top (min-width: 540px) { .sn > a { display: inline-flex; } }
 .sn > a[href="/rewards/"], .sn .sm > summary { position: relative; }
-.sn[data-owed] > a[href="/rewards/"]::after, .sn[data-owed] .sm > summary::after { content: ''; position: absolute; top: 8px; left: 26px; width: 7px; height: 7px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 2px var(--paper, transparent); }
-@container top (min-width: 540px) { .sn[data-owed] .sm > summary::after { display: none; } }
+.sn[data-owed] > a[href="/rewards/"]::after, .sn[data-owed] .sm > summary::after { content: ''; position: absolute; top: 4px; left: 26px; width: 7px; height: 7px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 2px var(--paper, transparent); }
 @container top (max-width: 539px) { .sn[data-owed] > a[href="/rewards/"]::after { display: none; } }
 /* a bridge under way: a dot on the header's Bridge link, or on the menu button where the links are in the menu (chrome.js adds both) */
 .sn .bd { position: absolute; top: 5px; right: 3px; width: 8px; height: 8px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 2px var(--paper, transparent); pointer-events: none; }
 .sn > a > .bd { top: 8px; right: auto; left: 26px; width: 7px; height: 7px; }
-@container top (min-width: 540px) { .sn .sm > summary > .bd { display: none; } }
 /* the Activity link chrome.js adds on a page without its own chip: at every width, once there is something in it, with the count still going */
 .sn > a.sa:not([hidden]) { display: inline-flex; }
 .sn > a.sa .n { position: absolute; top: 3px; right: 1px; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box; border-radius: 8px; background: var(--orange); color: #fff; font: 600 10px/16px var(--mono); text-align: center; }
@@ -2015,6 +2017,47 @@ header.top .sm > summary::before, header.top .sm > summary::after { content: non
   .sn > a { padding: 0 13px 0 11px; }
   .sn > a span { position: static; width: auto; height: auto; overflow: visible; clip-path: none; }
 }
+
+/* The mark, off the hub: the way back to All apps (chrome.js adds the "‹" and the hover name). */
+header.top a.brand.to-hub .tb-back { display: inline-grid; place-items: center; width: 18px; height: 22px; margin-right: -6px; color: var(--mute); transition: transform .2s var(--spring, ease), color .15s; }
+header.top a.brand.to-hub .tb-back svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+header.top a.brand.to-hub .tb-all { display: none; font: 500 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--orange); white-space: nowrap; }
+@media (hover: hover) {
+  header.top a.brand.to-hub:hover .tb-back { color: var(--ink); transform: translateX(-3px); }
+  header.top a.brand.to-hub:hover i { display: none; }
+  header.top a.brand.to-hub:hover .tb-all { display: inline; }
+}
+header.top a.brand.to-hub:focus-visible .tb-back { color: var(--ink); }
+html[data-hub="home"] header.top a.brand.to-hub :is(.tb-back, .tb-all) { display: none !important; }
+html[data-hub="home"] header.top a.brand.to-hub:hover i { display: inline; }
+/* a narrow header gives "Connect wallet" the room: the switcher keeps its grid and arrow, and drops the app's name */
+@container top (max-width: 420px) { .sn .sm.tapps > summary .cur { display: none; } }
+/* the smallest phones (320px): the mark alone says tacit, so "Connect wallet" is not cut short */
+@container top (max-width: 340px) { html:not([data-hub="home"]) header.top a.brand.to-hub b { display: none; } }
+
+/* The app switcher (build/chrome.mjs): one chip, the app you are on, that opens a grid of every app with All apps first. It takes the place of the
+   page links, so it is a quiet outline like the account chip beside it, with the grid in the brand's orange. */
+.sn .sm.tapps > summary {
+  gap: 8px; height: 40px; padding: 0 11px 0 12px; border: 1px solid var(--hair-2, var(--hair)); border-radius: 999px;
+  color: var(--ink); background: var(--card, transparent); font: 500 12.5px/1 var(--mono);
+}
+.sn .sm.tapps > summary svg:first-child { width: 18px; height: 18px; color: var(--orange); }
+.sn .sm.tapps > summary svg:last-child { width: 14px; height: 14px; color: var(--mute); stroke-width: 2; transition: transform .2s; }
+.sn .sm.tapps[open] > summary svg:last-child { transform: rotate(180deg); }
+.sn .sm.tapps[open] > summary { background: var(--hair); }
+@media (hover: hover) { .sn .sm.tapps > summary:hover { border-color: var(--mute); } }
+.sm-p.tapps-p { width: 312px; padding: 8px; gap: 6px; }
+.sm-p.tapps-p .tapps-home { min-height: 40px; font-weight: 500; }
+.sm-p.tapps-p .tapps-home svg { color: var(--ink); }
+.tapps-g { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 6px 0; border-top: 1px solid var(--hair); border-bottom: 1px solid var(--hair); }
+.sm-p.tapps-p .tapps-g a { flex-direction: column; justify-content: center; gap: 7px; min-height: 70px; padding: 8px 4px; font-size: 12px; text-align: center; }
+.sm-p.tapps-p .tapps-g a svg { width: 21px; height: 21px; color: var(--ink); }
+/* Shield, first in the grid: the way into the private pool, set apart by an underline under its name alone */
+.sm-p.tapps-p .tapps-g a.tapps-key span { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; text-decoration-color: color-mix(in srgb, currentColor 55%, transparent); }
+.tapps-l { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; }
+.sm-p.tapps-p .tapps-l a { min-height: 38px; font-size: 12.5px; }
+@container top (max-width: 360px) { .sn .sm.tapps > summary { padding: 0 9px 0 10px; } header.top .brand i { display: none; } }
+@media (pointer: coarse) { .sn .sm.tapps > summary { height: var(--tap, 44px); } }
 
 /* a very narrow header keeps the mark and the name; the page's label, and the Activity and total chips' room, go first */
 @container top (max-width: 340px) { header.top .brand i { display: none; } }
@@ -2103,8 +2146,59 @@ footer.sf nav a span { position: absolute; width: 1px; height: 1px; overflow: hi
 @font-face { font-family: 'Instrument Serif Fallback T'; font-style: italic; src: local('Times New Roman Italic'), local('TimesNewRomanPS-ItalicMT'), local('Liberation Serif Italic'), local('Tinos Italic'); size-adjust: 87.8%; ascent-override: 112.8%; descent-override: 35.3%; line-gap-override: 0%; }
 @font-face { font-family: 'Instrument Serif Fallback N'; src: local('Noto Serif'), local('NotoSerif'); size-adjust: 70.5%; ascent-override: 140.4%; descent-override: 44%; line-gap-override: 0%; }
 @font-face { font-family: 'Instrument Serif Fallback N'; font-style: italic; src: local('Noto Serif Italic'), local('NotoSerif-Italic'); size-adjust: 76.3%; ascent-override: 129.7%; descent-override: 40.6%; line-gap-override: 0%; }
+
+/* Scrollbars in a dialog (the front page's sheets and Activity, and Activity on every other page): thin, in the page's ink on no track, so the
+   bar sits quietly inside the card instead of a light system rail along its edge */
+dialog, .tact-b { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--ink) 24%, transparent) transparent; }
+dialog::-webkit-scrollbar, .tact-b::-webkit-scrollbar { width: 12px; height: 12px; }
+dialog::-webkit-scrollbar-track, .tact-b::-webkit-scrollbar-track { background: transparent; }
+dialog::-webkit-scrollbar-thumb, .tact-b::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ink) 24%, transparent); background-clip: padding-box; border: 4px solid transparent; border-radius: 12px; }
+dialog::-webkit-scrollbar-corner, .tact-b::-webkit-scrollbar-corner { background: transparent; }
+
+/* Activity over any page (activity-lite.js): the front page's panel, read-only. The card stays put and its list scrolls inside it. */
+dialog.tact {
+  width: min(480px, calc(100vw - 32px)); max-height: min(82vh, 760px); max-height: min(82dvh, 760px); margin: auto; padding: 0; box-sizing: border-box; overflow: hidden;
+  color: var(--ink); background: var(--card); border: 1px solid var(--hair-2, var(--hair)); border-radius: 20px;
+  box-shadow: 0 40px 90px -40px rgba(0,0,0,.6); font: 400 13px/1.55 var(--mono);
+}
+dialog.tact[open] { display: flex; animation: tact-in .2s cubic-bezier(.2,.8,.2,1); }
+dialog.tact::backdrop { background: var(--scrim, rgba(26,26,26,.36)); backdrop-filter: blur(2px); }
+@keyframes tact-in { from { opacity: 0; transform: translateY(10px); } }
+.tact-in { display: flex; flex-direction: column; width: 100%; min-height: 0; }
+.tact-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 22px 18px 14px 24px; border-bottom: 1px solid var(--hair); }
+.tact-top h2 { margin: 0; font: 400 34px/1 var(--serif, Georgia, serif); letter-spacing: -.02em; outline: none; }
+.tact-x { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--ink); font: 400 24px/1 var(--mono); cursor: pointer; }
+.tact-x:hover { background: var(--hair); }
+.tact-x:focus-visible, .tact-b a:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+.tact-b { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px 14px 22px 24px; scrollbar-gutter: stable; }
+.tact-k { display: flex; align-items: center; gap: 8px; margin: 18px 0 6px; font: 500 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--mute); }
+.tact-k .num { min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 9px; font-size: 10.5px; line-height: 18px; text-align: center; letter-spacing: 0; color: var(--card); background: var(--ink); }
+.tact-l { list-style: none; margin: 0; padding: 0; }
+.tact-r { display: grid; gap: 6px; padding: 13px 0; border-bottom: 1px solid var(--hair); }
+.tact-r.fin { gap: 4px; padding: 11px 0; }
+.tact-h { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.tact-h b { min-width: 0; font-weight: 500; overflow-wrap: anywhere; }
+.tact-r.fin .tact-h b { font-weight: 400; }
+.tact-h > span { flex: none; font-size: 12px; color: var(--mute); }
+.tact-h .num { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.tact-live { width: 6px; height: 6px; border-radius: 50%; background: var(--orange); animation: tact-pulse 1.6s ease-in-out infinite; }
+@keyframes tact-pulse { 50% { opacity: .35; } }
+.tact-m { display: inline-block; width: 1.3em; font-style: normal; font-size: 12px; }
+.tact-m.ok { color: var(--ok, #0a7234); }
+.tact-m.err { color: var(--err, #b8341d); }
+.tact-f { font-size: 12px; color: var(--mute); overflow-wrap: anywhere; }
+.tact-f a { color: var(--ink); white-space: nowrap; }
+.tact-0 { margin: 18px 0 4px; color: var(--mute); }
+.tact-foot { display: grid; gap: 10px; margin-top: 16px; font-size: 12px; color: var(--mute); }
+.tact-foot a { width: fit-content; color: var(--ink); }
+.tact-foot a.go { font-weight: 500; }
+@media (prefers-reduced-motion: reduce) { dialog.tact[open], .tact-live { animation: none; } }
+
+/* the switcher's Activity row: how many are under way */
+.sm-p.tapps-p .tapps-l a .tapps-n { margin-left: auto; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 9px; background: var(--orange); color: #fff; font: 600 10.5px/18px var(--mono); text-align: center; }
+.sm-p.tapps-p .tapps-l a .tapps-n[hidden] { display: none; }
 </style>
-<script src="/chrome.js?cb=3cafe52f" defer></script>
+<script src="/chrome.js?cb=47a92f93" defer></script>
 <!-- chrome:head:end -->
 </head>
 <body>
@@ -2150,28 +2244,32 @@ footer.sf nav a span { position: absolute; width: 1px; height: 1px; overflow: hi
     <a class="brand" href="/" aria-label="tacit v1"><svg class="tk" aria-hidden="true"><use href="#tk-tac"/></svg><b>tacit</b><i>v1</i></a>
     <div class="top-r">
       <!-- chrome:nav:begin -->
-      <nav class="sn" aria-label="Pages">
-          <a href="/assets/" title="Assets"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M8.1 9.3h7.2"/><path d="M13 6.1L10 16.3Q10 17.9 13.3 17.2"/></svg><span>Assets</span></a>
-          <a href="/farm/" title="Farm"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 14.2A4.2 4.2 0 0 1 7.8 6.1a4.6 4.6 0 0 1 8.4 0 4.2 4.2 0 0 1 1.3 8.1"/><path d="M6.5 14.2V19a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-4.8"/><path d="M6.5 16.8h11"/></svg><span>Farm</span></a>
-          <a href="/rewards/" title="Rewards"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13"/><path d="M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8"/><path d="M7.5 8a2.5 2.5 0 1 1 0-5C10 3 12 8 12 8s2-5 4.5-5a2.5 2.5 0 1 1 0 5"/></svg><span>Rewards</span></a>
-          <a href="/prove/" title="Prove"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/></svg><span>Prove</span></a>
-          <details class="sm">
-            <summary aria-label="More pages" title="More"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1.7"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.7"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.7"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.7"/></svg></summary>
-            <div class="sm-p">
-            <a class="pr" href="/assets/"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M8.1 9.3h7.2"/><path d="M13 6.1L10 16.3Q10 17.9 13.3 17.2"/></svg>Assets</a>
-            <a class="pr" href="/farm/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 14.2A4.2 4.2 0 0 1 7.8 6.1a4.6 4.6 0 0 1 8.4 0 4.2 4.2 0 0 1 1.3 8.1"/><path d="M6.5 14.2V19a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-4.8"/><path d="M6.5 16.8h11"/></svg>Farm</a>
-            <a class="pr" href="/rewards/"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13"/><path d="M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8"/><path d="M7.5 8a2.5 2.5 0 1 1 0-5C10 3 12 8 12 8s2-5 4.5-5a2.5 2.5 0 1 1 0 5"/></svg>Rewards</a>
-            <a class="pr" href="/prove/"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/></svg>Prove</a>
-            <hr class="pr">
-            <a href="/#portfolio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h15a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/><path d="M16 14h.01"/></svg>Portfolio</a>
-            <a href="/pay/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10.5 13.5"/><path d="M21 3l-6.5 18-4-7.5L3 9.5z"/></svg>Pay</a>
-            <a href="/vault/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9.5L12 4l9 5.5"/><path d="M5.5 10v8M10 10v8M14 10v8M18.5 10v8"/><path d="M3 20.5h18"/></svg>Borrow</a>
-            <a href="/bridge/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17h18"/><path d="M5 17v-3a7 7 0 0 1 14 0v3"/><path d="M9 17v-4.5M15 17v-4.5M12 17v-6"/></svg>Bridges</a>
-            <a href="/tac/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8-7.5 9.5-4.3-1.5-7.5-4.9-7.5-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg>TAC</a>
-            <a href="/etch/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4.2-1 10.6-10.6a2.1 2.1 0 0 0-3-3L5.2 16z"/><path d="M13.6 7.4l3 3"/></svg>Etch</a>
-            <a href="/shop/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 4h11L21 9l-9 11L3 9z"/><path d="M3 9h18"/><path d="M9.5 4L8 9l4 11 4-11-1.5-5"/></svg>Shop</a>
-            <a href="/tasks/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>Tasks</a>
-            <a href="/face/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 20V10a6 6 0 0 1 12 0v10l-2-2-2 2-2-2-2 2-2-2z"/><path d="M9.5 11.5h1M13.5 11.5h1"/></svg>FACE</a>
+      <nav class="sn" aria-label="Apps">
+          <details class="sm tapps">
+            <summary aria-label="Apps, on Apps" title="All apps"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1.7"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.7"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.7"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.7"/></svg><span class="cur">Apps</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg></summary>
+            <div class="sm-p tapps-p">
+            <a class="tapps-home" href="/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"/></svg>All apps</a>
+            <div class="tapps-g">
+            <a href="/#app=shield" class="tapps-key"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8-7.5 9.5-4.3-1.5-7.5-4.9-7.5-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg><span>Shield</span></a>
+            <a href="/#app=swap"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h14l-3.5-3.5"/><path d="M20 16H6l3.5 3.5"/></svg><span>Swap</span></a>
+            <a href="/farm/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 14.2A4.2 4.2 0 0 1 7.8 6.1a4.6 4.6 0 0 1 8.4 0 4.2 4.2 0 0 1 1.3 8.1"/><path d="M6.5 14.2V19a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-4.8"/><path d="M6.5 16.8h11"/></svg><span>Earn</span></a>
+            <a href="/tac/"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6.5" rx="7" ry="2.8"/><path d="M5 6.5v5c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-5"/><path d="M5 11.5v5c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-5"/></svg><span>Stake</span></a>
+            <a href="/vault/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9.5L12 4l9 5.5"/><path d="M5.5 10v8M10 10v8M14 10v8M18.5 10v8"/><path d="M3 20.5h18"/></svg><span>Borrow</span></a>
+            <a href="/#app=send"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10.5 13.5"/><path d="M21 3l-6.5 18-4-7.5L3 9.5z"/></svg><span>Send</span></a>
+            <a href="/bridge/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17h18"/><path d="M5 17v-3a7 7 0 0 1 14 0v3"/><path d="M9 17v-4.5M15 17v-4.5M12 17v-6"/></svg><span>Bridge</span></a>
+            <a href="/prove/"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/></svg><span>Prove</span></a>
+            <a href="/rewards/"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13"/><path d="M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8"/><path d="M7.5 8a2.5 2.5 0 1 1 0-5C10 3 12 8 12 8s2-5 4.5-5a2.5 2.5 0 1 1 0 5"/></svg><span>Rewards</span></a>
+            </div>
+            <div class="tapps-l">
+            <a href="/#portfolio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h15a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/><path d="M16 14h.01"/></svg><span>Portfolio</span></a>
+            <a href="/assets/"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M8.1 9.3h7.2"/><path d="M13 6.1L10 16.3Q10 17.9 13.3 17.2"/></svg><span>Assets</span></a>
+            <a href="/pay/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10.5 13.5"/><path d="M21 3l-6.5 18-4-7.5L3 9.5z"/></svg><span>Pay links</span></a>
+            <a href="/etch/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4.2-1 10.6-10.6a2.1 2.1 0 0 0-3-3L5.2 16z"/><path d="M13.6 7.4l3 3"/></svg><span>Etch</span></a>
+            <a href="/shop/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 4h11L21 9l-9 11L3 9z"/><path d="M3 9h18"/><path d="M9.5 4L8 9l4 11 4-11-1.5-5"/></svg><span>Shop</span></a>
+            <a href="/tasks/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg><span>Tasks</span></a>
+            <a href="/face/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 20V10a6 6 0 0 1 12 0v10l-2-2-2 2-2-2-2 2-2-2z"/><path d="M9.5 11.5h1M13.5 11.5h1"/></svg><span>FACE</span></a>
+            <a href="/#activity"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span>Activity</span></a>
+            </div>
             </div>
           </details>
         </nav>
@@ -2180,7 +2278,7 @@ footer.sf nav a span { position: absolute; width: 1px; height: 1px; overflow: hi
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="num" id="act-n" hidden></span>
       </button>
       <button class="chip tot" id="hold-tot" type="button" hidden title="What you hold, private and public, on both chains"><b>$0</b></button>
-      <button class="chip" id="wallet" type="button"><span class="dot" id="wallet-dot"></span><span id="wallet-label">Sign in</span></button>
+      <button class="chip" id="wallet" type="button"><span class="dot" id="wallet-dot"></span><span id="wallet-label">Connect wallet</span></button>
     </div>
   </header>
 
@@ -2241,6 +2339,13 @@ footer.sf nav a span { position: absolute; width: 1px; height: 1px; overflow: hi
       <h1 id="hero-h">Private DeFi<span class="sr"> on BTC and ETH</span><span class="hero-pair" aria-hidden="true"><svg class="tk"><use href="#tk-btc"/></svg><svg class="tk"><use href="#tk-eth"/></svg></span></h1>
       <p class="sub">One <b>tacit1</b>&nbsp;ID for both chains. Private inside the pool.</p>
     </div>
+    <div class="hub-bar" id="hub-bar">
+      <h1 id="hub-t" tabindex="-1">Shield</h1>
+      <p id="hub-d"></p>
+      <nav class="hub-sw" aria-label="Into or out of the private pool"><a href="/#app=shield">Shield</a><a href="/#app=withdraw">Withdraw</a></nav>
+      <p class="hub-first" id="hub-first" hidden>Your private balance is too low for this. Use your wallet in the card below, or <a href="/#app=shield" id="hub-first-a">shield first and come back →</a></p>
+      <p class="hub-first hub-then" id="hub-then" hidden></p>
+    </div>
     <section class="hx" id="hx" aria-label="Shield, swap, send, earn, withdraw, bridge or borrow"><div id="hx-body"><div class="hx-sk" aria-hidden="true"><i class="t"></i><i class="f"></i><i class="f"></i><i class="p"></i><i class="g"></i></div></div></section>
     <p class="fback" id="hx-fback" hidden></p>
     <div class="starts">
@@ -2269,6 +2374,55 @@ footer.sf nav a span { position: absolute; width: 1px; height: 1px; overflow: hi
         <div class="tape-v"><ul class="tape-run" id="tape-run"></ul></div>
       </div>
   </section>
+
+  <nav class="hub" id="hub" aria-label="Apps">
+    <section class="hub-pv" id="hub-pv" aria-labelledby="hub-pv-h">
+      <span class="hub-pv-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8-7.5 9.5-4.3-1.5-7.5-4.9-7.5-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg></span>
+      <div class="hub-pv-t">
+        <h2 id="hub-pv-h">Private balance</h2>
+        <p id="hub-pv-v">Coins in the private pool can be swapped, sent and farmed. Who pays whom, and how much, stays hidden.</p>
+      </div>
+      <div class="hub-pv-go">
+        <a class="hub-btn" href="/#app=shield">Shield</a>
+        <a class="hub-btn ghost" href="/#app=withdraw">Withdraw</a>
+      </div>
+    </section>
+    <ul class="hub-main">
+      <li><a class="hub-c" href="/#app=swap">
+        <span class="hub-art" aria-hidden="true"><span class="pair"><svg class="tk"><use href="#tk-eth"/></svg><svg class="arrow" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg><svg class="tk"><use href="#tk-tac"/></svg></span></span>
+        <b>Swap</b><small>Trade tokens, in private or in public</small>
+      </a></li>
+      <li><a class="hub-c" href="/farm/">
+        <span class="hub-art" aria-hidden="true"><span class="pair"><svg class="tk"><use href="#tk-tac"/></svg><svg class="tk"><use href="#tk-teth"/></svg></span></span>
+        <b>Earn</b><small id="hub-earn">Put ETH in a farm, earn TAC</small>
+      </a></li>
+      <li><a class="hub-c" href="/tac/">
+        <span class="hub-art" aria-hidden="true"><svg class="tk"><use href="#tk-tac"/></svg><span class="badge"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span></span>
+        <b>Stake TAC</b><small>Earn a share of every fee</small>
+      </a></li>
+      <li><a class="hub-c" href="/vault/">
+        <span class="hub-art" aria-hidden="true"><span class="pair"><svg class="tk"><use href="#tk-btc"/></svg><svg class="arrow" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg><svg class="tk"><use href="#tk-cusd"/></svg></span></span>
+        <b>Borrow</b><small>Borrow dollars against BTC or TAC</small>
+      </a></li>
+    </ul>
+    <ul class="hub-sub">
+      <li><a class="hub-s" href="/#app=send"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 3L10.5 13.5"/><path d="M21 3l-6.5 18-4-7.5L3 9.5z"/></svg></span><b>Send</b><small>Pay anyone, privately</small></a></li>
+      <li><a class="hub-s" href="/bridge/"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 17h18"/><path d="M5 17v-3a7 7 0 0 1 14 0v3"/><path d="M9 17v-4.5M15 17v-4.5M12 17v-6"/></svg></span><b>Bridge</b><small>Bitcoin ⇄ Ethereum, by proof</small></a></li>
+      <li><a class="hub-s" href="/prove/"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/></svg></span><b>Prove</b><small>Prove a block, earn TAC</small></a></li>
+      <li><a class="hub-s" href="/rewards/"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13"/><path d="M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8"/><path d="M7.5 8a2.5 2.5 0 1 1 0-5C10 3 12 8 12 8s2-5 4.5-5a2.5 2.5 0 1 1 0 5"/></svg></span><b>Rewards</b><small>Airdrop, points and claims</small></a></li>
+    </ul>
+    <h2 class="hub-k">More</h2>
+    <ul class="hub-m">
+      <li><a href="/#portfolio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h15a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/><path d="M16 14h.01"/></svg>Portfolio</a></li>
+      <li><a href="/assets/"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M8.1 9.3h7.2"/><path d="M13 6.1L10 16.3Q10 17.9 13.3 17.2"/></svg>Assets</a></li>
+      <li><a href="/pay/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10.5 13.5"/><path d="M21 3l-6.5 18-4-7.5L3 9.5z"/></svg>Pay links</a></li>
+      <li><a href="/etch/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4.2-1 10.6-10.6a2.1 2.1 0 0 0-3-3L5.2 16z"/><path d="M13.6 7.4l3 3"/></svg>Etch</a></li>
+      <li><a href="/shop/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 4h11L21 9l-9 11L3 9z"/><path d="M3 9h18"/><path d="M9.5 4L8 9l4 11 4-11-1.5-5"/></svg>Shop</a></li>
+      <li><a href="/tasks/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>Tasks</a></li>
+      <li><a href="/face/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 20V10a6 6 0 0 1 12 0v10l-2-2-2 2-2-2-2 2-2-2z"/><path d="M9.5 11.5h1M13.5 11.5h1"/></svg>FACE</a></li>
+      <li><a href="/weld/stats/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20v-6"/><path d="M12 20V5"/><path d="M19 20v-10"/></svg>Stats</a></li>
+    </ul>
+  </nav>
 
   <section class="dash" id="dash" aria-labelledby="dash-h" hidden>
     <div class="dash-h"><h2 id="dash-h">Your Tacit</h2><span class="dash-worth" id="dash-worth"></span></div>
@@ -5026,7 +5180,7 @@ function paintWallet() {
   try { hxPathPaint(); } catch { }
   $('#wallet-dot').className = 'dot' + (S.key ? ' on' : S.address ? ' live' : '');
   const wid = $('#wd-id'); if (wid) wid.textContent = S.key?.tacit ? short(S.key.tacit, 6) : 'tacit1…';
-  mount($('#wallet-label'), S.key ? (S.key.tacit ? chipView(S.key.tacit) : html`Opening…`) : html`${knownWallet() || otherWallet() ? 'Open wallet' : S.address ? short(S.address) : 'Sign in'}`);
+  mount($('#wallet-label'), S.key ? (S.key.tacit ? chipView(S.key.tacit) : html`Opening…`) : html`${knownWallet() || otherWallet() ? 'Open wallet' : S.address ? short(S.address) : 'Connect wallet'}`);
 }
 $('#wallet').onclick = () => { openSheet('wallet'); if (!S.key) getUx().catch(() => {}); };
 $('#hold-tot').onclick = () => openPortfolio();
@@ -5273,6 +5427,7 @@ const toCard = (name) => {
   for (const o of $$('dialog.sheet[open]')) o.close();
   if (location.hash.slice(1) === name) history.replaceState(null, '', location.pathname + location.search);
   hxPreset(CARD[name]);
+  hubFollow();
 };
 const ALIAS = { bridge: ['tac', 'bridge'], private: ['eth', 'v1'], device: ['eth', 'dev'],
   points: ['pts'], names: ['pts'], bitcoin: ['btc'], earn: ['farm'], lp: ['farm'], lock: ['borrow'], leaderboard: ['pts'] };
@@ -5334,7 +5489,7 @@ function linkNow() {
   if ($('#sheet-act').open) return '#activity';
   const d = $('dialog.sheet[open]:not(.layer)');
   if (d) return '#' + linkOf(d.id.replace('sheet-', ''));
-  return TACP.on ? tpgLink() : '';
+  return TACP.on ? tpgLink() : hubLink();
 }
 var LINK_READ = false;
 function syncLink() {
@@ -12027,7 +12182,7 @@ function paintDash() {
 }
 function paintDash0() {
   const id = dashId(), sec = $('#dash');
-  if (!id) { sec.hidden = true; DASH.id = null; DASH.view = ''; DASH.items = DASH.worth = DASH.groups = null; paintPortfolio(); return; }
+  if (!id) { sec.hidden = true; DASH.id = null; DASH.view = ''; DASH.items = DASH.worth = DASH.groups = null; paintPortfolio(); hubPv(null, null); return; }
   if (DASH.id !== id) { if (!(id in DASH.bases)) DASH.bases[id] = store.get(id); Object.assign(DASH, { id, base: DASH.bases[id], cur: {} }); }
   const base = DASH.base?.v || {}, k = S.key?.pubHex;
   const items = dashItems().filter((it) => it.core || it.show || Number(base[it.key]?.v || 0) > 0);
@@ -12047,6 +12202,7 @@ function paintDash0() {
   paintPortfolio();
   mount($('#dash-worth'), worth && worth.all > 0 ? html`≈ <b>${usdFmt(worth.all)}</b>${worth.priv > 0 ? html` · ${worth.priv >= worth.all * 0.999 ? 'all private' : `${usdFmt(worth.priv)} private`}` : ''}` : html``);
   if (tot) { tot.hidden = !(worth && worth.all > 0); if (worth) tot.querySelector('b').textContent = usdFmt(worth.all); }
+  hubPv(k ? items : null, worth);
   const due = [];
   if (k) { const stuck = listed().filter((x) => x.self?.exit && selfWork(x)); if (stuck.length) due.push([stuck.length === 1 ? `${stuck[0].label} has been in line for a few minutes. You can send it now from ${your()}, with no relay fee.` : `${stuck.length} withdrawals have been in line for a few minutes. You can send them now from ${your()}, with no relay fee.`, 'act', 'See how']); }
   if (k && P.scan) for (const sheet of ['eth', 'tac', 'borrow', 'usdt']) { const ps = pendingFor(sheet); if (ps.some((p) => p.ticker)) due.push([waitingText(ps), sheet, 'Finish']); }
@@ -12562,7 +12718,7 @@ function hxJoinSay(p, jq) {
   const none = { rc: [], warn: true };
   if (jq.err) return { ...none, line: errText(jq.err) };
   const { sd, j } = jq, { kA, kB, kS, kO, unit, dp, dpB, other } = sd;
-  if (jq.over) return { ...none, line: `${overBalance()} Try Max.` };
+  if (jq.over) return { ...none, line: `${overBalance()} Try Max.`, alt: hxWalletAlt('earn') };
   if (jq.small) return { ...none, line: `Add more than ${fmt(jq.small, 8, dp[kS])} ${unit[kS]}: the relay’s fees for the swap and the note cuts come out of it.` };
   const { q, a, b, shares } = jq, res = j.res, bonded = BigInt(p.totalShares || 0), day = FARM.program?.epoch?.active ? Number(p.tacPerDayForPool) * Number(shares) / Number(bonded + shares) : 0;
   const gas = ['Network fee', `about ${fmt(j.gas, 18, 5)} ETH`, '', `Sent from ${your()}, which makes the bond`], adds = ['Adds', `${fmt(a, 8, dp[kA])} ${unit[kA]} + ${fmt(b, 8, dp[kB])} ${unit[kB]}`];
@@ -12593,7 +12749,16 @@ const hxPair = (on) => { HX.pair = on; if (on && HX.from === 'tac') { HX.ern = '
 // Where the coin a pool pairs with comes from, as the card's side links, for a holder with none of it: adding both coins swaps nothing.
 // cBTC is minted one for one against bitcoin locked at the key's own address (or bridged in from Bitcoin); cUSD is borrowed against it.
 const HX_GETS = { cbtc: [['Lock BTC for cBTC', 'borrow:cbtc'], ['Bridge cBTC from Bitcoin', 'bridge:kb']], cusd: [['Borrow cUSD', 'borrow:cusd']], tac: [['Buy TAC', 'swap:ether:tac:private']], eth: [['Shield ETH', 'shield:ether:defi']] };
-const hxGetAlts = (k) => (HX_GETS[String(k).toLowerCase()] || []).map(([label, spec]) => ({ label, go: () => hxPreset(spec, undefined, true) }));
+// The private balance is short: do the same thing from the wallet instead, in the same tile. Earn zaps the wallet's ETH in (one transaction, private
+// after); Send pays from the wallet into their private balance (the deposit shows, not whose). Coins with no wallet form (cBTC, cUSD) have no such way.
+const HX_SEND_WALLET = { eth: ['ether', 'ETH'], tac: ['wtac', 'TAC'] };
+function hxWalletAlt(tab, k) {
+  if (tab === 'earn') return { label: 'Farm with ETH from your wallet instead', go: () => { HX.placePick = true; HX.placeAuto = null; hxKeepAmt(() => { HX.ern = 'ether'; HX.q = null; }); paintHx(); } };
+  const w = HX_SEND_WALLET[k];
+  if (!w || !HX_SEND.some(([x]) => x === w[0])) return null;
+  return { label: `Pay with ${w[1]} from your wallet instead`, go: () => { HX.sendPick = true; hxKeepAmt(() => { HX.send = w[0]; HX.q = null; }); paintHx(); } };
+}
+const hxGetAlts = (k) =>(HX_GETS[String(k).toLowerCase()] || []).map(([label, spec]) => ({ label, go: () => hxPreset(spec, undefined, true) }));
 async function hxPubQuote(units) {
   const mode = HX.from === 'wtac' ? 'tac' : 'eth', who = S.address, amt = units * E10;
   let x = FARM.precision;
@@ -12803,7 +12968,7 @@ async function hxSendQuote(units) {
   const over = held != null && units + split > held, small = units <= claim * 2n;
   if (split && !over && !small) cutAhead(k, units, split);
   else if (!over && !small) hxLockAhead(k, units);
-  return { warn: over || small,
+  return { warn: over || small, alt: over ? hxWalletAlt('send', k) : null,
     line: over ? feeRoom(units, split, held, P.scan?.[k]?.notes, show, dp) || `You hold ${show(held)}.`
       : small ? `Send more than ${show(claim * 2n)}: the recipient’s claim costs a relay fee of about ${show(claim)}.` : '',
     rc: over || small ? [] : [['They get', `about ${show(units - claim)}`], ['Claim fee', show(claim), '', 'They claim the payment with their key; the relay that sends their claim takes this from what they get'],
@@ -15970,7 +16135,7 @@ function swcBar(k) {
   const s = SWC_SECS[k];
   if (s) proveBar(q, typeof s === 'function' ? s() : s);
 }
-const swcLoad = () => (SWC.p ||= import('/swap/card.js?cb=165e776a').catch((e) => { SWC.p = null; throw e; }));
+const swcLoad = () => (SWC.p ||= import('/swap/card.js?cb=20aafe02').catch((e) => { SWC.p = null; throw e; }));
 const LBT = { p: null, at: 0 };
 const lbToday = () => {
   if (!LBT.p || Date.now() - LBT.at > 60e3) {
@@ -16648,7 +16813,7 @@ if ('IntersectionObserver' in window) { const io = new IntersectionObserver((es)
 }
 document.addEventListener('click', (e) => {
   const h = e.target.closest?.('[data-hx]');
-  if (h) { e.preventDefault(); hxPreset(h.dataset.hx, h.dataset.amt || ''); return; }
+  if (h) { e.preventDefault(); hxPreset(h.dataset.hx, h.dataset.amt || ''); hubFollow(); return; }
   if (e.target.closest?.('[data-permit-cancel]')) { PERMIT_WAIT.cancel?.(); return; }
   const ht = e.target.closest?.('[data-hint]');
   if (ht) { e.preventDefault(); hintGo(ht.dataset.hint); return; }
@@ -16778,11 +16943,114 @@ function chlRead() {
 (window.requestIdleCallback || setTimeout)(() => chlRead());
 setInterval(() => { if (!document.hidden) chlRead(); }, 60e3);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - lastTick > 60e3) tick(); });
+// The front page as a hub (hub.js sets html[data-hub] before the first paint, hub.css draws it). "home" is the grid of apps; any other value is one
+// tool: the tile narrowed to that tab, its name above it, the tab strip hidden. #app=<tab> is its link; the tile's own links (#card=…) open the same way.
+const HUB_TXT = {
+  shield: ['Shield', 'Move coins into the private pool. Swap, farm and borrow there.'],
+  withdraw: ['Withdraw', 'Take coins out of the private pool, to any wallet.'],
+  swap: ['Swap', 'Trade tokens, in private or in public.'],
+  send: ['Send', 'Pay a tacit1 ID or an address. Private inside the pool.'],
+  earn: ['Earn', 'Put ETH in a farm in one transaction, and earn TAC.'],
+  bridge: ['Bridge', 'Move coins between Bitcoin and Ethereum.'],
+  borrow: ['Borrow', 'Lock BTC at your own address, and borrow cUSD against it.'],
+};
+const hubOn = () => !SPXP && !TACP.on && (location.pathname === '/' || location.pathname === '/index.html');
+const hubView = () => { const v = document.documentElement.dataset.hub; return v && v !== 'home' ? v : ''; };
+const hubKey = () => { const k = hxHeadKey(); return k === 'more' ? HX.tab : k; };
+function hubLink() { const v = hubView(); return v && v !== 'card' ? `#app=${v}` : ''; }
+// the header's link to the tool on screen is the page it is on (Shield stands for Withdraw too: one tool, both ways)
+function hubHere() {
+  const v = hubView(), k = v === 'withdraw' ? 'shield' : v;
+  for (const a of $$('.sn a[href^="/#app="]')) { if (k && a.getAttribute('href') === `/#app=${k}`) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); }
+  for (const a of $$('.hub-sw a')) { if (a.getAttribute('href') === `/#app=${v}`) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); }
+}
+// The hub's private balance bar: what you hold in the pool (Portfolio's private rows), or what the pool is for before you sign in.
+// Shielding is a step of every tool, not a tool of its own, so it lives here and in each tool's own private choice, not as a card.
+const HUB_PV0 = 'Coins in the private pool can be swapped, sent and farmed. Who pays whom, and how much, stays hidden.';
+function hubPv(items, worth) {
+  const box = $('#hub-pv'), v = $('#hub-pv-v'), h = $('#hub-pv-h');
+  if (!box) return;
+  if (!items) { box.removeAttribute('data-on'); h.textContent = 'Private balance'; v.textContent = HUB_PV0; return; }
+  const amt = (it) => (it.key === 'tac' ? it.priv : it.v);
+  const priv = items.filter((it) => (DASH_PRIV.has(it.key) || it.key === 'tac') && typeof amt(it) === 'bigint' && amt(it) > 0n);
+  box.setAttribute('data-on', priv.length ? 'some' : 'none');
+  h.textContent = worth && worth.priv > 0 ? `Private balance ≈ ${usdFmt(worth.priv)}` : 'Private balance';
+  v.textContent = priv.length
+    ? priv.slice(0, 4).map((it) => `${fmt(amt(it), it.dec, Math.min(it.max ?? 4, 4))} ${it.label}`).join(' · ') + (priv.length > 4 ? ` · and ${priv.length - 4} more` : '')
+    : 'Nothing in the pool yet. Shield coins to swap, send and farm in private.';
+}
+function hubPaint() {
+  if (!hubView()) return;
+  const k = hubKey(), t = HUB_TXT[k] || HUB_TXT.shield;
+  document.documentElement.dataset.hub = k;
+  $('#hub-t').textContent = t[0]; $('#hub-d').textContent = t[1];
+  document.title = `tacit ${t[0].toLowerCase()}`;
+  hubHere();
+  // a tool asked to spend from the pool and the pool is short: the way in is one click away (Swap's "Not enough private …", Send's and Earn's
+  // "… from your wallet instead", which the tile offers only when the pool is short)
+  const first = $('#hub-first');
+  if (first) first.hidden = k === 'shield' || k === 'withdraw' || !($$('#hx button').some((b) => /^Not enough private\b/.test(b.textContent.trim())) || $$('#hx-alt button').some((b) => /from your wallet instead/.test(b.textContent)));
+  // on the way back: Shield, with the tool it was opened from named, until that link is used or an hour passes
+  const then = $('#hub-then'), to = hubThen();
+  if (then) {
+    const show = k === 'shield' && to && to !== k;
+    then.hidden = !show;
+    if (show && then.dataset.to !== to) { then.dataset.to = to; then.innerHTML = html`When the shield is done: <a href="/#app=${to}">back to ${HUB_TXT[to][0]} →</a>`.s; }
+  }
+  syncLink();
+}
+// "shield first and come back": the tool it came from is kept for the session, as the farm page's way back is (farmBack)
+const HUB_THEN = 'tacit-hub-then-v1';
+function hubThen() {
+  try { const v = JSON.parse(sessionStorage.getItem(HUB_THEN) || 'null'); return v && HUB_TXT[v.to] && Date.now() - v.at < 3600e3 ? v.to : null; } catch { return null; }
+}
+function hubThenClear() { try { sessionStorage.removeItem(HUB_THEN); } catch { } }
+$('#hub-then')?.addEventListener('click', (e) => { if (e.target.closest('a')) { hubThenClear(); $('#hub-then').hidden = true; delete $('#hub-then').dataset.to; } });
+$('#hub-first-a')?.addEventListener('click', () => { const k = hubKey(); if (HUB_TXT[k]) try { sessionStorage.setItem(HUB_THEN, JSON.stringify({ to: k, at: Date.now() })); } catch { } });
+function hubSet(v) {
+  if (!hubOn()) { delete document.documentElement.dataset.hub; return; }
+  const was = document.documentElement.dataset.hub;
+  if (v === 'home' || !HUB_TXT[v]) {
+    document.documentElement.dataset.hub = 'home'; document.title = 'tacit defi'; hubHere();
+    if (was && was !== 'home') window.scrollTo(0, 0);
+    return;
+  }
+  document.documentElement.dataset.hub = v;
+  const busy = HX.tab === 'swap' && SWC.card?.busy;
+  if (v !== hubKey() && !busy) { hxKeepAmt(() => { hxSetTab(v); HX.q = null; }); paintHx(); }
+  hubPaint();
+  if (was !== v) window.scrollTo(0, 0);
+}
+// a link that filled the tile (#card=…, a button with data-hx): on the hub, show that tool alone
+function hubFollow() { if (!hubOn()) return; document.documentElement.dataset.hub = hubKey(); hubPaint(); }
+if ($('#hx')) {
+  let raf = 0;
+  new MutationObserver(() => { if (!raf && hubView()) raf = requestAnimationFrame(() => { raf = 0; hubPaint(); }); })
+    .observe($('#hx'), { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-selected'] });
+}
+// the app switcher's "All apps" (build/chrome.mjs) and the mark: from a tool on this page, back to the hub without a reload
+document.addEventListener('click', (e) => {
+  if (!e.target.closest?.('.sn a.tapps-home, header.top a.brand') || !hubOn() || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+  e.preventDefault(); history.pushState(null, '', '/'); hubSet('home');
+});
+// the Earn card says what the farms pay now, once the farms' chips are painted
+{
+  const f = $('#fms'), e = $('#hub-earn');
+  if (f && e) new MutationObserver(() => {
+    // a small pool's rate moves with one deposit, so it is not what a farm pays
+    const n = $$('a', f).filter((a) => !a.querySelector('.fms-thin')).map((a) => parseFloat(($('.num', a)?.textContent || '').replace(/[,+]/g, ''))).filter(Number.isFinite);
+    if (n.length) e.innerHTML = `Farms pay TAC, up to <em>${Math.round(Math.max(...n)).toLocaleString('en-US')}% APR</em>`;
+  }).observe(f, { childList: true, subtree: true });
+}
 const route = () => {
   HX.routed = true; LINK_READ = true;
+  if (hubOn() && !document.documentElement.dataset.hub) document.documentElement.dataset.hub = 'home';
   const h = location.hash.slice(1), pay = h.match(/^(sp|st)=([0-9a-fA-F]{64})/);
   if (TACP.on && h && tpgHash(h)) return;
-  const snd = h.match(/^card=send(?::([a-z][a-z0-9]*))?((?:&(?:to|amt)=[^&]*){0,2})$/);
+  const app = h.match(/^app=([a-z]+)$/);
+  if (app) { hubSet(app[1]); return; }
+  if (!h && hubOn()) hubSet('home');
+  const snd =h.match(/^card=send(?::([a-z][a-z0-9]*))?((?:&(?:to|amt)=[^&]*){0,2})$/);
   if (snd) {
     const q = new URLSearchParams(snd[2]), to = (q.get('to') || '').trim(), amt = (q.get('amt') || '').trim();
     history.replaceState(null, '', location.pathname + location.search);
@@ -16791,6 +17059,7 @@ const route = () => {
     HX.rcpt = /^[\p{L}\p{N}._:-]{1,400}$/u.test(to) ? to : ''; HX.ask = false;
     hxPreset(`send:${snd[1] || HX.send}`, snd[1] && /^\d{0,12}(?:\.\d{1,18})?$/.test(amt) ? amt : '');
     if (!snd[1]) { HX.sendPick = false; if (hxSendAuto()) paintHx(); }
+    hubFollow();
     return;
   }
   const card = h.match(/^card=(shield:0x[0-9a-fA-F]{40}|[a-z]+:[a-z]+:[a-z]+\d{0,3}|borrow:[a-z]+|bridge(?::[a-z]+)?|swap|earn|borrow|shield|withdraw|more)(?::(public|private))?(?:&amt=([^&]*))?(?:&lp=(1))?(?:&back=([^&]*))?$/);
@@ -16800,6 +17069,7 @@ const route = () => {
     const amt = /^\d{0,12}(?:\.\d{1,18})?$/.test(card[3] || '') ? card[3] || '' : '';
     const later = chainWantLater(card[1], amt);
     hxPreset(card[1].startsWith('shield:0x') ? `${card[1].toLowerCase()}:defi` : card[1], amt, false, card[2] || null, card[4] === '1');
+    hubFollow();
     if (later) openSheet('wallet');
     return;
   }

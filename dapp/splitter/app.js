@@ -231,7 +231,7 @@ function paintChip() {
   const chip = $('#wallet-chip'); if (!provider()) return;
   chip.hidden = false;
   $('#wallet-dot').className = `dot ${S.account ? 'on' : ''}`;
-  $('#wallet-label').textContent = S.account ? `${short(S.account, 4)}${isOwner() ? ' · owner' : ''}` : 'Connect';
+  $('#wallet-label').textContent = S.account ? `${short(S.account, 4)}${isOwner() ? ' · owner' : ''}` : 'Connect wallet';
 }
 const ago = (blocks) => { const s = blocks * 12; return s < 3600 ? `${Math.max(1, Math.round(s / 60))} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`; };
 

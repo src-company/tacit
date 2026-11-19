@@ -615,7 +615,7 @@ function renderIdentity() {
 function paintChip() {
   const pub = T?.wallet.pub;
   $('chip-dot').className = 'dot' + (pub ? ' on' : '');
-  $('chip-label').textContent = pub ? short(T.wallet.address(), 6) : knownWallet() ? 'Open wallet' : 'Sign in';
+  $('chip-label').textContent = pub ? short(T.wallet.address(), 6) : knownWallet() ? 'Open wallet' : 'Connect wallet';
   $('chip').setAttribute('aria-label', pub ? `Wallet ${T.wallet.address()}` : $('chip-label').textContent);
 }
 function toWallet() {

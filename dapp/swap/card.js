@@ -940,7 +940,18 @@ const shareSync = () => {
   } catch { }
 };
 function paintQuote() { quotePaint(); flowGo(); }
+// The private balance is short for this swap: pay from the wallet instead, in this card. The same swap then takes the wallet's coin and, where the
+// other side is private, puts what it buys in the pool, so there is no Shield step to go and do first. Only for a coin the wallet can hold.
+function useWallet() {
+  const p = $('#use-w'), b = $('#use-w-b');
+  if (!p || !b) return;
+  const short = !S.busy && atOf('pay') === 'defi' && /^Not enough private\b/.test($('#go')?.textContent || ''), k = short ? coinAt(S.pay, 'wallet') : null;
+  const t = k && (isEth(k) || isListed(k)) ? tokenOf(k) : null;
+  p.hidden = !t;
+  if (t) b.textContent = `Pay with ${t.sym} from your wallet instead →`;
+}
 function flowGo() {
+  useWallet();
   const tip = $('#flow-tip');
   if (tip) { tip.hidden = !(FLOW === 'withdraw' && S.amt && !S.busy); if (!tip.hidden) tip.textContent = exiting() ? 'For more privacy: a new address, a while after you shielded, and not the same amount.' : 'For more privacy: a while after you shielded, and not the same amount.'; }
   const go = $('#go'), ask = !!FLOW && !S.busy && !S.amt && !(moveOf() && S.mq?.fixed);
@@ -2861,6 +2872,7 @@ const markup = (o) => `<p class="sr" id="sw-live" role="status" aria-live="polit
     <div id="ackbox"></div>
     <button class="go" id="go" type="button" disabled>Enter an amount</button>
     <p class="q" id="q" role="status"></p>
+    <p class="flow-tip use-w" id="use-w" hidden><button type="button" class="link" id="use-w-b"></button></p>
     ${o.moves ? '<div class="mv-st" id="mv-st"></div><p class="flow-tip" id="flow-tip" hidden></p>' : ''}
     ${o.moves ? `<button class="cp" id="copy" type="button" title="Copy link" aria-label="Copy link" hidden>${CP_ICON}</button>` : ''}
   </div>
@@ -2882,6 +2894,7 @@ function wire() {
   $('#later').addEventListener('input', (e) => { if (e.target.id === 'later-x') { LATER.pct = Number(e.target.value); paintQuote(); } });
   $('#later').addEventListener('change', (e) => { if (e.target.id === 'later-x') { LATER.rand = Math.random(); paintQuote(); } });
   $('#steps').addEventListener('click', stepsClick);
+  $('#use-w-b').addEventListener('click', () => { if (atOf('pay') === 'defi') pickAt('pay', 'wallet', coinAt(S.pay, 'wallet')); });
   $('#slip').addEventListener('click', (e) => { const b = e.target.closest('[data-slip]'); if (!b) return; S.slip = Number(b.dataset.slip); try { localStorage.setItem(SLIP_KEY, String(S.slip)); } catch { } slipPaint(); if (S.q) requote(true); else paintQuote(); });
   $('#amt').addEventListener('input', (e) => { S.amt = fitAmt(e.target.value.trim()); S.note = ''; fitSize(e.target); changed(); paintSides(); requote(); });
   $('#amt').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !$('#go').disabled) $('#go').click(); });
