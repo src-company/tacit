@@ -371,7 +371,7 @@ function paintDeploy() {
     ownerName.textContent = isAddress(D.owner) ? (nameOf(D.owner) || 'Not a known Tacit wallet') : '';
   };
   const ed = editor(D.rows, { balance: 0n, onChange: (structural) => { if (structural) paintDeploy(); else check(); } });
-  const go = h('button', { class: 'btn', type: 'button' }, S.account ? 'Deploy' : 'Connect a wallet and deploy');
+  const go = h('button', { class: 'btn', type: 'button' }, S.account ? 'Deploy' : 'Connect wallet and deploy');
   const dataBtn = h('button', { class: 'linkbtn', type: 'button', onclick: (e) => copy(e.target.dataset.data, e.target) }, 'Copy the deploy data');
   const ownerName = h('span', { class: 'mute' });
   go.addEventListener('click', () => busy(go, out, async (say_) => {

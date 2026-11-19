@@ -395,7 +395,7 @@ function renderUse() {
   const who = W.account;
   const head = `<p class="eyebrow">Use an address</p><h2 id="h-use">Deploy to an address you own</h2>
     <p class="note">Each address bought here is a token in your wallet. It puts a contract at its address, once. You can also call deploy on ${link(`https://etherscan.io/address/${MARKET}#writeContract`, 'the market\'s page')}.</p>`;
-  if (!who) { box.innerHTML = `${head}<button class="btn" type="button" id="use-connect">Connect a wallet</button>`; const b = $('#use-connect'); if (b) b.onclick = () => conn.connect(); return; }
+  if (!who) { box.innerHTML = `${head}<button class="btn" type="button" id="use-connect">Connect wallet</button>`; const b = $('#use-connect'); if (b) b.onclick = () => conn.connect(); return; }
   if (U.result) {
     const r = U.result;
     box.innerHTML = `${head}<p class="status">Deployed at <code>${esc(r.vanity)}</code>. ${link(`https://etherscan.io/address/${r.vanity}`, 'See the contract')}. The token is used up.${r.receiver ? ` ETH sent to it now goes on to <code>${esc(r.receiver)}</code>.` : ''}</p>

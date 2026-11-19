@@ -34,7 +34,7 @@ export function mountFast({ root, keyS, signIn, open, discover, wants = null, no
       <div class="rows" id="fx-recv" hidden></div>
       <div class="kv" id="fx-wait" hidden><span></span><button class="linkbtn" id="fx-unwait" type="button">Stop waiting</button></div>
     </div>
-    <button class="btn" id="fx-go" type="button" hidden>Open wallet</button>
+    <button class="btn" id="fx-go" type="button" hidden>Connect wallet</button>
     <p class="status" id="fx-st" role="status" aria-live="polite"></p>
     <p class="alt" id="fx-alt">No provider fee? The <a href="/#card=bridge">regular bridge</a>, about 4 hours. Or <a href="#provide">provide liquidity</a> and earn the fee.</p>
     <details class="fx-how" id="fx-how"><summary>New to the fast bridge?</summary>
@@ -101,7 +101,7 @@ export function mountFast({ root, keyS, signIn, open, discover, wants = null, no
     $('fx-max').hidden = !(signed && S.bal > 0n);
     wt.hidden = !(signed && S.want);
     if (!wt.hidden) wt.firstElementChild.textContent = `Waiting for a provider for ${fmtTac(S.want.amount)} TAC`;
-    if (!signed) { go.textContent = 'Open wallet'; go.disabled = S.busy; recv.hidden = true; out.hidden = true; return; }
+    if (!signed) { go.textContent = 'Connect wallet'; go.disabled = S.busy; recv.hidden = true; out.hidden = true; return; }
     const units = parseTac(S.amt), bad = problem(units), q = S.quote, wait = waitable(units), short = !!(S.cost && S.cost.short);
     go.hidden = !!S.want && !q;
     if (wait) { recv.hidden = true; out.hidden = true; go.textContent = S.busy ? 'Working…' : 'Wait for a provider'; go.disabled = S.busy; paintNote(); return; }

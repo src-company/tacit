@@ -1267,7 +1267,7 @@ function tcardForm() {
       <button class="btn ghost tcd-go" type="button" id="tcd-scan">Scan for payments</button><div class="status" role="status" id="tcd-st"></div>
       ${chainOn() ? html`<div class="tpq" id="tcd-pq"></div>` : ''}`;
   }
-  const go = !key ? 'Sign in' : { shield: 'Shield TAC', send: 'Send privately', withdraw: { wallet: 'Withdraw to your wallet', pool: 'Move to the private pool', btc: 'Move toward Bitcoin' }[ctx.TCARD.dest] }[tab];
+  const go = !key ? 'Connect wallet' : { shield: 'Shield TAC', send: 'Send privately', withdraw: { wallet: 'Withdraw to your wallet', pool: 'Move to the private pool', btc: 'Move toward Bitcoin' }[ctx.TCARD.dest] }[tab];
   return html`${line}
     ${tab === 'withdraw' ? html`<div class="tcd-dest" role="radiogroup" aria-label="Where it goes">${TCD_DEST.map(([k, t]) => html`<button type="button" role="radio" aria-checked="${String(ctx.TCARD.dest === k)}" tabindex="${ctx.TCARD.dest === k ? 0 : -1}" data-tcd-dest="${k}">${t}</button>`)}</div>` : ''}
     ${tcdAmt()}

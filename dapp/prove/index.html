@@ -21,7 +21,7 @@
 <link rel="preconnect" href="https://api.tacit.finance" crossorigin>
 <!-- preload-roots: /prove/app.js -->
 <!-- preload:begin -->
-<link rel="modulepreload" href="/prove/app.js?cb=ebe3190b">
+<link rel="modulepreload" href="/prove/app.js?cb=bffebd4c">
 <link rel="modulepreload" href="/relay-route.js?cb=0152b0db">
 <link rel="modulepreload" href="/private-route.js?cb=272cd9d3">
 <link rel="modulepreload" href="/community-prove.js?cb=e2a65259">
@@ -502,7 +502,7 @@ pre.cmd code::before { content: '$ '; color: var(--mute); -webkit-user-select: n
    of the width of the longest thing it says (its text centered in it), so the dot and the words stay where they were as it changes */
 #wallet { width: calc(14ch + 48px); justify-content: center; }
 #wallet-label { flex: none; min-width: 14ch; text-align: center; }
-@media (max-width: 430px) { #wallet { width: calc(11ch + 42px); } #wallet-label { min-width: 11ch; } }
+@media (max-width: 430px) { #wallet { width: calc(14ch + 42px); } #wallet-label { min-width: 14ch; } }
 @media (max-width: 430px) { .chip .wide { display: none; } .chip .narrow { display: inline; } }
 .chip[aria-busy="true"] { cursor: progress; }
 dialog.sheet { width: min(480px, calc(100vw - 32px)); max-height: min(90vh, 900px); padding: 0; overflow: auto; color: var(--ink); background: var(--card); border: 1px solid var(--hair-2); border-radius: 18px; box-shadow: var(--sheet-shadow); }
@@ -858,7 +858,7 @@ dialog.tact::backdrop { background: var(--scrim, rgba(26,26,26,.36)); backdrop-f
           </details>
         </nav>
       <!-- chrome:nav:end -->
-      <button class="chip" id="wallet" type="button"><span class="dot" id="wallet-dot"></span><span id="wallet-label"><span class="wide">Connect wallet</span><span class="narrow">Connect</span></span></button>
+      <button class="chip" id="wallet" type="button"><span class="dot" id="wallet-dot"></span><span id="wallet-label"><span class="wide">Connect wallet</span><span class="narrow">Connect wallet</span></span></button>
     </div>
   </header>
 
@@ -1138,6 +1138,6 @@ node scripts/pay-relay.mjs --tunnel</code></pre><button class="btn ghost" id="pa
 
 <div id="toast-container" class="toasts" popover="manual"></div>
 
-<script type="module" src="/prove/app.js?cb=ebe3190b"></script>
+<script type="module" src="/prove/app.js?cb=bffebd4c"></script>
 </body>
 </html>

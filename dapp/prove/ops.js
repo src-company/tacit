@@ -163,7 +163,7 @@ function paintWallet() {
   $('#wallet-dot').classList.toggle('on', !!S.address);
   const label = $('#wallet-label');
   if (S.address) label.textContent = short(S.address);
-  else label.innerHTML = '<span class="wide">Connect wallet</span><span class="narrow">Connect</span>';
+  else label.innerHTML = '<span class="wide">Connect wallet</span><span class="narrow">Connect wallet</span>';
   $('#wallet').title = S.address ? `Connected: ${S.address}` : 'Connect an Ethereum wallet to pay the network fee';
   if (S.address) dispatchEvent(new CustomEvent('tacit:prove-wallet', { detail: S.address }));    // app.js fills an empty "Pays to" with it
 }
